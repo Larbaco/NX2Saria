@@ -3,8 +3,7 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/context.py`, `launcher/net.py`,
-`launcher/paths.py`, `launcher/platform/__init__.py`, `launcher/platform/linux.py`, `launcher/saves.py`,
+names. These files still keep their comments until their notes are here: `launcher/context.py`, `launcher/saves.py`,
 `launcher/settings.py`, `launcher/start.pyw`, `launcher/steam.py`, `launcher/telemetry.py`, `launcher/toolchain.py`,
 `launcher/ui/__init__.py`, `launcher/ui/app.py`, `launcher/ui/art.py`, `launcher/ui/picture.py`,
 `launcher/ui/selftest.py`, `launcher/ui/sound.py`, `launcher/updater.py`, `launcher/versions.py`,
@@ -1181,6 +1180,351 @@ repair just that, and the setup's own release then replaces it.
   16 characters of room are kept for `\Programs`.
 - The current install's folder is preferred; when only the folder of the port's earlier name exists, it is updated in
   place.
+
+## `launcher/net.py`
+
+HTTPS for the launcher: JSON requests and file downloads that resume, report progress, can be cancelled and are
+checked against a sha256. It uses the standard library (`urllib`), and on Windows the truststore package of the
+launcher's Python for Windows' own certificate check.
+
+Two checks can accept a server's certificate, tried in turn by `request()`:
+
+- Python's: OpenSSL with the certificates of Windows' ROOT and CA stores (`ssl.create_default_context`). It knows only
+  the certificates already in those stores, while Windows holds few roots and downloads the others the first time a
+  Windows program needs them. And it takes a stored certificate before the server's copy of the same name and key: a
+  store that still holds an old, expired cross-signature of the root a server's chain leads to makes it report
+  "certificate has expired" for a valid chain (the chain of repo.msys2.org on a PC whose CA store still holds the
+  "ISRG Root X2" cross-signature that expired in September 2025).
+- Windows': Windows' own chain engine, which Windows programs check servers with (`CertGetCertificateChain` and
+  `CertVerifyCertificateChainPolicy`, through `truststore.SSLContext`). It weighs every path the stores and the server
+  allow, prefers a valid one, and downloads a missing root from Windows Update.
+
+A certificate both refuse ends the request with `CertificateError`: what each check said, whether the PC's clock
+agrees with the server's, and what to do.
+
+- `CLOCK_TOLERANCE` (3600) is the seconds between this PC's clock and a server's beyond which this PC's is wrong.
+- `_CHECKS` is `[(name, SSLContext)]` in the order `request()` tries them. `_ACCEPTED` maps a host to the index into
+  `_CHECKS` of the check that accepted its certificate last.
+- `SPACE_MARGIN` (32 MiB) is what a disk keeps free beyond what is about to be written to it (`space_problem()`).
+- `PART_OF` (`.of`) names `<dest>.part.of`: what the part file beside it is a part of (`download()`).
+
+### `CertificateError`
+
+No certificate check accepts a server's certificate. Asking again gets the same answer, so `download()` does not
+retry it.
+
+### `_windows_check()`
+
+An `SSLContext` that leaves the certificate to Windows' own verifier, or `None` off Windows, in a Python without
+truststore (a checkout's own Python, or `crypt32` not reachable through ctypes) and under Wine. Wine's `crypt32`
+accepts a chain that stops at an issuer it does not know (`CERT_TRUST_IS_PARTIAL_CHAIN` passes its SSL policy), and
+its roots are the host's, which Python's check reads already.
+
+### `_plain_ok()`
+
+Plain HTTP only to this PC (the tests' local servers): anything fetched from elsewhere comes over TLS.
+
+### `_Redirect`
+
+Follows a redirect only to https (or to this PC), and drops the `Authorization` header when the redirect leaves the
+host it was meant for: `urllib` copies every header given to the request onto the redirected one, and GitHub sends
+asset downloads on to its file servers.
+
+### `request()`
+
+The open response to a GET of the address (or `method`, with `data` as its body: the session reports' POST and
+DELETE, `launcher/telemetry.py`). An https address is tried with each certificate check in turn, first the one that
+accepted the host last, until one accepts the server; `CertificateError` when none does. Plain http is refused but for
+this PC's own address.
+
+### `server_clock()`
+
+The time (epoch seconds) of the `Date` header a plain-HTTP HEAD request answers with, without following a redirect, or
+`None` without an answer. A PC whose clock is wrong cannot check any certificate, so its clock is compared over HTTP;
+the answer is not authenticated and only chooses the advice of an error message.
+
+An HTTP error (the redirect to https, or any other status) carries a `Date` that is as good. No answer, whatever the
+reason (refused, timed out, not HTTP), gives `None`.
+
+### `certificate_problem()`
+
+The message of a `CertificateError`: what each check in `refused` (`[(name, error)]`) said, then the advice that fits
+this PC's clock.
+
+### `_check_eof()`
+
+`HTTPResponse.read(n)` accepts an early end of a body with `Content-Length` and leaves the missing byte count in
+`length`; this turns that into an error.
+
+### `get_bytes()`
+
+The body of a GET, at most `limit` bytes. A cut connection, a timeout or a server error (5xx, 429) is tried again
+after 1, then 2 seconds, as those of `download()` are: one connection reset during Gather Build Tools (the package
+index read by `launcher/toolchain.py` `ensure_zbic()`) ended the install. A refused certificate or another HTTP error
+is not tried again.
+
+### `NoSpace`
+
+The disk has no room for the file. Asking again or another server gets the same answer, so `download()` does not
+retry it, and it keeps the part file: the download goes on from it once there is room.
+
+### `free_bytes()`
+
+The free bytes of the disk that holds the folder, asked of the nearest folder above it that exists; `None` when that
+cannot be asked.
+
+### `space_problem()`
+
+Empty when the disk of the folder has room for `need` more bytes and `SPACE_MARGIN`, or when its free space cannot be
+asked; else the sentence that says there is no room for `what`, how much it takes and how much is free. It is asked
+before a download or an unpack starts: a disk that fills in the middle otherwise ends it with an error that names no
+cause and leaves half of it behind.
+
+### `download()`
+
+Fetches the address to `dest` through `dest.part`, resuming a part file a cut connection left. `progress(done, total)`
+is called after every chunk; `cancel()` returning true raises `Cancelled`. A wrong size or sha256 deletes the file and
+raises `DownloadError`. A `dest` already holding the expected sha256 is kept without a request. `NoSpace` is raised,
+before anything is written, when the disk has no room for the rest of the file (the expected size, else the size the
+server names).
+
+A part file is resumed only as a part of the same file: `dest.part.of` beside it names the file it was begun for, by
+the expected sha256 (the same file from any server) or, without one, by its address. A part begun for another file
+under the same name (a release published again with other bytes) is deleted with a line for the log, where resuming
+it ended in "sha256 ..., expected ..." as if the download were damaged. A part without that note (an older
+launcher's) is resumed as before, and so is one whose note could not be written.
+
+- A server that ignores `Range` (an answer other than 206 to a resumed request) makes the download start over.
+- The whole file's size for progress is the expected one, else what the server says is still to come plus what the
+  part file holds, else unknown (0: progress then gets the bytes so far as the total). An earlier form,
+  `length + have or size or 0`, took the part file's size for the whole when a resumed answer named no length, and the
+  bar ran past its end.
+- A server that sends more than the expected size is stopped: it would fill the disk.
+- HTTP 416 with a part file means the part is complete or longer than the file: it is deleted and the download starts
+  over.
+- HTTP 401, 403, 404 and 410 and any 3xx (a redirect `_Redirect` refused) are not tried again.
+- `ENOSPC` while writing means the disk filled meanwhile: trying again cannot help, and `NoSpace` is raised.
+
+## `launcher/paths.py`
+
+Where the launcher keeps everything ([launcher.md](../launcher.md#the-launchers-folder)).
+
+An installed launcher (`NX2Saria-Setup.exe` puts it in `%LOCALAPPDATA%\Programs\NX2Saria`) is one folder:
+
+| Path | What it is |
+|---|---|
+| `NX2Saria.exe` | `launcher/native/nx2saria.c`: starts `python\pythonw.exe` on `app\<current>\launcher\start.pyw` |
+| `python/` | the embeddable Python with tkinter, numpy, lz4 and zstandard (`tools/make_launcher.py`) |
+| `app/current.txt` | the version the stub starts; `app/previous.txt` the one before it, kept for a rollback |
+| `app/<version>/` | one release: `launcher/`, `runtime/`, `recomp/`, `tools/`, `bin/`, `VERSION`, `toolchain.lock.json` |
+| `pydeps/` | zbic, downloaded from PyPI on this PC (`launcher/toolchain.py` `ensure_zbic()`) |
+| `toolchain/msys64/ucrt64` | MSYS2's clang and libraries, downloaded from the MSYS2 repository on this PC |
+| `toolchain/pkgs/` | the downloaded package files, kept while the lock names them |
+| `data/launcher.json` | settings; `data/logs/` logs; `data/cache/` the fonts read from the player's game |
+| `game/` | the built game, unless the player picks another folder |
+
+Run from a checkout of the repository (`python -m launcher`), the app folder is the repository and everything else
+goes to `build/launcher-dev/`, which git ignores.
+
+On Windows a file's whole path may be 259 characters (`WINDOWS_PATH_MAX`) for the programs that do not ask for more,
+and the build's tools (the MSYS2 compiler, linker and resource compiler, `tar`) are among them whatever the system's
+long path setting. `LONGEST_IN_GAME` (128) is the room the game folder's own files need below it: the longest path a
+built game folder held was 106 characters
+(`romfs-patches-playstation-label\System\Resource\ResourceSizeTable...rsizetable.zs`), and a file is written under a
+temporary name up to 22 characters longer before it gets its own.
+
+### `ansi_safe()`
+
+True when the path survives the Windows ANSI code page: the MSYS2 tools and the game's own build read their arguments
+through it, so a folder name outside it breaks the build. Always true elsewhere.
+
+### `long_path_problem()`
+
+Empty when the files of a game built into the folder fit Windows' path length, else the sentence that says how long
+the folder's path is and how long it may be. Always empty elsewhere. Without it a build into a deep folder stops
+somewhere in the middle with "file not found" for a file that is there.
+
+### `fixed_drive()`
+
+True when the drive (`X:\`) is a fixed disk (`GetDriveTypeW` giving `DRIVE_FIXED`), not a network, removable or optical
+drive. True where that cannot be asked.
+
+### `Layout`
+
+`instance_lock` (`data/launcher.lock`) is held by whichever process works in this folder: the window while it is open,
+`launcher/cli.py` for a command and every job that changes files (`launcher/locks.py`).
+
+- `Layout.default_game_dir()`: `<root>/game`, or a `Games` folder on the fixed drive with the most free space when the
+  root's drive has less than 40 GB free or the root's path would break the build. A mapped network share or a USB
+  stick is no place for 30 GB of build, so only fixed drives are looked at.
+- `Layout.python_for_builds()`: the console `python.exe` beside the launcher's `pythonw.exe` (no window: the build
+  starts it with `CREATE_NO_WINDOW`), or this interpreter in a checkout.
+
+## `launcher/platform/__init__.py`
+
+Operating-system services used by the launcher. `launcher/winsys.py` remains the stable call surface while
+platform-specific implementations move behind it in small steps.
+
+### `game_executable()`
+
+The built game's executable in its selected game folder: `ocarina.exe` on Windows, `ocarina` elsewhere.
+
+## `launcher/platform/linux.py`
+
+The Linux services behind the launcher's compatibility surface, `launcher/winsys.py`.
+
+- `APPIMAGE_OWNED` is what the AppImage install (`tools/appimage_install.py`) puts in the launcher's folder besides
+  `data/`: the start script (`_write_wrapper()` there), the menu icon, the app versions, the Python runtime and the
+  folders an install or an update leaves while it swaps it, the Python packages and the build tools.
+- `KEPT_DATA` is what Uninstall keeps of `data/`: the launcher's logs, which the player may still want for a report.
+- `UNINSTALL_SCRIPT` is run by `sh` once the launcher has gone: `$1` is its process id, `$2` the `launcher.log` the
+  last line goes to, then the paths to delete, `--`, and the folders to delete only when empty. The wait is cut at
+  30 s; a file the launcher still has open is only unlinked, which Linux allows.
+- `USER_DIRS` maps the names `launcher/winsys.py` `known_folder()` takes to the keys of `user-dirs.dirs` for them.
+- `LOCAL_FILESYSTEMS` are the filesystems of local disks, whose mount points the dump search looks through. Not
+  network ones (a slow or unreachable server would hold the search), not autofs placeholders (listing one mounts the
+  disk behind it), and not the system's own (proc, tmpfs, overlay and the like).
+
+### `make_game_toolchain_args()` and `ensure_toolchain()`
+
+Linux uses its system compiler and libraries, which `tools/make_game.py` discovers itself, so there are no toolchain
+arguments. `ensure_toolchain()` checks the build's prerequisites (`toolchain_missing()`) and installs the launcher's
+own zbic package.
+
+### `refresh_installed_wrapper()`
+
+Writes the installed start script again from this app version, so that later starts have its rollback behaviour.
+
+### `game_running()`
+
+Checks the runtime's profile lock first, then `/proc` for Linux builds from before profile locking.
+
+### `child_subreaper()`
+
+Turns `PR_SET_CHILD_SUBREAPER` (`prctl` option 36) on or off for the launcher's process. It is on while the game runs
+(`launcher/winsys.py` `start_game()`): the copy the game's Restart spawns (`runtime/platform/linux.c`
+`plat_restart()`) is the old process's child, and once that one ends it becomes the launcher's, whose wait gives its
+exit code. It is off again when the run ended (`launcher/winsys.py` `game_finished()`), so that the processes a build
+leaves behind are not adopted and kept as zombies.
+
+### `_runs()`
+
+Whether the process folder (`/proc/<pid>`) runs the expected file; false once it has ended or is a zombie, whose `exe`
+link cannot be read.
+
+### `GameCopy`
+
+A copy of the game this launcher did not start itself (`game_copy()`), with `poll()`, `returncode` and `pid` as
+`subprocess.Popen` has them; `ended` is true once it has ended, also when its code could not be read. A copy that is
+the launcher's child (adopted, `child_subreaper()`) is waited for, which gives its code; another is taken as ended
+once its `/proc` folder no longer runs the game's file, so a process id used again is not taken for the game.
+
+### `game_copy()`
+
+A live process running the file `exe` other than the process id `skip`, as a `GameCopy`; `None` when there is none.
+The file is compared by its resolved path, so the game of another install is not taken for this one.
+
+### `ended_copies()`
+
+Waits for the launcher's children that ended as zombies named as the file `exe` (the `comm` of the `stat` line, which
+the kernel cuts to 15 characters), other than the process id `skip`: a copy of the Restart that ended before the
+launcher looked for it (`launcher/ui/app.py` `App.watch_game()` looks once a second). It returns their exit codes, the
+latest started last, by field 22 of the `stat` line, the start time.
+
+### `desktop_entry()`, `appimage_install()`, `_exec_line()` and `_starts()`
+
+- `desktop_entry()`: the menu entry the AppImage writes (`tools/appimage_install.py` `_write_desktop()`).
+- `appimage_install()`: whether the folder holds the AppImage's install, by its start script or the record of what it
+  installed (`tools/appimage_install.py` `_write_wrapper()` and `_write_install_manifest()`). Uninstall deletes nothing
+  elsewhere.
+- `_exec_line()`: the `Exec` line `tools/appimage_install.py` `_write_desktop()` writes for the start script, quoted as
+  `tools/appimage_gui.py` `exec_quote()` quotes it.
+- `_starts()`: whether the menu entry starts that script: another install's entry is left alone.
+
+### `_within()`
+
+Whether a path is the folder or lies inside it, by the paths as given and as resolved (a symbolic link on the way
+makes the two differ).
+
+### `_unsafe_game_folder()`
+
+Why the folder must not be deleted as the game folder, or empty: it is or holds the launcher's folder or the home
+folder, or it is a mount point (a drive's or a card's root).
+
+### `uninstall_plan()`
+
+`(paths to delete with all they hold, folders to delete only when that left them empty, (path, why) kept)` for the
+launcher's folder ([launcher.md](../launcher.md#uninstalling)). The game folder goes only when `remove_game` names
+it, and never when it holds the launcher's folder or the home folder or is a drive's root (`_unsafe_game_folder()`).
+`data/logs` stays (`KEPT_DATA`), and so does every path that holds one of `keep` (the game folder when it stays, the
+dump) or lies in it: a game folder inside `data/` is not deleted with `data/`.
+
+### `uninstall_command()`
+
+The `sh` command line that deletes `gone`, then the empty folders of `empty`, once the process `pid` has ended.
+
+### `udmabuf_status()`, `run_udmabuf_fix()`, `udmabuf_log_line()` and `udmabuf_after_log_line()`
+
+[launcher.md](../launcher.md#linux-guest-memory) says what udmabuf is to the game.
+
+- `udmabuf_status()` describes udmabuf without privilege; its paths and probes are parameters so that tests keep the
+  check isolated.
+- `run_udmabuf_fix()` asks PolicyKit to run the contents of the packaged script
+  (`launcher/platform/udmabuf_fix.sh`), once the player confirmed, through the system shell.
+- `udmabuf_log_line()` is one bounded diagnostic line for the launcher's log at start;
+  `udmabuf_after_log_line()` describes the device right after an approved fix action.
+
+### `os_name()`
+
+The distribution as `/etc/os-release` names it (`PRETTY_NAME`, else `NAME` and `VERSION_ID`), or "Linux".
+
+### `session_text()`
+
+The graphical session for the launcher's start line: its type (x11, wayland, tty) and desktop, from the variables the
+display manager sets, or from which display variable is there when it sets none.
+
+### `user_dir()`
+
+The folder the desktop keeps for a name (`downloads`, `desktop`, `documents`, `pictures`), as
+`$XDG_CONFIG_HOME/user-dirs.dirs` names it: translated ("Área de Trabalho", "Documentos") on a desktop set up in
+another language. `None` when the file names none, or names the home folder itself (the desktop's way of turning one
+off).
+
+### `_unescape_mount()`
+
+A mount point as `/proc/self/mounts` writes it, with its octal escapes (`\040` for a space) undone.
+
+### `mounted_drives()`
+
+The local disks mounted under `/mnt`, `/media/<user>` and `/run/media`, where a player's other drives are (an NTFS
+partition shared with Windows, a second disk; SteamOS mounts the SD card at `/run/media/mmcblk0p1` or
+`/run/media/<user>/<label>`), in the order mounted. Only filesystems mounted now: nothing here mounts a disk.
+
+### `pick_path()`
+
+The desktop's own chooser for a file (`kind` `file`) or a folder (`folder`): kdialog on KDE, else zenity, else
+kdialog. It returns `(tool, path)`, with an empty path when the player cancelled, and `(None, '')` when neither is
+installed or both failed, and the caller falls back to Tk's chooser. `patterns` are `(label, '*.ext')` pairs for a
+file.
+
+Exit code 0 gives the path as the file system has it, also when it is not UTF-8; both tools exit with 1 when the
+player cancelled.
+
+### `_sdl_library()`
+
+Loads the kit's SDL3 first, then the system's copy, and returns a short label of the source for the log.
+
+### `Gamepad`
+
+Reads SDL3 game controller input, including Steam Input's virtual controller on Steam Deck.
+
+### `keep_awake()`
+
+Holds a systemd sleep inhibitor for the duration of a foreground build job.
+
+### `toolchain_missing()`
+
+Checks the compiler and the headers the Linux build requires, with guidance per distribution; it changes no package.
 
 ## `launcher/play.py`
 
