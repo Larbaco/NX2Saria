@@ -1,4 +1,3 @@
-// The GPU time of frame generation through AMD's libraries: vk_fg_time.h says what is timed and how.
 #include <stdlib.h>
 #include <string.h>
 
@@ -24,7 +23,7 @@ static uint32_t family_bits(const VkQueueFamilyProperties *qp, uint32_t n, uint3
 int fgt_init(uint32_t present_family, int *gen) {
     const VkCtx *c = vk_ctx();
     if (T.tried && T.dev == c->device) return *gen = T.gen, T.on;
-    memset(&T, 0, sizeof T);   // first use, or after fgt_release
+    memset(&T, 0, sizeof T);
     T.tried = 1, T.dev = c->device;
     *gen = 0;
     const char *e = cfg_get("NX2SARIA_FG_GPU_TIME");
@@ -50,7 +49,6 @@ int fgt_init(uint32_t present_family, int *gen) {
         return 0;
     }
     vkResetQueryPool(c->device, T.pool, 0, 4 * FGT_SLOTS);
-    // the generation runs on a queue AMD's swapchain picks: the game's or the present queue, timed where both have timestamps
     T.gen = pres != 0;
     uint32_t bits = T.gen && pres < game ? pres : game;
     T.mask = bits >= 64 ? ~0ull : (1ull << bits) - 1;
@@ -66,7 +64,7 @@ static int take(int i, int from, int to) { return __atomic_compare_exchange_n(&T
 int fgt_prepare_begin(VkCommandBuffer cb, uint64_t id) {
     if (!T.on || !id) return 0;
     int i = (int)(id % FGT_SLOTS);
-    if (!take(i, FREE, PREPARING)) return 0;   // still in use by a frame FGT_SLOTS ago
+    if (!take(i, FREE, PREPARING)) return 0;
     __atomic_store_n(&T.slot[i].id, id, __ATOMIC_RELEASE);
     vkCmdWriteTimestamp(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, T.pool, 4 * (uint32_t)i);
     return 1;
@@ -107,13 +105,10 @@ int fgt_poll(uint64_t now_id, double *ms, int max) {
                                            VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
         int ready = q == VK_SUCCESS && r[1] && r[3] && (nts == 2 || (r[5] && r[7]));
         if (st == PREPARED) {
-            // generated only where the generation is timed; a prepared frame not generated after half the ring is let
-            // go once its preparation is done (nothing writes its slot any more)
             int late = T.gen ? now_id > id + FGT_SLOTS / 2 : 1;
             if (!late || !ready || !take(i, PREPARED, RESETTING)) continue;
             if (!T.gen) ms[n++] = (double)((r[2] - r[0]) & T.mask) * T.ns_per_tick / 1e6;
         } else {
-            // a generation recorded but not done yet waits: its queries may still be written, so they are never reset early
             if (!ready || !take(i, GENERATED, RESETTING)) continue;
             double prep = (double)((r[2] - r[0]) & T.mask), gen = (double)((r[6] - r[4]) & T.mask);
             ms[n++] = (prep + gen) * T.ns_per_tick / 1e6;
@@ -133,7 +128,6 @@ void fgt_idle(void) {
         }
 }
 
-// After AMD's contexts are destroyed (vk_fg.cpp vk_fg_release), with the device idle: nothing records into the pool.
 void fgt_release(void) {
     if (T.pool && T.dev) vkDestroyQueryPool(T.dev, T.pool, NULL);
     memset(&T, 0, sizeof T);
