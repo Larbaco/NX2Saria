@@ -545,9 +545,9 @@ The timestamps of the call RING calls ago in this slot, if the GPU wrote them: t
 
 `--probe-fsr3` (`tests/fsr3_check.py` runs it): AMD FSR 3.1 upscaling with the runtime's passes (`runtime/vk/vk_fsr3.c`)
 on a synthetic scene, no game files. The scene is a zone plate (rings whose frequency rises with the radius, up to a
-ring every 4 render pixels at its edge, half the render size's limit) with thin bars and a bright HDR patch, panning at a constant speed; each frame renders
-it on the CPU at the render size with the frame's jitter (Halton 2, 3 over FSR's phase count), with a flat depth and the
-motion vectors of the pan, and the passes upscale it, 960x540 to 1920x1080.
+ring every 4 render pixels at its edge, half the render size's limit) with thin bars and a bright HDR patch, panning at
+a constant speed; each frame renders it on the CPU at the render size with the frame's jitter (Halton 2, 3 over FSR's
+phase count), with a flat depth and the motion vectors of the pan, and the passes upscale it, 960x540 to 1920x1080.
 
 After 48 frames the output is read back and compared with the scene rendered at the output size (4x4 supersampled, no
 jitter), as PSNR over the rings (`rings_mask()`) and over the whole picture, against a bilinear enlargement of the same
@@ -560,10 +560,10 @@ current frame to the previous one); the pan sharpened; the scene still, plain an
 (`NX2SARIA_DYN_RES`) on the context made for 960x540.
 
 Checks: no NaN or infinity; on the rings FSR 3.1 beats bilinear by 0.5 `dB` panning, sharpened FSR 3.1 by 0.5 `dB` still
-and plain FSR 3.1 is within 0.5 `dB` of it still (at both render sizes); the reversed jitter does worse (by 0.5 `dB`) and the
-reversed motion much worse (by 5 `dB`); the second render size makes a context of its own, and none with dynamic resolution, where its
-picture is within 3 of 255 of the one of its own context; no validation error from the passes (run with
-`NX2SARIA_VK_VALIDATION=1`).
+and plain FSR 3.1 is within 0.5 `dB` of it still (at both render sizes); the reversed jitter does worse (by 0.5 `dB`)
+and the reversed motion much worse (by 5 `dB`); the second render size makes a context of its own, and none with dynamic
+resolution, where its picture is within 3 of 255 of the one of its own context; no validation error from the passes (run
+with `NX2SARIA_VK_VALIDATION=1`).
 
 Then the GPU time of one upscale at the docked sizes (1707x960 -> 2560x1440, the Quality mode) with and without
 sharpening, and outside Windows the upscaler switched off: `vk_ffx_release_idle()` leaves no context, and the next
@@ -665,8 +665,8 @@ frames the generated frame (between the last two) is read back.
 
 Checks: the first frame and a reset (at frame 6) show no generated frame and every other does; the square's centre in
 the generated frame is within 2 pixels of halfway between the two frames' (not at either end) and the square keeps at
-least half its pixels; with the scene still the square stays within 1 pixel of where it is; the HUD bar is the picture with the
-HUD's to within 2 of 255; the black bars stay black; no validation error from the passes (with
+least half its pixels; with the scene still the square stays within 1 pixel of where it is; the HUD bar is the picture
+with the HUD's to within 2 of 255; the black bars stay black; no validation error from the passes (with
 `NX2SARIA_VK_VALIDATION=1`). The same run with the motion vectors' sign reversed is reported (the optical flow alone may
 still place the square). Then the GPU time of one generated frame at 2560x1080 from 1920x810 (the 21:9 1080p of the
 bench) and at 1920x1080 from 1280x720, from the passes' own timestamps, and `vk_fsr3fg_idle()` freeing the images.
@@ -1012,8 +1012,8 @@ AMD publishes the SDK's libraries for Windows only: in any other build FSR 4 is 
 FSR 3.1 path is all there is, and the SDK's headers are not read. There the file is a set of stubs, and everything below
 describes the Windows code: `vk_ffx4_available()`, `vk_ffx4_upscale()`, `vk_ffx4_holds()`, `vk_ffx4_failed()`,
 `vk_ffx4_dead_take()`, `vk_ffx4_dead_fence()` and `vk_ffx4_vram()` return 0, `vk_ffx4_name()` returns "AMD FSR 4", the
-others do nothing, and the `vk_ffx4_api_*` functions are not defined. The file defines `VK_FFX_NO_API` before it includes
-`runtime/vk/vk_ffx.h`, which then leaves out the API declarations of the other set of headers.
+others do nothing, and the `vk_ffx4_api_*` functions are not defined. The file defines `VK_FFX_NO_API` before it
+includes `runtime/vk/vk_ffx.h`, which then leaves out the API declarations of the other set of headers.
 
 The state of the probe:
 
@@ -1105,8 +1105,9 @@ destroyed once the GPU is past it (`retire_up()`): its work may be in flight.
 
 A creation that fails is tried once more after every context not in use (not among the recent ones) has gone, FSR 3.1's
 idle ones too (`vk_ffx_trim_idle()`), and the GPU has finished with them and with those let go of before: what it lacked
-was most often video memory. When nothing was let go of and nothing destroyed, it is not tried again. The creation needs their memory now, so this is a wait for the GPU to pass them all, this file's and
-FSR 3.1's (with `NX2SARIA_UPSCALER_IDLE_WAIT=1` for the device).
+was most often video memory. When nothing was let go of and nothing destroyed, it is not tried again. The creation needs
+their memory now, so this is a wait for the GPU to pass them all, this file's and FSR 3.1's (with
+`NX2SARIA_UPSCALER_IDLE_WAIT=1` for the device).
 
 ### `failed()`
 
@@ -1595,10 +1596,10 @@ swapchain calls later, on its own present thread, for the frame id the configura
 `vk_fg_frame()` notes each frame's cut here under its id, and the callback looks it up. Without it every generated frame
 of a cut was blended from two unrelated pictures: an area load or a cutscene's cut flashed a frame of both.
 
-A ring of `FGR_SLOTS` (32) frames; each slot holds the frame id and its cut as one atomic word, so a slot being rewritten
-never pairs an old id with a new frame's answer. An id the ring no longer holds (the callback fell that far behind, or
-the slot was never written) counts as a cut: a lost history costs one plain frame, a wrong one blends two. Own header so
-`tests/fg_reset_check.c` checks it without a GPU.
+A ring of `FGR_SLOTS` (32) frames; each slot holds the frame id and its cut as one atomic word, so a slot being
+rewritten never pairs an old id with a new frame's answer. An id the ring no longer holds (the callback fell that far
+behind, or the slot was never written) counts as a cut: a lost history costs one plain frame, a wrong one blends two.
+Own header so `tests/fg_reset_check.c` checks it without a GPU.
 
 `FgrRing`: a `slot` is (frame id << 1) | cut, written by `vk_fg_frame()`; 0 never matches (ids start at 1). Frame ids
 above `FGR_MAX_ID` do not fit beside the cut bit; they always count as a cut.
@@ -1688,10 +1689,11 @@ on its own thread. A frame counts once both are in: `prepare_end` - `prepare_beg
 
 A ring of `FGT_SLOTS` (64) frames, four timestamps each, reset on the host after they are read (`hostQueryReset`), so
 nothing is recorded into AMD's command list but the two timestamps. A slot's state moves free -> preparing -> prepared
--> generating -> generated -> resetting -> free on the two threads by compare-and-swap; a slot still busy when its frame comes round again leaves that frame untimed, and a
-prepared frame AMD never generated (generation off before its present) is let go `FGT_SLOTS` / 2 frames later.
-`NX2SARIA_FG_GPU_TIME=0` turns it off; without `hostQueryReset` or timestamps on the game's queue it stays off, and the
-generation is timed only where the present queue's family has timestamps too.
+-> generating -> generated -> resetting -> free on the two threads by compare-and-swap; a slot still busy when its frame
+comes round again leaves that frame untimed, and a prepared frame AMD never generated (generation off before its
+present) is let go `FGT_SLOTS` / 2 frames later. `NX2SARIA_FG_GPU_TIME=0` turns it off; without `hostQueryReset` or
+timestamps on the game's queue it stays off, and the generation is timed only where the present queue's family has
+timestamps too.
 
 - `fgt_init()`: after the device exists: `present_family` is the family of the queue AMD's swapchain presents on. 1 when
   frames are timed, `*gen` whether their generation is (else the preparation alone). Logs one line the first time.
@@ -1976,15 +1978,15 @@ them:
   quarter pixel, `OBJ_MIN`): the camera's, the final ones and variants of the object part (final - camera) scaled by k =
   -1, 0.5, 1.5, 2 or with one axis negated. The variant with the lowest error names the correction the object vectors
   need, if any ("best").
-- Flow: on up to `FLOW_MAX` (20,000) object pixels with some texture, the offset whose 5x5 luminance patch of the frame before
-  matches best, searched over a window around both the camera and the final vector and refined to a sub-pixel by a
-  parabola: the measured motion. The end-point error of the camera and final vectors (+ d) against it, median in render
-  pixels, and how often the final vector is the nearer.
-- Output (DLSS's picture, which the vectors are for): on about `OUT_SAMPLES` (4000) pixels picked independently of the vectors,
-  the picture's own motion is measured with a wide search (12 px around the camera vector); where it differs from the
-  camera's by over 1.5 px the pixel moves on its own. At each sample, DLSS's output (at the same unjittered place)
-  against this frame's input, as a relative luminance difference: on the moving samples it grows where DLSS drags old
-  colour along wrong vectors (ghosting, smearing), on the static ones it is the plain difference anti-aliasing and
+- Flow: on up to `FLOW_MAX` (20,000) object pixels with some texture, the offset whose 5x5 luminance patch of the frame
+  before matches best, searched over a window around both the camera and the final vector and refined to a sub-pixel by
+  a parabola: the measured motion. The end-point error of the camera and final vectors (+ d) against it, median in
+  render pixels, and how often the final vector is the nearer.
+- Output (DLSS's picture, which the vectors are for): on about `OUT_SAMPLES` (4000) pixels picked independently of the
+  vectors, the picture's own motion is measured with a wide search (12 px around the camera vector); where it differs
+  from the camera's by over 1.5 px the pixel moves on its own. At each sample, DLSS's output (at the same unjittered
+  place) against this frame's input, as a relative luminance difference: on the moving samples it grows where DLSS drags
+  old colour along wrong vectors (ghosting, smearing), on the static ones it is the plain difference anti-aliasing and
   upscaling make. Their ratio compares runs with the per-object pass on and off (it does not depend on the pass's own
   vectors) and modes.
 
@@ -2266,12 +2268,12 @@ The comparison is written so that a NaN is not near.
 
 ## `runtime/vk/vk_skin_motion.inc`
 
-Included by `runtime/vk/vk_dlaa.c`: motion vectors for every skinned character (`NX2SARIA_SKIN_MOTION`, `skin_motion` in
-`nx2navi.ini`; game 1.1.1). The player's meshes get their own motion through ownership records
-(`runtime/input/motion_owner.c`, `runtime/vk/vk_fg_pose.inc`): a draw is the player's when a block it binds belongs to a
-model of the player's actor. People, animals and enemies have no such record, so the camera's motion was all they got,
-and DLSS and FSR 3.1 smeared them as they moved. This file gives them the same second draw, with last frame's pose and
-camera into the motion vector target, without knowing whose they are. A draw the player's path takes
+Included by `runtime/vk/vk_exec_draw.c`, after `runtime/vk/vk_fg_pose.inc`: motion vectors for every skinned character
+(`NX2SARIA_SKIN_MOTION`, `skin_motion` in `nx2navi.ini`; game 1.1.1). The player's meshes get their own motion through
+ownership records (`runtime/input/motion_owner.c`, `runtime/vk/vk_fg_pose.inc`): a draw is the player's when a block it
+binds belongs to a model of the player's actor. People, animals and enemies have no such record, so the camera's motion
+was all they got, and DLSS and FSR 3.1 smeared them as they moved. This file gives them the same second draw, with last
+frame's pose and camera into the motion vector target, without knowing whose they are. A draw the player's path takes
 (`runtime/vk/vk_fg_pose.inc` `pose_owner()`) never comes here.
 
 A skinned scene draw (`skin_pick()`): a draw that passes the scene filter of `mvobj_pick()` (solid, one instance, into a
@@ -2288,14 +2290,14 @@ frame, and a stretch of the submission's scratch memory is set aside where last 
 once that is known (`SkinBlock`).
 
 Which draw of last frame a draw continues is decided when the motion vectors are made (`skin_resolve()`, called from
-`vk_fg_pose_prepare()`), not at the draw: the replay's threads reach the draws of one pass in any order, and the number
-that tells two characters of one model apart counts in the order of the command stream (`runtime/vk/skin_pair.h`, which
-lists the cases that leave a draw to the camera). There the frame's draws are first cut down to the scene's own view
-(the camera block and size the motion vectors are made for) and to one draw for each mesh and palette: the game draws a
-mesh into a depth pre-pass and again, against a copy of that depth, into the light target, and the draw into the depth
-image the vectors are tested against is kept, as for the player; the pre-pass draw stands in where the other could not
-be listed (its vertex shader reads storage buffers), and from the next frame on a mesh with a light-target draw has its
-pre-pass draw left out at the draw already. Then:
+`runtime/vk/vk_exec_draw.c` `vk_fg_pose_prepare()`), not at the draw: the replay's threads reach the draws of one pass
+in any order, and the number that tells two characters of one model apart counts in the order of the command stream
+(`runtime/vk/skin_pair.h`, which lists the cases that leave a draw to the camera). There the frame's draws are first cut
+down to the scene's own view (the camera block and size the motion vectors are made for) and to one draw for each mesh
+and palette: the game draws a mesh into a depth pre-pass and again, against a copy of that depth, into the light target,
+and the draw into the depth image the vectors are tested against is kept, as for the player; the pre-pass draw stands in
+where the other could not be listed (its vertex shader reads storage buffers), and from the next frame on a mesh with a
+light-target draw has its pre-pass draw left out at the draw already. Then:
 
 - A key drawn more than once must also have each palette near last frame's (`runtime/vk/skin_pair.h` `skin_near()`,
   `SKIN_NEAR_UNITS`);
@@ -2831,11 +2833,24 @@ pictures before the game's switch) is shown as a 2.2 display would.
 
 ### `nits()`
 
-- The tone mapper as `runtime/shaders/hdr_tonemap.frag` numbers it: the game's curve, the luminance mapper, the
-  observer-response mapper (the default, and what any other value gives).
-- The sliders' 0..100 with 50 unchanged become factors around 1; blowout, hue, grade and hue clip are fractions.
-  Divided, not multiplied by a rounded reciprocal: 50 and 100 % come out as exactly 1, which the shader compares for to
-  leave a grading step out.
+- The nits are clamped: the peak to 80..10000, the picture's and the HUD's white to 48..500.
+- The tone mapper as `runtime/shaders/hdr_tonemap.frag` numbers it: 0 the game's curve (`vanilla`), 3 the luminance
+  mapper (`renodrt`), 9 the observer-response mapper (the default, and what any other value gives).
+- The gamma: `off` or `0` gives 0, `2.4` gives 2, anything else `HDR_GAMMA_22`; the game's own HDR always
+  `HDR_GAMMA_22`.
+- The sliders' 0..100 with 50 unchanged become factors around 1; blowout, hue, grade and hue clip are fractions; the
+  exposure is 0..200 over 100. Divided, not multiplied by a rounded reciprocal: 50 and 100 % come out as exactly 1,
+  which the shader compares for to leave a grading step out.
+
+The 20 floats of `tm`, four to a vec4:
+
+| Vec4 | x | y | z | w |
+|---|---|---|---|---|
+| p0 | peak nits | picture white nits | HUD white nits | tone mapper (-1 without an HDR10 swapchain, `vk_hdr_support()`) |
+| p1 | exposure / 100 | highlights / 50 | shadows / 50 | contrast / 50 |
+| p2 | saturation / 50 | highlight saturation / 50 | blowout / 100 | flare / 50 |
+| p3 | hue / 100 | grade / 100 | gamma (0, 1, 2) | tone slope / 50 |
+| p4 | hue clip / 100 | mid grey: 0 for `render`, else 1 | match slope: 0 or 1 | 0 |
 
 ### `vk_hdr_support()`
 
@@ -2844,6 +2859,37 @@ Without an HDR10 swapchain (yet), `p0.w` is -1: the game's own SDR picture.
 ### `name_is()`
 
 Compares the operands of an OpName after the id.
+
+### The SPIR-V numbers
+
+The file reads and writes SPIR-V words directly. The enum names its opcodes as the specification numbers them: OpName 5,
+OpLine 8, OpExtInstImport 11, OpExtInst 12, OpMemoryModel 14, OpEntryPoint 15, OpCapability 17, OpTypeBool 20, OpTypeInt
+21, OpTypeFloat 22, OpTypeVector 23, OpTypeMatrix 24, OpTypeStruct 30, OpTypePointer 32, OpTypeFunction 33,
+OpConstantTrue 41, OpConstantFalse 42, OpConstant 43, OpConstantComposite 44, OpConstantNull 46, OpFunction 54,
+OpFunctionParameter 55, OpFunctionEnd 56, OpFunctionCall 57, OpVariable 59, OpLoad 61, OpStore 62, OpAccessChain 65,
+OpDecorate 71, OpMemberDecorate 72, OpVectorShuffle 79, OpCompositeConstruct 80, OpCompositeExtract 81,
+OpCompositeInsert 82, OpFAdd 129, OpFMul 133, OpFDiv 136, OpLoopMerge 246, OpSelectionMerge 247, OpLabel 248,
+OpBranchConditional 250, OpSwitch 251, OpNoLine 317. With them: the decoration Offset 35, the storage classes Uniform 2,
+Output 3 and Function 7, the capability Shader 1, and GLSL.std.450's FMax 40, FClamp 43, Fma 50, NMax 80 and NClamp 81.
+
+The numbers the code holds bare:
+
+| Number | What it is | Where |
+|---|---|---|
+| 1 | storage class Input | `tonemap_splice()`: a library variable that is an Input is left with main |
+| 19 to 39 | the type declarations, OpTypeVoid to OpTypeForwardPointer | `is_type_op()` |
+| 45 | OpConstantSampler, which is not taken as a constant | `is_const_op()` (41 to 46 without it) |
+| 63 | OpCopyMemory | `spv_literal()` gives up on it; `tonemap_splice()` leaves it out as an instruction without a result |
+| 99 | OpImageWrite | `tonemap_splice()`: no result |
+| 228 | OpAtomicStore | `tonemap_splice()`: no result |
+| 249 | OpBranch | `tonemap_splice()`, the library's functions: no result |
+| 252 | OpKill | the same |
+| 253 | OpReturn | the same |
+| 254 | OpReturnValue | the same, and in the game's function |
+| 255 | OpUnreachable | the same |
+
+A module's first five words are its header; word 3 is the id bound, one more than the largest id. An instruction's first
+word holds its length in words in the high 16 bits and its opcode in the low 16.
 
 ### `is_clamp()`
 
@@ -2857,7 +2903,8 @@ back to the HUD's white for as long as the game takes it. Its own 0..1 clamps of
 bit trick (OpBitcast), so only the clamps whose result is stored to the shader's output change, to max(x, 0.0): one word
 shorter, so the words after it move down and the module shrinks. Recognised by FSR's two reciprocal constants
 (0x7ef07ebb, 0x7ef19fff) and its one texture `fp_t_tcb_8`. Returns the clamps changed, -1 for that shader with no output
-clamp found (a translator that stores the colour another way), 0 for any other shader.
+clamp found (a translator that stores the colour another way, or a module without the GLSL.std.450 import or the float
+constants 0 and 1), 0 for any other shader. The replacement is FMax for FClamp and NMax for NClamp.
 
 - `out` maps an id to 1, a pointer into an Output variable, or 2, a value stored through one.
 - The module is rewritten in place: the write position is never past the read position, as instructions only shrink.
