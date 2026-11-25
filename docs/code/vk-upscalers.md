@@ -764,8 +764,9 @@ FSR 3.1:
   highest such submission among those left (0: none).
 - `vk_ffx_proc_addr()`: the device's functions as the library is given them.
 - `vk_ffx_create()`, `vk_ffx_destroy()`, `vk_ffx_configure()`, `vk_ffx_query()`, `vk_ffx_dispatch()`: the API's calls
-  themselves, for `runtime/vk/vk_fg.cpp` (0 = `FFX_API_RETURN_OK`); the library is loaded first (`vk_ffx_load()`). C++
-  only, and not declared with `VK_FFX_NO_API`.
+  themselves, for `runtime/vk/vk_fg.cpp` (0 = `FFX_API_RETURN_OK`). Only `vk_ffx_create()` loads the library
+  (`vk_ffx_load()`); the other four return `FFX_API_RETURN_ERROR` until it is loaded with its entry points, as all five
+  do in a build without it. C++ only, and not declared with `VK_FFX_NO_API`.
 
 FSR 4 (`runtime/vk/vk_ffx4.cpp`), which `vk_ffx_upscale()` runs in FSR 3.1's place when the setting asks
 (`NX2SARIA_FSR4`) and it runs here, falling back to FSR 3.1 when it fails:
@@ -813,7 +814,11 @@ library's own business. `pipe_cache_on()` reads `NX2SARIA_FFX_PIPE_CACHE` once.
 ### `create_counted()`
 
 `ffxCreateContext` with what it made in pipelines: the library compiles every pass of a context inside this call, on the
-thread that asked, so the line says what a context cost and where its pipelines came from.
+thread that asked, so the line says what a context cost and where its pipelines came from. A refused creation writes no
+line here: the caller logs it.
+
+`message()` is the callback the upscaling contexts give the library (`fpMessage`): its errors and warnings go to the
+log as `ffx: error:` or `ffx: warning:`, at most 40 lines a run, characters outside ASCII as `?`.
 
 ### `context_for()`
 
@@ -828,13 +833,15 @@ size every few seconds, one context with that flag takes them all: it is made fo
 scene at the output size).
 
 A context of another render size goes once it is not among the recent ones (`UP_RECENT`), so a switch keeps at most two
-of an output size for a few frames, and the game's second scenes, of another output size, keep their own. When all slots
-are taken, the least recently used one goes for the new size. The work of a context that goes may still be in flight: it
+of an output size for a few frames, and the game's second scenes, of another output size, keep their own. When all four
+slots (`U`) are taken, the least recently used one that is not recent goes for the new size; when all four are recent
+there is no context and the upscale fails for that call. The work of a context that goes may still be in flight: it
 is let go of (`retire_up()`) and destroyed once the GPU is past the submission of its last upscale (`g_dead`), without a
 wait for the device.
 
-- No infinite-depth flag: the game's far plane is finite (`runtime/vk/vk_dlaa.c` `proj_planes()`) and each dispatch
-  gives it.
+- The context's flags are `FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE` and `FFX_UPSCALE_ENABLE_AUTO_EXPOSURE`. No
+  infinite-depth flag: the game's far plane is finite (`runtime/vk/vk_dlaa.c` `proj_planes()`) and each dispatch gives
+  it.
 - `NX2SARIA_FFX_DEBUG=1` (test): the library checks the values of each dispatch and says what it finds (`message()`).
 - A creation refused while contexts let go of (this file's and FSR 4's) are still in flight: most often their video
   memory, which a wait for the device freed before the creation up to 0.10.1. The GPU finishes with them
@@ -871,7 +878,8 @@ before this list existed, the device idle.
 ### `image()`
 
 Windows only, for the library's dispatch (`vk_ffx_upscale()`); the other builds hand `runtime/vk/vk_fsr3.c` the images
-themselves.
+themselves. The library wants each image with the `VkImageCreateInfo` it was made with, which is not kept: one is
+written from what `VkFfxImage` has (2D, the format and size, one level, one layer, storage usage or none).
 
 ### `configure_keys()`
 
@@ -907,20 +915,27 @@ there.
 
 - Each upscaler keeps a history of its own: the frame after a change from one to the other starts it anew, or it would
   blend this picture with whatever that upscaler last saw.
-- `last` (3 or 4) is which one made the frame before.
-- When FSR 4 fails it says so, and FSR 3.1 makes this frame.
+- `last` (3 or 4, 0 before the first upscale) is which one made the frame before; the log gets `ffx: the upscaler is
+  ...` at each change, but not for FSR 3.1 at the first upscale.
+- Order: `vk_ffx_load()`, the idle contexts of both go (`trim()`, `vk_ffx4_trim()`), then FSR 4 when `vk_ffx_fsr4()`
+  says so. When FSR 4 fails it says so, and FSR 3.1 makes this frame, with a reset.
 - The sharpness slider (0-100) drives FSR's own RCAS, as it does for FSR 1. Below a render scale of three quarters it
   goes towards the maximum, all the way from Performance down, where FSR 3.1 is soft (`runtime/vk/vk_dlaa.c`
   `vk_dlaa_fsr3_boost()`, which has the measurements); 0 still turns it off.
 - Outside Windows the call goes to `runtime/vk/vk_fsr3.c` `vk_fsr3_upscale()` from here. On Windows: every image is in
-  GENERAL, which the backend reads as its unordered-access state, and is left there.
-- The frame's camera (`runtime/vk/vk_dlaa.c` `proj_planes()`).
+  GENERAL, which the backend reads as its unordered-access state, and is left there; the output alone is given as a
+  UAV.
+- The dispatch on Windows: the jitter as given, a motion vector scale of (1, 1), the render and output sizes of the
+  images, a pre-exposure of 1, sharpening on when the slider is above 0, and the frame's camera
+  (`runtime/vk/vk_dlaa.c` `proj_planes()`; a field of 0 gets the defaults of `runtime/vk/vk_ffx.h`).
 - The context's fence is the submission being recorded, taken after the dispatch: it was recorded into cb (a refusal
-  too, for all this side knows).
+  too, for all this side knows). A refused dispatch returns 0 and is logged, at most 8 times a run.
 
 ### `vk_ffx_create()`
 
-The library's create, counted (`create_counted()`): never `runtime/vk/vk_fsr3.c`.
+The library's create, counted (`create_counted()`): never `runtime/vk/vk_fsr3.c`. Outside Windows `vk_ffx_load()` is 1
+for the runtime's passes with no library loaded, so the call also wants the library's entry points and returns
+`FFX_API_RETURN_ERROR` there.
 
 ### `vk_ffx_proc_addr()`
 
@@ -932,12 +947,13 @@ creates replaced by ours (`compute_pipelines`, `graphics_pipelines`) unless `NX2
 `--probe-ffx-cache` (`runtime/host.h`): one FSR 3.1 upscaling context on the device, without a window or the game, and
 where its pipelines came from. The pipeline caches are those beside the executable, or `NX2SARIA_PIPELINE_CACHE`'s, and
 are saved as after a run, so a second run of the probe shows what the first one's files give (`tests/ffx_cache_check.py`
-runs it twice on a folder of its own). Fails when the context is not created, or when the library made no pipeline
-through the runtime's creates although they are on.
+runs it twice on a folder of its own). The context is for 1280x720 to 2560x1440. Fails when the context is not created,
+when the library made no pipeline through the runtime's creates although they are on, or when it made one through them
+with `NX2SARIA_FFX_PIPE_CACHE` 0. Without a Vulkan device or the library it prints SKIP and returns 0.
 
 - The first `vk_pipeline_*` call (`vk_pipeline_push_fn()`) reads the pipeline caches.
 
-### `vk_ffx_holds()`
+### `vk_ffx_holds()`, `vk_ffx_release_idle()`
 
 The upscaler is off (`runtime/vk/vk_dlaa.c` `retire_idle()`): FSR 3.1's and FSR 4's upscale contexts are let go of, made
 again at the next upscale; outside Windows FSR 3.1's are `runtime/vk/vk_fsr3.c`'s. The caller's `vk_upscaler_let_go()`
@@ -945,7 +961,8 @@ frees them once the GPU is past them. Frame generation's contexts are not these.
 
 ### `vk_ffx_release()`
 
-Teardown and the probe: the device is idle.
+Teardown and the probe: the device is idle. FSR 4's go first (`vk_ffx4_release()`); then, where the library is loaded,
+the contexts that exist are destroyed at once and those let go of with them.
 
 ### `vk_ffx_vram()`
 
