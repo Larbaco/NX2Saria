@@ -113,9 +113,10 @@ images alternate between calls.
 Contexts (`ctx_for()`): one per render size and output size, or with the game's dynamic resolution one per output size
 for every render size up to it, at most `CTX_MAX`; one no upscale used for 90 seconds goes, and all of them go while the
 upscaler is off (`vk_fsr3_release_idle()`). A context that goes is let go of (`retire_ctx()`) and its images are
-destroyed once the GPU is past the submission of its last upscale (`g_dead`, a list of `runtime/vk/vk_up_defer.h`), as `runtime/vk/vk_ffx.cpp` does with the library's contexts. The constants live in a host-visible ring
-of `RING` (256) slots, each one `Consts`, `SpdConsts` and the RCAS words; a slot is reused `RING` calls later, after the
-GPU passed the submission that last read it.
+destroyed once the GPU is past the submission of its last upscale (`g_dead`, a list of `runtime/vk/vk_up_defer.h`), as
+`runtime/vk/vk_ffx.cpp` does with the library's contexts. The constants live in a host-visible ring of `RING` (256)
+slots, each one `Consts`, `SpdConsts` and the RCAS words; a slot is reused `RING` calls later, after the GPU passed the
+submission that last read it.
 
 ### The images of a context
 
@@ -2790,7 +2791,7 @@ The steps:
   variable's class (1 output, 2 uniform, 3 function); `sval`, the value last stored to a variable; `scnt`, its stores,
   counted to 2.
 - The support buffer is the struct whose member 10 is at 1424.
-- Where each result is defined: the globals the checks below look at, and inside the function every instruction that has
+- Where each result is defined: the globals the later checks look at, and inside the function every instruction that has
   a result (its second word; the first definition stands, so a word of an instruction without one, taken for a result
   here, cannot replace a real one). Left out there, as instructions without a result: the stores, labels, merges and
   branches, OpCopyMemory (63), OpImageWrite (99), OpAtomicStore (228) and OpReturnValue (254).
@@ -3080,7 +3081,7 @@ On Windows the answer is 0: Streamline's path serves there (`runtime/vk/vk_dlssg
 
 ### `p_seti()`
 
-The parameter object's vtable (the file's notes above): the SDK declares Set(u64), Set(float), Set(double), Set(u32),
+The parameter object's vtable: the SDK declares Set(u64), Set(float), Set(double), Set(u32),
 Set(int), Set(ID3D11Resource \*), Set(ID3D12Resource \*), Set(void \*), then the Get overloads in the same order, then
 Reset.
 
@@ -4029,10 +4030,10 @@ The evaluation of the upscaler on the armed scene, on the thread that replays th
   scene is sharp and stands still only with the right ones. The scene, the motion vectors and frame generation keep the
   real jitter.
 - The edges are filled (`edge_fill()`) before the motion vectors read the depth.
-- `if (no_mv < 0) no_mv = !rt_knob("DLAA_MV", "1")`: `NX2SARIA_DLAA_MV=0`: zero motion (test).
+- `NX2SARIA_DLAA_MV=0`: zero motion (test).
 - No camera: the history cannot be moved along (2: kept as it is for a short gap, `mv_pass()`, `dlaa_cam_keep`).
 - NGX records into the command buffer itself: the recorder thread must have made every call so far (`rec_drain()`).
-- `if (mv == 1) fcam_probe(cb, e, w, h)`: `mv_pass()`'s distances, behind its barrier.
+- The free camera's probe (`fcam_probe()`) reads `mv_pass()`'s distances, behind its barrier.
 - FSR 3.1 or FSR 4 (`runtime/vk/vk_ffx.cpp` `vk_ffx_upscale()`) in DLSS's place: the same images, then the same blit. A
   frame without a camera gives FSR its fixed values.
 - FrameTimeDeltaInMsec is taken once: the evaluation can run a second time (on the frame's own feature, after a
@@ -4122,9 +4123,7 @@ same point of the frame, tonemaps into its PQ picture (`runtime/vk/vk_hdr.c` `vk
 8-bit sRGB one; matching sRGB alone left DLAA off for the whole run there (no frame anti-aliased) and with it the frame
 generation that takes DLAA's depth and motion.
 
-### Before the bloom
-
-`NX2SARIA_DLSS_PREBLOOM`.
+### Before the bloom (`NX2SARIA_DLSS_PREBLOOM`)
 
 What the upscaler gets at the game's upscaler (`vk_dlaa_upscaler()`) is the armed pair of the bloom composite: measured
 on frame dumps (`NX2SARIA_DUMP`; 2880x1620 scene in a 3840x2160 picture, and 1280x720 in 2560x1440 with DLSS), the light
@@ -4155,14 +4154,15 @@ linear light before exposure and tonemap, at the render size, with the scene dep
 
 A frame without that bloom chain (menus, a loading screen) runs the upscaler at the game's upscaler as before.
 
-`PB`:
+The images, `PB`:
 
 - `scene`, `comp`: DLSS's picture with the flares, and the composite's picture: B10G11R11, picture size.
-- `used`: `D.presents` when last used (`idle_release()` frees them after `IDLE_FREE_PRESENTS`).
+- `used`: `D.presents` when last used (`idle_release()` frees them after `IDLE_FREE_PRESENTS`, 600).
 
 ### `pb_destroy()`
 
-- The picture-size images of the upscaler before the bloom (`prebloom_run()`).
+Destroys the picture-size images of the upscaler before the bloom (`prebloom_run()`); the device must be idle, or the
+images not yet used.
 
 ### `retire_pb()`
 
@@ -4170,10 +4170,12 @@ The same for images the GPU may still use (only the replay reads them): to the d
 
 ### `pb_images()`
 
-The two images at w x h, made again for another picture size (the old ones once the GPU is past them, as hudless).
+The two images at w x h, made again for another picture size (the old ones once the GPU is past them, as the HUD-less
+picture's).
 
-- Noted again once the new images exist, after any clear of PB above (`retire_pb()` keeps it, `pb_destroy()` would not):
-  at 0, `idle_release()` takes images this frame draws into for 600 presents unused and frees them at the next present.
+`PB.used` is noted again once the new images exist, after any clear of `PB` (`retire_pb()` keeps it, `pb_destroy()`
+would not): at 0, `idle_release()` takes images this frame draws into for 600 presents unused and frees them at the next
+present.
 
 ### `prebloom_start()`
 
@@ -4187,20 +4189,21 @@ read the light target at a third or half of its size have one target, or a light
 Runs the upscaler at the bloom chain's first pass (`prebloom_start()`), before that pass begins. 0: not here this frame
 (the picture's size not known yet, or not of the scene's shape): the game's upscaler runs it as before.
 
-- `vk_exec_hook_turn()`: as in `vk_dlaa_pass()`: the replay workers' draws read the jitter and its end.
-- `evaluate(ex, NULL)`: into the light target, which the bloom and everything after it read.
-- `if (D.evals == evals)`: the evaluation failed (`dl_fail()`) or did not run: nothing moves to the picture's size.
+- The hook takes its turn (`runtime/vk/vk_exec.c` `vk_exec_hook_turn()`), as in `vk_dlaa_pass()`: the replay workers'
+  draws read the jitter and its end.
+- The evaluation goes into the light target, which the bloom and everything after it read. An evaluation that failed
+  (`dl_fail()`) or did not run moves nothing to the picture's size.
 - The composite samples the light target: `PB.scene`, which the lens flares are then drawn into, in its place.
-- And the bloom chain reads the light target itself, at its own sizes: the resolved picture, scaled back down.
+- The bloom chain reads the light target itself, at its own sizes: the resolved picture, scaled back down.
 
 ### `vk_dlaa_retarget()`
 
-`runtime/vk/vk_exec.c` `vk_exec_pass_begin()`, in every replay thread, once the pass's targets are resolved and the pass
-hooks ran: after the upscaler ran before the bloom to the picture's size (`prebloom_run()`), a pass drawing into the
-light target draws into `PB.scene` and the bloom composite (one light-format target of the scene's size, with the scene
-depth) into `PB.comp`, each at the picture's size and without its depth attachment (neither tests depth in the dumps).
-Its draws' viewports and scissors follow (`vk_dlaa_viewport()`, `vk_dlaa_target_scale()`). A pass of the same targets
-begun again (the pass broken by a copy) keeps what it got: its targets are not resolved again.
+Called by `runtime/vk/vk_exec.c` `vk_exec_pass_begin()`, in every replay thread, once the pass's targets are resolved
+and the pass hooks ran: after the upscaler ran before the bloom to the picture's size (`prebloom_run()`), a pass drawing
+into the light target draws into `PB.scene` and the bloom composite (one light-format target of the scene's size, with
+the scene depth) into `PB.comp`, each at the picture's size and without its depth attachment (neither tests depth in the
+dumps). Its draws' viewports and scissors follow (`vk_dlaa_viewport()`, `vk_dlaa_target_scale()`). A pass of the same
+targets begun again (the pass broken by a copy) keeps what it got: its targets are not resolved again.
 
 ### `vk_dlaa_target_scale()`
 
@@ -4219,11 +4222,11 @@ picture (1). The HUD-less picture for frame generation is the result either way.
 
 The game's own upscaler is the place for DLSS or FSR: its stand-in (`runtime/vk/vk_exec_draw.c`
 `untranslated_dispatch_fallback()`) has just scaled the scene into the image the rest of the frame shows, and the
-upscaler's picture goes over it there. Until this hook the upscaler ran at the pass after it (`vk_dlaa_pass()` below),
-which was taken for the pass the HUD is drawn into, the stand-in's output image as its target. With the HUD hidden the
-game draws no such pass: the next pass is the frame's last, which encodes the stand-in's image into the 8-bit output.
-DLSS's or FSR's picture was then written into that 8-bit target and the last draw drew the stand-in's picture over it:
-the screen showed the jittered scene at its render size, scaled with a plain filter. On a player's save with the HUD off
+upscaler's picture goes over it there. Until this hook the upscaler ran at the pass after it (`vk_dlaa_pass()`), which
+was taken for the pass the HUD is drawn into, the stand-in's output image as its target. With the HUD hidden the game
+draws no such pass: the next pass is the frame's last, which encodes the stand-in's image into the 8-bit output. DLSS's
+or FSR's picture was then written into that 8-bit target and the last draw drew the stand-in's picture over it: the
+screen showed the jittered scene at its render size, scaled with a plain filter. On a player's save with the HUD off
 that was every frame: blocks of render pixels, a picture that shook with the jitter by up to one render pixel, the
 undrawn edge row in white, and the upscaler's cost for nothing; with the HUD on (every test save until then) the same
 settings gave the upscaler's picture. Found by dumping the same frame of both saves (`NX2SARIA_DUMP`): three HUD passes
@@ -4234,55 +4237,54 @@ the scene (the movie network's and other tensor programs' outputs are RGBA8 or s
 (`NX2SARIA_CS_FALLBACK=0`, another engine) still ends at `vk_dlaa_pass()`. `NX2SARIA_DLAA_AT_UPSCALER=0` (test): as
 before.
 
-- `if (D.armed && !D.gbuf && w >= D.color.width && h >= D.color.height) D.pic_w = w, D.pic_h = h`: `prebloom_run()`.
-- `if (D.pre)`: set only where the upscaler runs (`vk_dlaa_pass()`: prebloom needs `dl_active()`).
-- `if ((double)w * sh > 1.03 * (double)h * sw || (double)h * sw > 1.03 * (double)w * sh) return`: not the scene's shape.
-- `vk_exec_hook_turn()`: as in `vk_dlaa_pass()`: the replay workers' draws read the jitter and its end.
-
-### What idle_release
-
-(below) leaves after the upscaler is switched off.
-
-`idle_release()` frees the DLSS sizes and the HUD-less picture some presents after the setting goes off. What it does
-not reach stayed for the process: the reactive mask's snapshots, the FSR 3.1 and FSR 4 upscale contexts, and the DLSS
-sizes after a failure (`dl_fail()` turns the upscaler off without the setting changing, so `D.on` stays set). They go
-here, `RETIRE_PRESENTS` presents after the upscaler stopped running and frame generation stopped making inputs of its
-own from a size (`inputs_on()`), on the replay thread, which makes every evaluation, once the GPU is past them, as
-`free_size()` does for a size it replaces. Switched on again, the upscaler makes them anew, as at its first frame in a
-run.
-
-- `retire_off_at`: replay: `D.presents` when the upscaler stopped running.
-- `retired_n`: replay: times this gave memory back.
+- The picture's size is noted for `prebloom_run()`.
+- `D.pre` is set only where the upscaler runs (`vk_dlaa_pass()`: before the bloom needs `dl_active()`); then
+  `prebloom_upscaler()` takes the frame from here.
+- An image more than 3 % from the scene's shape is not the stand-in's output.
+- The hook takes its turn (`runtime/vk/vk_exec.c` `vk_exec_hook_turn()`), as in `vk_dlaa_pass()`: the replay workers'
+  draws read the jitter and its end.
 
 ### `retire_idle()`
 
-- No evaluation runs to take what the upscalers let go of (evaluate): it goes here once the GPU is past it.
-- `if (!idle_free()) return`: as `idle_release()`.
-- `if (inputs_on())`: the upscaler runs, or frame generation alone makes its inputs from a size (`D.fgo`).
-- `if (D.failed)`: as `idle_release()` does for a size: frame generation is handed nothing of one from here on.
+What `idle_release()` leaves after the upscaler is switched off. It frees the DLSS sizes and the HUD-less picture some
+presents after the setting goes off. What it does not reach stayed for the process: the reactive mask's snapshots, the
+FSR 3.1 and FSR 4 upscale contexts, and the DLSS sizes after a failure (`dl_fail()` turns the upscaler off without the
+setting changing, so `D.on` stays set). They go here, `RETIRE_PRESENTS` (600) presents after the upscaler stopped
+running and frame generation stopped making inputs of its own from a size (`inputs_on()`), on the replay thread, which
+makes every evaluation, once the GPU is past them, as `free_size()` does for a size it replaces. Switched on again, the
+upscaler makes them anew, as at its first frame in a run.
+
+`retire_off_at` is `D.presents` when the upscaler stopped running, `retired_n` the times this gave memory back; both are
+the replay thread's.
+
+- No evaluation runs to take what the upscalers let go of (`evaluate()`): it goes here once the GPU is past it.
+- With `NX2SARIA_DLSS_IDLE_FREE=0` nothing goes, as in `idle_release()`.
+- While `inputs_on()`, nothing goes: the upscaler runs, or frame generation alone makes its inputs from a size
+  (`D.fgo`).
+- After a failure (`D.failed`), as `idle_release()` does for a size: frame generation is handed nothing of one from then
+  on.
 
 ### `vk_dlaa_pass()`
 
-- `if (D.done)`: diagnostics: another scene drawn into a light target in the same present interval.
-- (not before the bloom: the flares and the composite after it are of that shape, and expected).
-- `deferred`: a scene-size G-buffer was seen: the deferred shape.
-- `gb_w`, `gb_h`: the depth of the pass that set it.
-- `lit_w`, `lit_h`: the last light target armed in the game's shape that grew a side, in any frame.
+- After DLSS ran (`D.done`), diagnostics only: another scene drawn into a light target in the same present interval is
+  counted (not before the bloom: the flares and the composite after it are of that shape, and expected).
+- `deferred`: a scene-size G-buffer was seen: the deferred shape. `gb_w`, `gb_h`: the depth of the pass that set it.
+  `lit_w`, `lit_h`: the last light target armed in the game's shape that grew a side, in any frame.
 - `NX2SARIA_DLAA_TEST_DEFERRED` (test): the run starts in the deferred shape, as if a 320x180 G-buffer was seen: 1 and
-  the game's light target takes it back as above, 2 and it stays, as before that (the shape set for good).
-- The game's builds carry no scene or output patch sets, so `res_sizes` reports placeholders there: the sizes come from
-  the frame itself (the light target's, and the output pass's).
+  the game's light target takes it back, 2 and it stays, as before that (the shape set for good).
+- The game's builds carry no scene or output patch sets, so `res_sizes()` reports placeholders there: the sizes come
+  from the frame itself (the light target's, and the output pass's).
 - The G-buffer: several colour targets with the D32F scene depth. Only the light target drawn after it arms the frame;
   at night the game draws into the light target alone with the scene depth before the G-buffer too, and DLAA then ran at
   a small pass ahead of the whole scene, which reached the screen jittered. A pass of that shape smaller than the light
   target already armed is not one: the game draws a half-size effect into three targets with a half-size D32F depth
   after its scene, and taking that for a G-buffer switched every later frame to the deferred shape, where DLSS's and FSR
   3.1's smaller modes never found their output pass. The same pass in a frame not armed yet (a load, the first frame of
-  an area) took the guard below past it: in the 0.12.1 Windows logs a 720x405 pass under a 1440x810 scene and a 960x405
+  an area) took the guard after it past it: in the 0.12.1 Windows logs a 720x405 pass under a 1440x810 scene and a 960x405
   one under 1920x810 set the deferred shape before the first scene was armed, and with it no frame without that effect
   was armed again, nor given its picture without the HUD in a picture larger than the scene: frame generation saw "no
   picture without the HUD" on every frame. A pass smaller than a light target armed in an earlier frame is not a
-  G-buffer either, and a light target larger than the G-buffer that set the shape takes it back (below).
+  G-buffer either, and a light target larger than the G-buffer that set the shape takes it back.
 - Target 0 is the object-class buffer (RGBA8, the scene size): the characters' bias mask reads its green. A smaller pass
   of the same shape (640x360, seen while loading) does not replace the scene's in the same frame.
 - The scene depth is D32F; a D16 target of the scene size also serves one composite pass before the transparents. A
@@ -4290,16 +4292,17 @@ run.
   depth after the lighting (852x480 under a 1704x960 scene), and DLSS ran on that and wrote its picture into the scene's
   own light target, which left every object black. The game's light target, larger than the G-buffer that set the
   deferred shape: that pass was the half-size effect, and the frame is the game's shape again.
-- `if (first) mask_snapshot(ex)`: the lit scene, before the transparents (reactive mask).
-- `if (!deferred)`: The game's shape: the output pass ends the scene and runs DLSS.
-- `NX2SARIA_DLSS_PREBLOOM`: before the bloom chain's first pass instead, where there is one (`prebloom_run()`).
-- `if (D.pre_on && dl_active() && prebloom_start(ex) && prebloom_run(ex)) return`: not for frame generation alone.
+- At the first arming of a frame the reactive mask's copy is taken (`mask_snapshot()`): the lit scene, before the
+  transparents.
+- The game's shape: the output pass ends the scene and runs DLSS.
+- `NX2SARIA_DLSS_PREBLOOM`: before the bloom chain's first pass instead, where there is one (`prebloom_run()`); not for
+  frame generation alone.
 - The output pass is the picture's size, the scene over the mode's share: at Ultra Performance (854 wide) a 960x540 post
-  pass comes first, and DLSS wrote there, which left a 540-line picture stretched to the output A frame whose scene is
+  pass comes first, and DLSS wrote there, which left a 540-line picture stretched to the output. A frame whose scene is
   not at that share (the first presents before the scale patch takes, a dynamic resolution step) has no such pass: after
   a frame that missed DLSS the first pass wider than the scene is taken for 120 frames (`D.share_off`,
   `vk_dlaa_frame()`), so a mismatch costs one frame rather than every frame.
-- `int native = share <= 0 || share >= 1`: no upscaling share: the scene is as large as the picture.
+- Without an upscaling share (`native`) the scene is as large as the picture.
 - The output pass has the scene's shape: the game redraws its 2000x2000 area map into an RGBA8 target of its own on a
   room change and on the pause menu, one colour target and no depth, larger than the scene both ways. Taken for the
   output pass, DLSS wrote the game's picture into the map, and the minimap showed that picture behind its room shapes
@@ -4307,16 +4310,18 @@ run.
   to multiples of 8) is not the output; the ultrawide sets widen the scene with the picture, so their output pass still
   matches.
 - DLSS runs: the replay workers' draws read the jitter and its end, and list the per-object motion it takes
-  (`runtime/vk/vk_exec.c` "replay workers"); the G-buffer and the arming above change nothing they read.
+  (`runtime/vk/vk_exec.c` `vk_exec_hook_turn()`); the G-buffer and the arming change nothing they read.
 - DLAA in gameplay: the pass the HUD is drawn into is also at the scene's size, in the light format, and the game's
   upscaler (its stand-in here) has just written the picture there. Waiting for the 8-bit output pass, as in a frame
   without it, put DLSS's picture back into the armed light target (the bloom composite's), which nothing reads after the
-  upscaler took it: the frame showed no DLAA at all. With an upscaling share the HUD's pass is the larger one above, so
-  a pass of this shape is not it and is ignored there as before.
-- `if (D.color.width >= o[0]) D.done = 1, evaluate(ex, NULL)`: DLAA in place; else wait for the scaling pass.
+  upscaler took it: the frame showed no DLAA at all. With an upscaling share the HUD's pass is the larger one, so a pass
+  of this shape is not it and is ignored there as before.
+- A deferred frame whose scene is as wide as the output: DLAA in place; else it waits for the scaling pass.
 - The game's scaling pass: one colour target of the output size, no depth.
 
 ### `dlss_mode()`
+
+`JITTER_LOD_BIAS` is -1.
 
 `NX2SARIA_DLSS`, read at each present (the menu switches it live): the scene size of the mode
 (`runtime/gfx/resolution.c`) and the texture bias that goes with it while DLSS or FSR 3.1 runs. NVIDIA's DLSS guide asks
@@ -4326,7 +4331,7 @@ detail one level finer: -1 at DLAA, -1.58 in Quality (67 %), -2 in Performance. 
 (`jitter_on()`): without it the same pixel samples the same spot every frame, and a sharper level would shimmer instead.
 The sampler clamps the sum to the device's limit (`runtime/vk/vk_texture.c` `make_sampler()`).
 
-- `const char *m = dynres_override()`: dynamic resolution's step (`runtime/pacing/dynres.c`) while it differs from the
+- Dynamic resolution's step (`runtime/pacing/dynres.c` `dynres_override()`) is the mode while it differs from the
   setting.
 - `NX2SARIA_DLSS_LOD_BIAS_TEST=<bias>` (test, read once): this bias in the place of the rule's while an upscaler runs,
   0 for none: what the rule's bias does to the picture is the difference between two runs.
@@ -4337,55 +4342,51 @@ The preset, read again when a setting changed (the menu); a different one recrea
 
 ### The scene's size after a setting changed
 
-`setting_presents`: The scene's size after a setting changed (a DLSS or FSR 3.1 mode picked in the menu). The game makes
-its scene targets again at the new size and they start empty, so the first frames drawn into them are wrong: the first
-one is lit without what the frame before it left (a dark scene), and two frames later the scene can be black with the
-interface intact (Ultra Performance and DLAA). Measured by capturing every present over six mode changes, 2026-11-10:
-bad frames 3 and 5 presents after the change, with every other setting the same. evaluate notes a scene of another size;
-`vk_dlaa_frame()` counts the presents since a setting last changed, so a game that draws two sizes in turn holds
-nothing. `setting_presents`: presents left in which that counts as a mode change. `vk_dlaa_frame()` sets and counts it
-down on the thread that runs the frame's bookkeeping, `vk_dlaa_resized_take()` clears it at the present
-(`runtime/vk/vk_backend.c` `frame_hold()`): atomics.
+A DLSS or FSR 3.1 mode picked in the menu: the game makes its scene targets again at the new size and they start empty,
+so the first frames drawn into them are wrong: the first one is lit without what the frame before it left (a dark
+scene), and two frames later the scene can be black with the interface intact (Ultra Performance and DLAA). Measured by
+capturing every present over six mode changes, 2026-11-10: bad frames 3 and 5 presents after the change, with every
+other setting the same. `evaluate()` notes a scene of another size; `vk_dlaa_frame()` counts the presents since a
+setting last changed, so a game that draws two sizes in turn holds nothing. `setting_presents`: presents left in which
+that counts as a mode change. `vk_dlaa_frame()` sets and counts it down on the thread that runs the frame's bookkeeping,
+`vk_dlaa_resized_take()` clears it at the present (`runtime/vk/vk_backend.c` `frame_hold()`): atomics.
 
 ### `vk_dlaa_resized_take()`
 
-`runtime/vk/vk_backend.c` `frame_hold()`, at each present (that frame's `vk_dlaa_frame()` may come one submission later,
-`runtime/vk/vk_frame_owed.h`): 1 once when the scene took a new size after a setting changed. The previous picture then
-stays on screen over the frames described above.
-
-### @@ before idle_release
-
-- `off_at`: `D.presents` when DLSS went off.
+Called by `runtime/vk/vk_backend.c` `frame_hold()`, at each present (that frame's `vk_dlaa_frame()` may come one
+submission later, `runtime/vk/vk_frame_owed.h`): 1 once when the scene took a new size after a setting changed. The
+previous picture then stays on screen over those frames.
 
 ### `idle_release()`
 
 What DLSS holds while nothing uses it (`NX2SARIA_DLSS_IDLE_FREE` 1 or 2, the default 1). With the upscaler switched off
 in the menu, the sizes kept their images and features for the rest of the run, since only an evaluation frees a size
 (`stale_sizes()`): at a 5120x2142 output that is the output, sharpening, mask, class and distance images, about 0.4 GiB,
-and about 0.5 GiB per feature. With frame generation off and DLSS on, the HUD-less picture (hudless) stayed the same
-way. After `IDLE_FREE_PRESENTS` presents without their use they go here, on the replaying thread that makes every other
-NGX call, without waiting for the GPU: the last evaluation that used them is that many presents back, and the CPU is
-never more than a few ahead. A feature made later is made with none alive, the case `release_kept()` leaves clean. What
-it costs: switching DLSS on again more than `IDLE_FREE_PRESENTS` presents after switching it off makes the size's images
-and feature again, which its first evaluation waits for, as at the first frame DLSS ran in a run.
+and about 0.5 GiB per feature. With frame generation off and DLSS on, the HUD-less picture stayed the same way. After
+`IDLE_FREE_PRESENTS` (600) presents without their use (`off_at` is `D.presents` when DLSS went off) they go here, on the
+replaying thread that makes every other NGX call, without waiting for the GPU: the last evaluation that used them is
+that many presents back, and the CPU is never more than a few ahead. A feature made later is made with none alive, the
+case `release_kept()` leaves clean. What it costs: switching DLSS on again more than `IDLE_FREE_PRESENTS` presents after
+switching it off makes the size's images and feature again, which its first evaluation waits for, as at the first frame
+DLSS ran in a run.
 
-- `if (PB.scene && D.presents - PB.used >= IDLE_FREE_PRESENTS)`: prebloom off, or no upscaling, for that long.
+- The images of the upscaler before the bloom go when that was off, or nothing was upscaled, for that long.
 - Frame generation without an upscaler (`fg_only_frame()`) makes its motion images in the size of the scene's size at
   every frame, and that size can change from one frame to the next: a size it used within the last `IDLE_FREE_PRESENTS`
   evaluations may still be in flight, and `destroy_size()` does not wait for the GPU. Such a size stays, and so does the
   last one; a DLSS feature made for the same sizes (DLAA) goes, since the upscaler that used it has been off for that
   long.
-- Frame generation's motion vectors were a size's (evaluate); none is handed out this late (`fg_current()`). Without an
-  upscaler they are the size kept above, which this frame's inputs may still be.
+- Frame generation's motion vectors were a size's (`evaluate()`); none is handed out this late (`fg_current()`). Without
+  an upscaler they are the kept size's, which this frame's inputs may still be.
 
 ### Frame generation without an upscaler
 
 Frame generation (`runtime/vk/vk_dlssg.c`, `runtime/vk/vk_fg.cpp`, `runtime/vk/vk_fg4.cpp`,
 `runtime/gfx/gfx_present.c`'s NGX presenter) takes the frame's depth, motion vectors, camera and picture without the HUD
-from this file. With an upscaler they are what its evaluation used (evaluate). With frame generation running and no
+from this file. With an upscaler they are what its evaluation used (`evaluate()`). With frame generation running and no
 upscaler (dlaa = 0, or DLSS set where it is not available: `D.fgo`, `vk_dlaa_frame()`) the frame is armed and ended in
-the same places (`vk_dlaa_draw()`, `vk_dlaa_pass()`, `vk_dlaa_upscaler()`), and evaluate hands it to `fg_only_frame()`,
-which leaves the upscaler's evaluation out:
+the same places (`vk_dlaa_draw()`, `vk_dlaa_pass()`, `vk_dlaa_upscaler()`), and `evaluate()` hands it to
+`fg_only_frame()`, which leaves the upscaler's evaluation out:
 
 - The camera is the scene context the scene's draws use (`vk_dlaa_draw()`), and the motion vectors come from the same
   pass at the scene's size (`mv_pass()`, the per-object motion included), into a size's images made for the scene's size
@@ -4405,67 +4406,69 @@ The scene can then be smaller than the picture (the game's own render scale), as
 depth and the vectors have the scene's size and the picture without the HUD the picture's, which every frame generation
 takes as it does there (`runtime/vk/vk_dlssg.c` `vk_dlssg_frame()`: the vectors scaled by the depth's size, the output
 by the swapchain's; `runtime/vk/vk_fg.cpp` `vk_fg_frame()`: the depth's size as the render size, the context made for up
-to the picture's; `runtime/vk/vk_dlaa.c` `vk_ngxfg_evaluate()`: the vectors' and the depth's own rectangles;
-`runtime/gfx/gfx_present.c` `hudless_record()`: the picture without the HUD scaled to the swapchain like the picture).
+to the picture's; `vk_ngxfg_evaluate()` here: the vectors' and the depth's own rectangles; `runtime/gfx/gfx_present.c`
+`hudless_record()`: the picture without the HUD scaled to the swapchain like the picture).
 
 ### `fg_runs()`
 
 Frame generation that takes this frame's inputs: NVIDIA's through Streamline (`runtime/vk/vk_dlssg.c`, set up with the
 device), AMD's swapchain in place (`runtime/vk/vk_fg.cpp`, either library), NVIDIA's through NGX or AMD FSR 3.1's
-through the runtime's passes (`runtime/vk/vk_fsr3fg.c`), set now (`vk_ngxfg_on()`, `vk_fsr3fg_on`).
+through the runtime's passes (`runtime/vk/vk_fsr3fg.c`), set now (`vk_ngxfg_on()`, `vk_fsr3fg_on()`).
 
-### `fg_off_why()`
+### `fg_off_why()`, `fg_state_line()`
 
 One line at the first present and one at each change: whether frame generation runs, and where its inputs come from.
 With none running, the line says why. It said only "no inputs are made" before, the same on a card where the one set
-cannot run as with the setting off. The key `fg_state_line()` compares: 0 the setting is off; with dlss, 1 the card in
-use has no DLSS Frame Generation (`vk_dlssg_why`: another vendor's, or Streamline found no adapter with it, as on an RTX
-30) and AMD FSR 3.1's runs here, 2 the same where FSR 3.1's does not, 3 Streamline gave another reason (`*sl_why`), 4 it
-has not started, for a reason its own lines give (the files, the device, NGX on Linux); with fsr3, 5 it does not run
-here, 6 its swapchain is not made yet. dlss set in the menu while the game runs starts only at the next start:
-Streamline is set up with the device (`vk_dlssg_wanted` reads the setting once) and NGX's frame generation needs DLSS
-upscaling on at the start (`vk_ngxfg_wanted()`), so neither has lines of its own yet. Then 7 this card cannot run it
-even then (`vk_dlssg_gpu_may`) and AMD FSR 3.1's runs here, 8 the same where FSR 3.1's does not, 9 the card may run it.
+cannot run as with the setting off. The key `fg_state_line()` compares, from `fg_off_why()`:
+
+- 0: the setting is off.
+- With dlss: 1 the card in use has no DLSS Frame Generation (`runtime/vk/vk_dlssg.c` `vk_dlssg_why()`: another vendor's,
+  or Streamline found no adapter with it, as on an RTX 30) and AMD FSR 3.1's runs here; 2 the same where FSR 3.1's does
+  not; 3 Streamline gave another reason (`*sl_why`); 4 it has not started, for a reason its own lines give (the files,
+  the device, NGX on Linux).
+- With fsr3: 5 it does not run here; 6 its swapchain is not made yet.
+- dlss set in the menu while the game runs starts only at the next start: Streamline is set up with the device
+  (`vk_dlssg_wanted()` reads the setting once) and NGX's frame generation needs DLSS upscaling on at the start
+  (`vk_ngxfg_wanted()`), so neither has lines of its own yet. Then 7 this card cannot run it even then
+  (`vk_dlssg_gpu_may()`) and AMD FSR 3.1's runs here; 8 the same where FSR 3.1's does not; 9 the card may run it.
 
 ### `blit_from()`
 
-`vkCmdBlitImage` reads an image of format f with optimal tiling into `hudless_from()`'s float, UNORM or `sRGB` images:
-the format must have `BLIT_SRC`, and an integer format may only be blitted into another integer one, which linear
-filtering (no integer format has it) rules out. The upscaler's targets (B10G11R11, RGBA16F, RGBA8) have all of that by
-the Vulkan spec's required formats; anything else is asked once per format.
+`vkCmdBlitImage` reads an image of format f with optimal tiling into `hudless_from()`'s float, UNORM or sRGB images: the
+format must have `BLIT_SRC`, and an integer format may only be blitted into another integer one, which linear filtering
+(no integer format has it) rules out. The upscaler's targets (B10G11R11, RGBA16F, RGBA8) have all of that by the Vulkan
+spec's required formats; anything else is asked once per format.
 
 ### `fg_only_frame()`
 
-- `D.up = 0`: the game's scaling draw makes the picture (`vk_dlaa_skip_draw()`).
-- `vk_exec_barrier(ex)`: what drew the scene, and the game's scaling into dst, is done (no pass is open here).
+- `D.up` stays 0: the game's scaling draw makes the picture (`vk_dlaa_skip_draw()`).
+- A barrier: what drew the scene, and the game's scaling into `dst`, is done (no pass is open here).
 - Another size: its own distances and masks are from another moment, and the vectors start anew.
-- `if (no_mv < 0) no_mv = !rt_knob("DLAA_MV", "1")`: `NX2SARIA_DLAA_MV=0`: zero motion (test), as in evaluate.
+- `NX2SARIA_DLAA_MV=0`: zero motion (test), as in `evaluate()`.
 - No jitter, and bias 0: the bias mask is DLSS's alone.
-- `if (!no_mv && mv == 0) D.reset = 1, D.why[1]++`: no camera: frame generation starts anew.
-- `if (mv == 1) fcam_probe(cb, e, w, h)`: `mv_pass()`'s distances, behind its barrier.
-- `vk_exec_draw_new_cb()`: the motion pass bound a pipeline and descriptors of its own: the next draw binds all again.
-- `D.jdepth = z->image, D.jw = z->width, D.jh = z->height`: the scene depth the camera's draws go to (`vk_dlaa_draw()`).
+- No camera: frame generation starts anew.
+- The free camera's probe (`fcam_probe()`) reads `mv_pass()`'s distances, behind its barrier.
+- The motion pass bound a pipeline and descriptors of its own: the next draw binds all again (`vk_exec_draw_new_cb()`).
+- `D.jdepth` and its size are noted: the scene depth the camera's draws go to (`vk_dlaa_draw()`).
 
 ### `vk_dlaa_frame()`
 
-- `__atomic_store_n(&D.presents, D.presents + 1, __ATOMIC_RELAXED)`: one writer; `presents_now()` reads it unlocked.
-- `} else`: down to 0, not past it: `vk_dlaa_resized_take()` may clear it meanwhile.
-- `D.pre = D.comp = 0, D.comp_game = VK_NULL_HANDLE`: the frame before was recorded up to its present.
-- `int pre_on = cfg_bool("NX2SARIA_DLSS_PREBLOOM")`: live: the evaluation point changes at the next frame.
-- `if (!N.ngx_up)`: FSR 3.1 follows the setting.
+- `D.presents` has one writer; `presents_now()` reads it unlocked.
+- `setting_presents` is counted down to 0, not past it: `vk_dlaa_resized_take()` may clear it meanwhile.
+- The state of the upscaler before the bloom is cleared: the frame before was recorded up to its present.
+- `NX2SARIA_DLSS_PREBLOOM` is live: the evaluation point changes at the next frame.
+- While NGX is not up, FSR 3.1 follows the setting.
 - Frame generation without an upscaler takes this frame's inputs alone (`fg_only_frame()`); switching in either
-  direction starts anew as switching the upscaler does below, and the frame before gets nothing to frame generation.
-- `off_at = D.presents`: `idle_release()`: the upscaler's sizes count as unused from here.
+  direction starts anew as switching the upscaler does, and the frame before gets nothing to frame generation.
+- When the upscaler goes off, `off_at` is set: `idle_release()` counts the upscaler's sizes as unused from there.
 - Either way the next DLAA frame starts a new history from an unjittered frame.
-- `D.fg_fresh = D.hl_fresh = 0`: frame generation gets nothing made before the switch (`fg_current()`).
+- Frame generation gets nothing made before the switch (`fg_current()`).
 - After a failure nothing is armed or counted any more (`inputs_on()`): those frames are gameplay without inputs.
-- `if (!D.done && D.armed) D.share_off = 120`: `vk_dlaa_pass()`: the output pass without the mode's share for a while.
+- A frame armed that missed DLSS: `vk_dlaa_pass()` picks the output pass without the mode's share for 120 frames.
 - The first few after DLSS first ran: what the frame drew, to tell a frame drawn another way from a loading screen.
-- `if (D.jit_used && !D.done) D.hold = 60, D.holds++`: jittered but not resolved: that frame shook.
+- A frame jittered but not resolved shook: the jitter is held for 60 frames.
 
-### The game's FXAA
-
-`NX2SARIA_FXAA`, live.
+### The game's FXAA (`NX2SARIA_FXAA`, live)
 
 The game's FXAA is two full-screen passes after the bloom, just before the HUD: one copies the scene target into a
 scratch target, the other draws the anti-aliased result back over the scene (found by diffing frame dumps with the
@@ -4477,27 +4480,25 @@ picture into the output-sized target, in a pass without the depth attachment the
 drawn, whatever fxaa says (skipping it would leave the 3D picture out), unless DLSS already wrote that target this
 frame.
 
-The stock translator's hash, the one with tools/xlate patch 0010 (PCSS, PR #89) applied, the one with patches 0010 and
-0011 (the shadow filter spread) applied, and that one with the `zero_locals` job flag (Mesa, `runtime/vk/vk_caps.c`). A
-scaling draw this list misses still scales DLSS's picture, not the jittered scene: after DLSS ran, passes larger than
-the light target sample DLSS's output (`vk_dlaa_swap_img`).
+`FXAA_FS` holds the stock translator's hash, the one with `tools/xlate/` patch 0010 (PCSS, PR #89) applied, the one with
+patches 0010 and 0011 (the shadow filter spread) applied, and that one with the `zero_locals` job flag (Mesa,
+`runtime/vk/vk_caps.c`). A scaling draw this list misses still scales DLSS's picture, not the jittered scene: after DLSS
+ran, passes larger than the light target sample DLSS's output (`vk_dlaa_swap_img`).
 
 ### `spirv_hash()`
 
-- `uint64_t h = gfx_shader_spirv_fnv(s)`: kept by the shader: a compressed one is not decoded on this thread.
-- `return 0`: table full: no skip.
+- The hash is kept by the shader (`gfx_shader_spirv_fnv()`): a compressed one is not decoded on this thread.
+- A full table gives 0: no skip.
 
 ### `vk_dlaa_skip_draw()`
 
-- Fxaa = 0 reports once whether it found the game's FXAA draw: the first skip, or a minute of frames (3600) with none,
+- `fxaa = 0` reports once whether it found the game's FXAA draw: the first skip, or a minute of frames (3600) with none,
   which is what a translator change that moves `FXAA_FS` looks like on every GPU, with or without DLSS.
-- `if (f != frame_read)`: once a frame: the menu switches it live.
-- `if (fxaa && !D.up) return 0`: nothing to skip: no shader lookup per draw at the defaults.
-- `if (!ex->depth.image)`: the scaling pass, which DLSS replaced.
+- The setting is read once a frame: the menu switches it live.
+- With nothing to skip there is no shader lookup per draw at the defaults.
+- A pass without depth is the scaling pass, which DLSS replaced.
 
 ### DLSS Frame Generation through NGX
-
-`vk_ngxfg`.
 
 `runtime/gfx/gfx_present.c` records this into the present command buffer once the frame's picture, HUD included, is in
 bb. It generates count frames between the previous call's picture and this one into `out[0..count-1]` (MultiFrameIndex 1
@@ -4509,7 +4510,6 @@ give the same (`fg_only_frame()`, no jitter).
 
 ### `vk_ngxfg_evaluate()`
 
-- `FG.reset = 1`: a frame without its inputs: the next generation has no valid previous frame.
-- `p_setf(p, "DLSSG.MvecScaleX", 1.0f / (float)m.width)`: the vectors are in render pixels.
-- `p_setf(p, "DLSSG.CameraNear", c.znear)`: the frame's own planes (`proj_planes()`), as `runtime/vk/vk_dlssg.c` gives
-  them.
+- A frame without its inputs: the next generation has no valid previous frame (`FG.reset`).
+- "DLSSG.MvecScaleX" and "Y" are 1 over the size: the vectors are in render pixels.
+- The camera planes are the frame's own (`proj_planes()`), as `runtime/vk/vk_dlssg.c` gives them.
