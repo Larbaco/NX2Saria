@@ -1,16 +1,3 @@
-"""The window's pictures, drawn with numpy into RGBA arrays and handed to Tk as PNG data.
-
-Everything is drawn here from shapes and colours: the misty green backdrop, the wooden title band, the bronze label
-cells with their mottled texture, the description box, the white glowing cursor, the filigree divider, the leaf sprig and
-the small icons. Tk's canvas draws lines and polygons without antialiasing on Windows, so every curved or soft
-shape is a picture; flat rectangles and text stay canvas items.
-
-Colours follow the game's options menu (docs/launcher.md, "Look"). Sizes are in logical pixels times the display
-scale s. PALETTE holds the colours of the colour scheme in use: set_theme fills it from THEMES, each scheme the
-first one with its woods, accents, backdrop and glow turned to other hues. The Custom scheme takes three colours the
-player picks on a colour square (color_square, hue_bar): one for the backdrop, one for the panels and the title band,
-one for the buttons.
-"""
 import base64
 import colorsys
 import re
@@ -19,9 +6,6 @@ import zlib
 
 import numpy as np
 
-# ---------------------------------------------------------------- colours
-
-# The first colour scheme, Forest: bronze wood on a misty dark green.
 BASE = {
     'window': '#06180d',
     'panel': '#3a2b22',
@@ -35,20 +19,16 @@ BASE = {
     'ok': '#a7d68c', 'gold': '#e6b65a', 'band_text': '#f3ecdc', 'status': '#b9a988', 'log_text': '#cfc4ab',
     'line': '#54442f', 'dot': '#5d4b36', 'filigree': '#7a6443', 'glow': '#e9ebee',
     'button_hover': '#8a6c3f', 'close_hover': '#b0402c',
-    # the backdrop: the field's four heights, its mist, the see-through tint over it (edge, side, middle), the corners
     'scene_0': '#394244', 'scene_1': '#414b4c', 'scene_2': '#474234', 'scene_3': '#3e3523', 'mist': '#262a22',
     'tint_edge': '#05180d', 'tint_side': '#092615', 'tint_mid': '#0c2e1b', 'vignette': '#020e07',
-    # the title band's wood from top to bottom and the two lines under it
     'wood_0': '#4c3b26', 'wood_1': '#5a4529', 'wood_2': '#6b5232', 'wood_3': '#806239',
     'band_line_dark': '#2c2217', 'band_line_light': '#a9874f',
-    # the cursor's glow near and far from its frame, the sparks drifting over the backdrop, the sprig's halo
     'glow_near': '#b7d1a6', 'glow_far': '#86b588', 'spark': '#dfca8c', 'halo': '#86b588',
     'icon_frame': '#e9dcc0', 'icon_fill': '#efe4ca', 'chevron_dim': '#d9ccae', 'bullet': '#c99a45',
     'badge_top': '#fbbd45', 'badge_bottom': '#e2942a', 'badge_ring': '#3a2a14', 'badge_text': '#3a2208',
     'text_shadow': '#2a1e10', 'band_shadow': '#1a120a', 'frame': '#140e09',
 }
 
-# The colours a scheme turns together, each group to one hue.
 GROUPS = {
     'wood': ('panel', 'label_top', 'label_mid', 'label_bottom', 'label_border', 'ring', 'desc', 'desc_border', 'line',
              'dot', 'filigree', 'button_hover', 'wood_0', 'wood_1', 'wood_2', 'wood_3', 'band_line_dark',
@@ -62,9 +42,6 @@ GROUPS = {
              'icon_frame', 'icon_fill', 'chevron_dim'),
 }
 
-# The colour schemes of Customize Launcher, in the order the row steps through them. Each group: (hue in degrees or
-# None to keep each colour's own, saturation factor, lightness factor, saturation added), applied to the first
-# scheme's colours (recolor), so a scheme keeps the first one's light and dark steps. 'set': colours given as they are.
 THEMES = {
     'forest': {'label': 'Forest'},
     'volcano': {'label': 'Volcano', 'wood': (14, 0.95, 0.80, 0), 'accent': (16, 1.05, 1.0, 0),
@@ -81,11 +58,6 @@ THEMES = {
 }
 DEFAULT_THEME = 'forest'
 
-# The Custom scheme: each colour the player picks takes the place of one colour of the first scheme (ref), and the
-# rest of that colour's part of the window follows it, lighter and darker as in the first scheme (follow). Each part:
-# (ref, the colours that follow it, the text on it, which turns dark when the picked colour is light). The buttons are
-# the rows' label cells, their value cells and the orange choices in them; the panel is the list panel, the
-# description box, the dividers and the title band. The colours start as the first scheme's.
 CUSTOM_SLOTS = {
     'background': ('tint_mid', GROUPS['scene'], ()),
     'panel': ('panel', ('panel', 'desc', 'desc_border', 'line', 'dot', 'filigree', 'button_hover', 'wood_0', 'wood_1',
@@ -101,8 +73,6 @@ HEX = re.compile(r'^#[0-9a-f]{6}$')
 
 
 def recolor(hexcolor, hue, sat=1.0, light=1.0, add=0.0):
-    """hexcolor turned to hue (degrees; None keeps its own), its saturation times sat plus add, its lightness times
-    light."""
     h = hexcolor.lstrip('#')
     r, g, b = (int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
     hh, ll, ss = colorsys.rgb_to_hls(r, g, b)
@@ -118,13 +88,10 @@ def hls(hexcolor):
 
 
 def hexcode(r, g, b):
-    """#rrggbb of r, g, b in 0..1."""
     return '#%02x%02x%02x' % tuple(int(round(max(0.0, min(1.0, v)) * 255)) for v in (r, g, b))
 
 
 def follow(hexcolor, ref, chosen):
-    """hexcolor moved as ref moves to chosen: chosen's hue, and its lightness and saturation shifted the way ref's
-    shift, so ref becomes chosen exactly and the colours lighter or darker than ref stay so."""
     _, l, s = hls(hexcolor)
     _, rl, rs = hls(ref)
     ch, cl, cs = hls(chosen)
@@ -143,12 +110,10 @@ def luminance(hexcolor):
 
 
 def custom_palette(colors):
-    """The Custom scheme's colours from {slot: '#rrggbb'} (CUSTOM_SLOTS); a slot left out or not a colour keeps the
-    first scheme's. Text on a light button or panel turns dark, so it stays readable, and its shadow light."""
     pal = dict(BASE)
     for slot, (ref, keys, text) in CUSTOM_SLOTS.items():
         c = str((colors or {}).get(slot) or '').lower()
-        if not HEX.match(c) or c == BASE[ref]:   # the first scheme's own colour: its colours as written
+        if not HEX.match(c) or c == BASE[ref]:
             continue
         for k in keys:
             pal[k] = follow(BASE[k], BASE[ref], c)
@@ -158,13 +123,12 @@ def custom_palette(colors):
                 pal[k] = recolor(BASE[k], h, 0.5, 0.3 if k == 'chevron_dim' else 0.18)
             shadow = 'text_shadow' if slot == 'buttons' else 'band_shadow'
             pal[shadow] = follow(BASE['label_top'], BASE[ref], c)
-        if slot == 'buttons' and luminance(pal['orange']) > 0.65:   # the choices come out lighter than the cells
+        if slot == 'buttons' and luminance(pal['orange']) > 0.65:
             pal['on_text'] = recolor(BASE['on_text'], hls(c)[0] * 360, 0.5, 0.18)
     return pal
 
 
 def theme_palette(name):
-    """The colours of scheme name (an unknown name: the first scheme's)."""
     if name == 'custom':
         return custom_palette(CUSTOM)
     t = THEMES.get(name) or THEMES[DEFAULT_THEME]
@@ -182,8 +146,6 @@ theme = DEFAULT_THEME
 
 
 def set_theme(name, custom=None):
-    """Fills PALETTE (in place: the window holds a reference) with scheme name's colours; the name in effect.
-    custom: the Custom scheme's colours, {slot: '#rrggbb'} (CUSTOM_SLOTS)."""
     global theme
     if custom is not None:
         CUSTOM.clear()
@@ -200,10 +162,7 @@ def rgb(hexcolor):
     return np.array([int(h[i:i + 2], 16) / 255.0 for i in (0, 2, 4)], dtype=np.float32)
 
 
-# ---------------------------------------------------------------- PNG and Tk
-
 def png_bytes(img):
-    """PNG of an HxWx4 float array in 0..1 (straight alpha) or uint8 array."""
     a = img if img.dtype == np.uint8 else (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
     h, w = a.shape[:2]
     raw = b''.join(b'\0' + a[y].tobytes() for y in range(h))
@@ -220,10 +179,9 @@ def photo(master, img):
 
 
 def dib_icon(img):
-    """One .ico entry as a 32-bit bitmap with its AND mask (what every Windows API and Tk read)."""
     a = img if img.dtype == np.uint8 else (np.clip(img, 0, 1) * 255 + 0.5).astype(np.uint8)
     n = a.shape[0]
-    bgra = a[::-1, :, [2, 1, 0, 3]].tobytes()   # bottom-up rows
+    bgra = a[::-1, :, [2, 1, 0, 3]].tobytes()
     stride = ((n + 31) // 32) * 4
     mask = bytearray()
     for row in a[::-1]:
@@ -237,7 +195,6 @@ def dib_icon(img):
 
 
 def ico_bytes(images):
-    """A Windows .ico of square HxWx4 images: bitmaps up to 64 pixels, PNG above (as Windows' own icons do)."""
     datas = [png_bytes(im) if im.shape[0] > 64 else dib_icon(im) for im in images]
     head = struct.pack('<HHH', 0, 1, len(datas))
     offset = 6 + 16 * len(datas)
@@ -249,17 +206,12 @@ def ico_bytes(images):
     return head + dirs + body
 
 
-# ---------------------------------------------------------------- drawing primitives
-
-# The blurred masks and the noise depend on sizes only, not on colours: kept here, a change of the colour scheme
-# paints them again in its colours without computing them again (most of the time a redraw took). The arrays kept
-# are read, never written.
 _KEPT = {}
 
 
 def kept(key, make):
     if key not in _KEPT:
-        if len(_KEPT) >= 160:   # row and box sizes of every screen stay far below this
+        if len(_KEPT) >= 160:
             _KEPT.clear()
         _KEPT[key] = make()
     return _KEPT[key]
@@ -274,7 +226,6 @@ def new(h, w, color=None, alpha=0.0):
 
 
 def over(dst, src, x=0, y=0):
-    """Composite src over dst at (x, y), straight alpha, clipped to dst."""
     h, w = src.shape[:2]
     H, W = dst.shape[:2]
     x0, y0, x1, y1 = max(x, 0), max(y, 0), min(x + w, W), min(y + h, H)
@@ -283,25 +234,23 @@ def over(dst, src, x=0, y=0):
     s = src[y0 - y:y1 - y, x0 - x:x1 - x]
     d = dst[y0:y1, x0:x1]
     sa, da = s[..., 3:4], d[..., 3:4]
-    if da.min() >= 1:   # onto a solid picture (the backdrop's layers): a plain mix, the result stays solid
+    if da.min() >= 1:
         d[..., :3] += (s[..., :3] - d[..., :3]) * sa
         return dst
     under = da * (1 - sa)
     oa = sa + under
     oc = s[..., :3] * sa
     oc += d[..., :3] * under
-    oc /= np.maximum(oa, 1e-6)   # where both are clear the sum above is 0, and stays 0
+    oc /= np.maximum(oa, 1e-6)
     d[..., :3], d[..., 3:4] = oc, oa
     return dst
 
 
 def paint(img, mask, color, alpha=1.0):
-    """Paint a colour through a coverage mask (HxW, 0..1) onto img."""
     if mask.shape != img.shape[:2]:
         layer = new(*mask.shape, color)
         layer[..., 3] = np.clip(mask, 0, 1) * alpha
         return over(img, layer)
-    # over() with one colour for the whole layer, without making the layer
     sa = (np.clip(mask, 0, 1) * alpha)[..., None].astype(np.float32)
     c, da = rgb(color), img[..., 3:4]
     if da.min() >= 1:
@@ -317,7 +266,6 @@ def paint(img, mask, color, alpha=1.0):
 
 
 def vgradient(h, w, stops):
-    """HxWx3 colours down the height through (position 0..1, colour) stops."""
     pos = np.array([p for p, _ in stops], dtype=np.float32)
     cols = np.stack([rgb(c) for _, c in stops])
     t = (np.arange(h, dtype=np.float32) + 0.5) / max(h, 1)
@@ -326,7 +274,6 @@ def vgradient(h, w, stops):
 
 
 def hgradient_alpha(h, w, stops):
-    """HxW alphas across the width through (position, alpha) stops."""
     pos = np.array([p for p, _ in stops], dtype=np.float32)
     al = np.array([a for _, a in stops], dtype=np.float32)
     t = (np.arange(w, dtype=np.float32) + 0.5) / max(w, 1)
@@ -334,7 +281,6 @@ def hgradient_alpha(h, w, stops):
 
 
 def hgradient_rgba(h, w, stops):
-    """An RGBA layer whose colour and alpha run across the width through (position, colour, alpha) stops."""
     pos = np.array([p for p, _, _ in stops], dtype=np.float32)
     cols = np.stack([rgb(c) for _, c, _ in stops])
     al = np.array([a for _, _, a in stops], dtype=np.float32)
@@ -347,7 +293,6 @@ def hgradient_rgba(h, w, stops):
 
 
 def value_noise(h, w, period_x, period_y=None, seed=0):
-    """Smooth noise in 0..1 with features about period pixels apart."""
     period_y = period_y or period_x
     rng = np.random.default_rng(seed)
     gh, gw = int(h / period_y) + 3, int(w / period_x) + 3
@@ -365,7 +310,6 @@ def value_noise(h, w, period_x, period_y=None, seed=0):
 
 
 def fractal(h, w, period_x, period_y=None, octaves=3, seed=0, contrast=0.4):
-    """Fractal noise around mid grey, about contrast wide (the range of an SVG feTurbulence turned grey)."""
     return 0.5 + (_fractal01(h, w, period_x, period_y, octaves, seed) - 0.5) * contrast
 
 
@@ -388,14 +332,12 @@ def _fractal01_make(h, w, period_x, period_y, octaves, seed):
 
 
 def overlay(rgb_arr, n, opacity):
-    """CSS mix-blend-mode overlay of a grey noise n (HxW) over colours, at opacity."""
     n = n[..., None]
     blended = np.where(rgb_arr < 0.5, 2 * rgb_arr * n, 1 - 2 * (1 - rgb_arr) * (1 - n))
     return rgb_arr + (blended - rgb_arr) * opacity
 
 
 def box_blur(a, r):
-    """Three box blurs of radius r over a 2-D array (close to a gaussian)."""
     r = int(round(r))
     if r < 1:
         return a
@@ -414,7 +356,6 @@ def box_blur(a, r):
 
 
 def rect_mask(h, w, x0, y0, x1, y1):
-    """Coverage of the rectangle [x0, x1) x [y0, y1) with fractional edges."""
     xs = np.arange(w, dtype=np.float32)
     ys = np.arange(h, dtype=np.float32)
     cx = np.clip(np.minimum(xs + 1, x1) - np.maximum(xs, x0), 0, 1)
@@ -428,7 +369,6 @@ def ring_mask(h, w, x0, y0, x1, y1, width):
 
 
 def polygon_mask(h, w, pts, ss=4):
-    """Antialiased coverage of a convex polygon (pixel coordinates), supersampled ss x ss."""
     ys = (np.arange(h * ss, dtype=np.float32) + 0.5) / ss
     xs = (np.arange(w * ss, dtype=np.float32) + 0.5) / ss
     X, Y = np.meshgrid(xs, ys)
@@ -443,7 +383,6 @@ def polygon_mask(h, w, pts, ss=4):
 
 
 def stroke_mask(h, w, polylines, width):
-    """Antialiased coverage of polylines (lists of (x, y)) stroked with round joins and caps."""
     ys = np.arange(h, dtype=np.float32) + 0.5
     xs = np.arange(w, dtype=np.float32) + 0.5
     X, Y = np.meshgrid(xs, ys)
@@ -465,17 +404,13 @@ def stroke_mask(h, w, polylines, width):
 
 
 def shadow(h, w, mask, color, alpha, blur, dx=0, dy=0):
-    """A soft shadow of a mask: blurred, offset, as an RGBA layer of the same size."""
     m = box_blur(np.roll(np.roll(mask, int(dy), 0), int(dx), 1), blur / 2)
     layer = new(h, w, color)
     layer[..., 3] = np.clip(m, 0, 1) * alpha
     return layer
 
 
-# ---------------------------------------------------------------- SVG path data (the filigree)
-
 def svg_polylines(d, scale=1.0, ox=0.0, oy=0.0, steps=10):
-    """Points along an SVG path made of M, L, C and Z commands."""
     toks = re.findall(r'[MLCZmlcz]|-?\d*\.?\d+', d)
     lines, cur, pos, i, cmd = [], [], (0.0, 0.0), 0, None
     start = (0.0, 0.0)
@@ -517,8 +452,6 @@ def svg_polylines(d, scale=1.0, ox=0.0, oy=0.0, steps=10):
     return [[((x - ox) * scale, (y - oy) * scale) for x, y in line] for line in lines]
 
 
-# The game's divider ornament, traced from the options menu: two pointed lens ends, S-waves into spiral hooks and a
-# diamond knot under the middle, in a 120 x 38 box (centre x 60).
 FILIGREE_PATHS = (
     'M20 17.4 C20.4 17.3 21.6 16.8 22.2 16.9 C22.8 17 23.5 17.7 23.5 18.2 C23.5 18.7 23.1 19.4 22.4 19.8 C21.6 20.2 '
     '20.3 20.4 19 20.4 C17.7 20.4 15.9 20.2 14.5 19.9 C13.1 19.6 10.6 19.4 10.5 18.6 C10.4 17.9 12.6 16.3 14 15.4 '
@@ -539,13 +472,7 @@ FILIGREE_PATHS = (
 )
 
 
-# ---------------------------------------------------------------- the window's pieces
-
 def backdrop(W, H, s, picture=None, dim=0.4, top=0):
-    """The whole window behind the panels: a dim misty field under a see-through tint of the colour scheme, darker at
-    the sides. picture: the player's own background instead of the field, an array of H - top rows and W columns in
-    0..1 put below the title band (top: where the band ends), darkened by dim (0 as it is .. 1 the scheme's darkest
-    colour) so the text over it stays readable."""
     P = PALETTE
     img = new(H, W, P['window'], 1.0)
     pad = int(45 * s)
@@ -577,7 +504,6 @@ def backdrop(W, H, s, picture=None, dim=0.4, top=0):
 
 
 def hsv_rgb(h, s, v):
-    """HSV to RGB on arrays (or numbers) in 0..1; an H... x 3 array."""
     h, s, v = (np.asarray(a, dtype=np.float32) for a in (h, s, v))
     h6 = (h % 1.0) * 6
     c = v * s
@@ -592,8 +518,6 @@ def hsv_rgb(h, s, v):
 
 
 def color_square(w, h, hue):
-    """The colour square of the Custom scheme's picker for one hue (0..1): saturation from grey on the left to the
-    full colour on the right, brightness from black at the bottom to full at the top."""
     sat = (np.arange(w, dtype=np.float32) + 0.5) / w
     val = 1 - (np.arange(h, dtype=np.float32) + 0.5) / h
     img = new(h, w)
@@ -603,7 +527,6 @@ def color_square(w, h, hue):
 
 
 def hue_bar(w, h):
-    """The picker's hue bar: every hue from red on the left through yellow, green, cyan, blue and magenta to red."""
     hue = (np.arange(w, dtype=np.float32) + 0.5) / w
     img = new(h, w)
     img[..., :3] = hsv_rgb(np.broadcast_to(hue, (h, w)), np.ones((h, w)), np.ones((h, w)))
@@ -612,7 +535,6 @@ def hue_bar(w, h):
 
 
 def picker_mark(size, s):
-    """The ring that shows the picked colour on the square and the bar: white with a dark edge inside and out."""
     t = (np.arange(size, dtype=np.float32) + 0.5) - size / 2
     d = np.hypot(t[None, :], t[:, None])
     r = size / 2 - 1.5 * s
@@ -625,19 +547,16 @@ def picker_mark(size, s):
 
 
 def spark(size, alpha=1.0):
-    """One spark of the dust drifting over the backdrop: a soft round dot of the scheme's spark colour, size pixels
-    across, brightest in its middle."""
     ys = (np.arange(size, dtype=np.float32) + 0.5) / size * 2 - 1
     d = np.hypot(ys[:, None], ys[None, :])
     img = new(size, size, PALETTE['spark'])
     img[..., 3] = np.clip(1 - d, 0, 1) ** 1.6 * alpha
     core = np.clip(1 - d * 2.6, 0, 1)
-    img[..., :3] += (1 - img[..., :3]) * core[..., None]   # a white middle
+    img[..., :3] += (1 - img[..., :3]) * core[..., None]
     return img
 
 
 def halo_frames(size, n=12):
-    """The title sprig's light: a soft disc of the scheme's halo colour, n frames of one slow pulse."""
     ys = (np.arange(size, dtype=np.float32) + 0.5) / size * 2 - 1
     d = np.hypot(ys[:, None], ys[None, :])
     fall = np.clip(1 - d, 0, 1) ** 2
@@ -651,7 +570,6 @@ def halo_frames(size, n=12):
 
 
 def band(w, h, s):
-    """The wooden title band, its two-line bottom edge and the shadow under it; (image, extra height below)."""
     pad = int(14 * s)
     img = new(h + pad, w)
     wood = vgradient(h, w, [(0, PALETTE['wood_0']), (0.30, PALETTE['wood_1']), (0.65, PALETTE['wood_2']),
@@ -669,8 +587,6 @@ def band(w, h, s):
 
 
 def panel(w, h, s, alpha=1.0):
-    """The left list panel with the shadow on its right. alpha below 1 lets the player's own background show through
-    it."""
     sh = int(26 * s)
     img = new(h, w + sh)
     over(img, kept(('panel shadow', w, h, s), lambda: shadow(h, w + sh, rect_mask(h, w + sh, 0, 0, w, h), '#000000',
@@ -686,7 +602,6 @@ def panel(w, h, s, alpha=1.0):
 
 
 def label_cell(w, h, s, bright=False):
-    """A bronze label cell: gradient, mottled texture, 1 px border and the 1 px dark ring around the row."""
     r = max(1, int(round(s)))
     img = new(h + 2 * r, w + 2 * r, PALETTE['ring'], 1.0)
     col = vgradient(h, w, [(0, PALETTE['label_top']), (0.5, PALETTE['label_mid']), (1, PALETTE['label_bottom'])])
@@ -710,7 +625,7 @@ def desc_box(w, h, s, alpha=1.0):
     layer = new(h, w)
     layer[..., :3], layer[..., 3] = col, 1
     over(img, layer, pad, pad)
-    if alpha < 1:   # the player's own background shows through the box, not through its border
+    if alpha < 1:
         img[pad:pad + h, pad:pad + w, 3] = alpha
     paint(img, ring_mask(h + 2 * pad, w + 2 * pad, pad, pad, pad + w, pad + h, max(1, round(s))),
           PALETTE['desc_border'])
@@ -718,8 +633,6 @@ def desc_box(w, h, s, alpha=1.0):
 
 
 def glow_frames(w, h, s, n=12):
-    """The selection cursor around a w x h box: a 3 px white frame 6 px outside it with a soft glow of the scheme's
-    colour inside and out, n frames of one breath. Returns (frames, margin) where the box sits at (margin, margin)."""
     gap, thick, spread = 6 * s, 3 * s, 16 * s
     mg = int(gap + spread)
     H, W = h + 2 * mg, w + 2 * mg
@@ -738,7 +651,6 @@ def glow_frames(w, h, s, n=12):
 
 
 def filigree(w, s):
-    """The divider: a thin line with a dot at each end and the ornament in the middle; (image, height)."""
     h = int(round(26 * s))
     img = new(h, w)
     mid = h / 2
@@ -769,7 +681,6 @@ SPRIG_LEAVES = (
 
 
 def sprig_icon(n):
-    """An original three-leaf sprig on the forest and gold palette, at the size Windows or Tk requests."""
     img = new(n, n)
     scale, cx, cy = n / 256, n / 2, n / 2
     yy, xx = np.mgrid[:n, :n].astype(np.float32)
@@ -796,12 +707,10 @@ def sprig_icon(n):
 
 
 def sprig_ico():
-    """The NX2Saria launcher, setup and taskbar icon at the sizes Windows asks for."""
     return ico_bytes([sprig_icon(n) for n in (16, 20, 24, 32, 40, 48, 64, 96, 128, 256)])
 
 
 def title_glyph(kind, size, s):
-    """The minimise bar or the close cross of the band's buttons, in the band's light text colour."""
     img = new(size, size)
     t = max(1.2, 1.4 * s)
     m = size * 0.12
@@ -829,7 +738,6 @@ def chevron(w, h, color, left=False):
 
 
 def framed_icon(size, s, kind):
-    """The square-framed icon of a big row (play or refresh), like the icon frames of the game's menu rows."""
     img = new(size, size)
     t = 1.5 * s
     paint(img, ring_mask(size, size, 0.5, 0.5, size - 0.5, size - 0.5, t), PALETTE['icon_frame'])
@@ -857,7 +765,6 @@ def framed_icon(size, s, kind):
 
 
 def badge(size, s):
-    """The orange "!" disc beside Updates when a new version is ready (the "!" itself is text)."""
     img = new(size + 4, size + 4)
     ring = stroke_mask(size + 4, size + 4, [[((size + 4) / 2, (size + 4) / 2)]], size + 1.5 * s)
     over(img, shadow(size + 4, size + 4, ring, PALETTE['badge_top'], 0.6, 6 * s))

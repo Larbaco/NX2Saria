@@ -1,5 +1,3 @@
-"""Running tools/make_game.py for the launcher: the command line, its "@@" progress lines (make_game.py --events)
-and cancelling it with every compiler it started."""
 import json
 import os
 import re
@@ -12,17 +10,11 @@ from pathlib import Path
 from . import winsys
 from .platform import game_executable
 
-# Runs make_game.py with pydeps/ (zbic) and the script's folder first on sys.path; the embeddable Python's ._pth
-# file leaves both off.
 RUN = ('import os, runpy, sys; p = sys.argv[1]; s = sys.argv[2]; sys.argv = sys.argv[2:]; '
        'sys.path[:0] = [x for x in p.split(os.pathsep) if x] + [os.path.dirname(os.path.abspath(s))]; '
        'runpy.run_path(s, run_name="__main__")')
 CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-# The build runs below normal priority: a compile on every processor for ten minutes and more otherwise takes the
-# PC from whatever the player does meanwhile, which the job screen invites ("Keep using your PC if you like"). On an
-# idle PC it costs nothing. Windows hands a below-normal process's class on to the processes it starts, so the
-# compilers, the lifter's workers and the shader preparation that make_game.py starts run that way too.
 BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
 
 
@@ -32,8 +24,6 @@ def command(layout, args):
 
 
 def has_prompt_art(layout):
-    """True when this version holds button art (app/<version>/prompt-art, tools/prompt_art.py FOLDER): make_game.py
-    then draws the button prompts in a step of its own, and the jobs show a row for it."""
     return (layout.app / 'prompt-art').is_dir()
 
 
@@ -47,8 +37,6 @@ def install_args(layout, dump, game_dir):
 
 
 def rebuild_args(layout, game_dir, retune=False):
-    """retune: Rebuild the Game, which compiles the game's code for this processor's level; an update keeps the level
-    its objects were compiled for, so that it compiles only what changed (tools/make_game.py lifted_level)."""
     return ['--rebuild', *(['--retune'] if retune else []), '--out', str(game_dir),
             *winsys.make_game_toolchain_args(layout)]
 
@@ -65,8 +53,6 @@ class BuildError(Exception):
 
 
 class Run:
-    """One make_game.py process. on_event(dict) for each "@@" line, on_line(str) for every other line; wait()
-    returns the exit code. cancel() ends the process and its children."""
 
     def __init__(self, cmd, on_event, on_line, cwd=None):
         self.error = None
@@ -79,15 +65,11 @@ class Run:
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                                      cwd=cwd, env=env, text=True, encoding='utf-8', errors='replace', bufsize=1, **kw)
         self.cancelled = False
-        self.dropped = 0   # lines and events whose handler raised (_read)
+        self.dropped = 0
         self._reader = threading.Thread(target=self._read, args=(on_event, on_line), daemon=True)
         self._reader.start()
 
     def _read(self, on_event, on_line):
-        """Reads the build's output to its end, whatever the handlers do. A handler that raises (the launcher's log
-        on a full disk, a drawing error) loses its line, counted in dropped, and the reading goes on: when this
-        thread ended on the exception nobody read the pipe any more, the build stopped at its next line once the
-        pipe was full, and the job waited for it for good."""
         def call(handler, arg):
             try:
                 handler(arg)
@@ -106,7 +88,7 @@ class Run:
                     if ev.get('ev') == 'error':
                         self.error = ev.get('message')
                     call(on_event, ev)
-                else:   # "@@" before something that is no event
+                else:
                     call(on_line, line)
             elif line.startswith('error: ') and not self.error:
                 self.error = line[7:]
@@ -137,8 +119,6 @@ ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION = 5, 32
 
 
 def _write_open_error(path):
-    """0 when path opens for writing (it is closed again at once), else Windows' error code for the refusal. Every
-    share mode is granted, so a sharing violation comes only from a running image."""
     import ctypes
     from ctypes import wintypes
     k = ctypes.WinDLL('kernel32', use_last_error=True)
@@ -146,7 +126,6 @@ def _write_open_error(path):
     k.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD,
                               wintypes.DWORD, wintypes.HANDLE]
     k.CloseHandle.argtypes = [wintypes.HANDLE]
-    # GENERIC_WRITE; FILE_SHARE_READ, FILE_SHARE_WRITE and FILE_SHARE_DELETE; OPEN_EXISTING; FILE_ATTRIBUTE_NORMAL
     h = k.CreateFileW(str(path), 0x40000000, 7, None, 3, 0x80, None)
     if h in (None, wintypes.HANDLE(-1).value):
         return ctypes.get_last_error() or -1
@@ -155,13 +134,6 @@ def _write_open_error(path):
 
 
 def game_running(game_dir, exe=None, log=None):
-    """True when the built game runs from game_dir: Windows refuses to open a running exe for writing, with a sharing
-    violation. A read-only exe (a copy restored from a backup or read-only media) is refused too, with access denied,
-    though nothing runs it: its read-only attribute is cleared and the open tried again, as the next build replaces
-    the file anyway. Access denied for another reason (an access list that denies the player writes, Controlled
-    Folder Access) is no running game either: taken for one, it kept Play saying "already running" and a rebuild
-    failing with "the game is running" for an exe that nothing ran. log, when given, gets a line for that case, which
-    a build's failure to replace the exe (tools/make_game.py) then has beside it."""
     if exe is None:
         path = game_executable(game_dir)
     else:
@@ -178,7 +150,7 @@ def game_running(game_dir, exe=None, log=None):
         err = _write_open_error(path)
         if err == ERROR_SHARING_VIOLATION:
             return True
-        if err != ERROR_ACCESS_DENIED:   # opened, or gone meanwhile
+        if err != ERROR_ACCESS_DENIED:
             return False
         if attempt or not os.stat(path).st_file_attributes & stat.FILE_ATTRIBUTE_READONLY:
             break
@@ -193,7 +165,6 @@ def game_running(game_dir, exe=None, log=None):
 
 
 def build_state(game_dir):
-    """The game folder's build-cache/state.json (make_game.py), or {}."""
     try:
         with open(os.path.join(str(game_dir), 'build-cache', 'state.json'), encoding='utf-8') as f:
             return json.load(f)
@@ -202,7 +173,6 @@ def build_state(game_dir):
 
 
 def built_version(game_dir):
-    """The kit version that last built the game folder ('' when none finished)."""
     st = build_state(game_dir)
     if 'compile' in st.get('steps', {}) and game_executable(game_dir).is_file():
         return st.get('kit', '')
@@ -210,8 +180,6 @@ def built_version(game_dir):
 
 
 def scan_report(game_dir):
-    """What the check of the game files found (tools/romfs_check.py writes <game>/romfs-check.json): (the paths of
-    the damaged files, how many of them got a stand-in), or None when the folder has no readable report."""
     try:
         with open(os.path.join(str(game_dir), 'romfs-check.json'), encoding='utf-8') as f:
             report = json.load(f)
@@ -226,19 +194,12 @@ def can_rebuild(game_dir):
 
 
 def unpacked(game_dir):
-    """True when the game files a rebuild reads are in the game folder (make_game.py BuiltSource names the same
-    ones): the unpacked ExeFS, the RomFS image and its index."""
     gd = str(game_dir)
     return all(os.path.isfile(os.path.join(gd, *parts)) for parts in
                (('exefs', 'main'), ('romfs', 'romfs.bin'), ('romfs', 'index.json')))
 
 
 def installed(game_dir):
-    """True when the game folder holds a game the player can start: a finished build, or the exe of the last
-    finished build beside a build that stopped later. make_game.py drops a step's record when a step before it
-    runs again, so an update that lifted again and then stopped in the compile (an error, Cancel, a power cut)
-    leaves state.json without `compile` and built_version says '': the old exe is still there and playable, and
-    a rebuild continues from the unpacked game files without the dump (can_rebuild)."""
     if not game_dir:
         return False
     if built_version(game_dir):
@@ -246,23 +207,16 @@ def installed(game_dir):
     return game_executable(game_dir).is_file() and can_rebuild(game_dir)
 
 
-# The game's log as the window (launcher/ui/app.py) and the session reports (launcher/telemetry.py) read it.
-FATAL_TAIL = 256 << 10   # bytes of the game's log last_fatal reads from its end
+FATAL_TAIL = 256 << 10
 
 
 def game_log_path(game_dir):
-    """Use the new log path, or read an existing legacy log until the new path is present."""
     logs = Path(game_dir) / 'logs'
     current, legacy = logs / 'nx2saria.log', logs / 'nx2navi.log'
     return current if current.is_file() or not legacy.is_file() else legacy
 
 
 def last_fatal(game_dir):
-    """The last FATAL line of the game's latest run, without its "FATAL: ", or ''. The game writes one before it
-    exits with 70 (runtime/dispatch.c rt_fatal), 71 (runtime/main.c crash_handler) or 72 (runtime/vk/vk_device.c
-    vk_device_lost_check) into logs/nx2saria.log (older installations may still have logs/nx2navi.log). A line this
-    launcher added for an earlier run's end (note_exit_in_log) ends the search: what stands before it is not this
-    run's."""
     if not game_dir:
         return ''
     try:

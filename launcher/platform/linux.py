@@ -1,4 +1,3 @@
-"""Linux services used by the launcher's compatibility facade (launcher/winsys.py)."""
 import ctypes
 import ctypes.util
 import fcntl
@@ -12,12 +11,10 @@ from . import game_executable
 
 
 def make_game_toolchain_args(layout):
-    """Linux uses its system compiler and libraries; make_game.py discovers them directly."""
     return []
 
 
 def ensure_toolchain(layout, cancel=None, log=None, version=''):
-    """Validate Linux build prerequisites and install the launcher-owned zbic package."""
     missing = toolchain_missing()
     if missing:
         if log:
@@ -31,7 +28,6 @@ def ensure_toolchain(layout, cancel=None, log=None, version=''):
 
 
 def refresh_installed_wrapper(root, app):
-    """Refresh the installed wrapper from this app version, so future starts use its rollback behavior."""
     root, app = Path(root), Path(app)
     if not (root / 'nx2saria-launcher').is_file():
         return
@@ -49,7 +45,6 @@ def refresh_installed_wrapper(root, app):
 
 
 def game_running(game_dir, exe=None):
-    """Check the runtime's profile lock first, then /proc for Linux builds from before profile locking."""
     folder = Path(game_dir)
     lock = folder / 'profile' / 'instance.lock'
     try:
@@ -83,21 +78,15 @@ def game_running(game_dir, exe=None):
 
 
 def child_subreaper(on, prctl=None):
-    """Turn PR_SET_CHILD_SUBREAPER on or off for the launcher's process. On while the game runs (winsys.start_game):
-    the copy the game's Restart spawns (runtime/platform/linux.c plat_restart) is the old process's child, and once
-    that one ends it becomes the launcher's, whose wait gives its exit code. Off again when the run ended
-    (winsys.game_finished), so that the processes a build leaves behind are not adopted and kept as zombies."""
     if prctl is None:
         prctl = ctypes.CDLL(None, use_errno=True).prctl
-    if prctl(36, 1 if on else 0, 0, 0, 0):   # PR_SET_CHILD_SUBREAPER
+    if prctl(36, 1 if on else 0, 0, 0, 0):
         error = ctypes.get_errno()
         raise OSError(error, os.strerror(error))
     return True
 
 
 def _runs(proc, expected, readlink=os.readlink):
-    """Whether the process folder proc (/proc/<pid>) runs the file expected; False once it has ended or is a zombie,
-    whose exe link cannot be read."""
     try:
         return Path(readlink(proc / 'exe').removesuffix(' (deleted)')) == expected
     except OSError:
@@ -105,11 +94,6 @@ def _runs(proc, expected, readlink=os.readlink):
 
 
 class GameCopy:
-    """A copy of the game this launcher did not start itself (game_copy), with poll(), returncode and pid as
-    subprocess.Popen has them; ended is True once it has ended, also when its code could not be read. A copy that is
-    the launcher's child (adopted, child_subreaper) is waited for, which gives its code; another is taken as ended
-    once its /proc folder no longer runs the game's file, so a process id used again is not taken for the game."""
-
     def __init__(self, pid, exe, proc_root='/proc', readlink=os.readlink):
         self.pid, self.exe, self.proc_root, self.readlink = int(pid), Path(exe), Path(proc_root), readlink
         self.returncode, self.ended = None, False
@@ -130,8 +114,6 @@ class GameCopy:
 
 
 def game_copy(exe, skip=None, proc_root='/proc', readlink=os.readlink):
-    """A live process running the file exe other than the process id skip, as a GameCopy; None when there is none.
-    The file is compared by its resolved path, so the game of another install is not taken for this one."""
     expected = Path(exe).resolve()
     try:
         for proc in Path(proc_root).iterdir():
@@ -143,9 +125,6 @@ def game_copy(exe, skip=None, proc_root='/proc', readlink=os.readlink):
 
 
 def ended_copies(exe, skip=None, proc_root='/proc', me=None, wait=None):
-    """Waits for the launcher's children that ended as zombies named as the file exe (the stat line's comm, which
-    the kernel cuts to 15 characters), other than the process id skip: a copy of the Restart that ended before the
-    launcher looked for it (App.watch_game looks once a second). Returns their exit codes, the latest started last."""
     me = os.getpid() if me is None else me
     wait = wait or (lambda pid: os.waitpid(pid, os.WNOHANG))
     name, found = Path(exe).name[:15], []
@@ -169,21 +148,16 @@ def ended_copies(exe, skip=None, proc_root='/proc', me=None, wait=None):
         except ChildProcessError:
             continue
         if pid:
-            found.append((int(fields[19]), os.waitstatus_to_exitcode(status)))   # field 22: the start time
+            found.append((int(fields[19]), os.waitstatus_to_exitcode(status)))
     return [code for _start, code in sorted(found)]
 
 
-# What the AppImage install (tools/appimage_install.py) puts in the launcher's folder besides data/: the start script
-# (_write_wrapper), the menu icon, the app versions, the Python runtime and the folders an install or an update leaves
-# while it swaps it, the Python packages and the build tools.
 APPIMAGE_OWNED = ('nx2saria-launcher', 'nx2saria-launcher.new', 'nx2saria.png', 'nx2saria.png.new', 'app', 'python',
                   'python.new', 'python.old', 'python.failed', 'pydeps', 'toolchain')
-# What Uninstall keeps of data/: the launcher's logs, which the player may still want for a report.
 KEPT_DATA = ('logs',)
 
 
 def desktop_entry(env=None, home=None):
-    """The menu entry the AppImage writes (tools/appimage_install.py _write_desktop)."""
     env = os.environ if env is None else env
     home = Path.home() if home is None else Path(home)
     value = env.get('XDG_DATA_HOME', '')
@@ -192,15 +166,11 @@ def desktop_entry(env=None, home=None):
 
 
 def appimage_install(root):
-    """Whether root holds the AppImage's install: its start script or the record of what it installed
-    (tools/appimage_install.py _write_wrapper, _write_install_manifest). Uninstall deletes nothing elsewhere."""
     root = Path(root)
     return (root / 'nx2saria-launcher').is_file() or (root / 'data' / 'appimage-install.json').is_file()
 
 
 def _exec_line(wrapper):
-    """The Exec line tools/appimage_install.py _write_desktop writes for wrapper, quoted as tools/appimage_gui.py
-    exec_quote quotes it."""
     out = str(wrapper)
     for ch in '\\"`$':
         out = out.replace(ch, '\\' + ch)
@@ -208,7 +178,6 @@ def _exec_line(wrapper):
 
 
 def _starts(entry, wrapper):
-    """Whether the menu entry entry starts the script wrapper: another install's entry is left alone."""
     try:
         text = entry.read_text(encoding='utf-8', errors='replace')
     except OSError:
@@ -217,8 +186,6 @@ def _starts(entry, wrapper):
 
 
 def _within(path, folder):
-    """Whether path is folder or lies inside it, by the paths as given and as resolved (a symbolic link on the way
-    makes the two differ)."""
     pairs = [(Path(os.path.abspath(path)), Path(os.path.abspath(folder)))]
     try:
         pairs.append((Path(path).resolve(), Path(folder).resolve()))
@@ -228,8 +195,6 @@ def _within(path, folder):
 
 
 def _unsafe_game_folder(game, root, home):
-    """Why the folder game must not be deleted as the game folder, or '': it is or holds the launcher's folder or the
-    home folder, or it is a mount point (a drive's or a card's root)."""
     if _within(root, game):
         return "it holds the launcher's folder"
     if _within(home, game):
@@ -243,11 +208,6 @@ def _unsafe_game_folder(game, root, home):
 
 
 def uninstall_plan(root, remove_game='', keep=(), entry=None, home=None):
-    """(paths to delete with all they hold, folders to delete only when that left them empty, (path, why) kept) for
-    the launcher's folder root. The game folder goes only when remove_game names it, and never when it holds the
-    launcher's folder or the home folder or is a drive's root (_unsafe_game_folder). data/logs stays (KEPT_DATA), and
-    so does every path that holds one of keep (the game folder when it stays, the dump) or lies in it: a game folder
-    inside data/ is not deleted with data/."""
     root = Path(root)
     home = Path.home() if home is None else Path(home)
     entry = desktop_entry(home=home) if entry is None else Path(entry)
@@ -275,9 +235,6 @@ def uninstall_plan(root, remove_game='', keep=(), entry=None, home=None):
     return gone, [root / 'data', root], kept
 
 
-# Run by sh once the launcher has gone: $1 is its process id, $2 the launcher.log the last line goes to, then the paths
-# to delete, "--", and the folders to delete only when empty. The wait is cut at 30 s; a file the launcher still has
-# open is only unlinked, which Linux allows.
 UNINSTALL_SCRIPT = r"""pid=$1; log=$2; shift 2
 i=0
 while kill -0 "$pid" 2>/dev/null && [ "$i" -lt 300 ]; do sleep 0.1; i=$((i + 1)); done
@@ -298,7 +255,6 @@ fi
 
 
 def uninstall_command(pid, gone, empty, log):
-    """The sh command line that deletes gone, then the empty folders of empty, once process pid has ended."""
     return ['sh', '-c', UNINSTALL_SCRIPT, 'sh', str(pid), str(log), *map(str, gone), '--', *map(str, empty)]
 
 
@@ -307,7 +263,6 @@ UDMABUF_MINIMUM_MB = 1024
 
 def udmabuf_status(device='/dev/udmabuf', parameter='/sys/module/udmabuf/parameters/size_limit_mb',
                   which=shutil.which, read_text=None, accessible=None, os_release='/etc/os-release'):
-    """Describe udmabuf without privilege; injectable paths and probes keep the check isolated in tests."""
     device, parameter = Path(device), Path(parameter)
     read_text = read_text or (lambda path: path.read_text(encoding='utf-8').strip())
     accessible = accessible or (lambda path: os.access(path, os.R_OK | os.W_OK))
@@ -330,7 +285,6 @@ def udmabuf_status(device='/dev/udmabuf', parameter='/sys/module/udmabuf/paramet
 
 
 def run_udmabuf_fix(script, action, run=subprocess.run):
-    """Ask PolicyKit to run the confirmed packaged script's contents through the system shell."""
     if action not in ('apply', 'remove'):
         raise ValueError('unknown udmabuf action')
     try:
@@ -348,7 +302,6 @@ def run_udmabuf_fix(script, action, run=subprocess.run):
 
 
 def udmabuf_after_log_line(action, status):
-    """Describe the device state immediately after an approved fix action."""
     if status is None:
         return f'udmabuf: after {action}: accessible=no; size_limit_mb=unknown (module absent)'
     accessible = 'yes' if status['accessible'] else 'no'
@@ -356,7 +309,6 @@ def udmabuf_after_log_line(action, status):
 
 
 def udmabuf_log_line(status):
-    """One bounded diagnostic line for the launcher log at startup."""
     if status is None:
         return 'udmabuf: module absent; offer=none'
     accessible = 'yes' if status['accessible'] else 'no'
@@ -381,7 +333,6 @@ def udmabuf_change_available(which=shutil.which, os_release='/etc/os-release'):
 
 
 def os_name(os_release='/etc/os-release'):
-    """The distribution as /etc/os-release names it (PRETTY_NAME, else NAME and VERSION_ID), or 'Linux'."""
     fields = {}
     try:
         for line in Path(os_release).read_text(encoding='utf-8', errors='replace').splitlines():
@@ -395,8 +346,6 @@ def os_name(os_release='/etc/os-release'):
 
 
 def session_text(env=None):
-    """The graphical session for the launcher's start line: its type (x11, wayland, tty) and desktop, from the
-    variables the display manager sets, or from which display variable is there when it sets none."""
     env = os.environ if env is None else env
     kind = env.get('XDG_SESSION_TYPE') or ('wayland' if env.get('WAYLAND_DISPLAY') else
                                            'x11' if env.get('DISPLAY') else 'unknown')
@@ -404,16 +353,11 @@ def session_text(env=None):
     return f'{kind} session, desktop {desktop}'
 
 
-# the names launcher/winsys.py known_folder takes, and the keys of user-dirs.dirs for them
 USER_DIRS = {'downloads': 'XDG_DOWNLOAD_DIR', 'desktop': 'XDG_DESKTOP_DIR', 'documents': 'XDG_DOCUMENTS_DIR',
              'pictures': 'XDG_PICTURES_DIR'}
 
 
 def user_dir(name, env=None, home=None):
-    """The folder the desktop keeps for name ('downloads', 'desktop', 'documents', 'pictures'), as
-    $XDG_CONFIG_HOME/user-dirs.dirs names it: translated ("Área de Trabalho", "Documentos") on a desktop set up in
-    another language. None when the file names none, or names the home folder itself (the desktop's way of turning
-    one off)."""
     env = os.environ if env is None else env
     home = Path(home or Path.home())
     key = USER_DIRS.get(name)
@@ -442,23 +386,16 @@ def user_dir(name, env=None, home=None):
     return None
 
 
-# Filesystems of local disks, whose mount points the dump search looks through. Not network ones (a slow or
-# unreachable server would hold the search), not autofs placeholders (listing one mounts the disk behind it), and
-# not the system's own (proc, tmpfs, overlay and the like).
 LOCAL_FILESYSTEMS = {'ext2', 'ext3', 'ext4', 'btrfs', 'xfs', 'f2fs', 'jfs', 'reiserfs', 'zfs', 'bcachefs', 'ntfs',
                      'ntfs3', 'fuseblk', 'exfat', 'vfat', 'msdos', 'hfsplus', 'udf'}
 
 
 def _unescape_mount(path):
-    """A mount point as /proc/self/mounts writes it, with its octal escapes (\\040 for a space) undone."""
     import re
     return re.sub(r'\\([0-7]{3})', lambda m: chr(int(m.group(1), 8)), path)
 
 
 def mounted_drives(mounts='/proc/self/mounts', user=None):
-    """The local disks mounted under /mnt, /media/<user> and /run/media, where a player's other drives are (an NTFS
-    partition shared with Windows, a second disk; SteamOS mounts the SD card at /run/media/mmcblk0p1 or
-    /run/media/<user>/<label>), in the order mounted. Only filesystems mounted now: nothing here mounts a disk."""
     user = user or os.environ.get('USER') or os.environ.get('LOGNAME') or ''
     bases = ['/mnt/', '/run/media/'] + ([f'/media/{user}/'] if user else [])
     out = []
@@ -477,9 +414,6 @@ def mounted_drives(mounts='/proc/self/mounts', user=None):
 
 
 def pick_path(kind, title, start, patterns=(), which=shutil.which, run=subprocess.run, env=None):
-    """The desktop's own chooser for a file (kind 'file') or a folder ('folder'): kdialog on KDE, else zenity, else
-    kdialog. (tool, path) with path '' when the player cancelled; (None, '') when neither is installed or both failed,
-    and the caller falls back to Tk's chooser. patterns: (label, '*.ext') pairs for a file."""
     env = os.environ if env is None else env
     start = str(start or Path.home())
     order = ['kdialog', 'zenity'] if 'KDE' in env.get('XDG_CURRENT_DESKTOP', '').upper() else ['zenity', 'kdialog']
@@ -501,16 +435,15 @@ def pick_path(kind, title, start, patterns=(), which=shutil.which, run=subproces
             r = run(cmd, capture_output=True)
         except (OSError, subprocess.SubprocessError):
             continue
-        if r.returncode == 0:   # the path as the file system has it, also when it is not UTF-8
+        if r.returncode == 0:
             out = r.stdout if isinstance(r.stdout, str) else os.fsdecode(r.stdout)
             return tool, out.strip('\n')
-        if r.returncode == 1:   # both say 1 when the player cancelled
+        if r.returncode == 1:
             return tool, ''
     return None, ''
 
 
 def _sdl_library():
-    """Load the kit's SDL3 first, then the system copy; return a short source label for the log."""
     bundled = next((root / 'toolchain' / 'sdl3' / 'lib' / 'libSDL3.so.0'
                     for root in Path(__file__).resolve().parents
                     if (root / 'toolchain' / 'sdl3' / 'lib' / 'libSDL3.so.0').is_file()), None)
@@ -527,7 +460,6 @@ def _sdl_library():
 
 
 class Gamepad:
-    """Read SDL3 GameController input, including Steam Input's virtual controller on Steam Deck."""
     BUTTONS = {11: 'up', 12: 'down', 13: 'left', 14: 'right', 0: 'a', 1: 'b', 3: 'y'}
     AXIS_LEFT_X, AXIS_LEFT_Y, AXIS_RIGHT_Y = 0, 1, 3
     INIT_GAMEPAD = 0x00002000
@@ -623,7 +555,6 @@ _inhibitor = None
 
 
 def keep_awake(on, log=None):
-    """Hold a systemd sleep inhibitor for the duration of a foreground build job."""
     global _inhibitor
     if not on:
         held = _inhibitor is not None
@@ -669,7 +600,6 @@ def keep_awake(on, log=None):
 
 
 def toolchain_missing(which=shutil.which, run=subprocess.run):
-    """Check the compiler and headers the Linux build requires, with distro guidance and no package changes."""
     required = ('clang', 'clang++', 'ld.lld')
     missing = [name for name in required if not which(name)]
     clang = which('clang')

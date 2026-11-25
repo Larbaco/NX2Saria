@@ -1,17 +1,13 @@
-"""Release versions: "0.3.11", optionally with build metadata ("0.3.11+abc1234") that never orders releases."""
 import re
 
 _NUM = re.compile(r'^\s*v?(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?\s*$')
 
 
 def _pre_key(pre):
-    """A pre-release's order as semver 2.0.0 gives it: dot-separated identifiers compared one by one, numbers as
-    numbers (rc.9 before rc.10) and before text, and a shorter list before a longer one it starts."""
     return tuple((0, int(p), '') if p.isdigit() else (1, 0, p) for p in pre.split('.'))
 
 
 def parse(text):
-    """(numbers, pre-release) for comparing; a pre-release sorts before its release. ValueError when malformed."""
     m = _NUM.match(text or '')
     if not m:
         raise ValueError(f'not a version: {text!r}')
@@ -22,10 +18,8 @@ def parse(text):
 
 
 def newer(a, b):
-    """True when version a is newer than version b."""
     return parse(a) > parse(b)
 
 
 def display(text):
-    """The version without build metadata."""
     return (text or '').split('+', 1)[0].strip()
