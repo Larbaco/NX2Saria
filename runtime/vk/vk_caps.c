@@ -1,17 +1,3 @@
-// What the runtime branches on, logged once at device creation, and the fallbacks for GPUs other than the RX 9070.
-//
-// Fallbacks (each also forced on any GPU by an environment switch, to test it where the GPU does not need it):
-//   - no shaderFloat64 (NX2SARIA_VK_NO_FLOAT64=1 clears the feature before vkCreateDevice): the translator lowers FP64 to
-//     FP32 ("softfloat64"), so no shader declares Float64.
-//   - minStorageBufferOffsetAlignment above 4 (NX2SARIA_VK_SSBO_ALIGN=<power of two> raises it): the translator computes
-//     storage offsets from the guest address rounded down to that alignment (the translator's unaligned storage path), and
-//     vk_exec_draw.c ssbo_info binds the rounded-down address, so shader writes reach guest memory instead of a copy.
-//   - no graphics pipeline library with fast linking (NX2SARIA_GPL=0 forces it; it also defaults off on AMD's Windows
-//     driver for RDNA 2 and older, see vk_caps_gpl): vk_caps.gpl = 0, the extension stays disabled, and pipelines are built whole.
-//   - no 32-lane pin (no subgroupSizeControl, 32 outside min..max, or NX2SARIA_VK_SUBGROUP_PIN=0): stages run at the
-//     device's subgroupSize (SPIR-V 1.3 without a required size) and the translator is told that size.
-//     NX2SARIA_VK_SUBGROUP=<n> pins n instead of 32 where the driver allows it.
-// The defaults (Float64, no storage rounding, 32 everywhere) leave the shader cache keys as they were (gfx_shader.c).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,13 +11,12 @@
 
 VkCaps vk_caps = {.float64 = 1, .sg_size = 32};
 static int f64_supported;
-static VkBool32 gpl_lib, gpl_fast;   // the driver's graphicsPipelineLibrary (feature), ...FastLinking (property)
-static const char *gpl_off;          // why gpl is off, for the boot report; NULL when it is on
-static char summary[832];           // vk_caps_summary: written once, in vk_caps_init, before any other thread reads it
+static VkBool32 gpl_lib, gpl_fast;
+static const char *gpl_off;
+static char summary[832];
 
 const char *vk_caps_summary(void) { return summary; }
 
-// The card for the session summary (session_summary.h vk_caps_gpu): stored once in vk_caps_init, published by gpu_known.
 static SsGpu gpu;
 static volatile int32_t gpu_known;
 
@@ -52,10 +37,8 @@ void vk_caps_features(VkPhysicalDeviceFeatures *f) {
     vk_caps.float64 = f->shaderFloat64;
 }
 
-static int amd_proprietary;   // AMD's own Windows driver (any branch): gfx_shader.c patch_vec_index
+static int amd_proprietary;
 
-// gfx_shader.c patch_vec_index: the driver reads uniform vector components at computed indices wrongly (Ryujinx's
-// HasVectorIndexingBug, which it sets for AMD's Windows drivers).
 int vk_caps_vec_index_bug(void) { return amd_proprietary; }
 
 void vk_caps_driver(VkPhysicalDevice p) {
@@ -64,8 +47,6 @@ void vk_caps_driver(VkPhysicalDevice p) {
     vkGetPhysicalDeviceProperties2(p, &p2);
     vk_caps.amd = p2.properties.vendorID == 0x1002;
     vk_caps.driver_id = (uint32_t)drv.driverID;
-    // AMD split RDNA 1 and 2 off into a driver branch of their own; its driverInfo reads
-    // "26.10.1 (AMD proprietary shader compiler)" where the RDNA 3 and 4 driver names LLPC.
     vk_caps.amd_sc = drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && strstr(drv.driverInfo, "shader compiler");
     vk_caps.amd_llpc = drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY && !vk_caps.amd_sc;
     amd_proprietary = drv.driverID == VK_DRIVER_ID_AMD_PROPRIETARY;
@@ -73,17 +54,6 @@ void vk_caps_driver(VkPhysicalDevice p) {
                    drv.driverID == VK_DRIVER_ID_MESA_NVK;
 }
 
-// NX2SARIA_GPL=0 turns graphics pipeline libraries off and 1 turns them on; unset, they are on wherever the driver has
-// fast linking, except on AMD's Windows driver for RDNA 2 and older (vk_caps.amd_sc: RX 400 to RX 6000). On an
-// RX 6700 XT the game ended with code 71 at every enemy killed, from 0.5 on, and no longer with gpl = 0; an RX 5700 XT
-// showed the same ending (issue #418). Where in the driver it faults is not established: a kill draws its effects
-// for the first time, which asks for a burst of new pipelines linked from stage libraries, and building them whole
-// avoids it. The price there: with libraries off a pipeline the game needs for the first time is built whole by a
-// worker while its draw is left out (vk_exec_draw.c, "pipeline still building"), so new things appear some frames
-// late, and the start waits for every recorded pipeline instead of 20 s at most (vk_pipeline.c prewarm_run). The
-// same driver had libraries off before, for device losses at boot (issue #5), whose cause was GPU writes past 3D BC
-// images (vk_exec.c, "3D BC render targets"); it boots with them since that was fixed, so gpl = 1 is there to try on
-// a newer driver. RDNA 4 under RADV is reported to hang the GPU at the title screen with GPL.
 int vk_caps_gpl(const VkPhysicalDeviceGraphicsPipelineLibraryFeaturesEXT *f,
                 const VkPhysicalDeviceGraphicsPipelineLibraryPropertiesEXT *p) {
     gpl_lib = f->graphicsPipelineLibrary;
@@ -147,20 +117,8 @@ void vk_caps_init(VkCtx *c) {
     static const VkShaderStageFlags stage[3] = {VK_SHADER_STAGE_VERTEX_BIT, VK_SHADER_STAGE_FRAGMENT_BIT, VK_SHADER_STAGE_COMPUTE_BIT};
     uint32_t told[3];
     for (int i = 0; i < 3; i++) told[i] = vk_caps.sg_pin_stages & stage[i] ? want : sg.subgroupSize;
-    // Gathers (TLD4) pick their four texels with Maxwell's rounding; AMD and Intel round a coordinate that sits between
-    // two texels the other way, which draws dark lines along object edges in shadow-map filtering (docs/maxwell.md 2.10;
-    // seen on AMD). The translator biases gather coordinates by the host's sub-texel precision; NVIDIA rounds
-    // as Maxwell does. NX2SARIA_GATHER_BIAS=<bits> forces it (0: off).
     uint32_t gather = env_u32("NX2SARIA_GATHER_BIAS", c->props.vendorID == 0x10de ? 0 : l->subTexelPrecisionBits);
-    // A register read before any write is an undefined load in SPIR-V, so function-local variables start at 0
-    // (docs/maxwell.md 3.12). Mesa folds undefined values freely; NVIDIA's compiler gives such a read a value of another
-    // lane of the warp: Ocarina's clustered-light loop reads registers that only some paths write, and on an RTX 5090
-    // the Great Fairy Fountain floor took an extra light term in 4x8-pixel tiles (one 32-lane warp each) and Link went
-    // dark with green speckles. On with every setting: vk_dlaa.c knows the game's FXAA by its zeroed SPIR-V hash too,
-    // and the shader cache keys (which include this) stay the same whether DLSS is on or off, so shaders prepared
-    // with one setting serve the other. NX2SARIA_ZERO_LOCALS=0 turns it off.
     uint32_t zero_locals = env_u32("NX2SARIA_ZERO_LOCALS", 1);
-    // bda: global accesses the translator finds no storage buffer for go through the device address table (vk_gpa.c)
     gfx_shader_set_host(vk_caps.float64, vk_caps.sbuf_align, told, gather, zero_locals != 0, vk_gpa_wanted_ctx(c));
     if (gather) rt_log("vk caps: gather coordinates biased for %u sub-texel bits (NX2SARIA_GATHER_BIAS)", gather);
 
@@ -171,7 +129,7 @@ void vk_caps_init(VkCtx *c) {
     snprintf(gpu.name, sizeof gpu.name, "%s", c->props.deviceName);
     snprintf(gpu.driver, sizeof gpu.driver, "%s %s", drv.driverName, dv);
     gpu.vendor = c->props.vendorID, gpu.device = c->props.deviceID;
-    for (uint32_t h = 0; h < c->mem_props.memoryHeapCount; h++)   // the largest device-local heap: the card's own memory
+    for (uint32_t h = 0; h < c->mem_props.memoryHeapCount; h++)
         if (c->mem_props.memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT && c->mem_props.memoryHeaps[h].size >> 20 > gpu.vram_mb)
             gpu.vram_mb = c->mem_props.memoryHeaps[h].size >> 20;
     __atomic_store_n(&gpu_known, 1, __ATOMIC_RELEASE);

@@ -1,23 +1,3 @@
-// Uniform blocks as of the submit call. NVN starts the GPU when nvnQueueSubmitCommands returns and the GPU reads the
-// constants soon after; here the replay records for several milliseconds, and the GPU reads a pool's bytes when it
-// runs the part that uses them (the VRAM mirror's sync copies run then, vk_memory.c "VRAM mirror"). Meanwhile the game,
-// having handed the frame over, rewrites per-object uniform blocks on other threads with no fence: late draws read
-// another object's matrix (phantom rocks, a flat far field; NX2Saria 1.2.1's producer f_70008c6460, 14-24 ms after the
-// submit). So at the start of a submission's recording every uniform range it binds is copied into an arena of its own,
-// and the uniform bindings of the replay use the copy.
-// - Only ranges of imported pools (memory the CPU writes) are copied, aligned out to 256 bytes (the largest
-//   minUniformBufferOffsetAlignment) and at most 64 KiB from the bound address, overlapping ones merged.
-// - A range the GPU wrote in a submission that has not completed is left out: its bytes reach guest memory only with
-//   that submission's write-back, the mirror holds them until then.
-// - A GPU write within the submission (UpdateUniformBuffer, a storage buffer a shader writes, a buffer copy or fill,
-//   an image-to-buffer copy: vk_usnap_drop) drops the copies it touches from then on, so later draws read the result.
-// - The arena goes back to a free list once the submission's fence is done (completion thread).
-// The copy is taken at the submit call: where vk_exec_record starts when the replay runs on the submitting thread, and
-// by the submitting thread itself with NX2SARIA_REPLAY_ASYNC (vk_usnap_take), where the record starts up to a frame
-// later on the replay thread. Taken only there, it held whatever the game had put into those bytes by then: in a
-// graveyard the block of the shadow pass came out with another block's values in the frame its allocator moved on to
-// the next stretch of memory, about every 364 frames, and that frame's sunlight was all in shadow (a dark frame with
-// the interface intact). NX2SARIA_UBO_SNAPSHOT=0 binds live memory as before; =ab alternates (NX2SARIA_AB).
 #include <stdlib.h>
 #include <string.h>
 
@@ -38,49 +18,41 @@ typedef struct Arena {
     VkBuffer buf;
     VmaAllocation alloc;
     uint8_t *map;
-    uint8_t *cpu;    // with DLSS (vk_dlaa_available) or frame generation alone (vk_dlaa_fg_only), the same bytes in host memory for the CPU's reads (vk_usnap_bytes):
-                     // map is often device memory through the BAR, written fast but read back at about a microsecond a
-                     // cache line. Without DLSS nothing reads them back, and the bytes go into map in one copy.
+    uint8_t *cpu;
     uint64_t size;
 } Arena;
 
 typedef struct { uint64_t lo, hi; } Rng;
-// dropped: 0, 1 (a GPU write in flight: dropped for every lookup), or the earliest place in the stream
-// (vk_exec_stream_pos) of a drop that ran; pos: the write's place in the stream
 typedef struct { uint64_t lo, hi, off, dropped; } Reg;
 typedef struct { uint64_t lo, hi, fence, pos; } Wrote;
 
 static struct {
-    int mode;                   // rt_knob: 0 off, 1 on, 2 ab
-    int on;                     // this submission has a snapshot
+    int mode;
+    int on;
     uint64_t fence, gen;
     Arena *arena;
     MotionOwnerSnapshot *owners;
-    Rng *col;                   // collected ranges
+    Rng *col;
     int ncol, ccol;
-    Reg *reg;                   // merged, sorted by lo, disjoint
+    Reg *reg;
     int nreg, creg;
-    Wrote *wr;                  // GPU writes of submissions not known to be complete
+    Wrote *wr;
     int nwr, cwr;
-    // since the last summary
     uint64_t subs, regions, bytes, copy_ns, hits, drops, inflight, refused, off_subs;
-    uint64_t chunk_drops;       // so far: GPU writes recorded by replay chunks that dropped copied ranges
+    uint64_t chunk_drops;
 } U;
 
 static Arena *free_arenas;
 static PlatMutex free_lock = PLAT_MUTEX_INIT;
-// U.col, sort_col's buffer and collect's neighbour cache: the submitting thread (vk_usnap_take) and the replay thread
-// (vk_usnap_begin, for a submission nothing was taken for) both collect.
 static PlatMutex gather_lock = PLAT_MUTEX_INIT;
 
-// A copy taken at the submit call for the replay thread (vk_usnap_take), in submission order.
 typedef struct Taken {
     struct Taken *next;
     MotionOwnerSnapshot *owners;
     Arena *arena;
     Reg *reg;
     int nreg, n;
-    uint64_t first, total, refused, ns;   // first, n: the submission's first handle and handle count
+    uint64_t first, total, refused, ns;
 } Taken;
 static Taken *tq_head, *tq_tail;
 static PlatMutex tq_lock = PLAT_MUTEX_INIT;
@@ -107,9 +79,7 @@ static Arena *arena_get(uint64_t need) {
     if (!a) rt_fatal("vk_usnap: out of memory");
     a->size = need < ARENA_MIN ? ARENA_MIN : (need + (1u << 20) - 1) & ~(uint64_t)((1u << 20) - 1);
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = a->size,
-                             // transfer source: DLAA copies the camera block out (vk_dlaa.c mv_pass)
                              .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
-    // Device-local through the BAR when the device has it (the GPU reads constants on every draw), else host memory.
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE,
                                   .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT |
                                            VMA_ALLOCATION_CREATE_MAPPED_BIT};
@@ -126,7 +96,7 @@ static Arena *arena_get(uint64_t need) {
     return a;
 }
 
-static void arena_done(void *arg) {   // completion thread: the GPU has read it
+static void arena_done(void *arg) {
     Arena *a = arg;
     plat_mutex_lock(&free_lock);
     a->next = free_arenas, free_arenas = a;
@@ -148,11 +118,7 @@ static void collect(const op_hdr *h, int depth) {
             const p_bind_buf *b = a;
             if (b->addr && b->size) {
                 uint64_t n = b->size < MAX_RANGE ? b->size : MAX_RANGE;
-                // the vertex stage's object and bone blocks: also the game's other copy on either side, which still
-                // holds last frame's (vk_mvprev.c)
                 uint64_t step = vk_mvprev_step(b->stage, b->index, b->size);
-                // which neighbours lie in an imported pool, per block and vk_mem_gen: the same blocks are bound by
-                // many draws, and two resolves for each binding were a quarter of the snapshot's time
                 static struct { uint64_t addr, size, gen; int ok; } nc[1024];
                 uint32_t ci = (uint32_t)((b->addr ^ n << 48) * 0x9E3779B97F4A7C15ull >> 54);
                 uint64_t gen = vk_mem_gen();
@@ -160,8 +126,6 @@ static void collect(const op_hdr *h, int depth) {
                 for (int k = step ? -1 : 0; k <= (step ? 1 : 0); k++) {
                     uint64_t at = b->addr + (uint64_t)((int64_t)k * (int64_t)step);
                     if (k < 0 && b->addr < step) continue;
-                    // a neighbour past its pool would make the whole merged region fail the pool check below, and
-                    // the bindings in it read live memory again
                     VkMemSpan sp;
                     uint64_t lo = at & ~(uint64_t)(ALIGN - 1);
                     if (k && known) {
@@ -191,9 +155,6 @@ static int wr_by_lo(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-// Sorts the collected ranges by lo. A town frame binds about 10,000 uniform ranges and qsort took half a millisecond
-// of the copy's 0.96 ms on the game thread, so they go through an LSD radix sort on (lo - lowest) / ALIGN, three
-// passes of 11 bits; qsort is left for a span that does not fit in 33 bits (2 TiB).
 #define RADIX_BITS 11
 static void sort_col(void) {
     static Rng *tmp;
@@ -226,11 +187,9 @@ static void sort_col(void) {
         Rng *t = src;
         src = dst, dst = t;
     }
-    if (src != U.col) memcpy(U.col, src, (size_t)n * sizeof *src);   // three passes end in tmp
+    if (src != U.col) memcpy(U.col, src, (size_t)n * sizeof *src);
 }
 
-// Keeps the GPU writes of submissions that are not done, merged into disjoint ranges sorted by lo (the terrain rewrites
-// one block before every draw: hundreds of equal entries), each with the newest fence among its parts.
 static void wr_prune(void) {
     uint64_t done = vk_sync_fence_done();
     int n = 0;
@@ -248,7 +207,7 @@ static void wr_prune(void) {
     }
     U.nwr = m;
 }
-static int wr_hits(uint64_t lo, uint64_t hi) {   // wr_prune ran: disjoint, sorted
+static int wr_hits(uint64_t lo, uint64_t hi) {
     int a = 0, b = U.nwr;
     while (a < b) {
         int k = (a + b) / 2;
@@ -263,7 +222,7 @@ static void summary(void) {
     rt_log("vk_usnap: GPU writes recorded by replay chunks that dropped copied uniform ranges: %llu so far",
            (unsigned long long)__atomic_load_n(&U.chunk_drops, __ATOMIC_RELAXED));
     double s = U.subs ? (double)U.subs : 1.0;
-    char clears[512];   // among the GPU writes: the small buffer clears and the counter records they covered
+    char clears[512];
     vk_exec_clear_stats(clears, sizeof clears);
     uint64_t hits = __atomic_exchange_n(&U.hits, 0, __ATOMIC_RELAXED);
     rt_log("vk_usnap: %llu submissions with a snapshot, %llu without; per submission %.0f ranges, %.1f KiB copied in "
@@ -276,8 +235,6 @@ static void summary(void) {
 
 void vk_usnap_hits_add(uint64_t n) { __atomic_add_fetch(&U.hits, n, __ATOMIC_RELAXED); }
 
-// copy_regions's work, sliced for the replay workers (vk_exec_par): regions of the game's memory into the arena, then
-// the host copy into the device copy in COPY_SLICE pieces.
 #define COPY_SLICE (64u << 10)
 typedef struct { uint8_t *dst, *map; const Reg *reg; uint64_t total; } CopyJob;
 static void copy_some(void *arg, int lo, int hi) {
@@ -292,34 +249,25 @@ static void copy_down(void *arg, int lo, int hi) {
     memcpy(j->map + a, j->dst + a, b - a);
 }
 
-// The bytes of regions reg[0..nreg) (total bytes in all) into a's device copy, through its host copy with DLSS. With
-// par (the replay thread at a submission's start), split over the replay workers: about 700 regions and 0.7 MiB in
-// Hyrule Field, half a millisecond of the submitting thread's time on one thread.
 static void copy_regions(Arena *a, const Reg *reg, int nreg, uint64_t total, int par) {
     uint8_t *dst = a->map;
-    if (vk_dlaa_available() || vk_dlaa_fg_only()) {   // the motion pass reads the camera (vk_dlaa.c mv_pass)
+    if (vk_dlaa_available() || vk_dlaa_fg_only()) {
         if (!a->cpu && !(a->cpu = malloc(a->size))) rt_fatal("vk_usnap: out of memory");
         dst = a->cpu;
     }
     CopyJob j = {dst, a->map, reg, total};
     if (par) vk_exec_par(copy_some, &j, nreg, 48);
     else copy_some(&j, 0, nreg);
-    if (dst != a->map) {   // sequential writes into the device copy
+    if (dst != a->map) {
         int slices = (int)((total + COPY_SLICE - 1) / COPY_SLICE);
         if (par) vk_exec_par(copy_down, &j, slices, 2);
         else copy_down(&j, 0, slices);
     }
-    vmaFlushAllocation(vk_ctx()->vma, a->alloc, 0, total);   // a no-op on coherent memory
+    vmaFlushAllocation(vk_ctx()->vma, a->alloc, 0, total);
 }
 
-// The player's model ownership goes with a submission only for the motion vectors the upscaler or frame generation reads
-// (vk_exec_draw.c mvobj_draw): without either, nothing reads it, and the walk of the player's actor and models in guest
-// memory at every submission is left out.
 static int owners_wanted(void) { return motion_owner_enabled() && (vk_dlaa_available() || vk_dlaa_fg_only()); }
 
-// NX2SARIA_REPLAY_ASYNC, the submitting thread before the submission is queued for the replay: the uniform ranges it
-// binds are copied now, while they hold what the game submitted. vk_usnap_begin takes the copy over when the replay
-// reaches the submission, and leaves out there what GPU writes in flight touch (the replay knows them only then).
 void vk_usnap_take(const uint64_t *handles, int n) {
     if (!U.mode) U.mode = rt_knob("UBO_SNAPSHOT", "1") + 1;
     if (n <= 0 || !RT_KNOB_ON(U.mode - 1)) return;
@@ -337,7 +285,7 @@ void vk_usnap_take(const uint64_t *handles, int n) {
     for (int i = 0; i < n; i++)
         if (handles[i]) collect(nvn_op_first(handles[i]), 0);
     sort_col();
-    for (int i = 0; i < U.ncol;) {   // merged, keeping what lies wholly in one imported pool
+    for (int i = 0; i < U.ncol;) {
         uint64_t lo = U.col[i].lo, hi = U.col[i].hi;
         for (i++; i < U.ncol && U.col[i].lo <= hi; i++)
             if (U.col[i].hi > hi) hi = U.col[i].hi;
@@ -368,11 +316,9 @@ static void taken_free(Taken *t) {
     free(t);
 }
 
-// The copy vk_usnap_take made for this submission becomes the replay's. 0: none was taken.
 static int adopt(const uint64_t *handles, int n) {
     plat_mutex_lock(&tq_lock);
     Taken *t = tq_head;
-    // in submission order: an entry ahead of this submission's belongs to one that never reached the replay
     while (t && (t->n != n || t->first != (n > 0 ? handles[0] : 0))) {
         tq_head = t->next;
         taken_free(t);
@@ -388,7 +334,7 @@ static int adopt(const uint64_t *handles, int n) {
         while (U.creg < t->nreg) U.reg = grow(U.reg, &U.creg, sizeof *U.reg);
         memcpy(U.reg, t->reg, (size_t)t->nreg * sizeof *U.reg);
         U.nreg = t->nreg;
-        for (int i = 0; i < U.nreg; i++)   // a GPU write in flight: the mirror holds those bytes, not guest memory
+        for (int i = 0; i < U.nreg; i++)
             if (wr_hits(U.reg[i].lo, U.reg[i].hi)) __atomic_store_n(&U.reg[i].dropped, 1, __ATOMIC_RELAXED), U.inflight++;
         U.arena = t->arena, t->arena = NULL;
         U.on = 1;
@@ -400,7 +346,7 @@ static int adopt(const uint64_t *handles, int n) {
 }
 
 void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
-    if (!U.mode) U.mode = rt_knob("UBO_SNAPSHOT", "1") + 1;   // stored +1: 0 is "not read yet"
+    if (!U.mode) U.mode = rt_knob("UBO_SNAPSHOT", "1") + 1;
     static int said;
     if (!said && RT_KNOB_ON(U.mode - 1)) {
         said = 1;
@@ -413,11 +359,10 @@ void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
     summary();
     if (!RT_KNOB_ON(U.mode - 1)) {
         U.off_subs++;
-        wr_prune();   // vk_usnap_drop goes on listing the GPU's writes with snapshots off: without this the list only grew
+        wr_prune();
         return;
     }
     if (adopt(handles, n)) return;
-    // Without a producer snapshot, asynchronous replay must not read present-day actor ownership.
     if (!gfx_replay_async() && owners_wanted()) {
         U.owners = malloc(sizeof *U.owners);
         if (U.owners) motion_owner_capture(U.owners);
@@ -429,7 +374,6 @@ void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
         if (handles[i]) collect(nvn_op_first(handles[i]), 0);
     sort_col();
     wr_prune();
-    // merge, keeping only what lies wholly in one imported pool and no GPU write in flight touches
     U.nreg = 0;
     uint64_t total = 0;
     for (int i = 0; i < U.ncol;) {
@@ -453,7 +397,7 @@ void vk_usnap_begin(const uint64_t *handles, int n, uint64_t fence) {
     plat_mutex_unlock(&gather_lock);
     if (!U.nreg) return;
     if (!(U.arena = arena_get(total))) return;
-    copy_regions(U.arena, U.reg, U.nreg, total, 1);   // the replay thread at the submission's start
+    copy_regions(U.arena, U.reg, U.nreg, total, 1);
     U.on = 1;
     U.subs++, U.regions += (uint64_t)U.nreg, U.bytes += total, U.copy_ns += kern_now_ns() - t0;
 }
@@ -465,7 +409,6 @@ void vk_usnap_end(uint64_t fence) {
     __atomic_add_fetch(&U.gen, 1, __ATOMIC_RELEASE);
 }
 
-// First region whose end is above a.
 static int first_above(uint64_t a) {
     int lo = 0, hi = U.nreg;
     while (lo < hi) {
@@ -478,9 +421,7 @@ static int first_above(uint64_t a) {
 
 int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferInfo *out) {
     if (!U.on || !n) return 0;
-    // Consecutive bindings mostly name the region the last one did: that one is tried before the binary search. The
-    // regions are sorted and disjoint, so the region that holds addr is the one first_above finds.
-    static _Thread_local int hint;   // per thread: the replay workers look up at once
+    static _Thread_local int hint;
     int i = hint;
     if (i >= U.nreg || addr < U.reg[i].lo || addr >= U.reg[i].hi) i = first_above(addr);
     if (i >= U.nreg) return 0;
@@ -495,16 +436,8 @@ int vk_usnap_find(uint64_t addr, uint64_t n, uint64_t align, VkDescriptorBufferI
     return 1;
 }
 
-static PlatMutex drop_lock = PLAT_MUTEX_INIT;   // the replay workers' shaders write storage at once
+static PlatMutex drop_lock = PLAT_MUTEX_INIT;
 
-// The replay workers (vk_exec.c) record the chunks of a group at once, and with NX2SARIA_REPLAY_PIPE the submitting
-// thread goes on past the group meanwhile. A drop holds from its place in the stream on (vk_exec_stream_pos): a lookup
-// sees the drops of the ops before it and not those of the chunks after it, in its group or later ones; the earliest
-// place is kept. A drop an earlier chunk has not run yet when a later chunk looks the range up is not seen, and the
-// later draw reads the copy instead of the earlier one's result: the chunks' drops into copied ranges are counted
-// (vk_usnap: lines) so that a scene where that can happen shows in the log. None did in Kokiri Forest, Hyrule Field
-// or Kakariko Village (2026-11-20): every drop into a copied range came from the submitting thread, which a group's
-// chunks never run beside in the stream (tests/usnap_order_check.c forces both orders).
 void vk_usnap_drop(uint64_t addr, uint64_t n) {
     if (!U.mode || !n) return;
     uint64_t pos = vk_exec_stream_pos();
@@ -535,8 +468,6 @@ void vk_usnap_drop(uint64_t addr, uint64_t n) {
 
 uint64_t vk_usnap_gen(void) { return __atomic_load_n(&U.gen, __ATOMIC_ACQUIRE); }
 
-// A GPU write of a submission not known to be complete touches [lo, hi). A linear scan: vk_usnap_drop appends after
-// wr_prune sorted the list, so wr_hits's binary search does not hold here; only called on rare paths.
 static int wr_overlaps(uint64_t lo, uint64_t hi) {
     uint64_t pos = vk_exec_stream_pos();
     for (int i = 0; i < U.nwr; i++)
@@ -544,7 +475,7 @@ static int wr_overlaps(uint64_t lo, uint64_t hi) {
     return 0;
 }
 
-static int cpu_written(uint64_t addr, uint64_t n) {   // the same test vk_usnap_begin keeps regions by
+static int cpu_written(uint64_t addr, uint64_t n) {
     VkMemSpan sp;
     return vk_mem_lookup(addr, n, &sp) && !sp.alloc && sp.pool && sp.avail >= n &&
            (sp.cls == VK_MCLS_HOST_CACHED || sp.cls == VK_MCLS_HOST_UNC);
@@ -554,7 +485,7 @@ int vk_usnap_read(uint64_t addr, uint64_t n, void *dst) {
     const uint8_t *s = vk_usnap_bytes(addr, n);
     if (s) return memcpy(dst, s, n), 1;
     if (!n || !cpu_written(addr, n)) return 0;
-    int lk = vk_exec_shared();   // a chunk's drop may grow the list
+    int lk = vk_exec_shared();
     if (lk) plat_mutex_lock(&drop_lock);
     int w = wr_overlaps(addr, addr + n);
     if (lk) plat_mutex_unlock(&drop_lock);
@@ -578,7 +509,6 @@ int vk_usnap_why(uint64_t addr, uint64_t n) {
     return VK_USNAP_NOT_BOUND;
 }
 
-// the host copy where there is one (DLSS), else the device copy
 static uint8_t *host_copy(void) { return U.arena->cpu ? U.arena->cpu : U.arena->map; }
 
 const uint8_t *vk_usnap_map(void) { return U.arena ? host_copy() : NULL; }
@@ -588,7 +518,6 @@ const uint8_t *vk_usnap_bytes(uint64_t addr, uint64_t n) {
     return vk_usnap_find(addr, n, 1, &bi) ? host_copy() + bi.offset : NULL;
 }
 
-// The arenas back on the free list (vk_exec_draw_shutdown: the device is idle, every completion ran).
 void vk_usnap_shutdown(void) {
     free(U.owners), U.owners = NULL;
     plat_mutex_lock(&free_lock);
@@ -597,8 +526,6 @@ void vk_usnap_shutdown(void) {
     plat_mutex_unlock(&free_lock);
 }
 
-// NX2SARIA_TRACE=perf "mem: sizes" (perf.c): the free uniform snapshot arenas (the free list is never trimmed) and the
-// GPU-write list (the replay thread's; read without a lock, a line may be one write behind).
 void vk_usnap_sizes(PerfSizes *s) {
     uint64_t n = 0, b = 0;
     plat_mutex_lock(&free_lock);
@@ -608,12 +535,9 @@ void vk_usnap_sizes(PerfSizes *s) {
     perf_size(s, "uniform snapshot GPU writes", (uint64_t)__atomic_load_n(&U.nwr, __ATOMIC_RELAXED), 0, PERF_SIZE_NONE);
 }
 
-// Ownership travels with the uniform snapshot. A missing, GPU-written, or overlapping range is not a match.
 int vk_usnap_motion_owner(uint64_t address, uint64_t size, MotionOwner *out) {
     if (!U.on || !U.owners || !size || address > UINT64_MAX - size ||
         vk_usnap_why(address, size) != VK_USNAP_FOUND) return 0;
-    // The producer excludes overlapping identities and sorts the remaining disjoint ranges once.
-    // Most scene draws are unowned, so do not scan every player binding for each one.
     unsigned lo = 0, hi = U.owners->count;
     while (lo < hi) {
         unsigned mid = lo + (hi - lo) / 2;

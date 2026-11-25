@@ -1,6 +1,4 @@
-// Vulkan instance, physical device choice, logical device, VMA, timeline semaphore and the validation messenger.
 // Contains code Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-// The VMA implementation is runtime/vk_vma.cpp (VMA is C++ only).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,20 +27,17 @@
 #include "vk_mesh_path.h"
 #include "vk_mesh_fb.h"
 
-// The loader's vkGetDeviceProcAddr until Streamline is on the device (see vk.h).
 PFN_vkGetDeviceProcAddr vk_dpa = vkGetDeviceProcAddr;
 
-static uint32_t g_gfx_queues = 1;   // queues the graphics family offers (pick_device)
+static uint32_t g_gfx_queues = 1;
 #define QFAM_MAX 16
-static uint32_t g_nqfam;                  // the device's queue families (pick_device): their flags and queue counts
+static uint32_t g_nqfam;
 static VkQueueFlags g_qfam_flags[QFAM_MAX];
 static uint32_t g_qfam_count[QFAM_MAX];
 
 static VkCtx g_vk;
 static int g_ready;
 static PlatMutex g_lock = PLAT_MUTEX_INIT;
-// The fence vk_device_lost_poll asks about. Nothing submits with it, so its status is "not ready" for as long as the
-// device lives.
 static VkFence lost_fence;
 static PlatMutex lost_fence_lock = PLAT_MUTEX_INIT;
 
@@ -83,12 +78,6 @@ static int instance_ext_present(const char *name) {
     return found;
 }
 
-// Mesa's drivers (RADV on Linux and the Steam Deck) keep a shader cache of their own beside our pipeline cache, by
-// default in ~/.cache and up to 1 GB: about 35 MB in a minute of the title screen. A Deck's /home is small and the game
-// usually sits on the SD card, so unless MESA_SHADER_CACHE_DIR names a folder, it goes to mesa-cache beside the exe.
-// That folder is ours alone, so its limit is raised to MESA_CACHE_SIZE unless MESA_SHADER_CACHE_MAX_SIZE is set: the
-// stage libraries the library warm builds in play live only in the driver's cache (vk_pipeline.c, "the play cache"),
-// and a preparation of every shader variant does not fit in 1 GB, so the rest would be compiled again in play.
 #define MESA_CACHE_SIZE "8G"
 static void mesa_cache_beside_exe(void) {
     char dir[PLAT_PATH_MAX * 2], size[32];
@@ -101,22 +90,6 @@ static void mesa_cache_beside_exe(void) {
     if (!plat_getenv("MESA_SHADER_CACHE_MAX_SIZE", size, sizeof size)) plat_setenv("MESA_SHADER_CACHE_MAX_SIZE", MESA_CACHE_SIZE);
 }
 
-// NVIDIA's driver keeps the pipelines it compiles in a disk cache of its own, by default one folder shared with every
-// program (Linux ~/.cache/nvidia, Windows %LOCALAPPDATA%\NVIDIA\GLCache). On Linux one process adds at most
-// __GL_SHADER_DISK_CACHE_SIZE to it (1 GiB unless set), and a start that finds more than that in several files deletes
-// the later ones. nx2saria.exe --prepare-shaders builds the 42,142 variants of game 1.1.1 into it in one process: with
-// the default limit it stored about 30,700 of them and the rest were compiled again by the first start after it. On
-// Windows the same preparation stored them all, and a laptop's updates found the cache cold, 17 to 33% of the list
-// still in it, with 1.6 GB in its folder (launcher.log, 2026-11-21): the driver's own folder gives the game no way to
-// know who else opens it or with what limit. So unless the environment sets them, the cache goes to nvidia-cache
-// beside the exe (nvidia_cache.h), which nothing else writes, with a limit of 8 GiB, and on Windows with the cleanup
-// off. The driver makes GLCache inside that folder but not the folder, so it is made here; pointed at a folder that is
-// missing or not writable it caches nothing at all, so when that folder cannot be made or written no variable is set
-// and the driver keeps its own folder and limit. Without NVIDIA's driver (Linux: no /proc/driver/nvidia/version, the
-// test the AppImage's build makes for DLSS; Windows: no nvapi64.dll in System32) the variables do nothing and the
-// folder would stay empty, so nothing is done. nvidia_cache_dir = 0 leaves all of it to the driver. Every call of
-// vk_driver_cache_env happens before a driver can load, in the game, the preparations and the probes alike, so a
-// start from the launcher, from Steam or from the exe itself sets the same.
 #if defined(_WIN32) || defined(__linux__)
 static int nvidia_driver_present(void) {
 #ifdef _WIN32
@@ -129,14 +102,11 @@ static int nvidia_driver_present(void) {
 #endif
 }
 
-// 0 when dir takes a new file, else the system's error code. Linux asks the access rights, as it always has; Windows
-// makes and deletes a file named after the process, since a directory's attributes say nothing of the rights on it and
-// the launcher's preparation and a game may start together.
 static int folder_error(const char *dir) {
 #ifdef _WIN32
     char probe[PLAT_PATH_MAX * 2 + 32];
-    snprintf(probe, sizeof probe, "%s\\.write-test-%u", dir, (unsigned)plat_process_id());   // another start may be here too
-    plat_fs_unlink(probe);   // one an earlier start with this process id left
+    snprintf(probe, sizeof probe, "%s\\.write-test-%u", dir, (unsigned)plat_process_id());
+    plat_fs_unlink(probe);
     PlatFile *f = plat_fs_create(probe, NULL);
     if (!f) return plat_fs_os_error() ? plat_fs_os_error() : 1;
     plat_file_close(f);
@@ -155,7 +125,6 @@ static void nvidia_cache_beside_exe(void) {
 #else
     const int windows = 0;
 #endif
-    // A restart inherits what this game set; those variables are the game's, not the player's (nvidia_cache.h).
     int ours = plat_getenv(NVC_MARK_VAR, mark, sizeof mark) ? nvc_mark_parse(mark) : 0;
     NvcIn in = {.windows = windows, .enabled = cfg_bool("NX2SARIA_NVIDIA_CACHE_DIR"), .driver = nvidia_driver_present()};
     in.path_set = plat_getenv(NVC_PATH_VAR, dir, sizeof dir) != 0 && !(ours & NVC_SET_PATH);
@@ -179,7 +148,7 @@ static void nvidia_cache_beside_exe(void) {
         }
     }
     NvcPlan plan = nvc_plan(&in);
-    int stale = nvc_stale(&plan, ours);   // set by this game before a restart and not wanted now
+    int stale = nvc_stale(&plan, ours);
     if (stale & NVC_SET_PATH) plat_setenv(NVC_PATH_VAR, NULL);
     if (stale & NVC_SET_SIZE) plat_setenv(NVC_SIZE_VAR, NULL);
     if (stale & NVC_SET_SKIP) plat_setenv(NVC_SKIP_VAR, NULL);
@@ -195,7 +164,7 @@ static void nvidia_cache_beside_exe(void) {
         return;
     }
     if (plan.verdict != NVC_USE) return;
-    int refused = 0;   // the variables the environment did not take
+    int refused = 0;
     if ((plan.set & NVC_SET_PATH) && !plat_setenv(NVC_PATH_VAR, dir)) refused |= NVC_SET_PATH;
     if (plan.set & NVC_SET_SIZE) {
         if (!plat_setenv(NVC_SIZE_VAR, NVC_SIZE_VALUE)) refused |= NVC_SET_SIZE;
@@ -206,7 +175,7 @@ static void nvidia_cache_beside_exe(void) {
         snprintf(skip, sizeof skip, "%s", NVC_SKIP_VALUE);
     }
     nvc_mark_text(plan.set & ~refused, mark, sizeof mark);
-    if (plan.set & ~refused) plat_setenv(NVC_MARK_VAR, mark);   // a restart will know these are the game's
+    if (plan.set & ~refused) plat_setenv(NVC_MARK_VAR, mark);
     if (refused) {
         nvc_refused_line(line, sizeof line, refused);
         rt_log("%s", line);
@@ -217,15 +186,7 @@ static void nvidia_cache_beside_exe(void) {
 }
 #endif
 
-// Mesa's Vulkan drivers on Linux (RADV, ANV, NVK) keep timeline semaphores as kernel sync objects, which cannot wait
-// for a value not submitted yet. Their queues therefore submit on the calling thread and use a thread of the queue's
-// own only for a submission that waits on such a value. Every other vkQueueSubmit2, the command stream's checks and
-// the kernel's ioctl, runs on the replaying thread, once for every part the replay hands to the queue early (vk_exec.c
-// maybe_split). MESA_VK_ENABLE_SUBMIT_THREAD=1 sends every submission to the queue's thread: in Kokiri Forest on an
-// RX 6800 XT (Mesa 26.2) the replay took 13.9 ms a frame with it and 15.0 ms without. NX2SARIA_SUBMIT_THREAD (default
-// 1 on Linux, 0 on Windows) sets it unless the environment already sets it; 0 leaves the driver's own choice. Drivers
-// that do not read the variable ignore it. vk_driver_cache_env calls this before any thread can load the driver.
-static const char *submit_thread_why;   // create_device logs it on a Mesa driver
+static const char *submit_thread_why;
 
 static void mesa_submit_thread(void) {
     char cur[16];
@@ -241,14 +202,6 @@ static void mesa_submit_thread(void) {
     submit_thread_why = "every one on the queue's own thread (NX2SARIA_SUBMIT_THREAD=0 leaves the driver's own choice)";
 }
 
-// A driver may read these variables when it loads, and a thread can load the Vulkan driver before create_instance:
-// widescreen.c's wide_init asks for the monitor's size (fullscreen with a monitor chosen and the picture at the
-// window's size), and SDL's load of the Vulkan library there lists the instance extensions, which loads the drivers,
-// while the prewarm thread may be in create_instance; setenv beside other threads' getenv is not safe either. The
-// quality preset's probe (hw_detect.c hw_detect, from cfg_start inside mem_init) therefore calls this first in a game
-// run, main calls it again for a game run whose probe did not run, before any thread of the game starts, and
-// create_instance calls it for the other modes. Every call happens before other threads exist or under vk_init's lock,
-// so the flag needs no atomics.
 void vk_driver_cache_env(void) {
     static int done;
     if (done) return;
@@ -262,7 +215,7 @@ void vk_driver_cache_env(void) {
 
 static int create_instance(void) {
     vk_driver_cache_env();
-    vk_dlssg_early();   // DLSS Frame Generation: Streamline before any Vulkan call of the process (its slInit asks so)
+    vk_dlssg_early();
     const char *ext[12];
     uint32_t n_ext = (uint32_t)gfx_window_vk_extensions(ext, 7);
     const char *layers[] = {"VK_LAYER_KHRONOS_validation"};
@@ -271,11 +224,9 @@ static int create_instance(void) {
         rt_log("vk: NX2SARIA_VK_VALIDATION set but %s is not installed; continuing without", layers[0]);
         validate = 0;
     }
-    // DLSS Frame Generation: Streamline's plugins call its naming functions even when they say it is off
     if (validate || (vk_dlssg_wanted() && instance_ext_present(VK_EXT_DEBUG_UTILS_EXTENSION_NAME)))
         ext[n_ext++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
-    // armed, not wanted: the menu switches HDR on during the run (vk_hdr.c), and the extensions are fixed here
-    if (vk_hdr_armed() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))   // HDR10 surface formats
+    if (vk_hdr_armed() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))
         ext[n_ext++] = VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME;
     vk_dlaa_instance_exts(ext, &n_ext, 12);
     VkApplicationInfo app = {.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO, .pApplicationName = "NX2Saria",
@@ -305,7 +256,6 @@ static const char *const k_required_ext[] = {
     VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME, VK_EXT_DEPTH_CLIP_CONTROL_EXTENSION_NAME,
     VK_EXT_EXTERNAL_MEMORY_HOST_EXTENSION_NAME};
 
-// Name of the first missing required extension, or NULL.
 static const char *missing_required(VkPhysicalDevice pd) {
     uint32_t n = 0;
     vkEnumerateDeviceExtensionProperties(pd, NULL, &n, NULL);
@@ -318,7 +268,6 @@ static const char *missing_required(VkPhysicalDevice pd) {
     return miss;
 }
 
-// Graphics+compute family that can present to the window.
 static uint32_t find_gfx_family(VkPhysicalDevice pd, const VkQueueFamilyProperties *qp, uint32_t nq) {
     for (uint32_t i = 0; i < nq; i++)
         if ((qp[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && (qp[i].queueFlags & VK_QUEUE_COMPUTE_BIT) &&
@@ -333,8 +282,6 @@ static int name_has(const char *s, const char *sub) {
     return 0;
 }
 
-// 1 when the game can run on pd: Vulkan 1.3, the required extensions and a graphics+present queue family (the tests
-// pick_device makes of each card it considers).
 static int card_usable(VkPhysicalDevice pd) {
     VkPhysicalDeviceProperties p;
     vkGetPhysicalDeviceProperties(pd, &p);
@@ -348,50 +295,34 @@ static int card_usable(VkPhysicalDevice pd) {
     return fam != UINT32_MAX;
 }
 
-// gpu_choice.h has no Vulkan header: its GPUC_* kinds are VkPhysicalDeviceType's values, which pick_device, the preset's probe
-// (hw_detect.c) and the menu's row (ui/menu.cpp) copy into GpucCard.type unchanged
 _Static_assert(GPUC_OTHER == VK_PHYSICAL_DEVICE_TYPE_OTHER && GPUC_INTEGRATED == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU &&
                    GPUC_DISCRETE == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU && GPUC_VIRTUAL == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU &&
                    GPUC_CPU == VK_PHYSICAL_DEVICE_TYPE_CPU,
                "gpu_choice.h GPUC_* are VkPhysicalDeviceType's values");
 
-// The fatal error's note on how the card was chosen (gpu_choice.h gpuc_choice_line), empty when it was not or the choice
-// gives no cause to say so. Written once, by pick_device, before the game runs.
 static char g_gpu_choice_note[200];
 
-// The card the device was made on and how it was chosen (gpu_choice.h gpuc_prepare_line), for the lines the preparation
-// modes print (vk_pipeline.c): the preparation builds the driver's cache of this card, and the launcher's log is where a
-// player's report of a slow update is read. Written once, by pick_device, before anything reads it.
 static char g_prepare_text[1024];
 
 const char *vk_card_prepare_text(void) { return g_prepare_text; }
 
 int vk_card_usable(VkPhysicalDevice pd) { return card_usable(pd); }
 
-// Which of the discrete cards the game can use (gpu_choice.h GpucCard.usable), before the choice that needs it.
 static void cards_usable(const VkPhysicalDevice *pd, GpucCard *cards, uint32_t n) {
     for (uint32_t i = 0; i < n; i++) cards[i].usable = cards[i].type == GPUC_DISCRETE && card_usable(pd[i]);
 }
 
-// First discrete GPU with Vulkan 1.3, the required extensions and a graphics+present queue (of one GPU listed by two
-// drivers, the newer driver's listing); NX2SARIA_GPU_INDEX (index) or NX2SARIA_GPU_NAME (case-insensitive part of the
-// name) overrides. The order the cards are listed in changes (gpu_choice.h): with both set, a gpu_index that lists a card
-// without the name is dropped and the name decides; a gpu_index alone that lists a card that is not a discrete one while
-// a discrete one the game can use is listed counts as Auto. The shader preparation modes get their device here too, from
-// the same settings, so they build the cache of the card the game takes.
 static int pick_device(void) {
     uint32_t n = 0;
     vk_dlssg_enumerate(g_vk.instance, &n, NULL);
     if (!n) { rt_log("vk: no Vulkan device"); return 0; }
     VkPhysicalDevice *pd = calloc(n, sizeof *pd);
     vk_dlssg_enumerate(g_vk.instance, &n, pd);
-    const char *e = cfg_get("NX2SARIA_GPU_INDEX");   // no fixed default: the best device when unset
+    const char *e = cfg_get("NX2SARIA_GPU_INDEX");
     int want = e && *e ? atoi(e) : -1;
     const char *name = cfg_get("NX2SARIA_GPU_NAME");
     int best = -1, best_score = -1, listed = 0;
-    uint32_t best_driver = 0;   // the driver version of the best one so far
-    // The cards in the order the loader lists them now: the list for the log, and the names that tell whether a gpu_index
-    // still lists the card it was written for
+    uint32_t best_driver = 0;
     GpucCard *cards = calloc(n, sizeof *cards);
     VkPhysicalDeviceProperties *props = calloc(n, sizeof *props);
     for (uint32_t i = 0; i < n; i++) {
@@ -403,15 +334,13 @@ static int pick_device(void) {
         cards[i].type = (int)p->deviceType;
     }
     char line[800];
-    const int asked = want;   // gpu_index as the settings give it: the lines below name it
-    const int from_env = cfg_from_env("NX2SARIA_GPU_INDEX");   // set for this run, on purpose (gpu_choice.h)
+    const int asked = want;
+    const int from_env = cfg_from_env("NX2SARIA_GPU_INDEX");
     int how = name && *name ? GPUC_BY_NAME : want >= 0 ? GPUC_BY_POSITION : GPUC_BY_AUTO;
     int usable_known = 0;
     {
-        // A position alone that lists a card that is not a discrete one gives way to a discrete card the game can use
-        // (gpu_choice.h gpuc_legacy_alt), so which of them the game can use is asked here, and only then
         if (gpuc_legacy_applies(cards, (int)n, want, name, from_env)) cards_usable(pd, cards, n), usable_known = 1;
-        gpuc_setting_line(cards, (int)n, want, name, from_env, line, sizeof line);   // what the settings hold
+        gpuc_setting_line(cards, (int)n, want, name, from_env, line, sizeof line);
         rt_log("%s", line);
         int dropped, give_way;
         want = gpuc_resolve(cards, (int)n, want, name, from_env, &dropped, &give_way);
@@ -431,10 +360,6 @@ retry:
         vkGetPhysicalDeviceProperties(pd[i], &p);
         if (want >= 0 && (int)i != want) continue;
         if (name && *name && !name_has(p.deviceName, name)) continue;
-        // A chosen card of another vendor while DLSS Frame Generation is on: the interposer cannot make its device
-        // (vk_dlssg_create_device), and the settings ask for what only an NVIDIA card runs. Not usable, so the best
-        // usable one is taken below, as for a card that is gone; where no NVIDIA card is usable either, the pass
-        // without a choice takes what there is and the device is made without frame generation.
         if (dlssg_card_skipped(vk_dlssg_interposed(), want >= 0 || (name && *name), p.vendorID)) {
             rt_log("vk: gpu %u skipped: DLSS Frame Generation is on (framegen = dlss), which only an NVIDIA card runs", i);
             continue;
@@ -452,9 +377,6 @@ retry:
         int score = (int)i == want ? 100 : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU ? 3
                   : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? 2 : 1;
         if (score > best_score) { best_score = score; best = (int)i; best_driver = p.driverVersion; continue; }
-        // The same GPU listed again by another installed driver (a laptop with the vendor's processor graphics and its
-        // card has both drivers list the card): the newer driver's listing. The older one, there to serve the processor
-        // graphics, was reported to crash in its shader compiler with the card.
         if (score == best_score && best >= 0) {
             VkPhysicalDeviceProperties b;
             vkGetPhysicalDeviceProperties(pd[best], &b);
@@ -465,8 +387,6 @@ retry:
             }
         }
     }
-    // A chosen GPU that is not usable or no longer there (the menu's GPU row, an unplugged card, a driver that lists the
-    // devices in another order): the best usable one instead, so the game still starts and the choice can be changed
     if (best < 0 && (want >= 0 || (name && *name))) {
         if (want >= 0) rt_log("vk: NX2SARIA_GPU_INDEX=%d is not usable (see above): the best usable gpu instead", want);
         else rt_log("vk: no usable gpu matches NX2SARIA_GPU_NAME=%s (see above): the best usable gpu instead", name);
@@ -478,13 +398,10 @@ retry:
         free(pd), free(cards), free(props);
         return 0;
     }
-    // A card a gpu_index alone chose that is not a discrete one, while a discrete one the game can use is listed: the
-    // game may be on the wrong card (gpu_choice.h). The line follows "using gpu" below, the short form goes to a fatal
-    // error's report.
     int alt = -1;
     g_gpu_choice_note[0] = 0;
     if (cards[best].type != GPUC_DISCRETE && !usable_known) cards_usable(pd, cards, n), usable_known = 1;
-    if (cards[best].type != GPUC_DISCRETE && want >= 0 && !(name && *name))   // a gpu_index alone (gpuc_choice_line)
+    if (cards[best].type != GPUC_DISCRETE && want >= 0 && !(name && *name))
         alt = gpuc_choice_line(cards, (int)n, best, want, name, line, sizeof line, g_gpu_choice_note,
                                sizeof g_gpu_choice_note);
     gpuc_prepare_line(cards, (int)n, best, how, asked, name, g_prepare_text, sizeof g_prepare_text);
@@ -502,7 +419,7 @@ retry:
     g_nqfam = nq < QFAM_MAX ? nq : QFAM_MAX;
     for (uint32_t i = 0; i < g_nqfam; i++) g_qfam_flags[i] = qp[i].queueFlags, g_qfam_count[i] = qp[i].queueCount;
     g_vk.xfer_family = g_vk.gfx_family;
-    for (uint32_t i = 0; i < nq; i++)   // a family that does transfer only (async DMA engine)
+    for (uint32_t i = 0; i < nq; i++)
         if ((qp[i].queueFlags & VK_QUEUE_TRANSFER_BIT) && !(qp[i].queueFlags & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT))) {
             g_vk.xfer_family = i;
             break;
@@ -511,8 +428,8 @@ retry:
     rt_log("vk: using gpu %d: %s", best, g_vk.props.deviceName);
     if (alt >= 0) rt_log("%s", line);
     hw_detect_device_check(g_vk.props.vendorID, g_vk.props.deviceID, g_vk.props.driverVersion, g_vk.props.deviceName);
-    vk_caps_driver(g_vk.phys);   // before vk_mem_class_log, which chooses the pools' storage by driver
-    {   // and by whether the device imports dma-bufs (vk_memory.c "dma-buf imports")
+    vk_caps_driver(g_vk.phys);
+    {
         uint32_t ne = 0;
         vkEnumerateDeviceExtensionProperties(g_vk.phys, NULL, &ne, NULL);
         VkExtensionProperties *ep = calloc(ne ? ne : 1, sizeof *ep);
@@ -524,18 +441,9 @@ retry:
     vk_mem_class_log(&g_vk.props, &g_vk.mem_props);
     return 1;
 }
-// Heap limits for VMA where the GPU has more than one device-local heap. An RX 580 (8 GiB, AMD 23.10) shows a 6 GiB
-// heap and a 2 GiB host-visible one; Windows granted the game 5.1 GiB of the first. VMA, asked for device-local memory,
-// takes the first heap whatever its budget, and a save load put 5.6 GiB there while the second held 69 MiB: the next
-// submit failed with VK_ERROR_OUT_OF_DEVICE_MEMORY. With a limit VMA counts a heap full at it and places what follows in
-// the next memory type that allows it (the other device-local heap first), for every allocation: textures, render
-// targets, VRAM mirrors, pools. The limit is each device-local heap's budget when the device is made (VK_EXT_memory_budget,
-// what other programs leave) less a margin for memory VMA does not see (swapchain, FidelityFX): a tenth, at least
-// 256 MiB. NX2SARIA_VRAM_HEAP_LIMIT: auto, 0 (no limits, the default) or a number of MiB for the largest device-local
-// heap. The low-end GPU mode set auto up to 0.10.1.
 static int vram_heap_limits(VkDeviceSize *limit) {
     const char *e = cfg_get("NX2SARIA_VRAM_HEAP_LIMIT");
-    long mb = !e || !*e ? 0 : strcmp(e, "auto") ? atol(e) : -1;   // unset: no limits
+    long mb = !e || !*e ? 0 : strcmp(e, "auto") ? atol(e) : -1;
     if (!mb) return 0;
     VkPhysicalDeviceMemoryBudgetPropertiesEXT b = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT};
     VkPhysicalDeviceMemoryProperties2 p2 = {.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PROPERTIES_2,
@@ -548,7 +456,7 @@ static int vram_heap_limits(VkDeviceSize *limit) {
         if (mp->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT) {
             if (!nlocal++ || mp->memoryHeaps[h].size > mp->memoryHeaps[largest].size) largest = h;
         }
-    if (mb < 0 && (nlocal < 2 || !g_vk.has_memory_budget)) return 0;   // auto: only where another heap can take the rest
+    if (mb < 0 && (nlocal < 2 || !g_vk.has_memory_budget)) return 0;
     for (uint32_t h = 0; h < VK_MAX_MEMORY_HEAPS; h++) limit[h] = VK_WHOLE_SIZE;
     for (uint32_t h = 0; h < mp->memoryHeapCount && h < VK_MAX_MEMORY_HEAPS; h++) {
         if (!(mp->memoryHeaps[h].flags & VK_MEMORY_HEAP_DEVICE_LOCAL_BIT)) continue;
@@ -560,7 +468,7 @@ static int vram_heap_limits(VkDeviceSize *limit) {
             VkDeviceSize budget = b.heapBudget[h] && b.heapBudget[h] < mp->memoryHeaps[h].size ? b.heapBudget[h]
                                                                                                  : mp->memoryHeaps[h].size;
             VkDeviceSize margin = budget / 10 > (256ull << 20) ? budget / 10 : (256ull << 20);
-            if (budget <= margin * 2) continue;   // too small to limit
+            if (budget <= margin * 2) continue;
             lim = budget - margin;
         }
         if (lim >= mp->memoryHeaps[h].size) continue;
@@ -604,11 +512,6 @@ typedef struct {
     VkPhysicalDevicePageableDeviceLocalMemoryFeaturesEXT pageable;
 } FeatureChain;
 
-// One line for a fatal error's report (dispatch.h rt_fatal_note_add): the card, its driver, and the settings in effect
-// that change how the game's memory behaves. A report often arrives as the end of a log alone, or as a picture of it,
-// and the lines that say these things are at its start. No lock is taken: the failing thread may hold any.
-// How the game's task and mesh programs are drawn (create_device decides it): natively, through the mesh fallback, the
-// mesh emulation, or not at all. Every RX 6000 loss whose marks named a pass was in one that starts with a mesh draw.
 static const char *g_mesh_path = "not decided yet";
 
 static void fatal_note(void) {
@@ -618,12 +521,6 @@ static void fatal_note(void) {
            g_mesh_path, g_gpu_choice_note[0] ? "; " : "", g_gpu_choice_note);
 }
 
-// NX2SARIA_TRACE=perf: every device memory allocation VMA makes, timed as the "device memory allocations" work mark
-// (perf.c mark_text). An area's first visit made 78 of them, 4.4 GB, in a frame of 421 ms of which about 180 ms
-// showed in no mark; vk_headroom.c measured 8-19 ms per 256 MiB block. VMA takes this one function from the
-// allocator's create info and the others from its static table (vk_vma.cpp VMA_STATIC_VULKAN_FUNCTIONS). A failed
-// attempt counts too, with its time and 0 bytes: VMA may then try again with a smaller block, and the failed call held
-// the frame as well, so the mark's count can pass the number of allocations made.
 static VkResult VKAPI_PTR timed_alloc(VkDevice d, const VkMemoryAllocateInfo *ai, const VkAllocationCallbacks *cb,
                                       VkDeviceMemory *m) {
     uint64_t t0 = perf_mark_begin();
@@ -661,10 +558,6 @@ static int create_device(void) {
     OPTIONAL_EXT(has_provoking_vertex, VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME, pv, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT);
     OPTIONAL_EXT(has_robustness2, VK_EXT_ROBUSTNESS_2_EXTENSION_NAME, rob2, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ROBUSTNESS_2_FEATURES_EXT);
     OPTIONAL_EXT(has_device_fault, VK_EXT_DEVICE_FAULT_EXTENSION_NAME, fault, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FAULT_FEATURES_EXT);
-    // Pageable video memory (NX2SARIA_VRAM_PAGEABLE): past the budget Windows pages device memory out by the priority of
-    // each allocation, textures (0.3) before render targets, VRAM mirrors and physical pools (1.0): vk_texture.c
-    // image_alloc, vk_memory.c mirror_create and alloc_physical. VMA passes the priority with its flag (below). Without
-    // it the texture residency (vk_texture.c "residency") could not bring the use down to the budget.
     if (cfg_bool("NX2SARIA_VRAM_PAGEABLE") && has_ext(ep, ne, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME) &&
         has_ext(ep, ne, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME)) {
         OPTIONAL_EXT(has_memory_priority, VK_EXT_MEMORY_PRIORITY_EXTENSION_NAME, mprio,
@@ -672,20 +565,12 @@ static int create_device(void) {
         OPTIONAL_EXT(has_pageable, VK_EXT_PAGEABLE_DEVICE_LOCAL_MEMORY_EXTENSION_NAME, pageable,
                      VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PAGEABLE_DEVICE_LOCAL_MEMORY_FEATURES_EXT);
     }
-    // The translator's SPIR-V declares fragment shader interlock whenever the host reports it (vk_pipeline.c spirv_fixup).
     OPTIONAL_EXT(has_fragment_shader_interlock, VK_EXT_FRAGMENT_SHADER_INTERLOCK_EXTENSION_NAME, fsi,
                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADER_INTERLOCK_FEATURES_EXT);
-    // NVN2 task and mesh programs (gameplay geometry) draw through VK_EXT_mesh_shader (vk_exec_draw.c op_draw_mesh)
     OPTIONAL_EXT(has_mesh_shader, VK_EXT_MESH_SHADER_EXTENSION_NAME, mesh, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MESH_SHADER_FEATURES_EXT);
-    // The foliage's far shadow cascades shade one fragment per 2x2 pixels (vk_exec_draw.c mesh_shading_rate)
     OPTIONAL_EXT(has_vrs, VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, vrs, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_FEATURES_KHR);
-    // Guest shaders that use warp-wide operations after divergent code run with their threads reconverged
-    // (vk_pipeline.c spirv_reconverge)
     OPTIONAL_EXT(has_maximal_reconvergence, VK_KHR_SHADER_MAXIMAL_RECONVERGENCE_EXTENSION_NAME, mrc,
                  VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MAXIMAL_RECONVERGENCE_FEATURES_KHR);
-    // Compiled pipelines kept under the runtime's own keys (vk_pipeline.c pipe_create): VK_KHR_pipeline_binary, which
-    // needs VK_KHR_maintenance5 (core only from Vulkan 1.4; the instance asks for 1.3). NX2SARIA_PIPE_BINARIES=0 leaves
-    // both off.
     if (cfg_bool("NX2SARIA_PIPE_BINARIES") && has_ext(ep, ne, VK_KHR_PIPELINE_BINARY_EXTENSION_NAME) &&
         has_ext(ep, ne, VK_KHR_MAINTENANCE_5_EXTENSION_NAME)) {
         g_vk.has_pipeline_binary = 1;
@@ -694,7 +579,6 @@ static int create_device(void) {
         CHAIN(m5, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MAINTENANCE_5_FEATURES_KHR);
         CHAIN(pbin, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_BINARY_FEATURES_KHR);
     }
-    // Feedback loops (vk.h VkCtx.feedback): the layout, and barriers inside dynamic rendering
     int has_fbl = 0, has_lr = 0;
     if (has_ext(ep, ne, VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME) &&
         has_ext(ep, ne, VK_KHR_DYNAMIC_RENDERING_LOCAL_READ_EXTENSION_NAME)) {
@@ -704,14 +588,9 @@ static int create_device(void) {
         CHAIN(fbl, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_FEATURES_EXT);
         CHAIN(lr, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_LOCAL_READ_FEATURES_KHR);
     }
-    vk_dlaa_device_exts(ep, ne, ext, &n_ext, 40);   // NGX's; the eight slots after it stay for the eight below
-    // FSR 3.1 (vk_ffx.cpp): its Vulkan back end looks vkGetBufferMemoryRequirements2KHR up by that name, which resolves
-    // only with the extension enabled (the core function has no suffix); without it the back end called address 0.
-    // Always asked for: FSR 3.1 can be switched on in the menu during a run
+    vk_dlaa_device_exts(ep, ne, ext, &n_ext, 40);
     if (has_ext(ep, ne, VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME))
         ext[n_ext++] = VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME;
-    // DLSS Frame Generation (vk_dlssg.c): Streamline's plugins look functions of extensions core in Vulkan 1.3 up by
-    // their suffixed names too, which resolve only with the extension itself enabled
     if (vk_dlssg_wanted()) {
         static const char *const promoted[] = {VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME, VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
                                                VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME, VK_KHR_CREATE_RENDERPASS_2_EXTENSION_NAME,
@@ -722,33 +601,21 @@ static int create_device(void) {
             if (has_ext(ep, ne, promoted[i])) ext[n_ext++] = promoted[i];
     }
     if (has_ext(ep, ne, VK_EXT_MEMORY_BUDGET_EXTENSION_NAME)) { g_vk.has_memory_budget = 1; ext[n_ext++] = VK_EXT_MEMORY_BUDGET_EXTENSION_NAME; }
-    // GPU timestamps on the CPU clock (vk_sync.c): the perf line splits GPU idle time into waiting for a submission or not.
     if (has_ext(ep, ne, VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) { g_vk.has_calibrated = 2; ext[n_ext++] = VK_KHR_CALIBRATED_TIMESTAMPS_EXTENSION_NAME; }
     else if (has_ext(ep, ne, VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME)) { g_vk.has_calibrated = 1; ext[n_ext++] = VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME; }
-    if (vk_hdr_armed() && has_ext(ep, ne, VK_EXT_HDR_METADATA_EXTENSION_NAME)) {   // the display's peak (vk_hdr_metadata)
+    if (vk_hdr_armed() && has_ext(ep, ne, VK_EXT_HDR_METADATA_EXTENSION_NAME)) {
         g_vk.has_hdr_metadata = 1;
         ext[n_ext++] = VK_EXT_HDR_METADATA_EXTENSION_NAME;
     }
-    // GPU breadcrumbs for a lost device (vk_crumbs.c): AMD's drivers and RADV report it.
     if (has_ext(ep, ne, VK_AMD_BUFFER_MARKER_EXTENSION_NAME)) { g_vk.has_buffer_marker = 1; ext[n_ext++] = VK_AMD_BUFFER_MARKER_EXTENSION_NAME; }
-    // Pass marks on NVIDIA (vk_crumbs.c): checkpoints only with NX2SARIA_PASS_CRUMBS=1, since NVIDIA documents a cost for
-    // the extension. NVIDIA's drivers report it, AMD's do not.
     if (vk_pass_marks_want_nv() && has_ext(ep, ne, VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME)) {
         g_vk.has_nv_checkpoints = 1;
         ext[n_ext++] = VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME;
     }
-    // Guest memory imported as dma-bufs (vk_memory.c "dma-buf imports"; pick_device checked the extensions)
     if (vk_mem_dmabuf_on() && n_ext + 4 <= sizeof ext / sizeof *ext) {
         ext[n_ext++] = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
         ext[n_ext++] = VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME;
     }
-    // Low latency without frame generation (vk_lowlat.c): NVIDIA's extension, which needs VK_KHR_present_id enabled
-    // with it, or AMD's, whose calls need its feature. Each only where the driver lists it; a driver lists one of them
-    // at most. Not on a device the DLSS Frame Generation proxies make (vk_dlssg_create_device): that path's own
-    // low-latency plugin asks for what it needs there, and the direct path stays off for the run. And only in a run
-    // that starts with NX2SARIA_LOW_LATENCY on: with it off the device is made exactly as before the mode existed, and
-    // a driver that lists one of the two is only remembered (lists_low_latency), so the menu can say that turning the
-    // setting on takes a restart.
     g_vk.lists_low_latency = 0;
     g_vk.low_latency2_rev = 0;
     if (!vk_dlssg_dpa() && n_ext + 2 <= sizeof ext / sizeof *ext) {
@@ -768,7 +635,6 @@ static int create_device(void) {
             CHAIN(antilag, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ANTI_LAG_FEATURES_AMD);
         }
     }
-    // Graphics pipeline library: chained last so it can be dropped again when vk_caps_gpl declines it.
     void **gpl_link = NULL;
     if (has_ext(ep, ne, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME) && has_ext(ep, ne, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME)) {
         ext[n_ext++] = VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME;
@@ -778,8 +644,6 @@ static int create_device(void) {
     }
     free(ep);
 
-    // The driver fills the chain with what it supports; the same chain then enables all of it (robustBufferAccess
-    // stays on: guest shaders index constant buffers freely and out-of-range reads must stay harmless).
     vkGetPhysicalDeviceFeatures2(g_vk.phys, &c->f2);
     vk_caps_features(&c->f2.features);
     if (gpl_link) {
@@ -806,28 +670,21 @@ static int create_device(void) {
     if (!c->mprio.memoryPriority) g_vk.has_memory_priority = 0;
     if (!c->pageable.pageableDeviceLocalMemory) g_vk.has_pageable = 0;
     rt_log("vk: pageable video memory with priorities %s (NX2SARIA_VRAM_PAGEABLE)", g_vk.has_pageable && g_vk.has_memory_priority ? "on" : "off");
-    if (g_vk.has_vrs) {   // the rate is set per draw; no rate attachment and no per-primitive rates
+    if (g_vk.has_vrs) {
         c->vrs.attachmentFragmentShadingRate = c->vrs.primitiveFragmentShadingRate = VK_FALSE;
         if (!c->vrs.pipelineFragmentShadingRate) g_vk.has_vrs = 0;
         rt_log("vk: fragment shading rate: %s", g_vk.has_vrs ? "per draw" : "not supported");
     }
     if (g_vk.has_mesh_shader) {
-        // these two need features that are not enabled (multiview, primitive fragment shading rate)
         c->mesh.multiviewMeshShader = c->mesh.primitiveFragmentShadingRateMeshShader = VK_FALSE;
-        // Mesh queries for two diagnoses: NX2SARIA_GPU_PASSES (vk_crumbs.c) and the dump's primitive counts
-        // (vk_dump.c vk_dump_mesh_begin), which also need pipeline statistics and host query reset.
         const char *gp = cfg_get("NX2SARIA_GPU_PASSES"), *dmp = cfg_get("NX2SARIA_DUMP");
         int want = (gp && *gp && strcmp(gp, "0")) || (dmp && *dmp);
         g_vk.has_mesh_queries = want && c->mesh.meshShaderQueries && h->pipelineStatisticsQuery && c->f12.hostQueryReset;
         c->mesh.meshShaderQueries = g_vk.has_mesh_queries ? VK_TRUE : VK_FALSE;
         if (!c->mesh.meshShader || !c->mesh.taskShader) g_vk.has_mesh_shader = 0;
         rt_log("vk: mesh shaders: %s", g_vk.has_mesh_shader ? "VK_EXT_mesh_shader" : "the extension is there, its task or mesh feature is not");
-    }   // vkGetDeviceFaultInfoEXT needs the feature, not just the extension
-    {   // mesh_fallback: auto, 1 (on every device) or 0 (vk_mesh_path.h says when auto takes it, and why on AMD's driver
-        // for RDNA 1 and 2 and on Intel's). Without mesh shaders the mesh emulation (mesh_emulation = 1) draws them
-        // instead.
-        // has_mesh_shader keeps saying what the hardware has: the recorder thread (vk_rec.c) goes by it, not by how
-        // mesh programs are drawn.
+    }
+    {
         const char *mf = cfg_value("NX2SARIA_MESH_FALLBACK"), *me = cfg_value("NX2SARIA_MESH_EMULATION"), *why = "";
         unsigned radv_fixed = MESH_RADV_NO_FIX;
         const uint32_t dv = g_vk.props.driverVersion;
@@ -863,15 +720,11 @@ static int create_device(void) {
         }
         else if (path == MESH_PATH_NONE)
             rt_log("vk: mesh shaders: not supported and mesh_fallback = 0 (task/mesh draws are skipped)");
-        // says NX2SARIA_MESH_FALLBACK_BATCH's value and whether it is active here (vk_exec_draw.c); vk_ctx() is not
-        // ready yet, so the path and the device's default go as arguments
         vk_exec_mfb_batch_start(g_vk.mesh_fallback, g_vk.mesh_fallback_default, g_mesh_path);
         mesh_pipeline_check_start(path == MESH_PATH_EMULATION);
     }
     if (g_vk.has_maximal_reconvergence && !c->mrc.shaderMaximalReconvergence) g_vk.has_maximal_reconvergence = 0;
     if (g_vk.has_pipeline_binary && !(c->pbin.pipelineBinaries && c->m5.maintenance5)) g_vk.has_pipeline_binary = 0;
-    // The chain enables what the driver reported: a present carries a frame's number only with presentId, and
-    // vkAntiLagUpdateAMD may be called only with antiLag (the extension alone stays enabled and unused without it).
     g_vk.has_present_id = g_vk.has_low_latency2 && c->pid.presentId;
     if (g_vk.has_anti_lag && !c->antilag.antiLag) g_vk.has_anti_lag = 0;
     g_vk.has_buffer_device_address = c->f12.bufferDeviceAddress;
@@ -887,12 +740,6 @@ static int create_device(void) {
                has_fbl && c->fbl.attachmentFeedbackLoopLayout, has_lr && c->lr.dynamicRenderingLocalRead);
     }
 
-    // Frame generation (vk_fg.cpp) presents on a second queue of the graphics family and acquires on a third. AMD's
-    // swapchain needs a present queue nothing else submits to (FidelityFX: the engine must not use it, or it can
-    // deadlock); the image acquire queue needs no capability. Where the graphics family has one queue (AMD's Windows
-    // driver, an RX 580), both come from another family: a queue of a family that can present for the present, and
-    // a second queue of it, or of any other family, for the acquire (the present queue itself when there is none).
-    // Without them vk_fg_create_swapchain gave up without a word: frame generation set in the menu did nothing.
     static const float prio[4] = {1.0f, 1.0f, 1.0f, 1.0f};
     uint32_t nq_gfx = vk_fg_queue_count() < g_gfx_queues ? vk_fg_queue_count() : g_gfx_queues;
     uint32_t used[QFAM_MAX] = {0};
@@ -902,7 +749,7 @@ static int create_device(void) {
     if (nq_gfx >= 2) {
         fg_pf = fg_af = g_vk.gfx_family, fg_pi = 1, fg_ai = nq_gfx - 1;
     } else {
-        for (int pass = 0; pass < 2 && fg_pf == UINT32_MAX; pass++)   // compute families first, then the others
+        for (int pass = 0; pass < 2 && fg_pf == UINT32_MAX; pass++)
             for (uint32_t f = 0; f < g_nqfam && fg_pf == UINT32_MAX; f++) {
                 if (f == g_vk.gfx_family || used[f] >= g_qfam_count[f]) continue;
                 if (!(g_qfam_flags[f] & (VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT))) continue;
@@ -932,7 +779,7 @@ static int create_device(void) {
     if (r != VK_SUCCESS) { rt_log("vk: vkCreateDevice failed (%d)", (int)r); return 0; }
     if (submit_thread_why && vk_caps.mesa) rt_log("vk: queue submissions: %s", submit_thread_why);
     vk_dlssg_device_ready(g_vk.phys, g_vk.device);
-    if (vk_dlssg_dpa()) {   // Streamline's, so its plugins hook every entry point the replay fetches
+    if (vk_dlssg_dpa()) {
         vk_dpa = vk_dlssg_dpa();
         rt_log("vk: device entry points come through Streamline's interposer (DLSS Frame Generation)");
     }
@@ -959,11 +806,11 @@ static int create_device(void) {
     vkGetPhysicalDeviceProperties2(g_vk.phys, &p2);
     g_vk.min_imported_host_alignment = (uint32_t)emh.minImportedHostPointerAlignment;
     vk_caps_init(&g_vk);
-    vk_mem_dmabuf_probe(g_vk.device, &g_vk.mem_props, vk_gpa_wanted_ctx(&g_vk));   // may turn shadow storage on
-    vk_mem_lazy_decide();   // the driver is known: the lazy write-back's default depends on it
+    vk_mem_dmabuf_probe(g_vk.device, &g_vk.mem_props, vk_gpa_wanted_ctx(&g_vk));
+    vk_mem_lazy_decide();
     rt_fatal_note_add(fatal_note);
 
-    static const VmaVulkanFunctions vf = {.vkAllocateMemory = timed_alloc};   // the rest from VMA's static table
+    static const VmaVulkanFunctions vf = {.vkAllocateMemory = timed_alloc};
     VmaAllocatorCreateInfo ai = {.physicalDevice = g_vk.phys, .device = g_vk.device, .instance = g_vk.instance,
                                  .vulkanApiVersion = VK_API_VERSION_1_3,
                                  .flags = (g_vk.has_buffer_device_address ? VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT : 0) |
@@ -988,18 +835,18 @@ static int create_device(void) {
     return 1;
 }
 
-static long g_errors_total;     // outlives the device so the probe can print it after vk_shutdown
+static long g_errors_total;
 
 static void destroy_all(void) {
     gfx_window_release_vk();
     if (g_vk.device) vkDeviceWaitIdle(g_vk.device);
-    if (g_vk.device) vk_dlaa_release();   // the DLSS features and NGX: the allocator and the device still live
-    if (g_vk.device) vk_fsr3_release();   // FSR 3.1's own passes and contexts, where they were made
+    if (g_vk.device) vk_dlaa_release();
+    if (g_vk.device) vk_fsr3_release();
     if (g_vk.device) vk_astc_release();
     if (g_vk.device) vk_crumbs_release();
-    if (g_vk.device) vk_lowlat_release();   // the sleep's semaphore: the device still lives
+    if (g_vk.device) vk_lowlat_release();
     if (g_vk.timeline) vkDestroySemaphore(g_vk.device, g_vk.timeline, NULL);
-    if (lost_fence) vkDestroyFence(g_vk.device, lost_fence, NULL);   // vk_device_lost_poll
+    if (lost_fence) vkDestroyFence(g_vk.device, lost_fence, NULL);
     lost_fence = VK_NULL_HANDLE;
     vk_headroom_stop();
     if (g_vk.vma) vk_mem_ballast_release(g_vk.vma);
@@ -1051,8 +898,6 @@ static const char *fault_address_type(VkDeviceFaultAddressTypeEXT t) {
     }
 }
 
-// The report of a lost device: the breadcrumbs, the pass marks, the video memory and the driver's fault information.
-// Once per process, on the thread that saw the loss first (vk_device_lost_check).
 static void device_fault_report(void) {
     vk_sync_lost_report();
     vk_crumbs_report();
@@ -1073,14 +918,13 @@ static void device_fault_report(void) {
     VkDeviceFaultVendorInfoEXT *vi = calloc(n.vendorInfoCount + 1, sizeof *vi);
     VkDeviceFaultInfoEXT info = {.sType = VK_STRUCTURE_TYPE_DEVICE_FAULT_INFO_EXT, .pAddressInfos = ai, .pVendorInfos = vi};
     uint64_t binary = n.vendorBinarySize;
-    n.vendorBinarySize = 0;   // the vendor binary is not fetched; its size alone is logged
+    n.vendorBinarySize = 0;
     if (q == VK_SUCCESS && ai && vi) q = get(c->device, &n, &info);
     if (q != VK_SUCCESS && q != VK_INCOMPLETE) {
         rt_log("vk: device lost; vkGetDeviceFaultInfoEXT failed (%d)", (int)q);
     } else {
         rt_log("vk: device fault: \"%s\" (%u address infos, %u vendor infos, vendor binary %llu bytes)", info.description,
                n.addressInfoCount, n.vendorInfoCount, (unsigned long long)binary);
-        // The faulting access lies in the precision-aligned range around the reported address.
         for (uint32_t i = 0; i < n.addressInfoCount; i++)
             rt_log("vk: device fault address %u: %s at %#llx, precision %#llx", i, fault_address_type(ai[i].addressType),
                    (unsigned long long)ai[i].reportedAddress, (unsigned long long)ai[i].addressPrecision);
@@ -1092,17 +936,6 @@ static void device_fault_report(void) {
     free(vi);
 }
 
-// ---- the end of a run whose device is lost (vk.h vk_device_lost_check)
-// A lost device stays lost: every later call on it fails or, worse, answers as if it had worked, and a driver that is
-// called on from several threads after the loss can fault inside itself. So the first thread that sees the loss ends
-// the run, and nothing else touches the device meanwhile: the paths that would read vk_lost and return, and a thread
-// that gets the loss as a result of its own stops here for good.
-// LOST_EXIT_MS bounds the end. The first thread writes the report and waits for a save commit (fs_host.c
-// fs_save_crash_wait, 2 s at most); should it hang on a lock that a stopped thread holds, the watchdog (arg non-NULL)
-// says so in one line and ends the process with the same code, and the lines already written are in the log
-// (rt_fatal_code wrote them itself). The end is plat_terminate: ExitProcess would stop the watchdog too and then run
-// every library's detach, and a driver's detach that hangs on a lost device would hold the process for good. A thread
-// that stops here otherwise ends the process a little later, should the watchdog not have started.
 #define LOST_EXIT_MS 10000
 volatile int32_t vk_lost;
 
@@ -1110,8 +943,8 @@ static void lost_wait_exit(void *arg) {
     int watchdog = arg != NULL;
     for (int t = 0; t < LOST_EXIT_MS + (watchdog ? 0 : 2000); t += 50) plat_sleep_ms(50);
     if (watchdog) {
-        rt_log_ending();   // its line reaches the log file past its cap (main.c log_sink)
-        rt_log_sync();   // the queue's locks only tried (bounded): their holder may be the thread that hangs
+        rt_log_ending();
+        rt_log_sync();
         rt_log("vk: the end of the run did not finish in %d s; ending it", LOST_EXIT_MS / 1000);
     }
     plat_terminate(RT_LOST_EXIT);
@@ -1119,9 +952,9 @@ static void lost_wait_exit(void *arg) {
 
 void vk_device_lost_check(VkResult r, const char *where) {
     if (r != VK_ERROR_DEVICE_LOST) return;
-    if (plat_xchg32(&vk_lost, 1)) lost_wait_exit(NULL);   // another thread is ending the run: this one stops here
+    if (plat_xchg32(&vk_lost, 1)) lost_wait_exit(NULL);
     plat_thread_spawn(lost_wait_exit, (void *)1, "vk lost exit", 0);
-    char at[16];   // when the loss was seen, before the report that follows takes its time
+    char at[16];
     log_stamp(at, sizeof at, 0);
     rt_log("vk: device lost at %s local time (seen at: %s)", at, where);
     device_fault_report();
@@ -1163,7 +996,7 @@ int vk_selftest(void) {
     vmaDestroyBuffer(c->vma, buf, alloc);
 
     VkSemaphoreSignalInfo sig = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO, .semaphore = c->timeline, .value = 1};
-    vk_sync_signal_note(1);   // a host signal of the timeline is noted first (vk_sync.c timeline_beyond)
+    vk_sync_signal_note(1);
     if ((r = vkSignalSemaphore(c->device, &sig)) != VK_SUCCESS) { rt_log("vk selftest: vkSignalSemaphore failed (%d)", (int)r); return 3; }
     uint64_t value = 1;
     VkSemaphoreWaitInfo wi = {.sType = VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO, .semaphoreCount = 1, .pSemaphores = &c->timeline,
@@ -1175,7 +1008,6 @@ int vk_selftest(void) {
     return 0;
 }
 
-// --probe-vkdevice (host.h)
 int probe_vkdevice(void) {
     int rc = vk_selftest();
     VkCtx *c = vk_ctx();
@@ -1190,12 +1022,11 @@ int probe_vkdevice(void) {
            c->has_conditional_rendering, c->has_transform_feedback, c->has_provoking_vertex, c->has_robustness2,
            c->has_device_fault, c->has_memory_budget, c->has_buffer_device_address, c->has_fragment_shader_interlock,
            c->has_buffer_marker, c->has_nv_checkpoints, c->validation);
-    fatal_note();   // the line a fatal error or a crash would add to the log, to read it without one
+    fatal_note();
     vk_shutdown();
     printf("probe-vkdevice: %s (validation errors %ld)\n", g_errors_total ? "FAILED" : "passed", g_errors_total);
     return g_errors_total ? 1 : 0;
 }
 
-// The GPU has mesh shaders (vk_exec.c vk_exec_tail_begin: the early tail runs only on such a card).
 int vk_mesh_shader_native(void) { return g_vk.has_mesh_shader; }
 
