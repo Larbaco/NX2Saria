@@ -214,7 +214,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `libs:` | Libraries loaded into the process | `main.c` |
 | `loaded` | Each module loaded (loader), no colon | `loader.c` |
 | `loader:` | Module loader: relocations, imports | `loader.c` |
-| `log:` | The log itself: path, log thread, slow writes, personal folders written short | `main.c`, `log_privacy.c`, `logq.c` |
+| `log:` | The log itself: path, log thread, slow writes, personal folders written short, a stderr lock given up at the end | `main.c`, `log_privacy.c`, `logq.c` |
 | `longjmp` | Guest longjmp debug lines, no colon | `guest_setjmp.c` |
 | `lowlat:` | Low latency mode (Reflex, anti-lag) | `vk_lowlat.c` |
 | `MapPhysicalMemory` | A failed physical memory map (memory), no colon | `memory.c` |
@@ -257,6 +257,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `platform:` | Memory commit note from the platform layer | `vk_texture.c` |
 | `power:` | Power and timer settings | `main.c` |
 | `prepo:` | Play reports (kept local) | `ov_system.c` |
+| `probe:` | The lines the busy crash probes' threads log while the main thread fails (`--probe-crash-busy`) | `main.c` |
 | `present:` | Present intervals (NX2SARIA_TRACE=present) | `vk_backend.c` |
 | `preset:` | Graphics presets and the hardware detection behind them | `cfg.c`, `hw_detect.c` |
 | `prof:` | Sampling profiler (NX2SARIA_PROFILE) | `prof_win.c`, `perf.c` |
