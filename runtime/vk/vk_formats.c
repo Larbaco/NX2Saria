@@ -1,8 +1,4 @@
-// NVN format -> VkFormat for the textures of the graphics layer.
 // Contains code Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-// The table is indexed by the NVNformat values of nvn.h and covers all of them, ASTC decodes to
-// RGBA8 unless the device samples it (vk_astc.c, NX2SARIA_ASTC), D24S8 is always D32S8 (no probing: the RX 9070 lacks
-// it), 3-component formats expand to 4 components, and formats with no Vulkan equivalent are reported with a reason.
 #include <string.h>
 #include "tex.h"
 
@@ -10,10 +6,8 @@
 #define TX (VK_FORMAT_FEATURE_TRANSFER_DST_BIT | VK_FORMAT_FEATURE_TRANSFER_SRC_BIT)
 #define DS VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT
 
-enum { F_RGB = 1, F_X = 2 };   // expand_rgb, alpha_one
+enum { F_RGB = 1, F_X = 2 };
 
-// chan: the component order vk holds (TexVkFormat.chan), zero when it is NVN's. alt, alt_chan: a mandatory format
-// standing in, with its order, when the device lacks vk.
 typedef struct { VkFormat vk; uint8_t flags; const char *note; uint8_t chan[4]; VkFormat alt; uint8_t alt_chan[4]; } Row;
 
 #define R(nvn, vkf) [nvn] = {vkf, 0, NULL}
@@ -21,12 +15,6 @@ typedef struct { VkFormat vk; uint8_t flags; const char *note; uint8_t chan[4]; 
 #define X(nvn, vkf) [nvn] = {vkf, F_X, "X format: alpha is sampled as 1 through the view swizzle"}
 #define N(nvn, vkf, why) [nvn] = {vkf, 0, why}
 
-// 16-bit packed formats. NVN names their components from the least significant bit, as it does for RGB10A2
-// (A2B10G10R10): RGB565 holds R in bits 0-4, RGB5A1 R in bits 0-4 and A in bit 15. Vulkan names them from the most
-// significant bit, so RGB565 is B5G6R5. RGB5A1's counterpart A1B5G5R5 needs VK_KHR_maintenance5, so it stands in as
-// A1R5G5B5 with R and B swapped by the view swizzle: sampling is right, rendering into it would store R and B swapped
-// (no NX2Saria pass does). The terrain's normal (RGB5A1) and blend (RGB565) maps read with the old order stretched the
-// ground textures along one axis.
 enum { CR = NVN_TEXTURE_SWIZZLE_R, CG = NVN_TEXTURE_SWIZZLE_G, CB = NVN_TEXTURE_SWIZZLE_B, CA = NVN_TEXTURE_SWIZZLE_A };
 #define P(nvn, vkf, fl, c0, c1, c2, c3, altf, a0, a1, a2, a3) \
     [nvn] = {vkf, fl, "16-bit packed format, NVN names components from the least significant bit", {c0, c1, c2, c3}, altf, \
@@ -55,7 +43,6 @@ static const Row rows[0x9D] = {
     N(0x35, VK_FORMAT_D32_SFLOAT_S8_UINT, "the RX 9070 has no D24S8 attachments; D32_SFLOAT_S8_UINT"),
     R(0x36, VK_FORMAT_D32_SFLOAT_S8_UINT),
     X(0x37, VK_FORMAT_R8G8B8A8_SRGB), R(0x38, VK_FORMAT_R8G8B8A8_SRGB),
-    // RGBA4: A4B4G4R4 (core in 1.3, optional), else B4G4R4A4 whose A, R, G, B hold NVN's R, G, B, A.
     P(0x39, VK_FORMAT_A4B4G4R4_UNORM_PACK16, 0, 0, 0, 0, 0, VK_FORMAT_B4G4R4A4_UNORM_PACK16, CA, CR, CG, CB),
     P(0x3A, VK_FORMAT_A1R5G5B5_UNORM_PACK16, F_X, CB, CG, CR, CA, 0, 0, 0, 0, 0),
     P(0x3B, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 0, CB, CG, CR, CA, 0, 0, 0, 0, 0),
@@ -70,13 +57,11 @@ static const Row rows[0x9D] = {
     R(0x4B, VK_FORMAT_BC5_UNORM_BLOCK), R(0x4C, VK_FORMAT_BC5_SNORM_BLOCK),
     R(0x4D, VK_FORMAT_BC7_UNORM_BLOCK), R(0x4E, VK_FORMAT_BC7_SRGB_BLOCK),
     R(0x4F, VK_FORMAT_BC6H_SFLOAT_BLOCK), R(0x50, VK_FORMAT_BC6H_UFLOAT_BLOCK),
-    // 0x51-0x68 (integer storage sampled as float) and 0x6B, 0x6C: unmapped, see the reason in tex_vk_format.
     R(0x69, VK_FORMAT_A2B10G10R10_SNORM_PACK32), R(0x6A, VK_FORMAT_A2B10G10R10_SINT_PACK32),
     X(0x6D, VK_FORMAT_R8G8B8A8_UNORM), X(0x6E, VK_FORMAT_R8G8B8A8_SNORM), X(0x6F, VK_FORMAT_R8G8B8A8_UINT),
     X(0x70, VK_FORMAT_R8G8B8A8_SINT), X(0x71, VK_FORMAT_R16G16B16A16_SFLOAT), X(0x72, VK_FORMAT_R16G16B16A16_UNORM),
     X(0x73, VK_FORMAT_R16G16B16A16_SNORM), X(0x74, VK_FORMAT_R16G16B16A16_UINT), X(0x75, VK_FORMAT_R16G16B16A16_SINT),
     X(0x76, VK_FORMAT_R32G32B32A32_SFLOAT), X(0x77, VK_FORMAT_R32G32B32A32_UINT), X(0x78, VK_FORMAT_R32G32B32A32_SINT),
-    // 0x79-0x94 ASTC: handled in tex_vk_format.
     P(0x95, VK_FORMAT_R5G6B5_UNORM_PACK16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
     P(0x96, VK_FORMAT_A1R5G5B5_UNORM_PACK16, F_X, 0, 0, 0, 0, 0, 0, 0, 0, 0),
     P(0x97, VK_FORMAT_A1R5G5B5_UNORM_PACK16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0),
@@ -85,7 +70,6 @@ static const Row rows[0x9D] = {
     R(0x9B, VK_FORMAT_B8G8R8A8_SRGB), R(0x9C, VK_FORMAT_B8G8R8A8_SRGB),
 };
 
-// ASTC block sizes in the order of NVN 0x79..0x86 (linear) and 0x87..0x94 (sRGB), with the Vulkan formats they stand for.
 static const struct { uint8_t bw, bh; VkFormat unorm, srgb; } astc[14] = {
     {4, 4, VK_FORMAT_ASTC_4x4_UNORM_BLOCK, VK_FORMAT_ASTC_4x4_SRGB_BLOCK},
     {5, 4, VK_FORMAT_ASTC_5x4_UNORM_BLOCK, VK_FORMAT_ASTC_5x4_SRGB_BLOCK},
@@ -116,7 +100,7 @@ int tex_vk_format(int nvn_format, TexVkFormat *o) {
         unsigned i = (f - 0x79) % 14;
         int srgb = f >= 0x87;
         o->ideal = srgb ? astc[i].srgb : astc[i].unorm;
-        if (vk_astc_native(o->ideal)) {   // NX2SARIA_ASTC auto / native on a device that samples ASTC: raw blocks, like BC
+        if (vk_astc_native(o->ideal)) {
             o->vk = o->ideal;
             o->note = "native ASTC";
             return 1;

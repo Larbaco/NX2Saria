@@ -2841,6 +2841,26 @@ log thread is still gathering them: `exit` as a run ends (`plat_exit`, whose hoo
 then the end). The exit code is the one the process ended with, and each file has to hold every line it logged, the
 fatal line last.
 
+## `tests/lowlat_revision_check.py`
+
+Builds `tests/lowlat_revision_check.c`, which includes `runtime/pacing/vk_lowlat.c` whole over stubs, and runs it once
+for a driver of revision 1, 2 and 3 of `VK_NV_low_latency2`: what the path may call on each ("The extension's
+revisions" in [pacing.md](pacing.md)). It needs a C compiler, `vk_mem_alloc.h` and the Vulkan headers the runtime
+builds with: no GPU, no game files.
+
+The driver is `fake_dpa()` and the `drv_*()` functions. Its `vkGetLatencyTimingsNV` of revision 1,
+`drv_timings_rev1()`, has that revision's four parameters and only counts the call and keeps its fourth argument,
+which it does not follow; called with the three arguments of revision 2 it finds there whatever the register held, and
+the check prints it. The one of revision 2 and later fills 16 reports that average to known times. `InfoRev1` is the
+info structure as revision 1 had it; the static assertions hold `pTimings` at 0x10 in it and the count at 0x10 with
+`pTimings` at 0x18 in the header's.
+
+`main()` plays 4200 frames, so two statistics lines are due (frames 600 and 4200), and checks for every revision the
+revision in the first line, one sleep mode set, a sleep for every frame start but the first (no host present yet) and
+seven markers a frame: low latency itself runs the same on all three. Revision 1: no call of `vkGetLatencyTimingsNV`,
+the first line says the timings are left out, and one statistics line of the two says there is no report. Revision 2
+and 3: two calls and the report in both lines. `listed()` checks `vk_lowlat_revision()` on a made-up extension list.
+
 ## `tests/make_game_gate_test.py`
 
 `tools/make_game.py`'s compiles through the memory gate (`tools/memgate.py`), with a stand-in script as the compiler
@@ -3323,6 +3343,12 @@ all, for each device kind and setting. No GPU, no game files, any Python.
 - A value the settings table does not list reads as auto. The reason names the driver default, and how to turn it off.
 - `mesh_fallback_batch` = auto batches where the fallback is the device's default (where `mesh_fallback` = auto would
   choose it).
+- RADV inside the releases whose task shaders lose the device takes the fallback by default, and `mesh_fallback` = 0
+  still draws natively there. The range is checked release by release: the last one before it, the first one in it,
+  each side of a series' fixed release (with a table of its own, since no series has one yet), a series with no fixed
+  release up to its last patch number, the snapshots a packager numbers 26.99.99 and the main branch's 27.0.0, and
+  another driver with the same number. A card without mesh shaders is drawn for as before, and its reason does not
+  name the regression.
 
 ## `tests/mesh_pipeline_check.c`
 
@@ -3997,6 +4023,36 @@ cannot drift apart. No game files, no GPU.
 - Version 2: the head, then three records. A cut last record is not counted. The head alone, or less: no list.
 - Version 1: records right after the 16 bytes, and nothing about where they came from.
 - Another version, record size or magic: not read.
+
+## `tests/quit_menu_check.c`
+
+Quit Game in the game's own menus without the game: the message file edit, the window's labels and the press
+(`runtime/ui/quit_menu_core.h`), and with a game folder the edit of its message archives
+(`runtime/ui/quit_menu_text.c`); `tests/quit_menu_check.py` builds and runs it, with `--romfs <folder>` for the game's
+archives. The message files of the first part are made by the test from the format.
+
+- The label hash puts the labels of two of the game's files in the groups the game has them in (`0000`, `0002` and
+  `0001` on two groups; `1000`, `0000`, `1001`, `0001`, `1002` on five).
+- A file made by hand reads back; a text with a control tag, whose bytes hold zeros, is whole.
+- Labels added: the new ones are found, the old ones keep their texts, the size field and the 16-byte padding are
+  right; a label that has its text already changes nothing and makes no file; one with another text is replaced; five
+  labels into an empty file of five groups each land in their group.
+- Refused: UTF-16, a third section, a file cut anywhere, a text without its zero.
+- The window's labels with three buttons, and every other label left alone.
+- The press: A on the entry is taken and chosen once, stays taken while held when the focus goes, and an A held from
+  another entry chooses nothing.
+- With a game folder, for each message archive: the three labels have the texts of the labels they copy, the window's
+  own labels keep theirs, exactly one member of the archive differs, and an archive that has the labels needs no
+  edit.
+
+## `tests/quit_menu_sites_check.py`
+
+The set `quit_menu` of `recomp/patches-v111.txt`: its name, switch and default, so that `NX2SARIA_QUIT_MENU=0` leaves
+the game's own word at every site; its seven sites and no other; each site's original word and the shape of its
+replacement (plain words, then a call of the page's +0xee0, +0xe20 or +0xe10, or of the game's helper at
+`main+0x3405bc0`); the words each pair of cuts puts back after its call; the one site it shares, with `menu_mouse`,
+making the same call; no other set calling its two slots; `runtime/ui/quit_menu.c` listing the same words for its
+check at start; and the three host functions registered at their slots (`runtime/patches/patches.c`).
 
 ## `tests/rebrand_compat_test.py`
 
@@ -5213,6 +5269,48 @@ data is there from then on.
 ## `tests/tsan_build_test.py`
 
 Checks the bench sanitizer compile and cache boundaries without game data.
+
+## `tests/ui_text_ids_check.py`
+
+The text catalog of the menu, the overlay and the software keyboard (`runtime/ui/ui_text.h`, `runtime/ui/ui_text.c`):
+no id without a use, no string without an id. It reads the sources as text; no compiler, no game files.
+`tests/run.py` runs it with `--with-self-test` (the check, then the planted cases).
+
+- An id is used when a source under `runtime/` or `tools/` names it (not `runtime/third_party/`; in `ui_text.c`, a name
+  that is not a `[UI_...] =` designator of a table or of the `LANG_NAMES` and `SWKBD` macros, as in `all_langs[]`), or
+  when an entry of `ARITHMETIC` marked as showing text reaches it. A name in `docs/` or `tests/` is not a use. An
+  unused id fails the check: it goes with its strings in every language.
+- `ARITHMETIC` is every place that computes an id from another or compares ids by order: the file, the expression as
+  it stands in the code, the first and last id it can give, whether it shows their text, and what it is for. The bind,
+  key, gamepad and preset tier labels are reached this way; the `static_assert`s of `runtime/ui/binds_page.cpp` and
+  the loops of `runtime/hle/ov_probe.c` need the order but show nothing. An entry whose expression is no longer in its
+  file fails, and so does a line of C or C++ with `+`, `-`, `<`, `>`, `<=` or `>=` next to an id's name that no entry
+  holds, so new arithmetic has to be declared with its range. Comparisons with `UI_TEXT_COUNT` (the bound of the
+  tables) and `==` are not arithmetic. Arithmetic on a variable that holds an id (`label + 1`) has no id's name beside
+  the operator and is not seen: the tree has none (every conversion of a `UiTextId` to an integer in the C++ sources
+  was listed from the compiler's syntax tree when the check was written).
+- The tables `text_en`, `text_ru`, `text_pt_br` and `text_zh_hans`: a string for an id the header does not declare
+  fails, as do two strings for one id in one table (the compiler keeps the last without a word), a string in a
+  language for an id English has none for, and an id without an English string (it would show as nothing in every
+  language). A missing Russian, Brazilian Portuguese or Chinese string is allowed, since `ui_text_in()` shows the
+  English one; the summary line counts them per language.
+
+- `FILE_NAME_GLYPHS`: the characters `runtime/ui/ui_text.c` `file_name_glyphs_zh_hans` must hold, and
+  `ui_text_visit()` must hand that list to the font builder (`glyph_problems()`), so the Simplified Chinese glyph set
+  does not shrink below it ([ui.md](ui.md), `ui_text_visit()`).
+
+### `check()`
+
+Takes the header, the catalog source and the other sources as text, so the self-test plants its faults in copies in
+memory. Returns the problems and the counts of the summary line.
+
+### `self_test()`
+
+A planted id with strings in the four tables that nothing names; a string for an undeclared id; an id without its
+English string; a second string for one id; `UI_MENU_ON + k` in a source; a declared expression renamed in its file:
+a character taken out of the
+glyph list; a catalog walk that no longer hands the list over: each must fail with its own message. A dropped Brazilian Portuguese string must pass and raise that language's count
+by one.
 
 ## `tests/up_defer_check.py`
 

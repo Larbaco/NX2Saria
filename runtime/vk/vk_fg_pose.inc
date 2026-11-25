@@ -1,10 +1,7 @@
-// Final submitted pose inputs for owned player models. Replay workers change history under
-// the motion-list lock; the submitting thread selects and consumes it after the group finishes.
-// Model and shape identities come from producer-side ownership records, never from a mesh fingerprint.
 #include "motion_owner.h"
 #define POSE_ROWS 256
 #define POSE_BYTES (128u * 1024u)
-#define POSE_BANKS 5  // c3 through c7
+#define POSE_BANKS 5
 #define POSE_VIEWS 8
 typedef struct {
     uint64_t frame, cam, indices;
@@ -53,7 +50,6 @@ static void pose_clear(PoseRange *r) {
 
 static int pose_owner(VkExec *ex, MotionOwner *out) {
     MotionOwner owner = {0};
-    // Only vertex resources consumed by this shader can establish identity. Stale unused bindings cannot.
     const GfxShaderRes *res;
     int nres = gfx_shader_resources(ex->dc->B.st.vs, GFX_RES_UBO, &res);
     for (int j = 0; j < nres; ++j) {
@@ -66,13 +62,11 @@ static int pose_owner(VkExec *ex, MotionOwner *out) {
                            (owner.part && m.part && owner.part != m.part))) return 0;
         if (!owner.model || m.part) owner = m;
     }
-    // The per-shape record is required even for skinned meshes; one palette can serve several pieces.
     if (!owner.model || !owner.part) return 0;
     *out = owner;
     return 1;
 }
 
-// The caller holds the motion-list lock while parallel replay workers record draws.
 static PoseRange *pose_match(VkExec *ex, const p_draw_idx *d, const MotionOwner *identity) {
     MotionOwner owner = *identity;
     uint64_t frame = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
@@ -107,7 +101,6 @@ static ActorPose *pose_previous(PoseRange *r, VkExec *ex, const p_draw_idx *d, u
     PoseFrame *now = &r->history[frame & 1];
     ActorPose *prev = r->history[(frame & 1) ^ 1].scene;
     uint64_t cam = ex->ubo[NVN_STAGE_VS][0].addr;
-    // The same mesh is drawn into several depth targets. Only the resolve knows which view supplies FG.
     ActorPose *cur = NULL;
     for (int i = 0; i < POSE_VIEWS; ++i) {
         ActorPose *p = &now->view[i];
@@ -131,7 +124,6 @@ static ActorPose *pose_previous(PoseRange *r, VkExec *ex, const p_draw_idx *d, u
         cur->height = ex->depth.height;
     }
 
-    // Unused bindings retain the previous draw's values. Only the shader's vertex inputs identify this mesh.
     NVNbufferRange vertex[16] = {0};
     uint32_t inputs = gfx_shader_inputs(ex->dc->B.st.vs, NULL);
     for (int i = 0; i < 16; ++i) {
@@ -158,8 +150,6 @@ static ActorPose *pose_previous(PoseRange *r, VkExec *ex, const p_draw_idx *d, u
         n += size[i];
     }
     if (repeated) {
-        // The same instance can be submitted again in the same pass. A second instance of this mesh
-        // can use another palette, or rewrite a palette at the same address between submissions.
         cur->ambiguous = cur->depth != ex->depth.image || cur->indices != d->ibuf ||
                          memcmp(vertex, cur->vertex, sizeof vertex) || memcmp(size, cur->size, sizeof size) ||
                          memcmp(bindings, cur->bindings, sizeof bindings);
@@ -193,21 +183,17 @@ static ActorPose *pose_previous(PoseRange *r, VkExec *ex, const p_draw_idx *d, u
            !memcmp(prev->size, cur->size, sizeof cur->size) ? prev : NULL;
 }
 
-// c6 holds a part's submitted transform. Translation is deliberately excluded: a fast jump
-// does not itself make a vector unreliable. Only a positively identified sharp rotation opts in.
 static float pose_rotation_trace_limit(void) {
     static int degrees;
     static float limit;
     if (!degrees) {
-        const char *setting = cfg_get("NX2SARIA_MOTION_GUARD_DEGREES");   // motion_guard_degrees in nx2navi.ini too
+        const char *setting = cfg_get("NX2SARIA_MOTION_GUARD_DEGREES");
         degrees = setting && !strcmp(setting, "35") ? 35 : setting && !strcmp(setting, "45") ? 45 : 60;
         limit = degrees == 60 ? 2.0f : degrees == 45 ? 2.41421356f : 2.63830409f;
         rt_log("motion policy: rotation guard threshold %d degrees per rendered frame", degrees);
     }
     return limit;
 }
-// Two 3x4 matrices (rows of four floats) of one part or bone, this frame's and last frame's: 1 when both are plain
-// rotations and the turn between them is past the guard threshold. vk_skin_motion.inc asks it for each bone of a palette.
 static int pose_matrix_sharp(const uint8_t *now, const uint8_t *prev) {
     float m[2][12];
     const uint8_t *p[2] = {now, prev};
@@ -225,8 +211,6 @@ static int pose_matrix_sharp(const uint8_t *now, const uint8_t *prev) {
     float trace = 0.0f;
     for (int i = 0; i < 3; ++i)
         for (int j = 0; j < 3; ++j) trace += m[0][4 * i + j] * m[1][4 * i + j];
-    // trace(R1 * transpose(R0)) = 1 + 2*cos(angle). The selected threshold controls
-    // when this part needs visibility filtering; equipment retains its separate raw policy.
     return trace < pose_rotation_trace_limit();
 }
 static int pose_sharp_rotation(const ActorPose *now, const ActorPose *prev) {
@@ -258,8 +242,6 @@ static void pose_select(uint64_t frame, uint64_t camera, VkImage depth) {
             }
         }
     }
-    // Selection preserves each part independently. No six-frame hold and no queue-wide drop:
-    // a risky body triangle cannot suppress the shield, sword, or another well-behaved part.
     pose_guarded_parts += guarded;
     pose_raw_parts += raw;
     pose_rigid_parts += rigid;
@@ -270,8 +252,6 @@ static void pose_select(uint64_t frame, uint64_t camera, VkImage depth) {
                frame_step_world_us() / 1e6, (unsigned long long)frame, guarded, raw, rigid, missing_depth);
 }
 
-// The motion status line, every 120 frames with motion vectors: the player's parts (ownership records), then the
-// other skinned draws (vk_skin_motion.inc skin_status).
 static int skin_status(char *out, size_t cap);
 static void pose_status(uint64_t frame) {
     if (frame % 120) return;

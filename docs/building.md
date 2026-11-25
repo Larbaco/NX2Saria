@@ -955,6 +955,12 @@ A change to the arithmetic of the mouse in the game's menus (`runtime/ui/menu_mo
 the layout's units on 16:9 and ultrawide pictures, which presses are clicks and the presses queued for the game)
 passes `python tests\menu_mouse_check.py`. No game files.
 
+A change to Quit Game in the game's own menus (`runtime/ui/quit_menu.c`, [quit-menu.md](quit-menu.md)) passes
+`python tests\quit_menu_check.py`: the message file edit, the labels and the press, without game files; with
+`--romfs <a folder with romfs.bin and index.json>` it also edits every message archive of the game and checks that
+only the three labels were added. A change to its patch sites (the set `quit_menu` of `recomp/patches-v111.txt`) passes
+`python tests\quit_menu_sites_check.py`.
+
 A change to how a gamepad's axes are read (`runtime/input/input.c` `pad_axis`: an axis counts once it has been seen at rest)
 passes `python tests\pad_rest_check.py`, which builds that function with stand-ins for SDL. No game files.
 
@@ -1089,6 +1095,12 @@ the limit only once Streamline took exactly that limit, that the game's own pace
 first host present, after 200 ms without one and with the setting off, that frames coming too soon over a window of 60
 give it to the pacer for the rest of the run, and that frames the multiplier periods apart switch Reflex to the frames
 on screen once and to the pacer the second time. No GPU, no game files.
+
+A change to the driver's low latency (`runtime/pacing/vk_lowlat.c`) passes `python tests\lowlat_revision_check.py`,
+which builds that file over a made-up driver of revision 1, 2 and 3 of `VK_NV_low_latency2` and checks that
+`vkGetLatencyTimingsNV` is called only where the driver's revision takes the three-argument form, that the sleep and
+the markers run the same on all three, and what the `lowlat:` lines say for each. It needs the Vulkan headers and
+`vk_mem_alloc.h`; no GPU, no game files.
 
 A change to `runtime/dlssg/nx2_sl.h` or to the export check in `tools/build_dlssg.py` (`declared_exports`,
 `pe_exports`) passes `python tests\dlssg_exports_check.py`, which builds a small DLL with MSYS2's clang and checks that

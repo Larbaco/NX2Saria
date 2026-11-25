@@ -76,8 +76,12 @@ Names are cut at 64 characters (the system's, the processor's, the graphics card
 characters are dropped, and `version` is the release without its build suffix.
 
 A field the game does not know is `null`. When the game crashed so hard that it could not write the report, the
-launcher makes one from the error line in the log: only `version`, `game_version`, `os.family`, `session.end`
-(`crash`) and `fatal`, every other field `null`.
+launcher makes one from the error line in the log, with `session.end` `crash`. The system, processor, memory,
+graphics card, display, settings, start-up times, patches and mods in it are the ones of the run that crashed: the
+game writes them to `logs/session-start.json` while it starts, and again when you apply settings. That file holds
+only fields of the report above, nothing more, and is never sent itself. The session's length, frame count and
+frame times stay `null`, and so does anything the game did not know yet when it crashed (the graphics card, in a crash
+before it was set up).
 
 Nothing else is collected. In particular the server does not keep the country a report came from.
 

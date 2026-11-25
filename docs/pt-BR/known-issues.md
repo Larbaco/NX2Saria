@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=69d8ac02a603b9a406b2e78a4032d4e57ec8257a reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=d38a6864bdb7072724d2ef92b4a8c01e00132e1b reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · **Português (Brasil)** · [Русский](../ru/known-issues.md) · [简体中文](../zh-Hans/known-issues.md)
 
@@ -14,7 +14,8 @@ Problemas que conhecemos na versão atual e o que os evita. Quando um deles é c
 
 - **O AMD FSR 3.1 e o FSR 4 podem mostrar falhas visuais no Windows**: manchas pretas ou escuras e cintilação enquanto a câmera ou o Link se movem, quando a cena é renderizada menor que a imagem, e rastros atrás de personagens em movimento. O upscaling bilinear, ou a cena no tamanho da janela sem upscaler, evita as manchas. Relatado ao projeto original como tangerineturtle1/NX2navi#794, tangerineturtle1/NX2navi#475 e tangerineturtle1/NX2navi#736.
 - **FSR 4 em Radeon RX 6000 (RDNA 2)**: o driver da AMD oferece o FSR 4 nessas placas e ele funciona, mas custa muito mais tempo de GPU do que nas placas mais novas (cerca de 12 ms por quadro em 1440p em uma RX 6750 XT). O FSR 3.1 é a opção mais leve nelas.
-- **No Linux com Mesa 26, o jogo pode terminar com "the GPU device was lost" em algumas placas AMD.** Os relatórios de sessão mostram isso em Radeon RX 480, RX 580 e RX 6800S com Mesa 26.2 e 26.3, segundos ou minutos depois do início da sessão; os relatórios com Mesa 25.2 não mostram. A causa ainda não é conhecida. Se acontecer com você, abra uma issue com o `logs/nx2saria.log` e as linhas do kernel depois da queda (`journalctl -k -b`).
+- **No Linux com Mesa 26.2 ou 26.3, as placas Radeon com mesh shaders (RX 6000 e mais novas) desenham parte da cena pelo mesh fallback.** Os task shaders dessas versões do Mesa têm uma falha que terminava o jogo com "the GPU device was lost" segundos depois do início da sessão (visto numa RX 6800S). O jogo passa a usar o mesh fallback ali sozinho: a grama e outros objetos desse tipo custam um pouco de taxa de quadros e aparecem um instante depois na primeira vez em que são vistos numa partida. A linha `vk: mesh path:` do log diz quando isso acontece. Nenhuma versão do Mesa tem a correção ainda; quando uma tiver, uma versão posterior do jogo volta a desenhar nativamente nela. `mesh_fallback = 0` no `nx2saria.ini` desenha nativamente em qualquer Mesa.
+- **No Linux, o jogo pode terminar com "the GPU device was lost" nas placas Radeon RX 400 e RX 500.** Os relatórios de sessão mostram isso em RX 480 e RX 580 com Mesa 26.2 e 26.3, segundos ou minutos depois do início da sessão, e com muito mais frequência a 45 quadros por segundo ou mais do que a 30. A causa ainda não é conhecida. *Limite de quadros* em 30 torna a queda mais rara. Se acontecer com você, abra uma issue com o `logs/nx2saria.log` e as linhas do kernel depois da queda (`journalctl -k -b`).
 
 ## Geração de quadros
 

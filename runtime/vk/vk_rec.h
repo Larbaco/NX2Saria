@@ -1,43 +1,23 @@
-// The recorder thread (vk_rec.c): the Vulkan calls the replay makes into its command buffer are made by a thread of
-// their own. vk_sync.c brackets each part of a submission with rec_begin (after vkBeginCommandBuffer) and rec_end
-// (before vkEndCommandBuffer). In between, every vkCmd* on that command buffer copies its arguments into a packet of a
-// ring, in call order, and the recorder makes the real call in that order; calls into any other command buffer (uploads,
-// the window, probes) are made at once. A call the ring has no packet for (a structure with a pNext chain) waits for
-// the recorder to empty the ring and is then made at once on the calling thread. rec_end returns once the recorder made
-// every call. vk_sync.c ends a part through rec_end_cb: the recorder makes the last calls into a part it recorded,
-// vkEndCommandBuffer included; submitting and the command pool stay on the submitting thread.
-//
-// Every vkCmd* the runtime calls through vk.h goes through the rc_* wrappers below (the macros at the end); the
-// extension commands called through function pointers have rec_* wrappers of their own. NX2SARIA_VK_RECORDER=0 makes every
-// call at once (the same calls in the same order), =ab switches it with the A/B blocks (rt_ab), per submission part.
-//
-// A recorder thread makes the Vulkan calls: the driver's work behind the commands depends on nothing the replay decides next.
 #pragma once
 
-void rec_begin(VkCommandBuffer cb, uint64_t fence);   // the submitting thread, sub_lock held; fence: the part's value
-void rec_end(void);                   // waits for the recorder; no-op when rec_begin did not start it
-// The end of part cb: the breadcrumb crumb (0: none, vk_crumbs.c), then vkEndCommandBuffer, both made by the recorder
-// when it records cb, and the wait for it (1); otherwise rec_end and the breadcrumb, and the caller ends cb (0).
+void rec_begin(VkCommandBuffer cb, uint64_t fence);
+void rec_end(void);
 int rec_end_cb(VkCommandBuffer cb, int crumb, uint64_t n);
-void rec_drain(void);                 // waits until the recorder made every call queued so far
-void rec_wait_totals(uint64_t *full_ns, uint64_t *drain_ns);   // producer time spent on a full ring and in drains
-void rec_stats_log(void);             // NX2SARIA_TRACE=perf: packets, bytes, drains and waits since the last call
-// NX2SARIA_REC_CHECK=1 (debug, recorder on): vk_memory.c reports each object it defers (destroy 0, stamped tl) or destroys
-// (destroy 1) with the value the GPU reached (gpu); a packet of the part being recorded that still names it is logged
-// as a hazard when the object can go before the part ran. rec_check_log: the counts by kind and packet, at exit.
+void rec_drain(void);
+void rec_wait_totals(uint64_t *full_ns, uint64_t *drain_ns);
+void rec_stats_log(void);
 enum { REC_IMAGE, REC_VIEW, REC_BUFFER, REC_KINDS };
 void rec_check_handle(int kind, uint64_t handle, int destroy, uint64_t tl, uint64_t gpu);
 void rec_check_log(void);
 
-// Extension commands called through device function pointers.
 void rec_push_tpl(PFN_vkCmdPushDescriptorSetWithTemplateKHR fn, VkCommandBuffer cb, VkDescriptorUpdateTemplate tpl,
-                  VkPipelineLayout layout, uint32_t set, const void *data, uint32_t bytes);   // data: bytes read by tpl
+                  VkPipelineLayout layout, uint32_t set, const void *data, uint32_t bytes);
 void rec_push(PFN_vkCmdPushDescriptorSetKHR fn, VkCommandBuffer cb, VkPipelineBindPoint bp, VkPipelineLayout layout,
               uint32_t set, uint32_t n, const VkWriteDescriptorSet *w);
 void rec_vertex_input(PFN_vkCmdSetVertexInputEXT fn, VkCommandBuffer cb, uint32_t nb,
                       const VkVertexInputBindingDescription2EXT *b, uint32_t na,
                       const VkVertexInputAttributeDescription2EXT *a);
-void rec_bool(PFN_vkCmdSetDepthClampEnableEXT fn, VkCommandBuffer cb, VkBool32 v);   // also alpha to coverage
+void rec_bool(PFN_vkCmdSetDepthClampEnableEXT fn, VkCommandBuffer cb, VkBool32 v);
 void rec_polygon_mode(PFN_vkCmdSetPolygonModeEXT fn, VkCommandBuffer cb, VkPolygonMode m);
 void rec_blend_enable(PFN_vkCmdSetColorBlendEnableEXT fn, VkCommandBuffer cb, uint32_t first, uint32_t n, const VkBool32 *v);
 void rec_blend_equation(PFN_vkCmdSetColorBlendEquationEXT fn, VkCommandBuffer cb, uint32_t first, uint32_t n,
@@ -45,10 +25,9 @@ void rec_blend_equation(PFN_vkCmdSetColorBlendEquationEXT fn, VkCommandBuffer cb
 void rec_write_mask(PFN_vkCmdSetColorWriteMaskEXT fn, VkCommandBuffer cb, uint32_t first, uint32_t n,
                     const VkColorComponentFlags *v);
 void rec_draw_mesh(PFN_vkCmdDrawMeshTasksEXT fn, VkCommandBuffer cb, uint32_t x, uint32_t y, uint32_t z);
-void rec_shading_rate(PFN_vkCmdSetFragmentShadingRateKHR fn, VkCommandBuffer cb, uint32_t size);   // size x size pixels per fragment
+void rec_shading_rate(PFN_vkCmdSetFragmentShadingRateKHR fn, VkCommandBuffer cb, uint32_t size);
 void rec_draw_mesh_ind(PFN_vkCmdDrawMeshTasksIndirectEXT fn, VkCommandBuffer cb, VkBuffer b, VkDeviceSize o, uint32_t n,
                        uint32_t stride);
-// A pass mark (vk_crumbs.c vk_pass_mark_cmd: a buffer marker and a checkpoint), in order with the commands around it.
 void rec_pass_mark(VkCommandBuffer cb, uint32_t id, int end);
 
 #define REC_CMDS(X)                                                                                                       \

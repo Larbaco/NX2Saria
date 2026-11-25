@@ -2,16 +2,17 @@
 
 The in-game menu: the settings pages and their draft, the menu's look from the game's own textures, fonts and sounds,
 the bindings page, the Amiibo page and picker, the Cheats tab, the debug menu's panel, the performance overlay's panel,
-the host's folder dialogs, the mouse in the game's own menus, and the catalog of the text the host shows. The feature
+the host's folder dialogs, the mouse in the game's own menus, Quit Game in the game's own menus, and the catalog of the text the host shows. The feature
 docs:
 
 - [controls.md](../controls.md): the menu, its tabs, the draft and Apply, the bindings.
 - [menu-mouse.md](../menu-mouse.md): the mouse in the game's own menus, how the game's objects were found.
+- [quit-menu.md](../quit-menu.md): Quit Game in the game's own menus.
 - [amiibo.md](../amiibo.md): the Amiibo tab, the picker, the keys and write-back.
 - [performance.md](../performance.md): the performance overlay.
 - [presets.md](../presets.md): the quality preset the menu stages.
 - [translating.md](../translating.md): the menu's strings and their translations.
-- [logging.md](../logging.md): the `menu:` and `menu_mouse:` lines.
+- [logging.md](../logging.md): the `menu:`, `menu_mouse:` and `quit_menu:` lines.
 
 "The settings file" on this page is the selected one, `nx2saria.ini` or the older name that still works
 ([branding.md](../branding.md)). "The game" is the game the port runs; where two game versions differ the version is
@@ -899,12 +900,6 @@ there. The dead zone's names follow the values in their order in `runtime/cfg/cf
 - The keyboard's sticks are all or nothing: the walk key scales them to the walk scale (0.2 to 0.9) while it is held
   (`runtime/input/input.c` `walk_get()`).
 
-### `go_to()`
-
-`g_tab` is the tab shown; `g_tab_request` selects a tab at the next layout (-1 none); `g_focus_page`: this tab's first
-row takes the cursor once it is shown (-1 none). `go_to()` is for a row of another tab: that tab opens with the row
-under the cursor.
-
 ### `menu_sounds_frame()`
 
 The game's interface sounds (`runtime/ui/menu_sound.c`) for what the frame did: a press or click on an item, the
@@ -914,6 +909,9 @@ cursor going to the first row is part of it. `g_sound_fresh` marks that frame, a
 nothing was laid out while the menu was closed.
 
 ### `layout_menu()`
+
+`g_tab` is the tab shown; `g_tab_request` selects a tab at the next layout (-1 none); `g_focus_page`: this tab's first
+row takes the cursor once it is shown (-1 none).
 
 - `opt_draft_sync()` runs first: a key something else changed (F11) leaves the draft.
 - With the game's frame art, the window's own border is 0: the game's frame is the border.
@@ -1209,12 +1207,6 @@ box opened by the row): `key` the row's setting, `from` and `to` its shown value
 A row that runs an action: true on A or a click. `id`: unique on the page and not a setting (`##copy_info`); `value`:
 shown on the right (`""` none).
 
-### `opt_text_row()`
-
-A row whose label, value, note (under the value) and description are text, not catalog ids: a mod's folder name.
-Returns 2 (A / click), -1 / +1 (left / right), 3 / 4 (move up / down: the top / left face buttons, Ctrl+Up /
-Ctrl+Down, the drawn arrows; movable rows only) or 0.
-
 ### `opt_toggle_text()`, `opt_group_text()`, `opt_text_str()`
 
 Rows and text that are not settings of the settings table: a label and description of the caller's own (the cheats of
@@ -1258,7 +1250,9 @@ them (`runtime/ui/menu.cpp` asks when the menu is about to close).
   (`runtime/ui/option_rows.cpp` `is_staged()`).
 
 Nothing is written to the settings file before Apply (`opt_draft_apply()`). A change back to the original value leaves
-the draft. Rows read their setting through `opt_value()` and its siblings so a staged change shows; anything else
+the draft. After Apply has saved the file it writes the session header again (`runtime/session_summary.c`
+`session_summary_header()`), so a hard crash's summary carries the settings in use then; once per Apply, never per
+frame. Rows read their setting through `opt_value()` and its siblings so a staged change shows; anything else
 reads `cfg_value`.
 
 `opt_value()`: the draft's value of a staged key, else `cfg_value`. `opt_get()`: as `opt_value()`, else `cfg_get`
@@ -1406,7 +1400,8 @@ the body do not, with the fonts and sizes of the game. At most 24 clicks.
 One row: draws it, handles A / click and left / right while selected. Returns 2 (A, or a click on a row without
 arrows), -1 / +1 (left / right, or the mouse on a stepper's framed arrow), 3 / 4 (move up / down, movable rows only)
 or 0; always 0 for a row the environment fixes (greyed out, still selectable so its description shows). `movable`: the
-top / left face buttons, Ctrl+Up / Ctrl+Down and two drawn arrows move it.
+top / left face buttons, Ctrl+Up / Ctrl+Down and two drawn arrows move it. No row is movable now: the row that was, a
+mod's folder in the Mods tab, is gone, and every caller passes `false`.
 
 A stepper takes the mouse on its two framed arrows only: a click anywhere else on the row selects it and changes
 nothing. A click on the row used to step to the next value, and the left arrow stood left of the value's text, so it
@@ -2603,6 +2598,234 @@ walk.
 The press that brings page `cur` one nearer to page `goal`: `MM_L`, `MM_R`, or -1 when it is there (or either is
 unknown). The pages do not wrap past the ends.
 
+## `runtime/ui/quit_menu.c`
+
+Quit Game in the game's own menus in game version 1.1.1: a fourth entry on the title screen and a third button in the
+confirmation the pause menu's Title Screen opens. What the game has, why the entry sits where it does, the texts and
+the log: [quit-menu.md](../quit-menu.md).
+
+The runtime calls no game code. The set `quit_menu` (`recomp/patches-v111.txt`) has seven sites; three call host
+functions, four make the game call its own text helper once more in each screen. The readers of the game's objects
+(`ok_at()`, `game_object()`, `pane_parent()`, the offsets) are the ones of `runtime/ui/menu_mouse.c`, whose notes
+name each field; they are repeated here so that neither file needs the other.
+
+The title screen's own fields: +0x2c8 the number of its buttons, +0x2d0 their array, +0x2e8 its menu shown
+(`TITLE_COUNT`, `TITLE_BUTTONS`, `TITLE_MENU`). The entries of a screen are in the order its buttons were made, so the
+title's fourth entry (`TITLE_SPARE`, 3) is `Pa_Button_03` and the window's third (`WINDOW_SPARE`, 2) `Pa_Button_02`.
+From a button's root pane the part pane that holds it in the screen's layout is two panes up (`TITLE_PART_DEPTH`, 3,
+is the most that is looked at).
+
+State shared between the interface thread and the pad read: `g_title_ms` and `g_pause_ms`, the time the focus was last
+seen on the new button of each screen (0 when it is not there); the pad read takes them as true for `ARMED_MS`, 250,
+so a screen that stops updating lets go by itself. `g_window`: the window opened with three buttons. `g_quit`: the
+choice was made. `g_texts`, `g_title`, `g_pause`: the labels are served, and each screen is on.
+
+### The sites
+
+Each is in a function that saved its x30 in its prologue (`stp x29, x30`), and is followed by a call that sets x30
+again before it is read. None is between a flag-setting word and its reader. `tests/quit_menu_sites_check.py` holds
+the words.
+
+**`main+0x2d13b0`, every interface screen's update** (`main+0x2d1380`): the cut and the call of the set `menu_mouse`
+(`runtime/ui/menu_mouse.c`), so with either set on the page's +0xee0 runs once, and its host function
+(`runtime/patches/patches.c` `screens_host()`) calls both files. The host functions change no register.
+
+**`main+0x3405b04`, the window's open** (`main+0x3405a00`):
+
+```
+3405a18: mov x20, x1              the kind
+3405a1c: mov x19, x0              the window
+...
+3405ab0: sub w8, w20, #2
+3405ab4: cmp w8, #2
+3405ab8: b.lo 0x3405b00           kinds 2 and 3
+...
+3405b00: ldr x0, [x19, #0x2b0]    the BtnNum animation
+3405b04: fmov s0, #2.0            <- bl page+0xe20: s0 = 2.0, or 3.0 for kind 2
+3405b08: bl 0x2d2d90              the animation's frame
+3405b0c: mov x0, x19
+3405b10: mov w1, wzr
+3405b14: mov w2, #3
+3405b18: b 0x3405b34
+```
+
+The host function writes s0 (as the fmov does, the rest of v0 zero) and reads x19 and w20. x0 is loaded before the
+cut and is not touched; every other argument register is written after the call at `main+0x3405b08`.
+
+**`main+0x3405b38` and `main+0x3405b3c`, between the open's two calls of the helper**:
+
+```
+3405b34: bl 0x3405bc0             the helper for button 0 (x0 the window, w1 0, w2 the label's number)
+3405b38: mov w1, #1               <- mov w1, #2; mov w2, #12; mov x0, x19; bl 0x3405bc0
+3405b3c: mov w2, #1               <- mov w1, #1; mov w2, #1
+3405b40: mov x0, x19
+3405b44: bl 0x3405bc0             the helper for button 1
+3405b48: ldr w8, [x19, #0x2b8]
+```
+
+After the call at `main+0x3405b34` returns, every caller-saved register is dead: the next three words write w1, w2 and
+x0, and the first read after the second call is of x19, which the helper keeps (it saves x19 to x21). So a third call
+between the two, with its own w1, w2 and x0, changes nothing the open reads, and the second cut writes the w1 the first
+took the place of. All the two-button kinds pass here (0 and 4 from `main+0x3405b1c`, 1 from `main+0x3405ba0`, 2 and 3
+from `main+0x3405b00`), so button 2 gets the text of the label 1012 in each; it is shown for kind 2 only.
+
+**`main+0x3405bfc`, in the helper** (`main+0x3405bc0`):
+
+```
+3405bd8: mov x21, x0              the screen
+3405be0: mov w19, w2              the label's number
+3405be4: mov w20, w1              the button
+3405be8: bl 0xa66f70
+3405bec: adrp x8, 0x3df6000       "LayoutMsg/SystemWindow_00"
+3405bf0: add x8, x8, #0xbcd
+3405bf4: adrp x2, 0x3e1e000       "10%02d"
+3405bf8: add x2, x2, #0x4dd
+3405bfc: mov w3, w19              <- bl page+0xe10: w3 = w19, or 10 or 11 with three buttons
+3405c00: str x8, [x29, #0x18]
+3405c04: add x0, sp, #8
+3405c08: bl 0x6458a0              the label formatted
+...
+3405c30: adrp x2, 0x3d26000       "Pa_Button_%02d/T_Btn_00"
+3405c3c: mov w3, w20
+...
+3405c64: ldr x0, [x21, #0x28]     the screen's layout: the only field of the screen the helper reads
+3405c68: bl 0xa67d30              the text pane takes the message
+```
+
+The host function writes x3 only (the mov's zero extension) and reads x19, x20 and x21. x8 and x2 are live across the
+cut: a host call leaves the registers it does not write as they are. The helper names the message file itself, so it
+gives a button of any screen a text of `LayoutMsg/SystemWindow_00.msbt`: that is why the title's entry takes its text
+from the label 1012 there.
+
+**`main+0x3406964` and `main+0x3406968`, the title screen's set-up** (`main+0x34067d0`, x19 the screen from
+`main+0x34067ec` on, not written again before `main+0x3406cdc`):
+
+```
+3406950: str x0, [x19, #0x2d8]
+3406954: ldr x0, [x19, #0x2c0]
+3406958: bl 0x2d0fe0
+340695c: ldr x0, [x19, #0x2b8]
+3406960: bl 0x2d0fe0
+3406964: adrp x2, 0x3e04000       <- mov x0, x19; mov w1, #3; mov w2, #12; bl 0x3405bc0
+3406968: add x2, x2, #0x8e        <- adrp x2, 0x3e04000; add x2, x2, #0x8e
+340696c: mov x0, sp
+3406970: mov w3, #1
+3406974: strb wzr, [x19, #0x2e8]
+3406978: mov w4, wzr
+340697c: bl 0x6f99d0
+```
+
+The cut follows a call, so every caller-saved register is dead there, and the words after it write x2, x0, w3 and w4
+before the next call reads them. The buttons are made by then (the loop at `main+0x34068a4`). The adrp moves one word
+down inside its page (0x3406964 and 0x3406968 are both in 0x3406000), so its word is the same. x20 to x23, which the
+set-up uses later, are callee-saved and the helper keeps them. The game does not call the window's helper for the
+title; it works there because the helper reads only the screen's layout (+0x28, a field of the class every screen
+derives from) and looks the pane up by its path, `Pa_Button_03/T_Btn_00`, which the title's layout has.
+
+### `test_flag()`
+
+A word of `NX2SARIA_QUIT_MENU_TEST` ([quit-menu.md](../quit-menu.md), "Testing").
+
+### `quit_menu_wanted()`
+
+The set `quit_menu` is in this build and on, on game 1.1.1.
+
+### `sites_ok()`
+
+The words of the game's image at a screen's sites are the ones the sites were written for (`title_sites[]`,
+`pause_sites[]`: the sites that screen needs, the screens' update and the helper's among them). The generator refuses
+a build whose module differs at a site, so this is the same check at run time; a difference turns that screen off with
+the address and the word in the start line.
+
+### `quit_menu_texts()`
+
+Called once by `runtime/hle/romfs.c` `quit_menu_overlay()` with the number of message archives edited: the start line,
+and what is on. Nothing is on unless every archive wanted got its labels.
+
+### `focused_entry()`, `entries_of()`
+
+The entry that has the game's focus (0 for none), and a screen's entries in order.
+
+### `hidden_at()`
+
+How far up from a pane the first pane is that hides it (0 the pane itself, -2 none: it is shown), as the game's entry
+test takes it: a pane not shown, or transparent where the alpha is inherited.
+
+### `describe()`, `trace()`
+
+The line of `NX2SARIA_QUIT_MENU_TEST=log`: each entry's button flags, its place, whether it has the focus and what
+hides it.
+
+### `title_tick()`
+
+At the title screen's update. A title with other than four entries and four buttons is left alone, with one line.
+The fourth button's part pane gets its shown bit when it is the pane that hides the button and at most
+`TITLE_PART_DEPTH` up; an ancestor further up (the menu not faded in yet) is the game's. The bit is written once: the
+game does not clear it. `g_title_ms` is the time while the screen is open and the focus is on the fourth entry.
+
+### `window_tick()`
+
+At the update of the window that was opened with three buttons: `g_pause_ms` while it is open with the focus on the
+third entry. When it leaves the open state without the choice, one line says so and the window is forgotten.
+
+### `quit_menu_window_count_host()`, `quit_menu_window_label_host()`
+
+The host functions of the sites at `main+0x3405b04` and `main+0x3405bfc`. The label 12 becomes 1 (the game's Cancel)
+when the labels were not served, so the helper never asks for a label the message file lacks; the button it is for
+is hidden then.
+
+### `quit_menu_poll()`
+
+Once per pad read, after the mouse in the menus has added its presses (`runtime/input/input.c` `input_poll()`), so a
+click on the entry is taken too. While the focus is on a new button, A does not reach the game and a new press of it
+is the choice (`runtime/ui/quit_menu_core.h` `qm_press()`). The window is asked to close once no save is being written
+(`runtime/hle/fs_host.c` `fs_save_busy()`), as the settings menu's Quit game waits. The pad is read on more than one
+thread: one at a time decides (`busy`), the others drop A while it is held taken.
+
+## `runtime/ui/quit_menu_core.h`
+
+The parts of Quit Game that need neither the game's memory nor the runtime, so `tests/quit_menu_check.c` runs them.
+
+The game's message files (MSBT) as this game writes them: a header of 0x20 bytes (`MsgStdBn`, the byte order mark, the
+encoding at 0xc, which is 0, UTF-8; the number of sections at 0xe, two; the file's size at 0x12), then `LBL1` and
+`TXT2`, each a tag, its size, 8 bytes of zero and its data, padded to 16 bytes with 0xab. `LBL1`: a count of groups,
+then a count and an offset per group, then the labels of each group (a length byte, the name, the index of its text);
+a label is in the group its hash names (`qm_label_hash()`: h = h * 0x492 + byte, modulo the groups). `TXT2`: a count,
+an offset per text, the texts, each ending in a zero byte. A text's control tags hold zero bytes too, so a text's
+length is the next offset less one, never the first zero.
+
+### `qm_msbt_open()`, `qm_msbt_text()`, `qm_msbt_labels()`, `qm_msbt_find()`
+
+A file of that shape, checked whole before anything is read from it: any other (UTF-16, a third section, an offset
+outside its section, a text without its zero) is refused. `qm_msbt_find()`: a label's text.
+
+### `qm_msbt_add()`
+
+The file with labels added, written anew with the same number of groups. A label that is there with the same text
+counts for nothing, one with another text gets the new one. Returns the number of labels that changed, 0 for none (no
+file is made), -1 for a file of another shape.
+
+### `qm_window_label()`
+
+The number of the label a button of the window gets: with three buttons shown, 10 for the first's 3 (Title Screen) and
+11 for the second's 1 (Cancel); otherwise the game's.
+
+### `qm_press()`
+
+Whether the pad read takes A away from the game, and whether this is the press that chooses: a press that starts
+while the focus is on the entry. An A held since another entry is the game's; an A taken stays taken until it is let
+go, also when the focus has gone.
+
+## `runtime/ui/quit_menu_text.h`, `runtime/ui/quit_menu_text.c`
+
+The labels in a message archive, free of the runtime for the test: the header names the message files and labels and
+includes nothing of the runtime (`runtime/ui/quit_menu.h`, which the runtime's files include, brings `runtime/cpu.h`
+for the host functions, and with it code the test's warnings refuse). `quit_menu_archive()`: a decompressed archive (a
+SARC) with the three labels of [quit-menu.md](../quit-menu.md) ("The texts") added to
+`LayoutMsg/SystemWindow_00.msbt`, their texts read from the same archive, and the archive laid out again
+(`runtime/hle/sarc.c` `sarc_rebuild()`). `quit_menu_build()`: the same on the compressed file, with the dictionary
+its zstd frame names. Each returns 1 when made, 0 when the archive has the labels already, -1 with why.
+
 ## `runtime/ui/binds_page.h`
 
 The remapping rows of the menu's Controls tab (`runtime/ui/binds_page.cpp`). Present path only (ImGui). What the player
@@ -3075,10 +3298,13 @@ leaves room for a note.
 ### `UiTextId`: what each text is for
 
 The ids come in groups, in this order: the software keyboard; the menu's window, tabs and bottom row; Screen; Game;
-Mods (the port's own patches and the player's mods folder, `runtime/patches/mods.c`); Sound; Controls; the Controls
-tab's remapping rows; the Amiibo tab; the Menu tab; the Game tab's Testing rows; the language names; Advanced; the
-performance overlay; the Cheats tab; the Saves group; the capture note; the boot screen; the Picture rows.
+Sound; Controls; the Controls tab's remapping rows; the Amiibo tab; the Game tab's Discord row and Testing rows; the
+language names; the Cancel of the confirmation boxes; the performance overlay; the Cheats tab; the Saves group; the
+capture note; the boot screen; the Picture rows.
 `UI_MENU_FIRST` to `UI_MENU_LAST_ID` carry English, Russian, Brazilian Portuguese and Simplified Chinese texts.
+
+An id is added and removed together with its strings in all four languages: when the last code that names it goes,
+the id and its strings go in the same change (`tests/ui_text_ids_check.py` fails on an id nothing uses).
 
 For a translator, what a text is for and what its printf arguments take:
 
@@ -3099,25 +3325,13 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_GRAPHICS` | group heading over the resolution rows |
 | `UI_MENU_WIDE_HUD`, `UI_MENU_WIDE_MENUS` and their `_DESC`, `_CENTER`, `_EDGES`, `_FULL` | where the HUD and the menus go on a picture wider than 16:9 (`NX2SARIA_WIDE_HUD`, `NX2SARIA_WIDE_MENUS`) |
 | `UI_MENU_TEX_DETAIL_AUTO` | "Automatic: %s", `%s` the level it picks on this card |
-| `UI_MENU_COLOR` | group heading over the colour rows |
-| `UI_MENU_HDR_GROUP` | group heading over the HDR rows |
 | `UI_MENU_AA_TAA_FSR4` | "TAA (%s)": FSR 4's name as the Upscaling row gives it ("AMD FSR 4.1") |
 | `UI_MENU_FPS_DISPLAY`, `UI_MENU_FPS_DISPLAY_HZ` | the monitor's refresh rate; the second is a printf format with the rate in Hz, used when it is known |
 | `UI_MENU_FPS_RTSS`, `UI_MENU_FPS_RTSS_READONLY` | notes under the frame rate value: RivaTuner Statistics Server (`runtime/pacing/rtss_limit.c`) limits the game, or cannot |
-| `UI_MENU_MODS_NONE` | no mod folder yet: where to unpack one |
-| `UI_MENU_MODS_ROW_DESC` | printf: files it replaces, files it adds (as of this start) |
-| `UI_MENU_MODS_OVERRIDDEN` | printf: files a higher mod serves instead, that mod's name |
-| `UI_MENU_MODS_EXEFS_UNSUPPORTED` | printf: the file and why |
-| `UI_MENU_MODS_EXEFS_ON` | printf: its ExeFS patch files in use |
-| `UI_MENU_MODS_REPLACES_BUILTIN` | printf: its ExeFS patch files in use, the port's own patch sets they turn off |
-| `UI_MENU_MODS_OTHER_VERSION` | printf: files made for another game version, left out |
-| `UI_MENU_MODS_UNUSED` | under the switch of a mod the port cannot use |
-| `UI_MENU_MODS_CHEATS` | printf: its cheats as read at start |
-| `UI_MENU_MODS_CHEATS_FILE` | printf: `<build id>.txt`, when none were read |
 | `UI_MENU_RUMBLE_HD`, `UI_MENU_RUMBLE_HD_DESC`, `UI_MENU_RUMBLE_HD_NEEDS` | HD rumble, and the note on its row while the gamepad in use cannot take it (`runtime/input/input.h` `input_rumble_hd_available()`) |
 | `UI_MENU_GROUP_GYRO`, `UI_MENU_GYRO_*` | the Gyro group (`runtime/ui/menu.cpp` `rows_gyro()`): its heading, rows and dead zone levels, and the note on its rows while motion controls are off |
 | `UI_MENU_PROMPTS_MISSING`, `UI_MENU_PROMPTS_FAILED`, `UI_MENU_PROMPTS_RESTART`, `UI_MENU_PROMPTS_OFF_SHAPE`, `UI_MENU_PROMPTS_OFF_MODS`, `UI_MENU_PROMPTS_OFF_PATCHES` | the notes under the prompts: their files are missing or damaged, they change after restart, or why they are off |
-| `UI_MENU_RESTART`, `UI_MENU_RESTART_DESC`, `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | "Restart now" under the prompts while they change after restart, and its confirmation (its Cancel is `UI_MENU_RESET_NO`) |
+| `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | the confirmation of the bar's Restart and Quit (its Cancel is `UI_MENU_RESET_NO`) |
 | `UI_MENU_RESTART_COUNT` | the bar's Restart with the count of settings waiting for it (printf: `%d`) |
 | `UI_MENU_DRAFT_TITLE`, `UI_MENU_DRAFT_APPLY`, `UI_MENU_DRAFT_DISCARD`, `UI_MENU_DRAFT_KEEP`, `UI_MENU_DRAFT_RESTART_NOTE`, `UI_MENU_DRAFT_QUIT_NOTE` | the box that asks about the changes made in the menu when it is left (`runtime/ui/menu.cpp` `apply_confirm()`), and the lines restarting and quitting add to their confirmation while there are such changes |
 | `UI_MENU_KEEP_TITLE`, `UI_MENU_KEEP_COUNTDOWN`, `UI_MENU_KEEP_YES`, `UI_MENU_KEEP_REVERT`, `UI_MENU_RESTART_NOW_TITLE`, `UI_MENU_RESTART_NOW`, `UI_MENU_RESTART_LATER` | after Apply: the "keep these display settings?" box with its countdown (`UI_MENU_KEEP_COUNTDOWN`, a printf format with one `%d`), and the "restart now / later" box for settings read at start |
@@ -3142,17 +3356,14 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_AMIIBO_DAILY_LIMIT`, `UI_MENU_AMIIBO_DAILY_LIMIT_DESC` | the Game tab's switch for the game's once-a-day amiibo limit (`NX2SARIA_AMIIBO_DAILY_LIMIT`) |
 | `UI_MENU_REPLAY_WORKERS` and the ids after it | the Game tab's Testing rows (`runtime/ui/menu.cpp` `tab_game()`), English only |
 | `UI_MENU_NEEDS_WORKERS`, `UI_MENU_NEEDS_PIPE` | why a row is greyed out |
-| `UI_MENU_LANGNAME_*` | language names, each in its own language and the same in every row (game language and menu language lists) |
-| `UI_MENU_ACTION_FAILED` | beside a button whose action did not work (no clipboard, no folder) |
+| `UI_MENU_LANGNAME_*` | language names, each in its own language and the same in every row (the game language list) |
 | `UI_MENU_OV_FPS_LABEL`, `UI_MENU_OV_FG_LABEL`, `UI_PERF_LINE_FPS_FG`, `UI_MENU_OV_FRAME_LABEL`, `UI_MENU_OV_FMT_FPS` | the overlay's frame rows: their labels, the rate |
 | `UI_MENU_OV_LOW1`, `UI_MENU_OV_LOW01` | printf: the fps of the slowest 1% / 0.1% of the frames, no unit (the overlay column stays narrow) |
 | `UI_MENU_OV_FMT_PCT`, `UI_MENU_OV_FMT_TEMP`, `UI_MENU_OV_FMT_POWER`, `UI_MENU_OV_FMT_MHZ`, `UI_MENU_OV_FMT_GB`, `UI_MENU_OV_FMT_GB_OF`, `UI_MENU_OV_GAME_GB`, `UI_MENU_OV_FMT_MS`, `UI_MENU_OV_PER_FRAME` | number formats of the overlay's cells (printf, one number each) |
-| `UI_MENU_OV_WINDOW`, `UI_MENU_OV_OUTPUT`, `UI_MENU_OV_SCENE`, `UI_MENU_OV_SCALING`, `UI_MENU_OV_LIMIT`, `UI_MENU_OV_PRESENT` | the picture lines: window, game image and 3D scene sizes, the scaling to the window, frame limit and presentation |
+| `UI_MENU_OV_WINDOW`, `UI_MENU_OV_OUTPUT`, `UI_MENU_OV_SCENE`, `UI_MENU_OV_LIMIT` | the picture lines: window, game image and 3D scene sizes, and the frame limit |
 | `UI_MENU_OV_FMT_SIZE` | "%ux%u" |
 | `UI_MENU_OV_FMT_SCENE` | "%ux%u, %.0f%%": the scene and its share of the game image's width |
 | `UI_MENU_OV_FMT_FSR` | "AMD FSR 1, sharpness %d%%" |
-| `UI_MENU_OV_FMT_SHRINK` | the image is larger than the window: "bilinear + FSR sharpening %d%%" |
-| `UI_MENU_OV_SCALE_DOWN` | FSR is selected but the image is larger than the window: FSR only enlarges |
 | `UI_MENU_TAB_CHEATS` and the ids after it | the Cheats tab (`runtime/patches/cheats.c`): the file, the kinds of cheat and why one cannot be switched |
 | `UI_MENU_CHEATS_NONE` | `%s`: `<build id>.txt` |
 | `UI_MENU_CHEAT_KEY_DESC` | `%s`: the buttons |
@@ -3169,12 +3380,12 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_BOOT_TITLE`, `UI_BOOT_STARTING` | the boot screen while the boot prewarm prepares shaders and pipelines (`runtime/boot.c`, `runtime/ui/menu.cpp` `menu_boot_frame()`) |
 | `UI_BOOT_SHADERS`, `UI_BOOT_PIPELINES` | printf: `%lld` done, `%lld` total |
 | `UI_BOOT_COMPUTE`, `UI_BOOT_DRIVER_CACHE` | after a driver change (`runtime/vk/vk_pipeline.c` `bf_decide()`): the compute pipelines, then the prepared shader variants built into the driver's own cache; printf as above |
-| `UI_MENU_UPSCALING`, `UI_MENU_UPSCALING_DESC`, `UI_MENU_FRAMEGEN`, `UI_MENU_FRAMEGEN_DESC`, `UI_MENU_FRAMEGEN_OFF`, `UI_MENU_FRAMEGEN_NOTE`, `UI_MENU_FRAMEGEN_NEEDS`, `UI_MENU_HDR_TONEMAPPED`, `UI_MENU_HDR_NATIVE` | the settings menu's Picture rows for this game (`runtime/ui/menu.cpp` `tab_screen()`): one upscaling choice (bilinear, FSR 1 or a DLSS mode) and the picture's resolution |
-| `UI_MENU_UPSCALING_DESC_FSR`, `UI_MENU_FRAMEGEN_DESC_FSR`, `UI_MENU_FRAMEGEN_NOTE_FSR`, `UI_MENU_FRAMEGEN_NEEDS_FSR` | the same rows' texts on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there |
+| `UI_MENU_UPSCALING`, `UI_MENU_UPSCALING_DESC`, `UI_MENU_FRAMEGEN`, `UI_MENU_FRAMEGEN_OFF`, `UI_MENU_FRAMEGEN_NOTE`, `UI_MENU_HDR_TONEMAPPED`, `UI_MENU_HDR_NATIVE` | the settings menu's Picture rows for this game (`runtime/ui/menu.cpp` `tab_screen()`): one upscaling choice (bilinear, FSR 1 or a DLSS mode) and the picture's resolution |
+| `UI_MENU_UPSCALING_DESC_FSR` | the Upscaling row's description on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there |
 | `UI_MENU_UPSCALING_DESC_NO_FSR` | where FSR 3.1 cannot run (`vk_ffx_available`: on Windows `amd_fidelityfx_vk.dll` does not load, elsewhere the runtime's own passes cannot run on the device, `runtime/vk/vk_fsr3.c`): the menu leaves it out there, and this text says so. Its English text differs by platform: off Windows there is no library to load, and the game's own passes (`runtime/vk/vk_fsr3.c` `vk_fsr3_init()`) found the device cannot run them |
 | `UI_MENU_FSR3_OFF` | FSR 3.1 is still set but cannot run: "in use: off" and why |
 | `UI_MENU_UPSCALING_NATIVE` | the scene at the picture's own size, no upscaler (`runtime/ui/menu.cpp` `share_native()`) |
-| `UI_MENU_FRAMEGEN_DESC_DLSS`, `UI_MENU_FRAMEGEN_NOTE_DLSS`, `UI_MENU_FRAMEGEN_NEEDS_DLSS` | DLSS only |
+| `UI_MENU_FRAMEGEN_NEEDS_DLSS` | DLSS only |
 | `UI_MENU_FRAMEGEN_DESC_NONE`, `UI_MENU_FRAMEGEN_NEEDS_NONE` | neither runs |
 | `UI_MENU_FRAMEGEN_DESC_FSR_WIN`, `UI_MENU_FRAMEGEN_NEEDS_FSR_WIN`, `UI_MENU_FRAMEGEN_OFF_FSR_WIN` | no DLSS, and FSR 3.1 upscales through the runtime's own passes while its frame generation needs AMD's library, which only the Windows build loads (`runtime/ui/menu.cpp` `row_framegen()`, `fsr_win_only`): the row says that, not that FSR 3.1 does not run. `OFF`: frame generation is still set to FSR 3.1 there |
 | `UI_MENU_FRAMEGEN_FSR3_NATIVE`, `UI_MENU_FRAMEGEN_OFF_HDR` | FSR 3.1's frame generation through the runtime's own passes (every build but the Windows one, `runtime/vk/vk_fsr3fg.c`): the row's note while it is chosen, and why it is off while HDR is on (it generates SDR pictures only) |
@@ -3217,6 +3428,11 @@ The game languages the F1 menu offers for a game build (`rt_game_version`): one 
 ships (`UiGameLang`), each with the Switch code `NX2SARIA_LANG` takes and the id of its name. 1.4.3 adds Brazilian
 Portuguese (`USpt`). Fills `out` (room for `max` entries) and returns the count.
 
+### `ui_text_game_lang_mals()`
+
+The four-letter prefix of the message archive a game language reads (`USpt` for `pt-BR`), NULL for a language the
+list does not have (`runtime/hle/romfs.c` `quit_menu_overlay()`).
+
 ### `ui_text_game_langs_in()`
 
 The same list from the Mals files the RomFS ships (this game: Polish and Brazilian Portuguese, no Portugal
@@ -3257,6 +3473,14 @@ every version; `USpt` only from 1.4.3; `EUpl` only in this game (its `since` is 
 
 A language's own strings, for the font that draws them: the merged system font must cover the whole menu of the
 language, not only its name (`runtime/ui/menu.cpp` `fonts_up()`).
+
+For Simplified Chinese it also hands over `file_name_glyphs_zh_hans`, a list of 124 characters that is data, not menu
+text: 121 Han characters and `7`, `|`, `×`. They are the characters that only strings of removed menu rows held. The
+font atlas holds the glyphs of the strings it is given and nothing else, and the menu also draws names it does not
+know in advance, the files of the amiibo folder among them (`runtime/ui/amiibo_page.cpp`); a name with one of these
+characters drew before those rows left and would show `?` without the list. With it, the set of glyphs is the one the
+catalog gave before. `tests/ui_text_ids_check.py` fails when a character leaves the list or the walk stops handing it
+over. A name with a Han character outside the catalog and the list shows `?`, as it always did.
 
 ### `resolve_menu_lang()`
 

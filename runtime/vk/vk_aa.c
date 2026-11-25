@@ -1,23 +1,3 @@
-// The anti-aliasing setting (NX2SARIA_AA, nx2navi.ini aa): what runs in place of the game's own SMAA.
-//
-// Ocarina anti-aliases every frame with SMAA in three compute passes right after the bloom composite: edge detection
-// into 4x4-pixel tiles, blending weights from the tiles (an indirect dispatch, with the game's area lookup texture),
-// and the composition, which reads the composite and the weights and writes the result into the scene target that the
-// game's upscaler, the HUD and the output passes then take. The composition stores each channel's square root packed
-// as RGB9E5 words through an integer view of that R11G11B10F target (vk_exec_draw.c raw_note).
-//
-// aa = game (the default) leaves those passes alone. off, fxaa and smaa leave out the edge and weight passes and
-// replace the composition (vk_exec_draw.c aa_dispatch) with one of the passes here, which read the same composite and
-// write the same words: off stores it as it is, fxaa smooths it first (shaders/aa_post.comp), smaa runs SMAA at its
-// Ultra preset (shaders/smaa_*.comp, the reference implementation in shaders/smaa.glsl with the area and search
-// textures of third_party/smaa). taa is DLSS or FSR at the scene's own size: the menu sets the upscaler for it
-// (ui/menu.cpp row_aa), and the game's SMAA runs with it. While DLSS or FSR anti-aliases or scales the scene (dlaa = 1),
-// game, off, fxaa and smaa still choose the pass above: in their native modes the upscalers run before the bloom (vk_dlaa.c,
-// "where DLAA runs") and the pass smooths their picture after it, in the scaling modes the pass runs on the scene first
-// and the upscaler scales its result. off then leaves the upscaler's TAA alone on the edges.
-//
-// The game's passes are known by a hash of their guest code (vk_aa_role), which does not change with the translator or
-// its settings. Everything here runs on the replay thread.
 #include "vk.h"
 
 #include <stdlib.h>
@@ -25,7 +5,7 @@
 
 #include "cfg.h"
 #include "host.h"
-#include "nvn_api.h"   // gfx_counters
+#include "nvn_api.h"
 #include "vk_dlaa.h"
 #include "vk_exec.h"
 #include "aa_post_spv.h"
@@ -45,9 +25,6 @@ static const unsigned char search_bytes[] = {
 #define SEARCH_W 64
 #define SEARCH_H 16
 
-// FNV-1a over the guest code of the game's three SMAA compute programs (vk_exec_draw.c cs_guest_hash), game 1.1.1,
-// found with NX2SARIA_AA_LOG=1: the edges (a 4x4-pixel tile per invocation), the weights (an indirect dispatch over the
-// tiles with edges) and the composition (16x16 pixels per group)
 static const struct { uint64_t hash; int role; } GAME_SMAA[] = {
     {0xfcb21f2afa88378cull, VK_AA_ROLE_EDGES},
     {0xe44377cbfafc1101ull, VK_AA_ROLE_WEIGHTS},
@@ -63,24 +40,19 @@ int vk_aa_role(uint64_t guest_hash) {
 
 static const char *const NAMES[] = {"game", "off", "fxaa", "smaa"};
 
-// DLSS or FSR anti-aliases this frame's scene: dlaa = 1 and one of them runs (vk_dlaa.c)
 static int temporal(void) { return cfg_bool("NX2SARIA_DLAA") && (vk_dlaa_available() || vk_dlaa_fsr3()); }
 
 static struct {
-    uint64_t frame_read;   // atomic: the frame whose first vk_aa_mode call took the setting
-    int mode;              // atomic: this frame's (vk_aa_mode)
-    int said;              // taa was last logged as waiting for DLSS or FSR
-    int composed;          // the last composition seen was replaced (vk_aa_composed): the passes before it may go
-    uint64_t frames_on, composes;   // frames with a replacement asked for, compositions replaced
+    uint64_t frame_read;
+    int mode;
+    int said;
+    int composed;
+    uint64_t frames_on, composes;
     int none_told;
 } A = {.frame_read = ~0ull, .composed = 1};
 
 static void work_idle(uint64_t frame);
 
-// Every compute dispatch asks (vk_exec_draw.c aa_dispatch), on whichever thread records it, and the replay workers
-// record at once: the first call of a frame claims it with a compare-and-swap, and only that one frees the idle work
-// images (work_idle, which two threads would have freed twice) and takes the setting. A call that finds the frame
-// claimed gets the mode as it stands.
 int vk_aa_mode(void) {
     uint64_t f = __atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED);
     uint64_t seen = __atomic_load_n(&A.frame_read, __ATOMIC_ACQUIRE);
@@ -91,7 +63,6 @@ int vk_aa_mode(void) {
     int want = VK_AA_GAME;
     for (int i = 1; i < 4; i++)
         if (!strcmp(v, NAMES[i])) want = i;
-    // taa is the game's SMAA with DLSS's or FSR's TAA; without them at work, the game's SMAA alone
     int said = !strcmp(v, "taa") && !temporal();
     if (said != A.said) {
         A.said = said;
@@ -99,7 +70,7 @@ int vk_aa_mode(void) {
     }
     __atomic_store_n(&A.mode, want, __ATOMIC_RELEASE);
     if (want != VK_AA_GAME && !A.none_told && ++A.frames_on == 3600 && !A.composes) {
-        A.none_told = 1;   // a game version or a frame without the passes this file knows: nothing is replaced
+        A.none_told = 1;
         rt_log("aa: aa = %s found none of the game's SMAA passes in %llu frames: the picture stays the game's",
                NAMES[want], (unsigned long long)A.frames_on);
     }
@@ -108,14 +79,11 @@ int vk_aa_mode(void) {
 
 int vk_aa_skip_ok(void) { return A.composed; }
 
-// A composition that could not be replaced runs as the game's, and the edge and weight passes run again from the next
-// frame on, until a composition is replaced again: the game's composition must never read weights left out.
 void vk_aa_composed(int ok) {
     if (ok && !A.composes++) rt_log("aa: the game's SMAA replaced by %s", NAMES[A.mode]);
     A.composed = ok;
 }
 
-// ---------------------------------------------------------------- pipelines
 enum { P_POST, P_LUMA, P_EDGE, P_WEIGHT, P_BLEND, P_N };
 #define S VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
 #define I VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
@@ -138,20 +106,15 @@ static struct {
     VkPipelineLayout layout[P_N];
     VkPipeline pipe[P_N];
     VkSampler linear, nearest;
-    int tables;          // the area and search textures: 0 not made, 1 ready, -1 failed
+    int tables;
     Img area, search;
-    Img luma, edges, weights;   // at the scene's size (w, h)
+    Img luma, edges, weights;
     uint32_t w, h;
-    uint64_t smaa_frame;        // the last frame that recorded SMAA's passes
+    uint64_t smaa_frame;
 } P;
 
 static void img_free(Img *m);
 
-// SMAA's work images stayed for the rest of the run once aa left smaa: three pictures of the scene's size, 109 MiB at
-// 5120x2142. They go WORK_IDLE presents after the last frame that used them, through the deferred destruction (no
-// submission still names them then); smaa again makes them as a change of the scene's size does (work_images), in the
-// command buffer of its first frame. A minute, not less: the passes run only where the game runs its own SMAA, so a
-// long pause or loading screen with smaa set also counts as unused, and the images are made again after it.
 #define WORK_IDLE 3600
 static void work_idle(uint64_t frame) {
     if (!P.luma.img || frame - P.smaa_frame < WORK_IDLE) return;
@@ -211,7 +174,6 @@ static void img_free(Img *m) {
     memset(m, 0, sizeof *m);
 }
 
-// An image of the passes' own, in the GENERAL layout from cb on (the transition is recorded into cb)
 static int img_make(VkCommandBuffer cb, Img *m, VkFormat f, uint32_t w, uint32_t h, VkImageUsageFlags usage) {
     VkCtx *c = vk_ctx();
     VkImageCreateInfo ii = {.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D, .format = f,
@@ -241,7 +203,6 @@ static int img_make(VkCommandBuffer cb, Img *m, VkFormat f, uint32_t w, uint32_t
     return 1;
 }
 
-// The area and search textures, uploaded once through the upload batch and waited for (the first SMAA frame only)
 static int tables_make(void) {
     if (P.tables) return P.tables > 0;
     P.tables = -1;
@@ -286,7 +247,6 @@ static int tables_make(void) {
     return 1;
 }
 
-// SMAA's work images at the scene's size, made again when it changes
 static int work_images(VkCommandBuffer cb, uint32_t w, uint32_t h) {
     if (P.luma.img && P.w == w && P.h == h) return 1;
     img_free(&P.luma), img_free(&P.edges), img_free(&P.weights);
@@ -301,7 +261,6 @@ static int work_images(VkCommandBuffer cb, uint32_t w, uint32_t h) {
     return 1;
 }
 
-// One pass: its pipeline, its images (samplers: linear but for the search texture) and the push constants
 static void pass(VkCommandBuffer cb, int p, const VkImageView *views, const VkSampler *samp, const void *pc, size_t pcn,
                  uint32_t w, uint32_t h) {
     VkDescriptorImageInfo ii[4];
@@ -313,7 +272,7 @@ static void pass(VkCommandBuffer cb, int p, const VkImageView *views, const VkSa
                                        .descriptorCount = 1, .descriptorType = PIPES[p].t[i], .pImageInfo = &ii[i]};
     }
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_COMPUTE, P.pipe[p]);
-    rec_push(P.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, P.layout[p], 0, (uint32_t)PIPES[p].n, wr);   // through the recorder
+    rec_push(P.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, P.layout[p], 0, (uint32_t)PIPES[p].n, wr);
     vkCmdPushConstants(cb, P.layout[p], VK_SHADER_STAGE_COMPUTE_BIT, 0, (uint32_t)pcn, pc);
     vkCmdDispatch(cb, (w + 7) / 8, (h + 7) / 8, 1);
     VkMemoryBarrier2 mb = {.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2, .srcStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT,

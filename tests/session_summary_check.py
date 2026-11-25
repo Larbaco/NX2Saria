@@ -172,6 +172,44 @@ def static_checks():
     ok = 'session_summary' not in ch
     print(f'static: main.c crash_handler writes no summary: {"ok" if ok else "FAIL"}')
     bad += not ok
+    return bad + header_checks()
+
+
+def header_checks():
+    bad = 0
+    ss = (RT / 'session_summary.c').read_text(encoding='utf-8')
+
+    def check(ok, what):
+        print(f'static: {what}: {"ok" if ok else "FAIL"}')
+        return not ok
+    name = re.search(r'#define HEADER_NAME "([^"]+)"', ss)
+    sys.path.insert(0, str(ROOT))
+    from launcher import telemetry
+    bad += check(name and name.group(1) == telemetry.HEADER, 'session_summary.c HEADER_NAME is the launcher\'s HEADER')
+    head = function(ss, 'void session_summary_header(const char *at)')
+    line = re.search(r'"(telemetry: session header written to logs/)%s', head)
+    bad += check(line and (line.group(1) + telemetry.HEADER).encode() == telemetry.HEADER_LINE,
+                 'session_summary_header logs the line the launcher looks for')
+    bad += check('plat_file_write_atomic(header_path' in head and 'gather(&s, &g, "running", 0)' in head,
+                 'session_summary_header writes the file atomically, without the session\'s times')
+    start = function(ss, 'void session_summary_start(void)')
+    a, b = start.find('plat_file_delete(header_path)'), start.find('session_summary_header("start")')
+    bad += check(0 <= a < b, 'session_summary_start removes the last run\'s header before it writes its own')
+    write = function(ss, 'static void write_summary(const char *end, const char *fatal_line)')
+    bad += check('header_lock' not in write and 'gather(&s, &g, end, 1)' in write,
+                 'write_summary takes no header lock (the fatal end runs it on a failing thread)')
+    sites = [('vk/vk_device.c', 'vk_caps_init(&g_vk);', 'session_summary_header("the Vulkan device");'),
+             ('boot.c', 'wide_init();', 'session_summary_header("the game\'s start");'),
+             ('ui/option_rows.cpp', 'opt_save_now();', 'session_summary_header("settings applied");')]
+    calls = 0
+    for path in sorted(RT.rglob('*.c*')):
+        calls += path.read_text(encoding='utf-8', errors='replace').count('session_summary_header(')
+    for path, before, call in sites:
+        text = (RT / path).read_text(encoding='utf-8')
+        a, b = text.find(before), text.find(call)
+        bad += check(0 <= a < b and text.count(call) == 1, f'{path}: {call} once, after {before}')
+    bad += check(calls == len(sites) + 2, f'session_summary_header is called at the start and the {len(sites)} '
+                 'places above only (none per frame)')
     return bad
 
 

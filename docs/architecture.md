@@ -210,8 +210,8 @@ keeps per-core data without locks and relies on that, so the host models it (`ru
   (`runtime/vk/vk_exec_draw.c` `mesh_ring_entry`).
 - Mesh fallback (`mesh_fallback`: `auto` on a device without the extension, on AMD's Windows driver for RDNA 1 and
   2, where native mesh pipelines lost the device in play, and on Intel's cards with mesh shaders, where native mesh
-  pipelines left holes in the fog on Arc (issue #13; every Intel driver, ANV as a precaution), `1` on any device for
-  testing, `0` never;
+  pipelines left holes in the fog on Arc (issue #13; every Intel driver, ANV as a precaution), and on RADV in the Mesa
+  26.2 and 26.3 releases whose task shaders lose the device, `1` on any device for testing, `0` never;
   `runtime/vk/vk_mesh_path.h`): the task and mesh stages run as compute dispatches and the result is drawn as ordinary
   triangles.
   - The modules come from the translations the shader cache already holds, not from the translator

@@ -14,7 +14,8 @@ what you saw; nothing else is needed. Press it as often as you like: each press 
 the one before is still being written is skipped.
 
 The captures are in the game folder under `logs\captures`, one folder each, named by number and time
-(`003-20261113-141502`). *Menu > Open log folder* shows `logs`. A capture is a few megabytes, most of it the picture (about
+(`003-20261113-141502`). The menu has no row that opens that folder now: open `logs` in the game folder with your
+file manager. A capture is a few megabytes, most of it the picture (about
 9 MB at 3440x1440 with HDR); delete old ones whenever you like. Nothing leaves your PC: a capture is files on your disk.
 
 ## What a capture holds

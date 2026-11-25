@@ -15,10 +15,17 @@ release notes say so. The [README](../README.md#status-and-known-issues) has the
   as tangerineturtle1/NX2navi#794, tangerineturtle1/NX2navi#475 and tangerineturtle1/NX2navi#736.
 - **FSR 4 on Radeon RX 6000 (RDNA 2)**: AMD's driver offers FSR 4 on these cards and it runs, but it costs far more GPU
   time than on newer cards (about 12 ms a frame at 1440p on an RX 6750 XT). FSR 3.1 is the lighter choice there.
-- **On Linux with Mesa 26, the game can end with "the GPU device was lost" on some AMD cards.** Session reports show
-  it on Radeon RX 480, RX 580 and RX 6800S with Mesa 26.2 and 26.3, seconds or minutes into a session; reports with
-  Mesa 25.2 do not show it. The cause is not known yet. If it happens to you, please open an issue with
-  `logs/nx2saria.log` and the kernel's lines after the crash (`journalctl -k -b`).
+- **On Linux with Mesa 26.2 or 26.3, Radeon cards with mesh shaders (RX 6000 and newer) draw part of the scene through
+  the mesh fallback.** The task shaders of those Mesa releases have a fault that ended the game with "the GPU device
+  was lost" seconds into a session (seen on an RX 6800S). The game takes the mesh fallback there by itself: grass and
+  other such objects cost some frame rate, and appear a moment late the first time they are seen in a run. The log's
+  `vk: mesh path:` line says when it does. No Mesa release has the fix yet; when one does, a later version of the game
+  draws natively on it again. `mesh_fallback = 0` in `nx2saria.ini` draws natively on any Mesa.
+- **On Linux, the game can end with "the GPU device was lost" on Radeon RX 400 and RX 500 cards.** Session reports
+  show it on RX 480 and RX 580 with Mesa 26.2 and 26.3, seconds or minutes into a session, and far more often at 45
+  frames per second and above than at 30. The cause is not known yet. *Frame rate limit* at 30 makes it rarer. If it
+  happens to you, please open an issue with `logs/nx2saria.log` and the kernel's lines after the crash
+  (`journalctl -k -b`).
 
 ## Frame generation
 
