@@ -73,6 +73,7 @@ typedef struct VkCtx {
         has_anti_lag,                       // VK_AMD_anti_lag with its antiLag feature (vk_lowlat.c)
         lists_low_latency,                  // the driver lists one of the two, left out: the run started with the mode off
         has_mesh_queries;                   // meshShaderQueries, kept while NX2SARIA_GPU_PASSES or NX2SARIA_DUMP is set
+    uint32_t low_latency2_rev;
     int mesh_fallback;                      // task and mesh programs run as compute passes and are drawn from buffers
                                             // (mesh_fallback: auto as vk_mesh_path.h decides; vk_exec_draw.c "mesh fallback")
     int mesh_fallback_default;              // the fallback is this device's default (mesh_fallback = auto chose it), not

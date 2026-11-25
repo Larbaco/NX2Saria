@@ -950,11 +950,18 @@ Frames are numbered by the game's presents, frame n ending with the n-th, as `gf
 present (`runtime/vk/vk_backend.c`), so the number a guest thread starts a frame with is the one the replay and the
 present thread end it with.
 
+### `vk_lowlat_revision()`
+
+The revision (`specVersion`) of `VK_NV_low_latency2` in a driver's list of device extensions, 0 when the list does not
+have it. `runtime/vk/vk_device.c` `create_device()` keeps it in `VkCtx.low_latency2_rev` when it enables the extension,
+and `vk_lowlat_init()` chooses by it what it may call ("The extension's revisions" under `runtime/pacing/vk_lowlat.c`).
+In the header so that `tests/lowlat_revision_check.c` reads a list with it.
+
 ### `vk_lowlat_init()`, `vk_lowlat_release()`
 
 `runtime/vk/vk_device.c` `create_device()`, once the device exists: takes the entry points of the extension the device
-enabled (`VkCtx.has_low_latency2`, `has_anti_lag`) and logs which path this run has. `vk_lowlat_release()`: before the
-device goes.
+enabled (`VkCtx.has_low_latency2` with `low_latency2_rev`, `has_anti_lag`) and logs which path this run has, for
+NVIDIA's with the revision and what the run leaves out because of it. `vk_lowlat_release()`: before the device goes.
 
 ### `vk_lowlat_status()`
 
@@ -1053,6 +1060,31 @@ Two drivers offer that, and the device enables the one it lists (`runtime/vk/vk_
 
 Any other driver has neither: the setting does nothing there and the menu's row says so.
 
+The extension's revisions. A driver says which revision of `VK_NV_low_latency2` it implements, and the revisions do not
+all take the same calls, so a call is made only in the form the driver's revision has:
+
+- Revision 1 (Vulkan headers 1.3.266 to 1.3.270): `vkGetLatencyTimingsNV` takes four arguments, the device, the
+  swapchain, a pointer to the count and the info structure, and that structure has no count: its `pTimings` is at
+  offset 0x10.
+- Revision 2 (headers 1.3.271 on): three arguments, with `timingCount` inside the structure at 0x10 and `pTimings`
+  after it at 0x18. The extension's history calls it a breaking change.
+- Revision 3 (2026): no call changed. Only from this revision on does a driver follow the frame number chained to a
+  queue submission (`VkLatencySubmissionPresentIdNV`, `vk_lowlat_submit_tag()`); an older one ignores it.
+
+`vkSetLatencySleepModeNV`, `vkLatencySleepNV` and `vkSetLatencyMarkerNV` are the same in all three, and so are the
+structures they take and the swapchain's `VkSwapchainLatencyCreateInfoNV`. `vkQueueNotifyOutOfBandNV`, which took its
+structure by value in the header 1.3.266 alone, is not called.
+
+The runtime has the three-argument form only. A revision 1 driver given three arguments takes the third, the
+structure, for the count's pointer and reads a fourth nobody passed as the structure: 0.26.0-rc.1 ended that way on the
+600th present, the first statistics line, with an access violation inside the driver reading address 0x10 (a null
+fourth argument plus `pTimings`' offset). So below `TIMINGS_REV` the entry point is not even looked up, the first
+`lowlat:` line says the timings are left out, the first statistics line says once that it has no report, and the rest
+of the path (the sleep, the markers, the frame limit) runs as on any revision. The four-argument form is not written:
+no machine here has a driver that takes it, and it would bring back only the report in a log line. NVIDIA's Windows
+drivers list revision 1 up to 546.31 and revision 2 from 546.32 (December 2023), as the reports in the public Vulkan
+hardware database show; 546.18 is among the first.
+
 Threads. The game's frame is made on guest threads and shown by the present thread, so the calls are split:
 
 - guest thread, where the frame starts (`vk_lowlat_frame_start()`): the first pad read (`runtime/hle/ov_input.c`
@@ -1098,12 +1130,15 @@ Constants:
 - `SLEEP_MAX_NS` 500 ms: the longest wait for the driver to end a sleep.
 - `SLEEP_FAILS` 3: that many waits in a row running out, and the mode is given up for the run.
 - `REPORTS` 16: frames of the driver's report read for a statistics line.
+- `TIMINGS_REV` 2: the first revision of `VK_NV_low_latency2` whose `vkGetLatencyTimingsNV` has the form called here.
 - `PACE_WINDOW` 60: frames over which the driver's hold of the frame limit is checked.
 
 State, `L`:
 
 - `kind`: `LL_*`, fixed by `vk_lowlat_init()`. `why`: `vk_lowlat_status()` while `kind` is `LL_NONE`. `present_ids`:
-  the presentId feature is on, the present carries the frame's number.
+  the presentId feature is on, the present carries the frame's number. `rev`: NVIDIA, the extension's revision as the
+  driver lists it. `timings` is NULL below `TIMINGS_REV`. `no_report_said`: the present thread's, the statistics line
+  said that there is no report.
 - `sem`: NVIDIA, the timeline the driver signals to end a sleep.
 - `m`: NVIDIA's calls name the swapchain and nothing says they may run at once on two threads: all of them, and the
   swapchain's replacement, hold `m`. None of them waits (the sleep's wait is on the semaphore, outside `m`). AMD's stage
@@ -1204,8 +1239,9 @@ driver has not finished timing is left out. The report array is the present thre
 ### `stats()`
 
 One line after the first 600 frames the path followed and every 3600 after that (every 600 with `NX2SARIA_TRACE=perf`):
-how many frame starts the driver held and for how long, where they were held, and the driver's report. The present
-thread's.
+how many frame starts the driver held and for how long, where they were held, and the driver's report. Without
+`timings` (a revision below `TIMINGS_REV`) the first line says that there is no report and why, and the later ones
+say nothing about it. The present thread's.
 
 ### `vk_lowlat_swapchain()`
 
@@ -1219,7 +1255,11 @@ Taken up at the next frame's start (`refresh()`).
 ### `vk_lowlat_init()`
 
 A probe makes the device more than once, so the state starts over each time. The sleep's semaphore has to be a timeline
-semaphore (the timelineSemaphore feature is one the device needs).
+semaphore (the timelineSemaphore feature is one the device needs). `vkGetLatencyTimingsNV` is looked up, and has to be
+there, from `TIMINGS_REV` on only.
+
+`tests/lowlat_revision_check.c` runs the whole file against a driver of each revision made of stubs
+([tests.md](tests.md)).
 
 ## `runtime/pacing/dlssg_pace.h`
 

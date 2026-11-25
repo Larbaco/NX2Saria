@@ -1096,6 +1096,12 @@ first host present, after 200 ms without one and with the setting off, that fram
 give it to the pacer for the rest of the run, and that frames the multiplier periods apart switch Reflex to the frames
 on screen once and to the pacer the second time. No GPU, no game files.
 
+A change to the driver's low latency (`runtime/pacing/vk_lowlat.c`) passes `python tests\lowlat_revision_check.py`,
+which builds that file over a made-up driver of revision 1, 2 and 3 of `VK_NV_low_latency2` and checks that
+`vkGetLatencyTimingsNV` is called only where the driver's revision takes the three-argument form, that the sleep and
+the markers run the same on all three, and what the `lowlat:` lines say for each. It needs the Vulkan headers and
+`vk_mem_alloc.h`; no GPU, no game files.
+
 A change to `runtime/dlssg/nx2_sl.h` or to the export check in `tools/build_dlssg.py` (`declared_exports`,
 `pe_exports`) passes `python tests\dlssg_exports_check.py`, which builds a small DLL with MSYS2's clang and checks that
 the export it lacks is the one named; that `build_dlssg.check` stops on that DLL, a missing file and a file that is no
