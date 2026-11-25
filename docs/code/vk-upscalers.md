@@ -3143,8 +3143,9 @@ What frame generation takes (`runtime/vk/vk_fg.cpp`, `runtime/vk/vk_fg4.cpp`, `r
 The hooks of the replay:
 
 - `vk_dlaa_pass()`: called by `runtime/vk/vk_exec.c` `vk_exec_pass_begin()`, once the pass's targets are resolved and
-  before its barrier: arms the frame on the scene's light target or, at the first quarter-width pass after it, runs DLAA
-  on that target. Each present ends the frame (`vk_dlaa_frame()`).
+  before its barrier: arms the frame on the scene's light target or runs the upscaler on the armed target, at the first
+  quarter-width pass after it in the deferred frame shape and at the output pass in the game's (`runtime/vk/vk_dlaa.c`
+  `vk_dlaa_pass()` has both). Each present ends the frame (`vk_dlaa_frame()`).
 - `vk_dlaa_retarget()`: called by `vk_exec_pass_begin()`, in every replay thread, after the pass hooks: with the
   upscaler run before the bloom to the picture's size (`NX2SARIA_DLSS_PREBLOOM`), the passes after it that draw into the
   light target or the bloom composite's target are moved to images of the picture's size (`runtime/vk/vk_dlaa.c`
@@ -3173,7 +3174,8 @@ The motion files' functions declared here:
   the replay with their vertex shader's last-frame variant; `runtime/vk/vk_dlaa.c` `mv_pass()` records them over the
   camera motion into `ex->cb` (and leaves every binding of the replay to be set again; draws whose camera block is not
   cam are left out). `vk_dlaa_prev_camera()`: last frame's camera block and this frame's jitter, 0 when there is no
-  history.
+  history. `vk_dlaa_pose_depth()`: last frame's view distances with the jitter and projection terms they were written
+  with, 0 when the frame before `frame` left none at that size.
 - `vk_mvobj_frame_masks()` (`runtime/vk/vk_exec_draw.c`): the last motion list, per position and changed banks.
 - `vk_mvcheck_camera()`, `vk_mvcheck_final()`, `vk_mvcheck_output()` (`runtime/vk/vk_mvcheck.c`, `NX2SARIA_MV_CHECK`,
   test): `mv_pass()` hands it the motion image after the camera pass and, after the object pass, the motion image again
