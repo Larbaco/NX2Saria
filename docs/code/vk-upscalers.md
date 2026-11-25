@@ -2298,3 +2298,626 @@ A skinned draw `vk_mvobj_execute()` records (guarded: checked against last frame
 
 The skinned draws' part of the motion status line (`pose_status()`): since the start, every draw `skin_pick()` took, the
 ones drawn with their own motion, and the others by why they kept the camera's.
+
+## `runtime/vk/vk_dlssg.h`
+
+What `runtime/vk/vk_dlssg.c` promises its callers: DLSS Frame Generation through NVIDIA Streamline and
+`nx2navi_dlssg.dll` ([dlssg.md](dlssg.md)).
+
+- `vk_dlssg_wanted()`: `NX2SARIA_FRAMEGEN` = dlss, with any upscaler or none (read once).
+- `vk_dlssg_early()`: before the instance exists: loads the DLL and Streamline; 1 when its proxies are there.
+- `vk_dlssg_create_instance()`: for `runtime/vk/vk_device.c`: the instance and device through Streamline's proxies when
+  `vk_dlssg_early()` succeeded, else the loader's.
+- `vk_dlssg_enumerate()`: through the interposer too.
+- `vk_dlssg_instance_proc()`: the interposer's, or NULL.
+- `vk_dlssg_interposed()`: Streamline's proxies are in use (until a device is made without them).
+- `vk_dlssg_create_device()`: the device through the interposer; by the loader alone, with frame generation off for the
+  run, when the card is not an NVIDIA one or the interposer fails to make it.
+- `vk_dlssg_device_ready()`: after the device: checks DLSS-G and takes the swapchain hooks.
+- `vk_dlssg_dpa()`: Streamline's device entry points, or NULL when it is not in use.
+- `vk_dlssg_create_swapchain()` and the calls declared with it: `runtime/gfx/gfx_present.c`'s swapchain calls while
+  active.
+- `vk_dlssg_frame()`: each present, before its command buffer is submitted.
+
+Frames are numbered by the game's presents (frame n ends with the n-th). Reflex's frame timing while active:
+
+- `vk_dlssg_frame_start()`: the game starts a frame (`runtime/nvn/nvn_api_obj.c`, nvnWindowAcquireTexture): Reflex's
+  sleep.
+- `vk_dlssg_pace()`: the game presents (`runtime/nvn/nvn_api_obj.c`, nvnQueuePresentTexture, through
+  `runtime/vk/vk_backend.c` `vk_be_frame_paced()`) with the pacer's period, 0 during a movie: 1 when Reflex holds the
+  frame limit where the frame starts (`runtime/pacing/dlssg_pace.h`), so the pacer keeps only the game's ceiling.
+  Atomics only, no wait; 0 while DLSS-G does not run.
+- `vk_dlssg_game_present()`: the game presents it (`runtime/vk/vk_backend.c` `vk_be_present()`): counts it.
+- `vk_dlssg_submitted()`: its submissions went out (`runtime/vk/vk_backend.c` `vk_be_present()`, or `replay_main()` with
+  asynchronous replay): the render-submit-end marker; frame is `gfx_counters.frames` of its present, the same count.
+- `vk_dlssg_present_frame()`: the present thread's next blit and present are of this frame.
+- `vk_dlssg_shown()`: the frames the display got, generated ones included (present thread); 0 when off.
+- `vk_dlssg_multiplier_of()`: the multiplier: the frames the display gets per rendered frame, 2, 3 or 4 (one to three
+  generated), set by `NX2SARIA_FRAMEGEN_MULTIPLIER` and applied at once. What a setting value gives where the GPU and
+  driver allow up to max (2 to 4): the value when it is 2, 3 or 4 ("3x" too) and at most max, else the nearest that is;
+  unset or empty, 2. `*why` (may be NULL): the reason the value was not taken as it is, for the log, or NULL.
+- `vk_dlssg_multiplier_max()`: the highest multiplier while DLSS-G runs: 2 to 4 from Streamline's
+  `numFramesToGenerateMax`; 0 while DLSS-G does not run, or before Streamline reported its limit (the first frames; one
+  frame is generated until then). `*old_dll` (may be NULL): 1 when the limit of 2 is `nx2navi_dlssg.dll`'s, a build
+  older than its `nx2sl_frames_max`, not the GPU's.
+- `vk_dlssg_multiplier()`: the frames the display gets per game frame now: the multiplier while generation runs, 1 while
+  it is off or paused (the menu). `runtime/pacing/frame_rate.c` paces the game at the frame limit over it. Any thread.
+
+- `vk_dlssg_status()`: why DLSS-G runs or not: `DLSSG_NOT_WANTED` (`NX2SARIA_FRAMEGEN` was not dlss at start, or no DLSS
+  or FSR 3.1 upscaling), `DLSSG_NO_FILES` (`nx2navi_dlssg.dll`, Streamline or its swapchain hooks missing or failing),
+  `DLSSG_UNAVAILABLE` (Streamline loaded but DLSS-G or a required plugin function was unavailable).
+
+- `vk_dlssg_why()`: why DLSS-G is unavailable, where known: 1 when the card in use has none (another vendor's card, or
+  Streamline's support check found no adapter with it: an RTX 30 or older); else 0, with Streamline's result for another
+  reason in `*sl_why` when it gave one (NULL when it did not, or with an `nx2navi_dlssg.dll` older than
+  `nx2sl_support`).
+- `vk_dlssg_gpu_may()`: whether the card in use can run DLSS Frame Generation at all, known before Streamline or NGX
+  looks: 0 when it cannot (another vendor's card, or an NVIDIA GPU older than the RTX 40 series), 1 when it may
+  (Streamline's or NGX's own check decides). For framegen = dlss set while the game runs, which starts only at the next
+  start (`runtime/vk/vk_dlaa.c` `fg_off_why()`).
+
+## `runtime/vk/vk_dlssg_device.h`
+
+DLSS Frame Generation and the card the device is made on (`runtime/vk/vk_device.c` `pick_device()`,
+`runtime/vk/vk_dlssg.c` `vk_dlssg_create_device()`). Header only, so that `tests/dlssg_device_check.c` checks both
+decisions without a device.
+
+With frame generation on, the instance and the device are made through Streamline's interposer, whose `vkCreateDevice`
+asks the card for NVIDIA's extensions (`VK_NV_low_latency2` among them) and fails without them
+(`VK_ERROR_EXTENSION_NOT_PRESENT`, -7). On a laptop with an NVIDIA card and Intel graphics, framegen = dlss and
+`gpu_index` on the Intel one, that was the only attempt, and every start ended with "no usable Vulkan device" (exit code
+70) until `nx2navi.ini` was edited by hand.
+
+### `dlssg_card_skipped()`
+
+For `pick_device()`: a card the player chose (`gpu_index`, `gpu_name`) counts as not usable while the interposer is in
+use and the card is of another vendor, so the best usable card is taken instead, as for a chosen card that is gone.
+Without a choice nothing is skipped: the pass takes what there is, and `dlssg_device_create()` makes the device.
+
+`DlssgCreate`: a creation attempt: 0 (`VK_SUCCESS`) or the `VkResult` it failed with.
+
+`DLSSG_DEV_*`: how the device was made, or tried: by the loader with the interposer not in use (`DLSSG_DEV_LOADER`);
+through the interposer (`DLSSG_DEV_INTERPOSER`); by the loader because the card is not an NVIDIA one
+(`DLSSG_DEV_NOT_NVIDIA`: the interposer is not asked); by the loader after the interposer refused (`DLSSG_DEV_REFUSED`:
+(`*refused` holds its result). In the last two frame generation is off for the run.
+
+### `dlssg_device_create()`
+
+Returns the result of the attempt that counts: the interposer's when it made the device, else the loader's.
+
+## `runtime/vk/vk_dlssg.c`
+
+DLSS Frame Generation (`NX2SARIA_FRAMEGEN` = dlss; applies after a restart) through `nx2navi_dlssg.dll`
+(`runtime/dlssg/nx2_sl.cpp`), which drives NVIDIA Streamline. Like AMD's frame generation (`runtime/vk/vk_fg.cpp`) it
+takes the depth, motion vectors and camera `runtime/vk/vk_dlaa.c` makes for DLSS or FSR 3.1 upscaling, or without an
+upscaler for frame generation alone (`runtime/vk/vk_dlaa.c` `fg_only_frame()`: the same pass at the scene's size, no
+jitter); it needs an RTX 40 or 50 GPU.
+
+The DLL and Streamline (`sl.interposer.dll` and its plugins, `nvngx_dlssg.dll`) sit next to the game. The instance and
+device are created through Streamline's proxies (`runtime/vk/vk_device.c`), so it can add the extensions, features and
+queues DLSS-G needs; the present path calls Streamline's swapchain functions (`runtime/gfx/gfx_present.c`), and every
+present records the frame's constants and tags first (`vk_dlssg_frame()`). Generation pauses while the menu is open.
+
+Multi frame generation: `NX2SARIA_FRAMEGEN_MULTIPLIER` (2, 3 or 4, live) is how many frames the display gets per
+rendered frame, so one, two or three generated ones. Streamline says how many this GPU and driver can generate
+(`numFramesToGenerateMax`: one where only 2x runs, three on an RTX 50); a higher setting is clamped to it with a log
+line. The frame limit counts the frames the game draws and the generated ones come on top (`runtime/pacing/frame_rate.c`
+`limit_game_hz()`): 60 at 4x is 60 drawn and 240 shown. Only a limit of display is divided by the multiplier in effect
+(`vk_dlssg_multiplier()`), since a frame past the monitor's refresh is never seen.
+
+DLSS-G needs Reflex, whose low-latency mode paces the game (`NX2SARIA_REFLEX`, default 1; 0 off, 2 on with boost): the
+game's frame sleeps in Reflex where it starts (its acquire of a window image), and each frame carries the latency
+markers from that start to the host present, all with the frame's number, the count of the game's presents up to it. The
+mode is the swapchain's, so it is set again after each one (`vk_dlssg_create_swapchain()`).
+
+One limiter. Reflex's sleep also holds the frame limit (its frame limit, the driver's minimum interval), and the game's
+own pacer then keeps only the game's ceiling (`vk_dlssg_pace()`, `runtime/nvn/nvn_api_obj.c`, nvnQueuePresentTexture):
+the pacer's wait came after the picture was drawn, so the pad was read up to a period before the picture left, and
+Reflex's sleep at the frame's start already waited for the GPU. The pacer keeps the limit while a movie plays, before
+the first host present, while none went out for `DLSSG_HOLD_IDLE_NS`, with `NX2SARIA_REFLEX_LIMIT=0` (live), a DLL older
+than `nx2sl_reflex2` or a limit Streamline refused, and for the rest of the run once the frames show Reflex does not
+hold it (`runtime/pacing/dlssg_pace.h`). The guest thread that presents decides and the present thread hands the limit
+to Streamline before its present (`vk_dlssg_frame()`, under the present lock, which keeps Streamline's options calls on
+one thread at a time); the pacer stands aside only once Streamline took that limit.
+
+The state, `S`:
+
+- `fail`: `DLSSG_NO_FILES` or `DLSSG_UNAVAILABLE` when it was wanted and does not run (`vk_dlssg_status()`).
+- `mode`, `pending`: generation as the driver has it, and the frames since the host asked for the other state.
+- `shown_mult`: `vk_dlssg_multiplier()`: the frames per game frame as last handed to the DLL (1 while off).
+- `frames_max`: NULL with an older DLL, which generates one frame.
+- `support`: NULL with an older DLL: the reason DLSS-G is unavailable is not known here.
+- `no_gpu`: the card in use has no DLSS-G: another vendor's, or Streamline's check says so.
+- `sl_why`: else Streamline's support result, when it gave one (`vk_dlssg_why()`).
+- `reflex2`: NULL with an older DLL: Reflex holds no frame limit, the pacer keeps it.
+- `game`: the game's presents (`vk_dlssg_game_present()`).
+- `cur`: the frame the present thread blits and presents next (`vk_dlssg_present_frame()`).
+- `started`: the last frame `vk_dlssg_frame_start()` started.
+- `hosted_ns`: `kern_now_ns` after the last host present.
+- `limit_want`, `limit_set`, `limit_refused`: Reflex's frame limit, in microseconds (0 none). `limit_want`: what
+  `vk_dlssg_pace()` asks for (the presenting guest thread writes it); `limit_set`: what Streamline last took (written
+  under the present lock, `reflex_apply()`); `limit_refused`: Streamline refused a limit, so the pacer keeps it for the
+  run. Atomics.
+- `pace`: the presenting guest thread's (`vk_dlssg_pace()`).
+- `pace_said`: who held the limit as last logged: 1 Reflex, 0 the pacer, -1 not yet.
+- `n_hold`, `hold_ns`, `n_unheld`: the frame starts Reflex's sleep held, and their time, since the last statistics line
+  (`stats()`); atomics.
+
+### `reflex_apply()`
+
+Reflex's mode and frame limit to Streamline: under the present lock (`vk_dlssg_frame()`, `vk_dlssg_create_swapchain()`),
+or once at the device's creation before any present. Streamline's `slReflexSetOptions` is not thread safe, and every
+caller is one of these. A limit Streamline refuses leaves the limit to the pacer for the run.
+
+### `limit_allowed()`
+
+Reflex may hold the frame limit: `NX2SARIA_REFLEX_LIMIT` (default 1, live; 0 leaves the limit to the game's own limiter,
+as before Reflex's frame limit was used), and a DLL with `nx2sl_reflex2` whose limit Streamline did not refuse. The
+setting is parsed again when a setting changed (`cfg_version`). Only the presenting guest thread calls it.
+
+### `vk_dlssg_wanted()`
+
+With any upscaler or none: `runtime/vk/vk_dlaa.c` makes the inputs either way (`vk_dlaa_frame()` says which, at the
+start and at each change).
+
+### `vk_dlssg_early()`
+
+Three entry points of the DLL are optional, for an older build of it: `nx2sl_support` (without it the reason DLSS-G is
+unavailable is not known), `nx2sl_frames_max` (2x only without) and `nx2sl_reflex2` (the pacer keeps the limit).
+
+### `vk_dlssg_instance_proc()`
+
+An instance function through the interposer while Streamline is loaded, else NULL (the caller takes the loader's). The
+window surface goes through it: Streamline learns the window a swapchain shows from `vkCreateWin32SurfaceKHR`, and
+without that its swapchain hook found "no window corresponding to this application" and generated no frames.
+
+### `vk_dlssg_enumerate()`
+
+The interposer's `vkCreateDevice` finds the device's instance in a map its own `vkEnumeratePhysicalDevices` fills; a
+physical device enumerated through the loader alone left it a null instance, so the plugins got an empty instance table
+and `sl.common` called a null `GetPhysicalDeviceMemoryProperties` while it set up. Enumerate through it as well.
+
+### `give_up()`
+
+Frame generation is off for the run from here on: every later call goes to the loader alone, as when Streamline's files
+are missing, and the settings menu says it is unavailable (`vk_dlssg_status()`).
+
+### `create_interposed()`
+
+The interposer's `vkCreateDevice` asks the device for NVIDIA's extensions (`VK_NV_low_latency2` among them) and fails
+without them (`VK_ERROR_EXTENSION_NOT_PRESENT`). On a laptop with an NVIDIA card and Intel graphics, frame generation
+set to DLSS and the Graphics card setting on the Intel one, that ended every start with "no usable Vulkan device" (exit
+code 70) until `nx2navi.ini` was edited by hand: four reports on 0.10.1. A device of another vendor is now made by the
+loader, without frame generation, and so is one the interposer refuses for any other reason. The order of the attempts
+is `runtime/vk/vk_dlssg_device.h` `dlssg_device_create()` (`tests/dlssg_device_check.c`).
+
+### `vk_dlssg_device_ready()`
+
+Reflex's mode is set here without a limit: there is no swapchain and no present yet.
+
+### `vk_dlssg_gpu_may()`
+
+NVIDIA numbers its PCI device IDs by architecture: Ada (the RTX 40 series, the first with DLSS Frame Generation) starts
+at 0x2600, and every earlier one is below it (the RTX 3050 Laptop is 0x25ac); Blackwell is above.
+
+Before the device is known the answer is that it may.
+
+### `gpu_multiplier_max()`
+
+Streamline's limit as a multiplier: 2 to 4, or 0 while it has reported none (the first frames). An older DLL generates
+one frame: 2.
+
+### `multiplier_wanted()`
+
+The multiplier the setting gives here (present thread), clamped to the GPU's limit; one log line each time the value or
+the limit changes and the value is not taken as it is. Until Streamline reports its limit, one generated frame, and no
+log line about the GPU yet.
+
+### `vk_dlssg_dpa()`
+
+For `runtime/vk/vk_device.c`: while Streamline is loaded, every device entry point the runtime fetches goes through its
+interposer, so its plugins see the calls they hook (Reflex's frame timing and DLSS-G's presents). NULL keeps the
+loader's.
+
+### `vk_dlssg_create_swapchain()`
+
+Called by `runtime/gfx/gfx_present.c` `create_swapchain()`, under the present and queue locks: the new swapchain has
+neither the mode nor the limit, so both go to Streamline again, the limit as the presenting guest thread last asked for
+it. One line for each of the first 16 swapchains says the limit sent and the one Streamline took:
+`runtime/dlssg/nx2_sl.cpp` `nx2sl_reflex2()` logs only its first calls, and the start (the device, the first swapchain,
+the first hand-over, a movie) uses them up.
+
+### `stats()`
+
+One line after the first 600 blits of a game frame and every 3600 after that (600 with `NX2SARIA_TRACE=perf`), on the
+present thread outside the queue lock (`vk_dlssg_frame()`): who holds the frame limit, and how many frame starts
+Reflex's sleep held and for how long.
+
+### `FG_SETTLE_FRAMES`
+
+Turning generation on or off is an `slDLSSGSetOptions` call and Streamline's own rebuild, and it can be seen: around a
+menu, a fade or a swapchain change the depth and motion-vector views come and go for a frame or two. Following them
+frame by frame switched generation off and on dozens of times a second (a run logged 32 changes, in pairs, a frame
+apart), so a change waits until the new state has held for `FG_SETTLE_FRAMES` frames.
+
+### `vk_dlssg_frame_start()`
+
+Reflex holds the frame's start until the time the driver computes from the measured render and queue times, and no
+sooner than its frame limit after the frame before (`vk_dlssg_pace()`), so the game's CPU work ends about when the GPU
+is free for it; then the frame's first markers. Once a frame: the game may acquire again before it presents. No hold
+while no host present went out for `DLSSG_HOLD_IDLE_NS` (the window minimized: `runtime/gfx/gfx_present.c` skips the
+host presents while the game runs on): the driver then has no present to time the frame by, and the sleep would wait out
+Streamline's half-second timeout each frame.\n\nThe guest thread gave its core up for the acquire (`NVN_BLOCKING`). The
+sleep counts as the pacer's wait (`PERF_PACE`) only while Reflex holds a frame limit (`limit_set`), whose place it then
+takes, on whichever guest thread acquires (`perf_end_any()`), as the acquire's own waits do. Without one (`reflex_limit`
+0, an older DLL, a movie, a refused limit, frames that showed Reflex does not hold it) the sleep is only the driver's
+wait for the GPU while the pacer waits as well, so it stays out of `PERF_PACE`, as before Reflex held a frame limit:
+counted there, GPU-bound frames read as paced in the perf windows.
+
+- The time of the last host present is read before the clock, in this order, so that the clock's value is never before
+  it.
+
+### `pace_say()`
+
+Who holds the frame limit, as a log line when it changes (the first 40). `why`: the reason the pacer holds it.
+
+### `vk_dlssg_pace()`
+
+The limit wanted is stored for the present thread, which hands it over (`vk_dlssg_frame()`). A limit Streamline has yet
+to take is no change: the present thread hands it over next.
+
+### `vk_dlssg_frame()`
+
+- A change of generation waits (`FG_SETTLE_FRAMES`): the state the driver has is held until the new one stays.
+- `shown_mult` is the pacer's divisor (`runtime/pacing/frame_rate.c`).
+- Reflex's frame limit as the presenting guest thread last asked for it (`vk_dlssg_pace()`), before this present.
+- The frame's own near and far planes (`runtime/vk/vk_dlaa.c` `proj_planes()`); `nx2navi_dlssg.dll` tells Streamline the
+  depth is not inverted, which holds for every projection the game has shown (0 near, 1 far).
+- Render pixels: the scene's size, which is the output's or smaller (an upscaling mode, or the game's own scale without
+  an upscaler); Streamline takes the depth and the vectors at their own size and the output at ext.
+- The frames to generate between two rendered ones: the multiplier less the rendered one, 0 off.
+
+### `vk_dlssg_release()`
+
+A device made again starts without a limit.
+
+## `runtime/vk/vk_hdr.c`
+
+HDR output (`NX2SARIA_HDR=1`): an HDR10 swapchain (Rec. 2020 primaries, PQ) and a game picture tone mapped to the
+display's range (`runtime/shaders/hdr_tonemap.frag` says how). Settings: `NX2SARIA_HDR`, on and off following the menu
+during a run (`vk_hdr_wanted()`), the game's own HDR (`native`, the menu's other HDR) from the start only; the nits
+`NX2SARIA_HDR_PEAK_NITS` (the display's peak), `NX2SARIA_HDR_GAME_NITS` (the picture's white, "paper white") and
+`NX2SARIA_HDR_UI_NITS` (the HUD's and this menu's white); `NX2SARIA_HDR_TONEMAP` with what each tone mapper takes
+(`NX2SARIA_HDR_MIDGRAY`, `NX2SARIA_HDR_MATCH_SLOPE`, `NX2SARIA_HDR_TONE_SLOPE` and `NX2SARIA_HDR_HUE_CLIP`, or
+`NX2SARIA_HDR_HIGHLIGHT_SAT` .. `NX2SARIA_HDR_GRADE`), the grading sliders `NX2SARIA_HDR_EXPOSURE` ..
+`NX2SARIA_HDR_SATURATION` of both and `NX2SARIA_HDR_GAMMA`, the display the present shows the picture as; all read when
+the settings change (`vk_hdr_support()`). Left at their defaults they give one look: the observer-response mapper
+anchored to the game's mid grey and tone slope, half of the hue bend of the game's clamp, no grading, shown as a 2.2
+display would. With `NX2SARIA_HDR=0` the swapchain is SDR, the spliced tonemap gives the game's own SDR picture
+(`vk_hdr_support()`, `p0.w` = -1) and the present is what it was.
+
+The game's picture ([architecture.md](../architecture.md), "HDR"). The game tonemaps its scene into an r11g11b10f
+target, upscales it and draws the HUD into a second one (float, nothing in these passes clamps), and one last draw
+copies that into the 8-bit sRGB window texture it presents. So:
+
+1. `vk_hdr_shader_swap()`, on each fragment shader as it loads (in memory only; the cache keeps the translator's):
+   1.1.1's tonemap ends in the fitted ACES curve and a clamp to 0..1 per channel. `tonemap_splice()` links
+   `runtime/shaders/hdr_tonemap.frag` `nx_tonemap()` into that shader and stores its result in place of the three
+   clamped channels: the scene mapped onto the display by the tone mapper chosen (that file says how each does it), from
+   the values the curve takes and the scene before the game's exposure gain, with the settings in five vec4 the support
+   buffer gains at 1440. Recognised by the curve's constants, not by a hash, so another translator still finds it. The
+   game's FSR 1 upscale after it would clamp the picture to 1 again; `fsr_unclamp()` drops that clamp in its SPIR-V.
+2. `vk_hdr_draw()` and `vk_hdr_present_source()`: a draw into a presented window texture that samples one float texture
+   of its size is that copy; the present then reads the float texture instead of the window texture. Any other last draw
+   into it leaves the window texture, decoded from sRGB: menus and movies stay SDR at the HUD's white. The present is
+   queued before the next frame's work (`runtime/vk/vk_backend.c`), so the float target is read before the game draws
+   into it again.
+3. `vk_hdr_encode()`: on the present, the crop rectangle goes to PQ code values in an RGBA16F image
+   (`runtime/shaders/hdr_encode.comp`: gamma correction, gamut compression, the HUD's white and the peak) that FSR 1 or
+   the blit scale into the swapchain. `vk_hdr_ui_*`: the in-game menu draws into an RGBA8 image and
+   `runtime/shaders/hdr_ui.frag` blends it onto the swapchain at the HUD's white.
+
+### Settings
+
+What the start decides for the whole run (`hdr_start()`, first asked when the Vulkan instance is made), in `g_armed` and
+`g_native`:
+
+- Armed: the HDR path is set up, so the menu can switch HDR on and off without a restart: the instance and device get
+  the HDR extensions (`runtime/vk/vk_device.c`), the game's tonemap is spliced as its shaders load
+  (`vk_hdr_shader_swap()`) and every draw's support buffer carries the settings (`runtime/vk/vk_exec_draw.c`). While the
+  swapchain is SDR the spliced tonemap returns the game's own SDR result. Always, unless `NX2SARIA_HDR_LIVE` = 0 with
+  `NX2SARIA_HDR` = 0 (the path left out as it was before the setting followed the menu: HDR then needs a restart) or a
+  probe turned it off (`vk_hdr_off()`).
+- Native: `NX2SARIA_HDR` = native, the game's own HDR. The display is reported as HDR10 (`runtime/hle/ov_gfx.c`,
+  QueryDisplayHdrStatus, with the peak and paper white of the settings), and the game then renders its HDR picture
+  itself and presents it as PQ-encoded Rec. 2020 in A2B10G10R10 (format 64), which goes to the HDR10 swapchain as it is:
+  no tonemap splice, no float picture, no encode (pictures still presented in 8 bits, before the switch, are encoded as
+  for `NX2SARIA_HDR=1`). The game asks once, so a change to or from native waits for a restart
+  (`vk_hdr_needs_restart()`).
+
+### `hdr_start()`
+
+`g_armed` is written last: it is the mark that both values are read.
+
+### `vk_hdr_wanted()`
+
+HDR is on now: the setting as the menu has it, read again when the settings change. The swapchain follows at the next
+present (`runtime/gfx/gfx_present.c` `window_settings_live()` makes it again) and `vk_hdr_active()` then says what it
+got. A run that started with the game's own HDR keeps it: the game goes on presenting its PQ picture whatever the menu
+says.
+
+### `vk_hdr_needs_restart()`, `vk_hdr_restart_for()`
+
+The menu's HDR row: what is set takes a restart. To or from the game's own HDR, and switching HDR on in a run that
+started without the HDR path (`NX2SARIA_HDR_LIVE` = 0). `vk_hdr_restart_for()`: the same for a value not set yet (the
+menu's draft holds HDR until Apply).
+
+### The settings' snapshot
+
+The settings, read again when they change. The replay (every draw's support buffer) and the present thread read them: an
+update fills the snapshot not in use and then publishes it.
+
+The game's picture is graded for a display of gamma about 2.2, and its sRGB encode is linear near black: shown as that
+encode decodes, its darkest tones sit up to a hundred times above where such a display puts them (a scene value of
+0.001, 0.08 nits at a white of 350 nits against 0.001), the floor of a dark scene lifted to grey. So the present shows
+the picture as a 2.2 display would (`runtime/shaders/hdr_encode.comp`, `runtime/shaders/hdr_ui.frag`: the power 2.2 of
+the sRGB code), and the tonemap aims its peak below the display's by that correction's inverse
+(`runtime/shaders/hdr_tonemap.frag` `peak_before_gamma()`). That holds for every tone mapper and is the default of
+`NX2SARIA_HDR_GAMMA`, which can make it 2.4 or switch it off (the picture as its sRGB code decodes, the dark tones
+lighter). The game's own HDR does not take the setting: what the present still encodes there (the menu, the 8-bit
+pictures before the game's switch) is shown as a 2.2 display would.
+
+`HDR_GAMMA_22` (1.0) is the present's correction as the shaders number it: 0 none, 1: 2.2, 2: 2.4.
+
+`Nits`:
+
+- `peak`, `game`, `ui`: nits.
+- `gamma`: the present's correction, as `HDR_GAMMA_22` numbers it (`runtime/shaders/hdr_encode.comp`,
+  `runtime/shaders/hdr_ui.frag`).
+- `tm`: the support buffer's five vec4 (`runtime/shaders/hdr_tonemap.frag` p0..p4).
+
+### `nits()`
+
+- The tone mapper as `runtime/shaders/hdr_tonemap.frag` numbers it: the game's curve, the luminance mapper, the
+  observer-response mapper (the default, and what any other value gives).
+- The sliders' 0..100 with 50 unchanged become factors around 1; blowout, hue, grade and hue clip are fractions.
+  Divided, not multiplied by a rounded reciprocal: 50 and 100 % come out as exactly 1, which the shader compares for to
+  leave a grading step out.
+
+### `vk_hdr_support()`
+
+Without an HDR10 swapchain (yet), `p0.w` is -1: the game's own SDR picture.
+
+### `name_is()`
+
+Compares the operands of an OpName after the id.
+
+### `is_clamp()`
+
+A 0..1 clamp: translators write FClamp, or NClamp (NaN gives the low bound, as the GPU's saturate does).
+
+### `fsr_unclamp()`
+
+The game's FSR 1 pass after the tonemap (some frames take it in place of the plain pass, at 1:1 as well as when it
+scales up; what picks it is not known yet) ends with clamp(colour, 0.0, 1.0) per channel, which cuts the HDR highlights
+back to the HUD's white for as long as the game takes it. Its own 0..1 clamps of the filter weights each feed a float
+bit trick (OpBitcast), so only the clamps whose result is stored to the shader's output change, to max(x, 0.0): one word
+shorter, so the words after it move down and the module shrinks. Recognised by FSR's two reciprocal constants
+(0x7ef07ebb, 0x7ef19fff) and its one texture `fp_t_tcb_8`. Returns the clamps changed, -1 for that shader with no output
+clamp found (a translator that stores the colour another way), 0 for any other shader.
+
+- `out` maps an id to 1, a pointer into an Output variable, or 2, a value stored through one.
+- The module is rewritten in place: the write position is never past the read position, as instructions only shrink.
+- The operands of the extended instruction are result type, result, set, instruction, x, min, max.
+
+### `spv_literal()`
+
+Which words of an instruction are literals rather than ids, for the opcodes the tonemap library uses (word j, 1 is the
+first after the opcode word). An opcode it does not know makes the splice give up (-1).
+
+Among those it gives up on are OpSwitch, OpLine, OpNoLine and OpCopyMemory (63).
+
+### `put_mapped()`
+
+One library instruction with its ids mapped (`map[id]`, new ones already assigned); 0 when an id has no mapping.
+
+### `SpvView`
+
+What `tonemap_splice()` knows of the game's module while it looks for the exposure: where each result is defined
+(`def`), the class of each variable (`cls`: 1 output, 2 uniform, 3 function), and for a function variable the value its
+stores gave it and how many there were (`sval`, `scnt`).
+
+### `spv_stored()`
+
+The value behind id when id loads a function variable that is stored once (the translator keeps every value in one); id
+itself otherwise.
+
+### `spv_uniform_load()`
+
+Whether id loads a member of a uniform block.
+
+### `spv_same_source()`
+
+Whether a and b are the same value read twice: one id, two loads of one variable, or two loads through access chains of
+one base and the same indices (the translator loads a uniform anew at each use).
+
+### `spv_common_factor()`
+
+Whether the three values are products with one factor in common: 1 with the factor (the first value's operand) and what
+each is multiplied with.
+
+### `spv_common_fma()`
+
+Whether the three values are fma(a, f, t) with one f for the three: 1 with f, and each value's a and t.
+
+### `spv_exposure()`
+
+The game's exposure in the three x it feeds its curve, and those values without local exposure ("exposed"; each plus add
+where add is set). The shapes:
+
+- x = scene \* gain, one gain for the three: a uniform in the scene's tonemap (its constants, element 3 .z), a value the
+  vertex shader passes in the shaders that draw into the tonemapped picture with the curve of their own. The exposed
+  values are x.
+- x = (scene \* gain) \* local exposure, the gameplay shader: the local exposure computed from a grid, the gain a
+  uniform under it. The exposed values are the inner products.
+- x = fma(scene, gain, colour), a colour added per channel after the exposure, the gain a uniform: x again.
+- x = fma(scene \* gain, local exposure, colour): the inner products, plus the colours.
+
+Returns 1 when one of them is found.
+
+### `spv_top_level()`
+
+The instruction at pos, between the function's first label and end, is in a block outside every selection and loop: such
+a block runs on every path and before the blocks after it. Constructs nest between the instruction that names their
+merge block and that block's label.
+
+### `tonemap_splice()`
+
+The fitted ACES curve the game ends its tonemap with: FClamp/NClamp(FMul(FMul(x, Fma(x, 2.51, 0.03)), rcp), 0, 1) per
+channel, each result stored to a function variable that the output store of its channel loads. `tonemap_splice()` keeps
+everything the game computes and only changes what the three colour channels store: `runtime/shaders/hdr_tonemap.frag`
+`nx_tonemap()`, called just before the first of those stores, of the three x, of those values without local exposure
+with the exposure gain in them (`spv_exposure()`; x and a gain of 1 when it finds none), and of the settings from the
+`HDR_SETS` vec4 the support buffer gains at 1440 (`runtime/vk/vk_exec_draw.c` `support_fill()` writes them; the
+translator's SupportBuffer ends there). The library's types are matched to the game's where the same (SPIR-V allows one
+declaration of each), its constants and functions appended with new ids. Gives up (0) on any shape it does not expect,
+and the shader stays as it was.
+
+`HDR_SETS` is 5 and `HDR_PARAMS` 7: the function is `nx_tonemap(vec3 x, vec4 scene, vec4 settings[HDR_SETS])`.
+
+The steps:
+
+- The tables by id: `def`, the word index of a result's instruction; `cval`, an integer constant's value + 1; `cls`, a
+  variable's class (1 output, 2 uniform, 3 function); `sval`, the value last stored to a variable; `scnt`, its stores,
+  counted to 2.
+- The support buffer is the struct whose member 10 is at 1424.
+- Where each result is defined: the globals the checks below look at, and inside the function every instruction that has
+  a result (its second word; the first definition stands, so a word of an instruction without one, taken for a result
+  here, cannot replace a real one). Left out there, as instructions without a result: the stores, labels, merges and
+  branches, OpCopyMemory (63), OpImageWrite (99), OpAtomicStore (228) and OpReturnValue (254).
+- The support buffer's block and a Uniform vec4 pointer are looked for among the globals.
+- The clamp sites and their x: the clamp's operand is FMul(num, rcp), and num is FMul(x, Fma(x, 2.51, 0.03)); the
+  clamp's result is stored to a variable (OpStore var, result).
+- The output stores of channels 0..2: OpStore (AccessChain out, c), value, with a load of a site's variable between. A
+  channel stored twice gives up.
+- The insertion point is the first of those stores; the span from it to the last must be one block.
+- The exposed values and the gain: usable at the call when defined in a block outside every selection and loop before
+  it, or in the call's own. A value with nothing added is passed as it is.
+- The library: its ids mapped into the game's id space, in three outputs: the library's globals, its functions, the
+  result.
+- A library type takes the game's own declaration of it (any but a struct).
+- A library variable that is neither an Input nor an Output is a global its functions could use, which gives up
+  (`lib_fail`); main's inputs and output are left behind with main.
+- Names, decorations (the inputs' locations), the entry point and the memory model stay the game's.
+- `nx_tonemap`'s function type is (vec3, vec4 x (1 + `HDR_SETS`)) with its parameters by pointer, as the compiler writes
+  them; the library's vec4 must be the support buffer's.
+- The library's functions, all but its main. First a new id for every result in them (calls may refer ahead): OpLabel's
+  is its first word, any other instruction's with a result its second; the stores, the merges, the branches (OpBranch
+  249 too), OpKill (252), OpReturn (253), OpReturnValue (254), OpUnreachable (255) and OpFunctionEnd have none.
+- The result: the game's module with the support block grown, the library's globals before the first function, the call
+  in main, the three stores changed, and the library's functions at the end. The support block gains `HDR_SETS` vec4 at
+  1440.
+
+### `vk_hdr_shader_swap()`
+
+Armed, not wanted: a shader loaded while HDR is off must be ready for the menu switching it on.
+
+### The picture the window texture is copied from
+
+- `vk_hdr_track`: `runtime/vk/vk_exec_draw.c` calls `vk_hdr_draw()` while it is set: set at the first present with
+  `NX2SARIA_HDR=1`.
+- `g_active`: the swapchain is HDR10 (`runtime/gfx/gfx_present.c` calls `vk_hdr_set_active()`).
+
+- `recs`: per presented window image: what the last draw copied, and where in the stream (`vk_exec_stream_pos()`).
+
+### `vk_hdr_draw()`
+
+- An unlocked first look: most draws go elsewhere (a stale slot only costs the lock that follows).
+- The last such draw of the stream decides, as in the replay, also when replay workers record draws at once.
+- The source is the one plain 2D texture the draw samples.
+
+### `vk_hdr_present_source()`
+
+The record is kept until the next draw into the window texture: a present again without a new copy shows the same
+picture.
+
+### `vk_hdr_image_gone()`
+
+A texture image went away: forget it as window or source.
+
+No records exist before the first HDR present (`vk_hdr_present_source()`), so nothing is locked per image until then.
+
+### `vk_hdr_surface_format()`
+
+While `NX2SARIA_HDR` is on (`vk_hdr_wanted()`), the HDR10 format among the surface's (10-bit UNORM, ST 2084): 1 with
+`*out` set, else 0 and the reason logged once.
+
+### `vk_hdr_metadata()`
+
+The display's peak and the picture's white for sc; again when the settings change (`runtime/gfx/gfx_present.c` calls it
+on every present to an HDR10 swapchain, with new = 1 for a new swapchain).
+
+AMD's frame generation swapchain takes it through its own call (`runtime/vk/vk_fg.cpp` `vk_fg_hdr_metadata_fn()`).
+
+### `img_ensure()`
+
+M at w x h in fmt; another size waits for the device first (earlier presents may still read the old image).
+
+### The present passes' state
+
+`H`:
+
+- `ui`: for `ui_fmt`.
+- `out`: PQ code values of the crop, RGBA16F.
+- `menu`: the in-game menu, RGBA8.
+
+### `vk_hdr_native_picture()`
+
+The game's own HDR picture: PQ codes in A2B10G10R10, the format of NVN's RGB10A2 (`runtime/vk/vk_formats.c`); no guest
+format becomes A2R10G10B10.
+
+### `vk_hdr_encode()`
+
+- Native HDR: the game's picture holds PQ codes already; the present scales it into the swapchain as it is.
+- An sRGB format decodes itself through the view; 8-bit UNORM holds sRGB codes the shader decodes.
+
+### `vk_hdr_ui_target()`
+
+The in-game menu's target: an RGBA8 image of the swapchain's size in `COLOR_ATTACHMENT_OPTIMAL` (its old content
+dropped); the caller renders the menu into the view with a clear to 0.
+
+### `ui_pipeline()`
+
+Another swapchain format: earlier presents may still use the old pipeline, so the device is waited for first.
+
+### `vk_hdr_ui_compose()`
+
+The menu image onto dst (a swapchain image in `COLOR_ATTACHMENT_OPTIMAL`, view `dst_view` of format fmt).
+
+### `vk_hdr_images_release()`
+
+The swapchain is made without HDR (`runtime/gfx/gfx_present.c` `create_swapchain()`): the encode's picture and the
+menu's image at the picture's size (28 and 14 MiB at 2560x1440, 63 and 32 MiB at 2160 lines) were kept for the process
+once HDR had been on. They go now, after a wait for the presents that may still read them; HDR switched on again makes
+them anew.
+
+### `pq_nits()`
+
+Luminance of a PQ code (0..1023 over 1) in nits.
+
+### `vk_hdr_to_srgb8()`
+
+10-bit PQ pixels of an HDR10 swapchain to bytes that show on a display of gamma 2.2 what the HDR display shows, the
+HUD's white at 255 (menu test shots and flight thumbnails): a dark tone the HDR display lifts looks lifted here too.
+
+- Rec. 2020 to Rec. 709 (the inverse of ITU-R BT.2087's matrix).
+- A2B10G10R10: red is the low 10 bits.
+
+### `vk_hdr_luminance_stats()`
+
+The luminance (Rec. 2020 Y, in nits) of the 10-bit PQ pixels inside the rectangle {x, y, w, h} of a stride-wide image:
+out = the darkest pixel's, the 0.1st, 1st, 50th and 99th percentiles, the brightest's, and the share of pixels under
+0.01 nits. The percentiles come from a histogram of 64 bins a stop, from 2^-24 to 2^14 nits; a value is a bin's upper
+edge.
+
+- Bin 0 is exactly black.
