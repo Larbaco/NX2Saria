@@ -1407,9 +1407,14 @@ nothing in the dispatch it is given, and a cut reaches the library as the prepar
 - `handle`: the swapchain the context made: remade in place, destroyed after the context.
 - `sc_desc` to `fg_pin`: what the contexts were made from: the API asks that it stays until the
   context is destroyed.
-- `prepared`: the last frame was prepared. A frame after one that was not is counted as a cut in the periodic line
-  (`vk_fg4_frame()`); the preparation's `reset` is the one the inputs gave (`runtime/vk/vk_dlaa.c`
-  `vk_dlaa_fg_inputs()`), not that cut.
+- `prepared`: the last frame was prepared. A frame after one that was not is a cut (`vk_fg4_frame()`): its preparation
+  has `reset`, as one the inputs ask for (`runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()`), and it counts as a cut in the
+  periodic line. Up to 0.26.0, `reset` was the inputs' alone, while the FSR 3.1 path resets on both
+  (`runtime/vk/vk_fg.cpp`, its ring of cuts): after the menu, a load or a frame without the picture without the HUD, the
+  first frame generated would blend the frame before the gap with this one. Changed by reading the SDK
+  (`ffxDispatchDescFrameGenerationPrepareV2::reset`: "the camera has moved discontinuously and frame generation should
+  reset its internal state"), not seen on a Radeon.
+- `cut_resets`: the preparations reset for a cut alone (the inputs asked for none), for the periodic line.
 - `on`: the last configured frame had generation on (`vk_fg4_generating()`).
 
 The probe's state:
@@ -1505,7 +1510,8 @@ near plane, far plane and metres are constants here, not the frame's (`runtime/v
 - The HUD-less picture has the swapchain's format (`runtime/gfx/gfx_present.c` `hudless_record()`).
 - Only with the picture without the HUD: generated from the presented picture alone, the HUD would be warped along with
   the scene behind it and trail when the camera turns. A frame without that picture is shown as it is.
-- Each frame by the game's state, and the periodic line (`runtime/vk/vk_fg.cpp` `vk_fg_frame()`).
+- Each frame by the game's state, and the periodic line (`runtime/vk/vk_fg.cpp` `vk_fg_frame()`), which adds the frames
+  the swapchain generated and the preparations reset for a cut alone (`cut_resets`).
 - The picture's rectangle: with black bars beside or below it (a window of another shape) a generation over the whole
   swapchain warped the picture's edges into the bars.
 - The motion vector scale is 1: render pixels, current to previous (`runtime/vk/vk_dlaa.c` `mv_pass()`), as FSR takes
