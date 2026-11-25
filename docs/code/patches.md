@@ -42,7 +42,7 @@ owns them. A slot registered twice ends the start (`runtime/dispatch.c` `rt_regi
 | +0xf20 | `owater`: the surfaces' fixed-step sites | `runtime/pacing/frame_rate.c` |
 | +0xf10, +0xf00 | `osound`: the sound job's two sites | `runtime/pacing/frame_rate.c` |
 | +0xef0 | `wide_bars`: the screens' setup site | `runtime/patches/wide_bars.c` `wide_bars_screen_host()` |
-| +0xee0 | `menu_mouse`: every interface screen's update site | `runtime/ui/menu_mouse.c`, the mouse in the game's own menus |
+| +0xee0 | `menu_mouse` and `quit_menu`: every interface screen's update site | `screens_host()` here, which calls `runtime/ui/menu_mouse.c` `menu_mouse_screen_host()` and `runtime/ui/quit_menu.c` `quit_menu_screen_host()` |
 | +0xed0, +0xec0 | `heap_retry` | `runtime/patches/heap_retry.c` |
 | +0xeb0 | the debug menu's field of view | `runtime/diag/debug_tools.c` |
 | +0xea0, +0xe80 | the horse's jump and Gohma's turn | `runtime/pacing/frame_rate.c` |
@@ -52,6 +52,7 @@ owns them. A slot registered twice ends the start (`runtime/dispatch.c` `rt_regi
 | +0xe50 | the balloon's callback | `runtime/patches/widescreen.c` `wide_balloon_host()` |
 | +0xe40 | the wide lens | `runtime/patches/widescreen.c` |
 | +0xe30 | `changebank_hold` | `runtime/patches/changebank_hold.c` |
+| +0xe20, +0xe10 | `quit_menu`: the confirmation window's button count and label | `runtime/ui/quit_menu.c` `quit_menu_window_count_host()`, `quit_menu_window_label_host()` |
 | +0xe00 | `camera_clearance` | `runtime/patches/camera_clearance.c` |
 
 The slots from +0xf50 to +0xff0 not named here belong to other sets (`runtime/input/mouse_direct.c`,

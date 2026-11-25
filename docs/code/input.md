@@ -63,6 +63,8 @@ scripted counts and leaves the real mouse for menu input. Live counts need the c
 `runtime/ui/menu_cursor.c`: the pointer in the game's menus (1.4.3). The poll runs once per pad read and adds a click's
 A or B; the pointer call says a menu has the pointer, so the mouse camera's capture is released.
 `runtime/ui/menu_mouse.c`: the same for 1.1.1's menus (the poll adds the A, B, up and down the mouse asked for).
+`runtime/ui/quit_menu.c` `quit_menu_poll()` runs after them in `input_poll()`: it takes A away while the focus is on a
+Quit Game entry of the game's menus, a click's A included.
 
 ### `input_game_input_blocked()`
 
