@@ -20,6 +20,93 @@ window; everything that does work runs without it (`launcher/cli.py`).
 
 `python -m launcher [--selftest [--shots DIR]]`: the launcher window (`launcher/ui/app.py`).
 
+## `launcher/build.py`
+
+Running `tools/make_game.py` for the launcher: the command line, its "@@" progress lines (`make_game.py --events`) and
+cancelling it with every compiler it started. Also what the launcher reads of a game folder: whether it is built,
+whether the game runs from it, and the game's log.
+
+### `command()`
+
+Runs `make_game.py` with `pydeps/` (zbic) and the script's folder first on `sys.path`; the embeddable Python's `._pth`
+file leaves both off.
+
+The build runs below normal priority (`BELOW_NORMAL_PRIORITY_CLASS` in `Run`): a compile on every processor for ten
+minutes and more otherwise takes the PC from whatever the player does meanwhile, which the job screen invites ("Keep
+using your PC if you like"). On an idle PC it costs nothing. Windows hands a below-normal process's class on to the
+processes it starts, so the compilers, the lifter's workers and the shader preparation that `make_game.py` starts run
+that way too.
+
+### `has_prompt_art()`
+
+True when this version holds button art (`app/<version>/prompt-art`, `tools/prompt_art.py` `FOLDER`): `make_game.py`
+then draws the button prompts in a step of its own, and the jobs show a row for it.
+
+### `rebuild_args()`
+
+`retune` is Rebuild the Game, which compiles the game's code for this processor's level. An update keeps the level its
+objects were compiled for, so that it compiles only what changed (`tools/make_game.py` `lifted_level()`).
+
+### `Run`
+
+One `make_game.py` process. `on_event(dict)` is called for each "@@" line and `on_line(str)` for every other line;
+`Run.wait()` returns the exit code; `Run.cancel()` ends the process and its children. `dropped` counts the lines and
+events whose handler raised.
+
+`Run._read()` reads the build's output to its end, whatever the handlers do. A handler that raises (the launcher's log
+on a full disk, a drawing error) loses its line, counted in `dropped`, and the reading goes on: when this thread ended
+on the exception nobody read the pipe any more, the build stopped at its next line once the pipe was full, and the job
+waited for it for good. A line that starts with "@@" and is not an event (not JSON, or JSON that is no object) goes to
+`on_line`.
+
+### `_write_open_error()`
+
+0 when the path opens for writing (it is closed again at once), else Windows' error code for the refusal. The open
+asks for `GENERIC_WRITE`, grants every share mode (`FILE_SHARE_READ`, `FILE_SHARE_WRITE`, `FILE_SHARE_DELETE`), and
+uses `OPEN_EXISTING` and `FILE_ATTRIBUTE_NORMAL`; with every share mode granted a sharing violation comes only from a
+running image.
+
+### `game_running()`
+
+True when the built game runs from the game folder: Windows refuses to open a running exe for writing, with a sharing
+violation. A read-only exe (a copy restored from a backup or read-only media) is refused too, with access denied,
+though nothing runs it: its read-only attribute is cleared and the open tried again, as the next build replaces the
+file anyway. Access denied for another reason (an access list that denies the player writes, Controlled Folder Access)
+is no running game either: taken for one, it kept Play saying "already running" and a rebuild failing with "the game
+is running" for an exe that nothing ran. `log`, when given, gets a line for that case, which a build's failure to
+replace the exe (`tools/make_game.py`) then has beside it. An exe that opened, or that is gone meanwhile, is not
+running.
+
+### `build_state()`, `built_version()`, `scan_report()`
+
+`build_state()`: the game folder's `build-cache/state.json` (`make_game.py`), or `{}`. `built_version()`: the kit
+version that last built the game folder ('' when none finished). `scan_report()`: what the check of the game files
+found (`tools/romfs_check.py` writes `<game>/romfs-check.json`): the paths of the damaged files and how many of them
+got a stand-in, or None when the folder has no readable report.
+
+### `unpacked()`, `installed()`
+
+`unpacked()`: true when the game files a rebuild reads are in the game folder (`tools/make_game.py` `BuiltSource`
+names the same ones): the unpacked ExeFS, the RomFS image and its index.
+
+`installed()`: true when the game folder holds a game the player can start: a finished build, or the exe of the last
+finished build beside a build that stopped later. `make_game.py` drops a step's record when a step before it runs
+again, so an update that lifted again and then stopped in the compile (an error, Cancel, a power cut) leaves
+`state.json` without `compile` and `built_version()` says '': the old exe is still there and playable, and a rebuild
+continues from the unpacked game files without the dump (`can_rebuild()`).
+
+### `game_log_path()`, `last_fatal()`
+
+The game's log as the window (`launcher/ui/app.py`) and the session reports (`launcher/telemetry.py`) read it.
+`game_log_path()` gives the new log path, or an existing log under the older name until the new path is present.
+`FATAL_TAIL` (256 KiB) is how many bytes of the game's log `last_fatal()` reads from its end.
+
+`last_fatal()`: the last FATAL line of the game's latest run, without its "FATAL: ", or ''. The game writes one before
+it exits with 70 (`runtime/dispatch.c` `rt_fatal()`), 71 (`runtime/main.c` `crash_handler()`) or 72
+(`runtime/vk/vk_device.c` `vk_device_lost_check()`) into `logs/nx2saria.log` (older installations may still have
+`logs/nx2navi.log`). A line this launcher added for an earlier run's end (`launcher/game_session.py`
+`note_exit_in_log()`) ends the search: what stands before it is not this run's.
+
 ## `launcher/cli.py`
 
 The launcher without its window, for scripts, tests and anyone who prefers a console
