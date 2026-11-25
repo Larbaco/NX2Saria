@@ -19,7 +19,7 @@ from ..context import Context, shorten
 from ..game_session import (ASKED_SIGNALS, EXIT_CODES, FATAL_CODES, FATAL_SHOWN, GameEnd, GameRun, LOG_CUT_LINE,
                             LOG_WHERE, OWN_EXIT_LINES, exit_code_text, game_end, log_has_own_exit, log_is_new, note_exit_in_log,
                             shown_fatal, shown_path)
-from ..paths import install_folder, long_path_problem
+from ..paths import drop_partial_image, free_gb, install_folder, long_path_problem, partial_image_gb
 from ..platform import game_executable
 from . import art, picture, sound
 
@@ -104,35 +104,7 @@ def fit(font, text, width):
     return text[:keep] + '…' + text[len(text) - (lo - keep):]
 
 
-def free_gb(path):
-    p = Path(path)
-    while not p.exists() and p.parent != p:
-        p = p.parent
-    try:
-        return shutil.disk_usage(p).free / 1e9
-    except OSError:
-        return 0.0
-
-
-
-
 REPORTS_ON_NOTICE = 'Session reports are on. You can change this in Settings > Session Reports.'
-
-
-
-
-def partial_image_gb(game_dir):
-    try:
-        return (Path(game_dir) / 'romfs' / 'romfs.bin.part').stat().st_size / 1e9
-    except OSError:
-        return 0.0
-
-
-def drop_partial_image(game_dir):
-    try:
-        (Path(game_dir) / 'romfs' / 'romfs.bin.part').unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 FORCED_CHECK_PAUSE = 60

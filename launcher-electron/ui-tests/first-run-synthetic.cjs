@@ -5,6 +5,33 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { _electron } = require('playwright-core');
 
+const standInInstall = `
+import runpy
+import sys
+import time
+from pathlib import Path
+from unittest import mock
+from launcher import jobs, net, paths
+from launcher.platform import game_executable
+
+def install(job):
+    job.begin('check')
+    release = Path(job.game_dir).parent / 'allow-install'
+    until = time.monotonic() + 20
+    while not release.exists():
+        if job.cancelled() or time.monotonic() > until:
+            raise net.Cancelled()
+        time.sleep(0.05)
+    cache = Path(job.game_dir, 'build-cache')
+    cache.mkdir(parents=True)
+    (cache / 'state.json').write_text('{"steps":{"compile":{}},"kit":"0.0.1"}')
+    game_executable(job.game_dir).write_text('stand-in that cannot be run')
+
+sys.argv = sys.argv[2:]
+with mock.patch.object(jobs.InstallJob, 'run', install), mock.patch.object(paths, 'free_gb', return_value=100):
+    runpy.run_module('launcher.worker', run_name='__main__')
+`;
+
 async function main() {
   const base = await fs.mkdtemp(path.join(os.tmpdir(), 'nx2-first-run-ui-'));
   const root = path.join(base, 'nx2saria');
@@ -15,19 +42,24 @@ async function main() {
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(root, 'data'));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), '0.0.1');
-    await fs.writeFile(settings, '{}');
+    await fs.writeFile(settings, '{"desktop_shortcut":false}');
     await fs.mkdir(folder);
     await fs.writeFile(path.join(folder, 'unrelated.txt'), 'keep');
+    const python = path.join(base, 'test-python');
+    await fs.writeFile(python, '#!/bin/sh\nexec "$NX2SARIA_TEST_PYTHON" -c "$NX2SARIA_TEST_INSTALL" "$@"\n', { mode: 0o755 });
     app = await _electron.launch({
       args: ['--no-sandbox', '.'],
       cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, XDG_DATA_HOME: base }
+      env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_PYTHON: python,
+        NX2SARIA_TEST_PYTHON: process.env.NX2SARIA_PYTHON || 'python3', NX2SARIA_TEST_INSTALL: standInInstall }
     });
     const page = await app.firstWindow();
     const location = page.locator('#game-folder-proposal');
+    const install = page.getByRole('button', { name: 'Iniciar instalação' });
     const pick = page.getByRole('button', { name: 'Escolher pasta do jogo' });
     await pick.waitFor({ timeout: 10000 });
     await location.getByText(path.join(root, 'game'), { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await install.isDisabled({ timeout: 5000 }), true);
 
     await app.evaluate(({ dialog }, selected) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
@@ -67,7 +99,20 @@ async function main() {
     await page.waitForFunction(() => !document.querySelector('#pick-game-dump').disabled);
     assert.equal(await dump.textContent(), valid);
     assert.deepEqual(await fs.readdir(folder), ['unrelated.txt']);
-    assert.equal(await fs.readFile(settings, 'utf8'), '{}');
+    assert.equal(await fs.readFile(settings, 'utf8'), '{"desktop_shortcut":false}');
+    await install.click();
+    const cancel = page.getByRole('button', { name: 'Cancelar compilação' });
+    await cancel.click({ timeout: 5000 });
+    await page.getByText('Instalação cancelada', { exact: true }).waitFor({ timeout: 10000 });
+    await assert.rejects(fs.access(path.join(root, 'data', 'job-running.json')), { code: 'ENOENT' });
+    assert.deepEqual(await fs.readdir(folder), ['unrelated.txt']);
+
+    await install.click();
+    await page.getByText('Instalando o jogo…', { exact: true }).waitFor({ timeout: 5000 });
+    await fs.writeFile(path.join(folder, 'allow-install'), '');
+    await page.getByText('Instalação concluída', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
+    assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')), { desktop_shortcut: false, game_dir: path.join(folder, 'NX2Saria'), dump: valid });
   } finally {
     if (app) await app.close();
     await fs.rm(base, { recursive: true, force: true });

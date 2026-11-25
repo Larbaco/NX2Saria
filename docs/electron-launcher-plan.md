@@ -38,8 +38,8 @@ Milestones may overlap where dependencies allow; they do not authorize publishin
 Each entry stays open until implementation and the required verification are complete. Track automated results on Windows and Linux, owner-observed evidence where applicable, and remaining gaps. `docs/launcher.md` describes the existing behavior.
 
 - [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery.
-- [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The installation job, automatic dump search and full preflight remain open.
-- [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection.
+- [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The Windows and Linux worker tests exercise the install request with a stand-in task. The Linux Electron window test covers progress, cancel, retry and a return to a playable screen. Automatic dump search, the remaining first-run preferences and prerequisites, first installation without the app/runtime, and owner validation remain open.
+- [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Rebuild, interruption recovery and an end-to-end build remain open.
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. Electron still needs its own update flow and separately designed handover and rollback before parity.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
@@ -78,8 +78,26 @@ and leaves the installation settings unchanged. Accepting a proposal confirms th
 The installation job retains its version and content checks. Both the dump and the proposed destination
 will be rechecked when installation is explicitly started.
 
-Creating the installation job and provisioning Python plus the active app on a machine without
-a launcher are subsequent slices.
+On explicit Begin Installation, the worker uses its last validated dump and destination proposals.
+It refuses a new installation while it lacks the lock, has a running game or job, or sees a job
+marker that needs recovery. It checks the selected file and target again before modifying either
+the settings or game folder. Use the existing path limit, running-game detection and 34 GB check.
+Credit a removable partial ROMFS image only at the selected destination and recheck after cleanup.
+An existing complete ROMFS retains the current low-space exception. A playable configured
+game or a playable game already present at the selected destination cannot be replaced through first run.
+
+After validation, record the two choices and start the existing Python `InstallJob`. Keep its
+tool, dump version and build checks. Report progress, allow cancel and wait for complete job
+cleanup before showing success, failure or cancellation. Success refreshes the installation
+state without starting the game. Cancellation or failure allows retry after cleanup. Closing the
+window during installation cancels the job and waits for cleanup as it does for a mod rebuild.
+The same worker logs refusal, start and completion without raw dump or destination paths. Tests
+use stand-in job steps and verify both state transitions and untouched files on refusal. The Linux Electron test
+starts a stand-in build, cancels it, waits for the marker to clear, retries and returns to the ready screen
+without spawning the game. The branch CI runs the worker case on both platforms. Actual tool download,
+extraction and compilation are covered separately by existing Python tests and were not run by the new UI test.
+
+Provisioning Python plus the active app on a machine without a launcher remains a later slice.
 
 ## Provisioning and handover design
 

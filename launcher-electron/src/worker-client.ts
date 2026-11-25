@@ -74,7 +74,7 @@ export class WorkerClient extends EventEmitter {
                 frame.fraction < 0 || frame.fraction > 1 || typeof frame.step !== 'string' || !/^[a-z_]{1,32}$/.test(frame.step)) throw new Error();
           } else if (frame.event === 'job_ended') {
             if (this.activeJob !== frame.session || !['ok', 'failed', 'cancelled'].includes(frame.result) ||
-                !['resume', 'failed', 'cancelled'].includes(frame.outcome)) throw new Error();
+                !['resume', 'complete', 'failed', 'cancelled'].includes(frame.outcome)) throw new Error();
             this.activeJob = null;
           } else if (frame.event === 'game_started') {
             if (this.activeSession !== null || this.activeJob !== null) throw new Error();

@@ -1497,6 +1497,19 @@ drive. True where that cannot be asked.
 - `Layout.python_for_builds()`: the console `python.exe` beside the launcher's `pythonw.exe` (no window: the build
   starts it with `CREATE_NO_WINDOW`), or this interpreter in a checkout.
 
+### `free_gb()`
+
+Measures space on the nearest existing parent for game folders yet to be created.
+
+### `partial_image_gb()` and `drop_partial_image()`
+
+`partial_image_gb()` is the size of what an install that was cut short left of the RomFS image
+(`romfs/romfs.bin.part`, up to 26 GB). The next install writes the image anew (`tools/make_game.py` `step_romfs()`),
+so that space is the install's to use: the first-run screen counts it as free. `drop_partial_image()` removes that
+file, so that it does not count against the free space an install asks for.
+
+The Tk launcher and the worker share these helpers.
+
 ## `launcher/platform/__init__.py`
 
 Operating-system services used by the launcher. `launcher/winsys.py` remains the stable call surface while
@@ -1982,6 +1995,12 @@ change records the usual `setting:` line. On a failed write the in-memory prefer
 ### `Settings.reset()`
 
 Default Settings: the choices go back to their defaults; the game folder, the dump and the history stay.
+
+`Settings.save_install_choices()` writes the confirmed dump and game folder together. It rereads
+the settings file and preserves unrelated fields, including fields the current worker does not
+understand. The replacement is atomic and the launcher logs changed fields through the usual
+settings logger.
+
 
 ## `launcher/start.pyw`
 
@@ -2486,13 +2505,6 @@ All in logical pixels unless said otherwise.
 `fit()` and the rows' values), and on Linux each measure is a round trip to the X server's fonts that took 1 to 2 ms.
 A Font's name is never reused, so a font made again (`App.reload_fonts()`) is measured again. `fit()` shortens a text
 in the middle with an ellipsis so that it fits a width in pixels.
-
-### `partial_image_gb()` and `drop_partial_image()`
-
-`partial_image_gb()` is the size of what an install that was cut short left of the RomFS image
-(`romfs/romfs.bin.part`, up to 26 GB). The next install writes the image anew (`tools/make_game.py` `step_romfs()`),
-so that space is the install's to use: the first-run screen counts it as free. `drop_partial_image()` removes that
-file, so that it does not count against the free space an install asks for.
 
 ### `App`
 
@@ -3592,6 +3604,17 @@ during a Play, memory decision or job, and reports only the proposal's source or
 The check recognizes the game's title in the container metadata. The build still validates the
 version and contents. No settings are changed, and the worker logs a selected, saved, unset or
 rejected outcome without the dump's filename.
+
+The worker retains the last successful proposals until confirmation. `prepare_install()` rechecks
+the source, destination, path limit and running game and protects playable targets. On a valid
+target it accounts for a partial ROMFS image and checks free space again after that image is
+removed. A completed ROMFS image keeps the existing low-space exception.
+
+The install request requires the lock and refuses an active game, job, memory decision or remaining
+job marker. It saves the two choices, honors the existing desktop shortcut setting and runs
+`launcher/jobs.py` `InstallJob`. `job_ended` follows marker and claim cleanup. Its `complete`
+outcome refreshes the Electron installation screen. It never resumes Play after installation.
+
 
 For Play, a memory decision has an attempt number. The worker rejects a stale answer and checks for another
 game before resuming. Mod rebuilds use the shared completion policy and wait for `finished` before resuming

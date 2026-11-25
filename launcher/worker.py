@@ -7,7 +7,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import build, commit, game_session, gamefiles, jobs, locks, mods_job, play, saves, updater, versions, winsys
+from . import build, commit, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context
 from .inspect_installation import inspect_installation
@@ -151,6 +151,31 @@ def install_dump(ctx, request):
     return None
 
 
+def prepare_install(ctx, choices):
+    dump, folder = choices.get('dump'), choices.get('destination')
+    if not dump or not folder:
+        return 'choose_source'
+    if not install_dump(ctx, {'file': dump}):
+        return 'invalid_dump'
+    destination = Path(folder)
+    if not destination.is_absolute() or (destination.exists() and not destination.is_dir()):
+        return 'invalid_destination'
+    if paths.long_path_problem(folder):
+        return 'path_too_long'
+    saved = ctx.settings.get('game_dir')
+    if build.installed(folder) or (saved and saved != folder and build.installed(saved)):
+        return 'already_installed'
+    if saves.game_running(folder) or (saved and saved != folder and saves.game_running(saved)):
+        return 'game_running'
+    complete_image = (destination / 'romfs' / 'romfs.bin').is_file()
+    if not complete_image and paths.free_gb(folder) + paths.partial_image_gb(folder) < 34:
+        return 'need_space'
+    paths.drop_partial_image(folder)
+    if not complete_image and paths.free_gb(folder) < 34:
+        return 'need_space'
+    return 'ready'
+
+
 def defer_crash_offer(ctx, run, end):
     if not run.kind:
         return
@@ -249,7 +274,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
@@ -259,6 +284,7 @@ def main(argv=None):
         job = None
         job_revision = -1
         failed_mods = []
+        install_choices = {}
         session = 0
         attempt = 0
         pending = None
@@ -274,7 +300,7 @@ def main(argv=None):
                     ctx.log('worker: output disconnected idle')
                     return 0
             if job and job.finished is None and not job.cancelled() and job.steps and job.rev != job_revision and not disconnected:
-                with job._lock:
+                with job.locked():
                     job_revision = job.rev
                     fraction = job.overall()
                     step = job.current().id
@@ -283,7 +309,10 @@ def main(argv=None):
                       'fraction': fraction, 'step': step})
             if job and job.finished is not None:
                 winsys.keep_awake(False, ctx.log)
-                outcome, failed_mods = mods_job.finish_mods_job(ctx, job, failed_mods, require_finished=True)
+                if job.kind == 'install':
+                    outcome = 'complete' if job.result == 'ok' else job.result
+                else:
+                    outcome, failed_mods = mods_job.finish_mods_job(ctx, job, failed_mods, require_finished=True)
                 ctx.log(f'job {job.kind}: {job.result} {job.error}')
                 action_log(ctx, counts, 'job', f'result={job.result}')
                 result = job.result
@@ -476,11 +505,38 @@ def main(argv=None):
                 except (OSError, ValueError, RuntimeError, TypeError, AttributeError):
                     proposal = None
                 if proposal:
+                    install_choices[subject] = proposal['file' if choosing_dump else 'folder']
                     action_log(ctx, counts, 'install', f'{subject} {proposal["source"]}')
                     emit({'id': request['id'], 'result': proposal})
                 else:
                     action_log(ctx, counts, 'install', f'{subject} rejected')
                     error(request['id'], f'invalid_{subject}')
+            elif request.get('method') == 'install':
+                status = 'unavailable'
+                try:
+                    if lock_state == 'held' and not (run or job or pending or (layout.data / jobs.MARKER).exists()):
+                        status = prepare_install(ctx, install_choices)
+                    if status == 'ready':
+                        dump, folder = install_choices['dump'], install_choices['destination']
+                        installation = jobs.InstallJob(ctx, dump, folder)
+                        ctx.settings.save_install_choices(dump, folder)
+                        if ctx.settings.get('desktop_shortcut'):
+                            winsys.desktop_shortcut(layout, True)
+                except (OSError, ValueError, RuntimeError, TypeError, AttributeError):
+                    status = 'unavailable'
+                if status != 'ready':
+                    action_log(ctx, counts, 'install', f'refused status={status}')
+                    emit({'id': request['id'], 'result': {'status': status}})
+                    continue
+                job = installation
+                job_revision = -1
+                winsys.keep_awake(True, ctx.log)
+                job.start()
+                session += 1
+                action_log(ctx, counts, 'install', 'started')
+                emit({'id': request['id'], 'result': {'status': 'building'}})
+                sequence += 1
+                emit({'event': 'job_started', 'sequence': sequence, 'session': session})
             elif request.get('method') == 'set_hide_while_playing':
                 value = request.get('value')
                 if type(value) is not bool:

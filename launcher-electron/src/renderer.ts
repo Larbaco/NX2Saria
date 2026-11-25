@@ -1,6 +1,7 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<string | null>; installDump(pick: boolean): Promise<string | null>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+type InstallFeedback = { outcome: string; state: Result | null };
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<string | null>; installDump(pick: boolean): Promise<string | null>; install(): Promise<string>; onInstallEnded(callback: (result: InstallFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: 'install' | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -8,6 +9,7 @@ const playButton = document.querySelector<HTMLButtonElement>('#play')!;
 const cancelJob = document.querySelector<HTMLButtonElement>('#cancel-job')!;
 const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-playing')!;
 const settingError = document.querySelector<HTMLElement>('#setting-error')!;
+const installButton = document.querySelector<HTMLButtonElement>('#begin-install')!;
 const firstRun = document.querySelector<HTMLElement>('#first-run')!;
 const gameFolderProposal = document.querySelector<HTMLElement>('#game-folder-proposal')!;
 const pickGameFolder = document.querySelector<HTMLButtonElement>('#pick-game-folder')!;
@@ -21,13 +23,19 @@ let selecting = false;
 let playing = false;
 let savingPreference = false;
 let playFailed = false;
+let choosingSource = false;
+let proposedFolder: string | null = null;
+let proposedDump: string | null = null;
 
 function updateControls() {
-  const busy = selecting || playing || savingPreference;
+  const busy = selecting || playing || savingPreference || choosingSource;
   button.disabled = busy;
   playButton.disabled = busy || playFailed || installation?.status !== 'ready' ||
     installation.job_marker_present === true || installation.game_running === true;
   hideWhilePlaying.disabled = busy || typeof installation?.hide_while_playing !== 'boolean';
+  pickGameFolder.disabled = pickGameDump.disabled = busy || firstRun.hidden;
+  installButton.disabled = busy || firstRun.hidden || !proposedFolder || !proposedDump ||
+    installation?.job_marker_present === true || installation?.game_running === true;
   if (!savingPreference) hideWhilePlaying.checked = installation?.hide_while_playing === true;
 }
 
@@ -40,29 +48,36 @@ function showResult(result: Result | null) {
   detail.textContent = (result.game_dir || result.root || 'Confira a instalação e tente novamente.') + (result.job_marker_present ? ' Há um registro de trabalho: ele pode estar em andamento ou ter sido interrompido.' : '') + (result.game_running === true ? ' O jogo já está em execução.' : '');
 }
 async function showInstallDestination(pick: boolean) {
-  pickGameFolder.disabled = true;
+  choosingSource = true;
+  updateControls();
   gameFolderError.textContent = '';
   try {
     const folder = await window.launcher.installDestination(pick);
-    if (folder) gameFolderProposal.textContent = folder;
+    if (folder) gameFolderProposal.textContent = proposedFolder = folder;
   } catch {
     gameFolderError.textContent = 'Não foi possível verificar a pasta do jogo.';
   } finally {
-    pickGameFolder.disabled = false;
+    choosingSource = false;
+    updateControls();
   }
 }
 pickGameFolder.onclick = () => { void showInstallDestination(true); };
 
 async function showInstallDump(pick: boolean) {
-  pickGameDump.disabled = true;
+  choosingSource = true;
+  updateControls();
   gameDumpError.textContent = '';
   try {
     const file = await window.launcher.installDump(pick);
-    if (file || !pick) gameDumpProposal.textContent = file ?? 'Nenhum dump escolhido';
+    if (file || !pick) {
+      proposedDump = file;
+      gameDumpProposal.textContent = file ?? 'Nenhum dump escolhido';
+    }
   } catch {
     gameDumpError.textContent = 'O arquivo selecionado não é um dump válido do jogo.';
   } finally {
-    pickGameDump.disabled = false;
+    choosingSource = false;
+    updateControls();
   }
 }
 pickGameDump.onclick = () => { void showInstallDump(true); };
@@ -72,6 +87,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   installation = null;
   playFailed = false;
   settingError.textContent = '';
+  proposedFolder = proposedDump = null;
   gameFolderProposal.textContent = '';
   gameDumpProposal.textContent = '';
   firstRun.hidden = true;
@@ -159,12 +175,50 @@ window.launcher.onPlayEnded(result => {
   showPlayFeedback(result);
 });
 
+const installMessages: Record<string, string> = {
+  choose_source: 'Escolha a pasta do jogo e o dump antes de instalar.',
+  invalid_dump: 'O dump escolhido não está mais disponível ou é inválido. Escolha o arquivo novamente.',
+  invalid_destination: 'A pasta escolhida está indisponível. Selecione outra pasta.',
+  path_too_long: 'Escolha uma pasta com um caminho mais curto.',
+  already_installed: 'Já existe um jogo pronto nesta instalação.',
+  game_running: 'Feche o jogo antes de instalar.',
+  need_space: 'Libere cerca de 34 GB na unidade escolhida ou selecione outra pasta.',
+};
+
+installButton.onclick = async () => {
+  playing = true;
+  updateControls();
+  statusElement.textContent = 'Instalando o jogo…';
+  detail.textContent = 'Preparando a instalação.';
+  let result = 'unavailable';
+  try { result = await window.launcher.install(); } catch {}
+  if (result === 'building') return;
+  playing = false;
+  statusElement.textContent = 'Não foi possível iniciar a instalação';
+  detail.textContent = installMessages[result] || 'Confira o estado da instalação e tente novamente.';
+  updateControls();
+};
+window.launcher.onInstallEnded(({ outcome, state }) => {
+  playing = false;
+  cancelJob.hidden = true;
+  installation = state;
+  firstRun.hidden = state?.status !== 'not_configured' && state?.status !== 'not_ready';
+  if (outcome === 'complete' && state?.status === 'ready') {
+    showResult(state);
+    statusElement.textContent = 'Instalação concluída';
+  } else {
+    statusElement.textContent = outcome === 'cancelled' ? 'Instalação cancelada' : 'Não foi possível concluir a instalação';
+    detail.textContent = outcome === 'cancelled' ? 'Você pode iniciar a instalação novamente.' : 'Confira o log do launcher e tente novamente.';
+  }
+  updateControls();
+});
+
 cancelJob.onclick = () => { cancelJob.disabled = true; void window.launcher.cancelJob(); };
 window.launcher.onJobStatus(result => {
   cancelJob.hidden = result.status !== 'running';
   cancelJob.disabled = false;
   if (result.status === 'running') {
-    statusElement.textContent = 'Preparando os mods para jogar…';
+    statusElement.textContent = result.task === 'install' ? 'Instalando o jogo…' : 'Preparando os mods para jogar…';
     detail.textContent = typeof result.fraction === 'number' ? `Progresso: ${Math.round(result.fraction * 100)}%.` : 'Aguarde a compilação ou cancele.';
   } else if (result.status === 'resuming') {
     showOpeningGame();

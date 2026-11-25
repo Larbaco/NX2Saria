@@ -5950,6 +5950,14 @@ With the local log shortening switch disabled, it checks both the outbound log t
 shortened paths without sending a request. The worker unit suite also checks boot and privacy when that single
 export is absent.
 
+The worker install test drives the request through the same protocol. A stand-in replaces the
+expensive build step. Missing choices, insufficient space and an already playable target are
+refused. After confirmation on a clear target the test observes successful completion, a removed
+job marker and only the two confirmed settings changed. The first-run Electron window test also
+cancels the job while it waits, checks marker cleanup, retries, and gets back to a usable Play
+control without starting the synthetic game.
+
+
 ## `tests/launcher_mods_job_characterization_test.py`
 
 Characterizes the Tk adapter's existing handling of a mod rebuild result: success with cache kept or dropped, the

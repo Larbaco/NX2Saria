@@ -16,6 +16,7 @@ app.whenReady().then(() => {
   let worker: WorkerClient | null = null;
   let state: Inspection | null = null;
   let playing = false;
+  let installing = false;
   let gameSpawned = false;
   let hidden = false;
   let shown = window.isVisible();
@@ -51,6 +52,21 @@ app.whenReady().then(() => {
   }
   function notifyPlayEnded(result: object) {
     if (!window.isDestroyed()) window.webContents.send('play-ended', { ...result, messageId: expectPlayMessage() });
+  }
+  async function finishInstall(active: WorkerClient, outcome: string) {
+    if (worker === active) {
+      let refreshed: Inspection | null = null;
+      try { refreshed = parseInspection(await active.request('inspect')); } catch {}
+      if (worker !== active) return;
+      state = refreshed;
+    }
+    log?.write('install', `ended outcome=${outcome}`);
+    installing = false;
+    playing = false;
+    if (!window.isDestroyed()) window.webContents.send('install-ended', { outcome, state: settingsView(state) });
+  }
+  function firstRunAvailable(selected: Inspection | null) {
+    return selected?.status === 'not_configured' || selected?.status === 'not_ready';
   }
   function settingsView(result: Inspection | null): Inspection | null {
     return result && { ...result, hide_while_playing: worker?.handshake.lock === 'held' ? result.hide_while_playing : null };
@@ -96,6 +112,11 @@ app.whenReady().then(() => {
       active.on('disconnect', () => {
         if (worker !== active) return;
         worker = null;
+        if (installing) {
+          state = null;
+          void finishInstall(active, 'worker_disconnected');
+          return;
+        }
         playing = false;
         restoreWindow();
         log?.write('play', 'worker_disconnected');
@@ -105,10 +126,14 @@ app.whenReady().then(() => {
       active.on('event', async frame => {
         if (worker !== active) return;
         if (frame.event === 'job_started') {
-          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running' });
+          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: installing ? 'install' : 'mods' });
         } else if (frame.event === 'job_progress') {
-          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', fraction: frame.fraction });
+          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: installing ? 'install' : 'mods', fraction: frame.fraction });
         } else if (frame.event === 'job_ended') {
+          if (installing) {
+            await finishInstall(active, frame.outcome);
+            return;
+          }
           log?.write('play', `job_ended outcome=${frame.outcome}`);
           if (!window.isDestroyed()) window.webContents.send('job-status', { status: frame.outcome === 'resume' ? 'resuming' : frame.outcome });
           if (frame.outcome !== 'resume') {
@@ -188,7 +213,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('install-destination', async (event, pick) => {
     if (event.sender !== window.webContents || !worker || playing || typeof pick !== 'boolean' ||
-        (state?.status !== 'not_configured' && state?.status !== 'not_ready')) throw new Error('Unavailable');
+        !firstRunAvailable(state)) throw new Error('Unavailable');
     const active = worker;
     let options = {};
     if (pick) {
@@ -204,7 +229,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('install-dump', async (event, pick) => {
     if (event.sender !== window.webContents || !worker || playing || typeof pick !== 'boolean' ||
-        (state?.status !== 'not_configured' && state?.status !== 'not_ready')) throw new Error('Unavailable');
+        !firstRunAvailable(state)) throw new Error('Unavailable');
     const active = worker;
     let options = {};
     if (pick) {
@@ -220,6 +245,26 @@ app.whenReady().then(() => {
     if (worker !== active || (result?.file !== null && (typeof result?.file !== 'string' ||
         !path.isAbsolute(result.file)))) throw new Error('Unavailable');
     return result.file;
+  });
+  ipcMain.handle('install', async event => {
+    if (event.sender !== window.webContents) return 'unavailable';
+    log?.write('install', 'requested');
+    if (!worker?.handshake.capabilities.includes('install') || playing || state?.job_marker_present ||
+        !firstRunAvailable(state)) {
+      log?.write('install', 'result=unavailable');
+      return 'unavailable';
+    }
+    const active = worker;
+    playing = installing = true;
+    let status = 'unavailable';
+    try {
+      const response = await active.request('install');
+      if (['building', 'choose_source', 'invalid_dump', 'invalid_destination', 'path_too_long',
+        'already_installed', 'game_running', 'need_space'].includes(response?.status)) status = response.status;
+    } catch {}
+    if (status !== 'building') playing = installing = false;
+    log?.write('install', `result=${status}`);
+    return status;
   });
   ipcMain.handle('play', async event => {
     if (event.sender !== window.webContents) return { error: 'unavailable' };

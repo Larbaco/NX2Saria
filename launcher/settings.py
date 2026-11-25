@@ -84,14 +84,30 @@ class Settings(dict):
             for line in lines:
                 self.log(line)
 
-    def save_hide_while_playing(self, value):
-        key = 'hide_while_playing'
+    def _read_for_write(self):
         try:
             data = json.loads(self.path.read_text(encoding='utf-8-sig'))
         except FileNotFoundError:
             data = {}
         if not isinstance(data, dict):
             raise ValueError('settings are not an object')
+        return data
+
+    def save_install_choices(self, dump, game_dir):
+        data = self._read_for_write()
+        choices = {'dump': dump, 'game_dir': game_dir}
+        previous = {key: data.get(key, DEFAULTS[key]) for key in choices}
+        if previous != choices:
+            data.update(choices)
+            self._write(data)
+        for key, value in choices.items():
+            self[key] = self.saved[key] = value
+            if self.log and previous[key] != value:
+                self.log(f'setting: {key} {_shown(key, previous[key])} -> {_shown(key, value)}')
+
+    def save_hide_while_playing(self, value):
+        key = 'hide_while_playing'
+        data = self._read_for_write()
         previous = data.get(key, DEFAULTS[key])
         if type(previous) is not bool:
             previous = DEFAULTS[key]

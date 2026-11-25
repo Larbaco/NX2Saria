@@ -1,4 +1,5 @@
 import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -50,6 +51,30 @@ def install_folder(path):
             and folder.name.lower() not in ('nx2navi', 'nx2saria')):
         return folder / 'NX2Saria'
     return folder
+
+
+def free_gb(path):
+    folder = Path(path)
+    while not folder.exists() and folder.parent != folder:
+        folder = folder.parent
+    try:
+        return shutil.disk_usage(folder).free / 1e9
+    except OSError:
+        return 0.0
+
+
+def partial_image_gb(game_dir):
+    try:
+        return (Path(game_dir) / 'romfs' / 'romfs.bin.part').stat().st_size / 1e9
+    except OSError:
+        return 0.0
+
+
+def drop_partial_image(game_dir):
+    try:
+        (Path(game_dir) / 'romfs' / 'romfs.bin.part').unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 class Layout:

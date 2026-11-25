@@ -12,6 +12,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 
 class WorkerTest(unittest.TestCase):
@@ -227,6 +228,88 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('worker: install dump rejected', log)
         self.assertNotIn(valid.name, log)
         self.assertNotIn(wrong.name, log)
+
+    def test_first_run_starts_install_job_only_after_confirmed_proposals(self):
+        from fixtures.worker_install_dump import write_dump
+
+        root = Path(self.tmp.name)
+        dump = root / 'setup-source.nup'
+        write_dump(dump)
+        folder = root / 'target'
+        folder.mkdir()
+        occupied = root / 'NX2navi'
+        (occupied / 'build-cache').mkdir(parents=True)
+        (occupied / 'build-cache' / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        from launcher.platform import game_executable
+        game_executable(occupied).write_text('stand-in that cannot be run')
+        enough_space = root / 'enough-space'
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text('{"desktop_shortcut": false, "telemetry": "off"}')
+        script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,paths,winsys\n"
+                  "enough_space=Path(sys.argv[2])\n"
+                  "def build(job):\n"
+                  " job.begin('check')\n"
+                  " Path(job.game_dir,'fake-install-done').write_text(Path(job.dump).name)\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs.InstallJob,'run',build), "
+                  "mock.patch.object(paths,'free_gb',side_effect=lambda _: 100 if enough_space.exists() else 1), "
+                  "mock.patch.object(winsys,'keep_awake'):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), str(enough_space)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+
+        def request(**message):
+            worker.stdin.write(json.dumps(message) + '\n')
+            worker.stdin.flush()
+            response = frames.get(timeout=10)
+            self.assertEqual(response['id'], message['id'])
+            return response
+
+        self.assertEqual(request(id=1, method='hello', protocol=1)['result']['lock'], 'held')
+        self.assertEqual(request(id=2, method='install')['result']['status'], 'choose_source')
+        self.assertEqual(json.loads(settings.read_text()), {'desktop_shortcut': False, 'telemetry': 'off'})
+        self.assertEqual(request(id=3, method='install_destination', folder=str(folder))['result']['folder'],
+                         str(folder))
+        self.assertEqual(request(id=4, method='install_dump', file=str(dump))['result']['file'], str(dump))
+        self.assertEqual(request(id=5, method='install')['result']['status'], 'need_space')
+        self.assertEqual(json.loads(settings.read_text()), {'desktop_shortcut': False, 'telemetry': 'off'})
+        self.assertEqual(list(folder.iterdir()), [])
+        enough_space.touch()
+        self.assertEqual(request(id=6, method='install_destination', folder=str(occupied))['result']['folder'],
+                         str(occupied))
+        self.assertEqual(request(id=7, method='install')['result']['status'], 'already_installed')
+        self.assertEqual(game_executable(occupied).read_text(), 'stand-in that cannot be run')
+        self.assertEqual(request(id=8, method='install_destination', folder=str(folder))['result']['folder'],
+                         str(folder))
+        self.assertEqual(request(id=9, method='install')['result']['status'], 'building')
+        started = frames.get(timeout=10)
+        self.assertEqual(started['event'], 'job_started')
+        event = frames.get(timeout=10)
+        while event['event'] == 'job_progress':
+            event = frames.get(timeout=10)
+        self.assertEqual((event['event'], event['result'], event['outcome']), ('job_ended', 'ok', 'complete'))
+        self.assertEqual(event['session'], started['session'])
+        self.assertEqual((folder / 'fake-install-done').read_text(), dump.name)
+        self.assertFalse((self.root / 'data' / 'job-running.json').exists())
+        self.assertEqual(json.loads(settings.read_text()), {
+            'desktop_shortcut': False, 'telemetry': 'off', 'game_dir': str(folder), 'dump': str(dump)})
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: install started', log)
+        self.assertIn('job install: ok', log)
+        self.assertNotIn('worker: spawn started', log)
 
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'
