@@ -1094,6 +1094,23 @@ does the test. The pipeline cache files go to `build/test/ffx_cache`, never besi
 probe run and returns the exit code, the last probe line and the counts or None. The text the test prints when it is
 called without the executable's path is the string `USAGE`.
 
+## `tests/ngx_lock_check.py`
+
+Two checks of the lock every NGX call goes through (`runtime/vk/ngx_lock.h`). No GPU, no NGX, no game files.
+
+- `runtime/vk/vk_dlaa.c` is read: every call to an NGX entry point (`N.init`, `N.req_ext`, `N.caps`, `N.alloc_params`,
+  `N.destroy_params`, `N.create`, `N.evaluate`, `N.release`, `N.shutdown1`, `N.feat_inst_req`) and to a callback NGX
+  hands out (`(NgxParam *))cb)(`) must have `NGX_CALL(` before it on its line. Each one that has not is printed with its
+  line; any fails the check.
+- `tests/ngx_lock_check.c` is built and run with the header over a fake NGX that counts how often a call enters while
+  another thread is inside, and pthread mutexes for the platform's. Three threads as in the game: a replay thread (150
+  calls of 0.2 ms, one of them a 30 ms create), a present thread (150 calls of 0.2 ms) and the frame's bookkeeping (15
+  of 0.02 ms). Without the lock the fake must see overlaps (the detector works); with it none, every call counted for
+  its caller, and the longest hold the replay's create. It prints the lock's log line, the present thread's worst wait
+  and what an uncontended call costs (fails above 2 us). The worst wait is printed, not checked: the lock is not fair,
+  so a waiter can sit through two holds in a row, and on a loaded CI runner the present thread waited 65.6 ms behind a
+  32.8 ms hold.
+
 ## `tests/fg_reset_check.py`
 
 Builds and runs `tests/fg_reset_check.c` on `runtime/vk/vk_fg_reset.h`: which frames FSR 3.1 frame generation's

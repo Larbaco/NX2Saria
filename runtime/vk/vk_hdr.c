@@ -413,7 +413,8 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
     enum { MAX_SITES = 8 };
     uint64_t site[MAX_SITES];
     uint32_t site_x[MAX_SITES], site_var[MAX_SITES];
-    int nsite = 0;
+    int nsite = 0, bad_x = 0, other_x = 0;
+    const SpvView view = {w, def, sval, cls, scnt, bound, glsl};
     for (uint64_t i = first_fn; i < n && nsite < MAX_SITES; i += w[i] >> 16) {
         const uint32_t *a = w + i + 1;
         if ((w[i] & 0xffff) != SPV_OP_EXT_INST || (w[i] >> 16) != 8 || a[2] != glsl || !is_clamp(a[3]) ||
@@ -426,10 +427,26 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         const uint32_t *f = w + def[num[4]];
         if ((f[0] & 0xffff) != SPV_OP_EXT_INST || (f[0] >> 16) != 8 || f[4] != GLSL_FMA || f[6] != c251 || f[7] != c003)
             continue;
+        if (num[3] >= bound) {
+            bad_x++;
+            continue;
+        }
+        if (f[5] != num[3] && !spv_same_source(&view, f[5], num[3]) &&
+            spv_stored(&view, f[5]) != spv_stored(&view, num[3])) {
+            other_x++;
+            continue;
+        }
         site[nsite] = i, site_x[nsite] = num[3], site_var[nsite] = 0;
         for (uint64_t j = i; j < n; j += w[j] >> 16)
             if ((w[j] & 0xffff) == SPV_OP_STORE && (w[j] >> 16) >= 3 && w[j + 2] == a[1]) { site_var[nsite] = w[j + 1]; break; }
         if (site_var[nsite]) nsite++;
+    }
+    if (bad_x || other_x) {
+        static volatile int32_t refused;
+        if (plat_inc32(&refused) <= 4)
+            rt_log("hdr: %d clamp(s) of a fitted ACES curve not taken: %d with an x that is no id of the module, %d whose "
+                   "Fma does not take the x its FMul does; %d taken, %s", bad_x + other_x, bad_x, other_x, nsite,
+                   nsite < 3 ? "too few: the shader keeps its own tonemap" : "enough for the splice");
     }
     if (nsite < 3) goto fail;
     uint64_t chain_at[3] = {0}, store_at[3] = {0};
@@ -464,7 +481,6 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         if (site[chan_site[c]] >= at || def[site_x[chan_site[c]]] >= at) goto fail;
     for (uint64_t i = lo; i < hi; i += w[i] >> 16)
         if ((w[i] & 0xffff) == SPV_OP_LABEL) goto fail;
-    const SpvView view = {w, def, sval, cls, scnt, bound, glsl};
     uint32_t exposed[3], add[3], gain = 0;
     uint64_t at_block = first_label;
     for (uint64_t i = first_label + (w[first_label] >> 16); i < at; i += w[i] >> 16)
