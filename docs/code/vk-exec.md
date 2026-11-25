@@ -3167,6 +3167,504 @@ bottom. Runs on the submitting thread under `vk_sync_submit`'s lock: no locking 
   pass (begins an occlusion query when counting and none is active), and the open pass about to end (ends the active
   query).
 
+## `runtime/vk/vk_exec_xfer.c`
+
+Transfers of the Vulkan op-stream replay: buffer and texture copies, texture clears, event signals, counter reports and
+conditional rendering. `runtime/vk/vk_exec.c` calls `vk_exec_op_xfer` for these ops.
+
+Buffers are guest memory: `vk_mem_resolve` maps an address to the `VkBuffer` behind its pool, textures are the
+`runtime/vk/vk_texture.c` images (linear texel layout, GENERAL layout; block-linear storage is only converted when a
+mirrored texture is uploaded). So a copy is one Vulkan transfer command and the pitch of a buffer side comes from the
+payload (`OP_COPY_STRIDE` or the tight row). Every copy ends the open pass and starts with a full barrier. Destinations:
+an image is marked GPU-written at record time; a CPU-visible buffer range is reported to `vk_gpu_written` once the GPU
+is done (write watch does not see GPU writes, textures stored there re-upload).
+
+Events and counters are CPU-visible side effects. Their values go into guest memory on the completion thread through
+`vk_completion_add`, in submit order, as `runtime/gfx/gfx_null.c` does: event WRITE / ADD, counter {0, timestamp} for
+every type but samples passed. A timestamp report puts 0 in the counter word: the game gates its clears on two such
+words being unequal.
+
+Samples passed (`NVN_COUNTER_TYPE_SAMPLES_PASSED`) is a running count on the queue: `RESET_COUNTER` zeroes it, every
+draw after it adds the samples that passed the depth and stencil tests, `REPORT_COUNTER` writes the running value. The
+game resets and reports it 3 to 8 times a frame in the field and its CPU reads the results back (`f_70010c3298`); a 0
+there culls what the query tested. The replay counts with Vulkan occlusion queries ("occlusion counts" below).
+
+Conditional rendering is a CPU-side skip, not `VK_EXT_conditional_rendering`: the extension compares one 32-bit word
+with zero, NVN compares the counter words at addr and addr + 16. The condition is evaluated when the op is recorded from
+guest memory; a counter reported by an earlier submission that is not done yet counts as 0 if it is a timestamp, as
+unknown if it is samples passed. An unknown count renders: the report usually sits in the command buffer being recorded,
+so its value cannot be waited for, and the word in memory still holds an older query's count. Rendering costs at most
+the work the condition would have saved; in the field the game conditions only on timestamp reports. The condition sets
+`VkExec.render_disabled`, which `runtime/vk/vk_exec.c` honours for clears and `runtime/vk/vk_exec_draw.c` for draws and
+dispatches. A condition that cannot be read (address outside every pool) renders. Copies and `CLEAR_TEX` are not
+conditional.
+
+### Completion callbacks (completion thread)
+
+- `Range`: back: written into a VRAM mirror (`vk_mem_mirrored`).
+- `ex_results`: What the GPU work of the submission being recorded hands to the CPU at its completion without a fault to
+  fetch it: event values, counter and occlusion reports, GPU writes of memory no VRAM mirror holds
+  (`vk_sync_recorded_wait` waits for the newest such submission). Write-backs of the mirrors note it in
+  `runtime/vk/vk_memory.c`; the lazily written ones fetch on the CPU's first access.
+
+  `VK_RES_*` bits.
+- `tail_results`: those noted while the submission's tail records (`runtime/vk/vk_exec.c` "the early tail").
+
+### `vk_exec_note_results()`
+
+- `vk_gpu_passes_result(kind)`: `NX2SARIA_GPU_PASSES`: where in the submission it is done.
+
+### `ub_write_cb()`
+
+An inline uniform update in a submission's tail (`runtime/vk/vk_exec_draw.c` `op_update_ub()`, `runtime/vk/vk_exec.c`
+"the early tail"): the GPU copies the bytes into the pool's mirror where the stream has the update, and guest memory
+gets them here, with the results the game reads, in place of a write-back.
+
+### `note_gpu_write()`
+
+The GPU wrote [addr, addr+size) of CPU-visible memory: tell the texture cache once the fence is reached.
+
+### `vk_exec_late_stats()`
+
+The side effects below that ran after a waiter on the executed timeline had gone on
+(`runtime/vk/vk_sync.c` `vk_sync_effect_late()`): the game was already past the wait after its submit when these reached
+its memory.
+
+### `write_counter()`
+
+`NVNcounterData` = {counter, timestamp}; timestamps are Tegra 19.2 MHz ticks (the base of GetSystemTick). keep: the
+4-byte quarters of the record the write leaves as they are (bit n: bytes 4n to 4n + 3), 0 none. `ahead_ns`: the
+timestamp is that much past now (a tail timestamp the GPU has not reached yet, `counter_cb`), else 0.
+
+### `counter_cb()`
+
+- `report_write()`: Reports other than samples passed (timestamps; the statistics counters are not modelled) write a
+  counter of 0. The counter word matters: Ocarina writes {1, 0} into a record from the CPU, reports `TIMESTAMP_TOP` into
+  it and gates clears on it differing from a zero record (mode 1), clears that must not run.
+
+  below, with the pending table.
+- `CounterWrite`: tail: the submission's value for a timestamp reported in its tail (`runtime/vk/vk_exec.c` "the early
+  tail"), else 0.
+
+- A timestamp of the tail, written while the GPU still runs the tail: the time the tail is expected to end at.
+
+### `vk_exec_cond_frame_end()`
+
+- `PENDING`: Reports queued by the replay that the GPU has not finished. The condition of `RENDER_COND` reads a
+  timestamp one as 0 and a samples-passed one as unknown. The newest report per address, in a table probed over
+  `PENDING_PROBE` slots from the address's hash: Ocarina issues hundreds of occlusion reports a frame and conditions
+  draws on them in the same frame, so a ring of the last 256 reports had dropped the report a condition referred to,
+  which then read an older query's count (often 0) and culled visible ground and trees. It also rotates through tens of
+  thousands of record addresses, so an entry whose value is in memory (written >= seq: a condition reads memory anyway)
+  gives its slot to a new address; a table that only grew filled up after a minute and conditions on the newer records
+  read the CPU's 1 again.
+- `Pending`: seq: the newest report to addr; written: the newest whose value the completion thread has put in guest
+  memory. A report counts as pending until then, not until its fence passes: the callback runs after the fence, and in
+  between the record still held what the CPU wrote (Ocarina re-arms its condition records with 1 for the next frame), so
+  a condition read 1 where the GPU had written 0, a depth clear ran after the depth copy and frames showed only sky.
+  frame: the present count (`vk_exec_cond_frame_end`, in replay order) when the report was replayed. The game arms its
+  condition records from the CPU between frames, so within a frame a timestamp report decides the record's value even
+  after it reached memory: Ocarina's CPU, running a frame ahead, had re-armed a record with 1 by the time a later depth
+  clear of the frame read it, the clear ran after the depth copy and the frame showed only sky (white flashes).
+  `clr_seq`, `clr_mask`: the quarters of the record a small buffer clear filled after the report `clr_seq`, the newest
+  replayed before the clear ("small buffer clears over counter records" below). Written by the replay thread under
+  `clr_lock`; the report writes read them under it.
+- `vk_cond_clears_run`: Per-frame counts of conditional work (`NX2SARIA_LOG_RCOND=1`, `vk_exec_cond_frame_end` logs
+  them): clears and draws issued under a render condition, run or skipped.
+
+### `pending_written()`
+
+Completion thread: the value of report seq to addr is in guest memory.
+
+### `pending_slot()`
+
+Lookups run on the replay thread and the completion thread; only the replay thread inserts.
+
+- `victim = e`: done, and not from this frame (whose reports still decide their records).
+- `if (!e) return NULL`: every probed entry still has a report in flight.
+
+### Small buffer clears over counter records
+
+(`NX2SARIA_CLEAR_SMALL_CPU`, default 1; 0: the GPU's fill alone).
+
+A ClearBuffer or ReportValue is a fill the GPU makes where it stands in the stream (`clear_buf`): guest memory has the
+bytes once the GPU got there, through the imported pool, a mirror's twin or the mirror's write-back. A counter report
+reaches guest memory another way, as a CPU write after its submission's fence (`report_write`), and a render condition
+reads the record when it is replayed (`counter_word`). For a record that gets both, the two ways do not keep the order
+of the stream:
+
+- A report followed by a clear ends as the report: its write comes after the fence, the fill ran before it. When the
+  clear is in a later submission the completion thread races the GPU for the last word;
+- A condition replayed after the clear reads what memory held before the GPU ran the fill, or the 0 of a report that the
+  clear has since overwritten.
+
+So a fill of at most `CLEAR_SMALL` bytes is also applied here, at its place in the replay, to the records it covers that
+the pending table holds, which are the records a counter report went into: the covered bytes get the value in guest
+memory at once, the entry notes which quarters of the record were filled and after which report, reports up to that one
+leave those quarters alone when their write comes, and a condition takes them from memory. A report replayed after the
+clear writes the whole record as before. The GPU's fill is recorded all the same; it writes the value a second time and
+is what a shader or a mirror sees. Only those records, not every small fill: the write here is ahead of the GPU, and the
+GPU reads guest memory too, at once in an imported pool and through the next upload of the page the write watch then
+lists in a mirrored one. A draw count or an atomic counter a shader adds to, reset by such a fill, would read the reset
+before the passes that still count on the old value have run. Nothing on the GPU reads a counter record (conditions are
+decided on the CPU), a report's own write already lands on the same page, and whatever this write puts a value over, the
+GPU's fill puts the same value over later. The counts (`vk_exec_clear_stats`) are kept whatever the setting is: the
+small fills into CPU-visible memory, how many covered such a record, and the reports that went into bytes one of the
+last `CLR_RING` fills had covered.
+
+- `clr_lock`: a report's write against a clear's note and write.
+- `clr_any`: an entry holds a note: the report writes take `clr_lock` from here on.
+- `clr_cpu`: the setting.
+- `rep_pages`: A flag per 4 KiB page a counter report went into, by a hash of the page (a page that shares another's
+  flag only costs a clear its table lookups). Replay thread.
+- `CS`:
+  - `uint64_t n, bytes, hit, recs, after, frame0`: since the last line: fills, their bytes, fills over a record, such
+    records, reports into filled bytes; the frame of the last line.
+  - `volatile uint64_t kept`: report writes that left filled quarters alone.
+  - `uint64_t addr`: the last fill.
+  - `struct { uint64_t lo, hi; } ring[CLR_RING]`: the last fills, and the range that holds them all.
+
+### `clear_note_report()`
+
+Replay thread, at a report into the record at addr.
+
+### `clear_small()`
+
+Replay thread: the fill of [a, a + n) with value, 4-byte aligned, backed and CPU-visible, at its place in the stream.
+
+- `if (!*rep_page(a) && !*rep_page(a + n - 1)) return`: no report ever went into these pages.
+- `for (uint64_t k = a - 12; k < a + n; k += 4)`: every record address whose 16 bytes reach into the fill.
+- The quarters filled since the newest report: an earlier fill's stay when no report came in between.
+- `e->clr_seq = report_seq`: every report replayed so far.
+
+### `clear_quarters()`
+
+The quarters of e's record that a small clear filled after its newest report: memory holds them.
+
+### `report_write()`
+
+Completion thread, or the thread whose wait runs the results: report seq to addr goes into guest memory, but for the
+quarters a small clear replayed after it has filled.
+
+### `vk_exec_clear_stats()`
+
+The counts since the last call as a clause for a periodic log line (`runtime/vk/vk_usnap.c` summary). Replay thread.
+
+### Occlusion counts (samples passed)
+
+After a `SAMPLES_PASSED` reset, the first draw of a pass begins an occlusion query (precise when the device has
+`occlusionQueryPrecise`); the query ends with the pass, or at the next report or reset of the counter, and the next
+draw begins another. A Vulkan query begun inside a render pass must end inside it. The game always resets, draws the
+tested proxies, reports, so counting stops at a report and restarts at the next reset: queries cover only the draws
+between the two, not every pass of the frame. Once the game reports twice without a reset in between, counting stays on
+for good (cumulative NVN semantics; that one report misses the draws since the previous one). The queries closed since
+the last report or reset form a segment, handed to the completion thread with that report or reset: in submit order it
+sums the segment's results into the running count (a reset drops the sum and zeroes the count) and writes the count of
+a report into guest memory. Slots come from one ring; the completion thread reads and host-resets them
+(`hostQueryReset`, Vulkan 1.2), so the replay records no reset commands. A full ring (no slot read back yet) leaves the
+draw uncounted and the segment's count at least 1, as does a query still unavailable after its fence. Without
+`hostQueryReset` the counts stay 0. The ring holds about four frames of Hyrule Field's queries (about 3,500 a frame):
+the replay workers' chunks take blocks of slots sized to their draws (`vk_exec_xfer_slots`), more than they use, and
+with 4096 the ring came round to slots the completion thread had not reset yet, leaving draws uncounted.
+
+- `oq_state`: 0 not set up, 1 counting available, -1 unavailable.
+- `oq_busy`: from begin until the completion thread read and reset the slot.
+- `oq_next`: replay: next ring slot.
+- `oq_counting`: replay: draws are counted (a reset since the last report, or `oq_keep`).
+- `oq_reported`: replay: a samples-passed report since the last reset.
+- `oq_keep`: replay: the game reported twice without a reset: count every draw.
+- `oq_open`: replay: the slot whose query is active in the open pass.
+- `oq_seg`: replay: slots closed since the last report or reset.
+- `oq_lost`: replay: the segment missed a draw (ring full).
+- `oq_count`: completion thread: samples since the last reset.
+- `XW`: The replay workers (`runtime/vk/vk_exec.c` "parallel groups") record the draws of one group at once. The front
+  pass replays a group's samples-passed resets and reports in the order of the stream before the workers record
+  (`vk_exec_xfer_front`): each makes its segment, queued for the completion thread in that order, and they are listed in
+  GS. A worker follows the counting as the stream does from its chunk's first op (`vk_exec_xfer_chunk_state`):
+  XW.counting and the segment its closed queries belong to, the next one at or after its position in the stream (XW.seg;
+  past the group's last, the pending list `oq_seg`, which a later reset or report takes). It keeps the query open in its
+  own pass (XW.open), takes ring slots from its chunk's block and keeps the slots it closes with their segment in its
+  chunk's list (CP), which `vk_exec_xfer_group_merge` puts into the segments once the group is done, chunk after chunk:
+  under a lock per slot, the workers waited for each other at every query. XW.cond: the decisions of its chunk's render
+  conditions, made by the front pass in the order of the stream. The blocks (`vk_exec_xfer_slots`): the front pass gives
+  each chunk as many slots as it has draws that count samples and render, one after the other, so the slots follow the
+  stream as the replay's own do and the completion thread reads and resets them in long runs (`oq_take`). Taken from the
+  ring at once, the slots of a group's chunks interleaved: four times the result calls and a reset per slot, 3.5 ms more
+  of the wait after a frame's first submission (RX 7900 XT, Hyrule Field, 3 workers). A chunk that needs more than its
+  block takes them from the ring.
+- `GS_GROUPS`: GS: per group slot (`runtime/vk/vk_exec.c` `LIVE_GROUPS()`), the front pass's segments of the group.
+  tail: with `NX2SARIA_REPLAY_PIPE` the submitting thread replays on past the group before its chunks are done: the
+  first segment made after the group's front pass (`tail_wait`), by the next group's front pass or the replay, takes the
+  queries the chunks close after the group's last report or reset, which in the stream come before that one's own.
+- `gs_on`: the group slot whose front pass runs.
+- `CP`: per chunk: closed slots and their segment.
+
+### `vk_exec_xfer_group()`
+
+A group's front pass begins (its slot), or it ended (-1): the list stays.
+
+- `else if (gs_on >= 0) GS[gs_on].tail_wait = 1`: until `vk_exec_xfer_group_merge`.
+
+### `vk_exec_xfer_slots()`
+
+The workers of a group the submitting thread went on past take some too.
+
+### `seg_add()`
+
+Adds closed slot q to the segment a worker's queries belong to now, or the pending list.
+
+### `oq_ready()`
+
+- `runtime/vk/vk_device.c` enables every feature the device reports, so supported means enabled.
+
+### `vk_exec_oq_draw()`
+
+- A worker takes the next slot of its chunk's block, past it one from the ring at once (as the replay does, while a
+  group's workers may still take some); a busy one is lost, not tried again.
+
+### `vk_exec_xfer_shutdown()`
+
+- `oq_batch_drop()`: the results kept by the completion thread (`oq_take`).
+- `oq_hold_drop()`: the counts remembered by the completion thread (`oq_report_count`).
+
+### `oq_batch_drop()`
+
+- `OQB`:
+  - `uint32_t first, n`: the slots kept: [first, first + n).
+  - `uint64_t v[OQ_BATCH * 2]`: per slot: samples, available.
+  - `uint32_t r0, rn`: the run of taken slots still to be reset.
+  - `uint64_t calls, slots, segs`: since the last perf line: result calls, slots they read, segments served.
+
+The completion thread reads the results in batches (`NX2SARIA_OQ_BATCH`, default 1; 0: every segment by itself, as
+before). The game tests one proxy per report, so a segment holds one query, and a frame of Hyrule Field has about a
+hundred of them: one `vkGetQueryPoolResults` and one `vkResetQueryPool` each. On an RX 7900 XT (26.10.1) each of those
+calls goes into the kernel, and the two hundred took 3.9 ms of every frame on the completion thread, which runs a
+submission's callbacks before it lets the submission's waiters go: the game's main thread waits for the previous frame's
+fence before it lets the next frame's GPU work start, so the frame after one replayed inside its submit call began 4 to
+6 ms late with every thread idle. Slots come from the ring in order, so the slots of the segments that follow lie behind
+the one asked for: one call reads `OQ_BATCH` slots from there on with their availability, the available ones are kept
+(the results stay in the pool until the reset), and the segments after it take theirs from what is kept. A slot not
+available in the batch (its part had not run yet) is read again when its segment comes. The slots taken are reset in
+runs, one `vkResetQueryPool` for each: a run ends when a slot that does not continue it is taken or a new batch is read.
+Until then its slots stay busy for the replay, at most `OQ_BATCH` of the ring's `OQ_N`, also while the game reports
+nothing.
+
+### `oq_take()`
+
+The samples of slot q, whose submission has completed; `*avail` 0 when the query has no result.
+
+- Not kept, or kept as unavailable (read before its part ran): from this slot on, up to the replay's next slot.
+- `oq_reset_flush(dev)`: before the kept results go: the run's slots are among them.
+
+### `oq_hold_drop()`
+
+`NX2SARIA_OQ_HOLD` (default 0): a report whose segment left draws uncounted (a full ring, `vk_exec_oq_draw`) writes the
+larger of what was counted and the last complete count of its record (`runtime/vk/vk_oq_hold.h`); off, what was counted,
+at least.
+
+- Such reports are counted either way and logged at the 1st, 10th, 100th... so a log shows how often the ring ran.
+
+full. Completion thread only, as `oq_count`.
+
+### `oq_cb()`
+
+- A segment the replay workers filled lists its slots in the order the chunks closed them: in ring order, they are taken
+  in runs (`oq_take`).
+- The fence has passed, so a query that is still unavailable will not become available: waiting would block the
+  completion thread, and with it every later callback, for good. It counts as visible (one sample).
+- A query its submission never wrote. Every RX 6000 report of a lost device (0.8.0 to 0.9.2) had this line first, its
+  callback run for work the GPU had not finished. A timeline read above every value its signals carry, then the device
+  itself, end the run here when it is lost (`runtime/vk/vk_sync.c` "a lost device in the timelines' values",
+  `runtime/vk/vk_device.c` `vk_device_lost_poll()`). Otherwise the slot counts as visible and the game goes on, as a
+  ring that came round too early would leave it. The first such slot is logged with the submissions' state and the GPU's
+  breadcrumbs: whether the GPU had finished this submission, and whether the timeline read above what was signalled.
+
+### `oq_segment()`
+
+Hands the segment to the completion thread with a report (addr; 0: no CPU-visible memory) or a reset.
+
+- `if (gs_on >= 0)`: the front pass: the workers add the queries of the group's ops before it.
+- `for (int g = 0; g < GS_GROUPS; g++)`: the first made after a group's front pass.
+
+### `oq_report()`
+
+A samples-passed report: the segment goes with it (addr 0: no CPU-visible memory) and counting stops until the next
+reset, unless reports came without resets before.
+
+### Event order check
+
+The game orders work between its queues with events: a command buffer waits (WaitEvent) until another's SignalEvent has
+set the value. Every submission replays here on one queue in the order it came, and a wait records nothing, so a wait
+whose signal comes in a later submission does not hold its work back: that work runs before what it waits for. The
+replay keeps the value each event reaches in replay order (`ev_seen`, the signals recorded so far, on top of the value
+in memory) and counts the waits it reaches unmet; `NX2SARIA_TRACE=perf` logs the count, and the first few are logged as
+they happen. Replay thread only, apart from `vk_exec_event_met_now`'s unlocked read of `ev_seen`.
+
+- `EV_OPEN`: Waits reached unmet, until a replayed signal meets them (`ev_late`: the signal came that many submissions
+  later, so the work after the wait ran before the work it waited for) or they are pushed out by newer ones.
+
+### Events the CPU signals
+
+Ocarina gates its main queue on the CPU: each frame the game sets one of two events to 0 (they take turns frame by
+frame), submits the worker queues' command buffers and the main queue's, whose first command waits for the event to be
+1, and signals 1 from the CPU (`nvnEventSignal`) once it has finished writing what the frame's commands read. The signal
+comes before the main queue's submit call, after it, or while that call is replaying. On the console the GPU starts the
+queue at the signal and reads memory from then on. Here a submission's recording begins with the copies of what it
+reads: the VRAM mirrors' sync and the uniform snapshot (`vk_exec_record`), and the wait is tested when the walk reaches
+it, some hundred microseconds later. A signal that came in between passed the wait, and the frame was drawn from copies
+taken before the game had finished writing: single frames with the scene's shadowing missing or the whole scene black,
+the interface as it was, most of them when other work keeps the CPU busy, since the game's threads then finish later and
+the signal falls into the replay more often. So a wait is tested against the value the event had when the submission
+took its copies: every `nvnEventSignal` is numbered and keeps the value it replaced (`vk_exec_event_cpu`, before the
+write), `vk_exec_record` notes the number at its start (`vk_exec_event_sync`), and a signal with a later number does not
+count for that submission. The wait then stops the submission like any wait reached before its signal, and
+`runtime/vk/vk_backend.c` `submit_sync()` lets it go on at once in a submission of its own, whose copies are taken after
+the signal. `NX2SARIA_EVENT_AT_SYNC=0`: the value in memory when the walk reaches the wait, as before.
+
+- `cpu_ev_n`: `cpu_ev_lock`.
+- `cpu_ev_seq`: `cpu_ev_lock`: `nvnEventSignal` calls so far.
+- `ev_sync_seq`: `cpu_ev_lock`: `cpu_ev_seq` at the recording's start; `UINT64_MAX` outside one.
+- `ev_after_sync`: replay: waits only a signal after the copies would have passed.
+
+### `vk_exec_event_cpu_known()`
+
+1 when the CPU has signalled this event before (`nvnEventSignal`): its waits are gates the game opens from the CPU.
+
+### `vk_exec_event_holds_now()`
+
+The wait's condition on the value in memory now, whatever the replay has seen. Any thread.
+
+### `ev_mem()`
+
+The event's value in memory, and in `*at_sync` the value it had when the submission being recorded took its copies (the
+same outside a recording, and for an event the CPU has not signalled since).
+
+- `for (unsigned k = 0; k < n; k++)`: the earliest signal after the copies replaced the value they saw.
+
+### `ev_met()`
+
+Whether the wait holds. `*late`: it holds only by a CPU signal that came after the submission's copies.
+
+### `vk_exec_event_met_now()`
+
+The value in memory now, or the signals replayed so far, whatever submission is being recorded: for
+`runtime/vk/vk_exec.c` `vk_exec_held_ready()`, which asks without the submission lock whether held work can go on in a
+submission of its own. That submission takes its copies later, so a CPU signal given before now counts for it; testing
+at the copy point (`ev_mem`) would take the copy point of the recording another thread may be making. `ev_seen` belongs
+to the replay and is read here without its lock, so the answer is a decision only: a wrong "ready" makes an empty
+submission, which decides again under the lock (`runtime/vk/vk_exec.c` `evo_resume()`).
+
+### `report_counter()`
+
+- `report_seq++`: before `oq_report` / `counter_cb` take it.
+- `if (nvn_gpu_only(p->addr))`: CPU-invisible pool: no host memory behind it.
+- A timestamp in the tail is the one result a tail may hand the CPU: its time is written ahead (`counter_cb`).
+
+### Conditional rendering
+
+### `counter_word()`
+
+1: `*v` read, 0: not readable, 2: a samples-passed report not in memory yet (unknown).
+
+- `const Pending *e = pending_slot(addr, 0)`: the last report to addr decides.
+- But for the halves of the word a small clear filled after it (`clear_small`): memory holds those.
+- `int zero = 0`: the report decides the halves that were not filled: 0.
+- `if (!e->unknown && e->frame == cond_frame) zero = 1`: a timestamp/statistics report of this frame.
+
+### `last_type()`
+
+The counter type of the newest report to addr the ring still holds, -1 when there is none (`NX2SARIA_LOG_RCOND`).
+
+### `vk_exec_cond_why()`
+
+`NX2SARIA_LOG_RCOND=ab` (diagnosis): the words a condition compares and where each came from: "f" a report replayed this
+frame (0), "p" a pending report (0 or unknown), "m" memory, "c" memory after a small clear that came after the report
+(`clear_small`), with the newest report's type and frame.
+
+### `cond_enabled()`
+
+- `if (rx == 2 || ry == 2) return 1`: a samples-passed count not done yet.
+- `NX2SARIA_LOG_RCOND=1`: one condition in 499 (up to 300 lines), on or off, with the counter types last reported there.
+- (pending: the report value has not reached guest memory yet).
+- `int px = 0, py = 0`: the word came from a report not done yet (forced to 0) rather than memory.
+
+### Textures
+
+- `Sub`:
+  - `int32_t x, y, z`: region origin.
+  - `uint32_t w, h, nz`: region extent; nz: slices (3D) or layers.
+
+### `sub_resolve()`
+
+Resolves tex, its view and a copy region to image coordinates. 0 (warned) when the copy cannot be replayed.
+
+- `int k = img->scale > 1 ? img->scale : 1`: a larger shadow map: the game's region in its texels.
+
+### `buffer_side()`
+
+Buffer side of a texture <-> buffer copy: bytes covered, pitches, Vulkan buffer span (a VRAM mirror when the pool has
+one).
+
+### `copy_buffer_image()`
+
+- `if (s.img->scale > 1)`: the buffer holds the game's texel count, the image more.
+
+### `copy_t2t()`
+
+- `} else`: scaled or converting copy: nearest, or linear when asked for (colour only).
+
+### Buffer to buffer
+
+### Buffer fills
+
+(ClearBuffer, and ReportValue as a 4-byte one): `vkCmdFillBuffer` in GPU order after a full barrier, so the value lands
+after earlier work, as NVN's semaphore release does; CPU-visible ranges go to `vk_guest_written` at the fence, as copies
+do. Works in CPU-invisible pools. A small fill of CPU-visible memory is also applied to the counter records it covers,
+here in the replay (`clear_small`).
+
+### `clear_buf()`
+
+- A VRAM mirror's guest copy is filled too, at once: atomics through the device address table count in both copies
+  (translator patch 0036), and a counter reset here must start from the same value in both.
+
+### Texture clears
+
+### `clear_tex()`
+
+Whole levels only (`vkCmdClear*Image` has no rectangle); partial regions, channel masks and a view that reinterprets the
+format are skipped.
+
+- A value of the other kind that is all zero bits (0.0f is) is the same clear either way: Ocarina clears its rg16ui edge
+  map (480x270) with a float 0 each frame, and skipped, the post chain's edge classification read the previous frames'
+  edges. Other values stay skipped.
+
+### Parallel groups
+
+(`runtime/vk/vk_exec.c`): the CPU side in the front pass, the rest in the workers.
+
+### `vk_exec_xfer_front()`
+
+The front pass, in the order of the stream, before the workers record (`vk_exec_xfer_group` on): a counter report or
+reset (completion callbacks, pending entries, the occlusion segments and counting), a render enable and a render
+condition (decided here, on the reports replayed so far). Returns the condition's decision: 1 renders.
+
+### `xfer_worker()`
+
+A worker: what the front pass left, in its chunk. The contact shadows' pass (`vk_contact_flush`) is recorded where the
+replay would, once every earlier chunk of the group is done.
+
+- `oq_close(ex)`: into the segment this op ends; the next queries go to the next one.
+- `if (XW.reported) XW.keep = 1`: as `oq_report`.
+
+### `op_xfer_impl()`
+
+- `case OP_COPY_T2B: copy_buffer_image(ex, payload, 0); break`: `p_copy_b2t`: src holds the destination address.
+
+### `vk_exec_op_xfer()`
+
+`NX2SARIA_REPLAY_TIME`: see the note over `vk_exec_op_draw` in `runtime/vk/vk_exec_draw.c`; transfers are the third
+kind.
+
 ## `runtime/vk/vk_exec_probe.c`
 
 nx2saria.exe --probe-vkexec: the Vulkan replay, through `gfx_vulkan_backend`. Sync part: empty submissions get
@@ -3300,7 +3798,7 @@ written: CPU bytes beside a GPU fill keep their values.
 
 ### `test_empty_pool()`
 
-A pool of zero bytes (NX2Saria makes some now and then) initialises as an empty pool: no Vulkan buffer or memory (a
+A pool of zero bytes (the game makes some now and then) initialises as an empty pool: no Vulkan buffer or memory (a
 buffer or import of 0 bytes is invalid usage) and no pool index entry, so a lookup at its address still finds the pool
 that starts there, before and after the empty pool's Finalize.
 
@@ -3473,6 +3971,701 @@ next.
 - `rec_shading_rate()`: size x size pixels per fragment.
 - `rec_pass_mark()`: A pass mark (`runtime/vk/vk_crumbs.c` `vk_pass_mark_cmd()`: a buffer marker and a checkpoint), in
   order with the commands around it.
+
+## `runtime/vk/vk_sync.c`
+
+Submission, fences and the completion thread of the Vulkan back end. One timeline semaphore (`VkCtx.timeline`) orders
+everything: each submission records its command handles into a primary command buffer (`vk_exec_record`) and signals the
+next timeline value, which is the NVN fence value the front end hands to syncs. The completion thread waits on the
+timeline and, in submit order, runs the CPU side effects queued for each value (event writes, counter reports, sync
+state), then frees the memory and texture objects whose users completed. A value counts as done only after its side
+effects ran, so a guest woken by `fence_wait` sees them.
+
+One timeline value per submission, signalled at `ALL_COMMANDS`; waits use `vkWaitSemaphores`, and a failed wait is
+treated as a lost device.
+
+- `CmdSlot`: reusable once the timeline reached fence.
+- `sub_lock`: Submissions: one at a time, so timeline values are signalled in the order they are handed out.
+- `cur_slot`: the slot `vk_sync_submit` records into now (an index: `take_slot` may move slots).
+- `cur_fence`: the value of the submission being recorded.
+- `PART_CBS`: The command buffers of the part being recorded that come before `slots[cur_slot]` (`vk_sync_append`):
+  earlier pieces of the replay's own and those the replay workers recorded, in queue order.
+- `st_lock`: Shared with the completion thread (`st_lock`).
+- `cv_work`: a submission, a callback or stop.
+- `cv_done`: done advanced.
+- `issued`: newest submitted value; newest value whose side effects ran.
+- `reserved`: asynchronous replay: newest value handed out before its submission (>= issued).
+- `LIVE_RING`: Staged mirror uploads (`runtime/vk/vk_memory.c` "staged mirror uploads"): per submission value, whether
+  its GPU still reads guest memory itself (value << 1 | live), under `st_lock`. A value not found counts as live.
+- `live_last_of`: Per submission value: the newest submission up to it whose GPU reads guest memory itself (`live_of`),
+  0 none. The submit wait is for the frame's first submission, but the game's writes after it race with every submission
+  before it that still reads guest memory: those of the frame before (the instances of its grass and moss, read through
+  the device address table) were often still on the GPU when the wait ended at the first one's hand-over, and the game
+  wrote the next frame's instances under them (flicker and sliding foliage, RX 580, 2026-11-11). The wait goes on until
+  that one is done.
+- `res_of`: Per value (index & `LIVE_RING` - 1): the newest value up to it whose completion hands results to the CPU
+  (`vk_exec_take_results`).
+- `res_kinds`: per value: its `VK_RES_*` kinds.
+- `early_of`: The early tail (`runtime/vk/vk_exec.c` "the early tail"), per value under `st_lock`: `early_of` holds the
+  value when its part with the write-backs signalled the executed timeline before its tail; `empty_of` when the
+  submission handed the GPU nothing and the CPU no results (a submission held at its first event wait: Ocarina's first
+  of a frame in the field).
+- `tail_cb`: `sub_lock`: the tail's command buffer between hold and release.
+- `tail_early`: `sub_lock`: this submission's tail went behind its write-backs; the parts of it handed over before the
+  last.
+- `tail_ns`: about how long the GPU takes for a tail (a moving average).
+- `tail_t0`: the first early return for `tail_val`, for `tail_ns`.
+- `tail_n`: since the last `vk_sync_tail_stats`: early tails; waits they ended.
+- `res_mask`: `NX2SARIA_SUBMIT_FINISH_KINDS`: the kinds the wait counts.
+- `queue`: side effects in the order they were added.
+- `rqueue`: The side effects the game's CPU reads (`vk_completion_add_result`: occlusion counts, counter reports, event
+  values), in a queue of their own: the wait after a frame's first submission runs those that are due itself
+  (`results_run`, "the executed timeline" below). One runner at a time, in the order they were added.
+- `res_lock`: the runner; taken before `st_lock`.
+- `fqueue`: `vk_completion_add_first`: run before the callbacks of their value (merge lists).
+
+### Submit batching
+
+Every game submission used to be its own `vkQueueSubmit2`, about 150 a frame, each a trip into the driver on the render
+thread. Now up to `hold_max` of them are held and go to the queue together, as one `vkQueueSubmit2` with one
+`VkSubmitInfo2` each, in the order they were made; a part of a long submission (`vk_sync_split`) goes at once, with what
+is held before it, since it was split off to start the GPU early. Queue order is what orders them with everything else,
+so held work goes to the queue before anything else does or is waited for:
+
+- Every other submitter, and every idle wait, takes the queue lock through `vk_queue_lock`, which flushes first;
+- A fence wait for a value still held flushes (`fence_wait_impl`), as do `vk_sync_finish` and shutdown;
+- The completion thread flushes what has been held for `HOLD_NS`, so a guest that polls memory a held submission writes,
+  instead of waiting on its fence, still sees it soon; it only tries the lock, never waits for it.
+
+H is guarded by the queue lock. `NX2SARIA_SUBMIT_BATCH=0` (or 1) hands each to the queue at once; `=N` holds up to N.
+
+- `CHAIN_MAX`: Command buffers of one submission: the mirror prologue, the parts cut before the part with their pre-pass
+  command buffers (`CHAIN_MAX`), the part's pre-pass command buffer, the part (`vk_sync_pre`, `vk_sync_cut`,
+  `chain_infos`).
+- `H`:
+  - `VkLatencySubmissionPresentIdNV lat[HOLD_CAP]`: the frame's number for the driver's low latency
+    (`runtime/pacing/vk_lowlat.c`).
+  - `uint64_t last`: the newest timeline value a held submission signals, 0 none.
+  - `uint64_t batches, subs`: `vkQueueSubmit2` calls and the submissions they carried.
+- `held_n`: H.n, for readers without the lock.
+- `HOLD_PAIRS`: The GPU timeline (`vk_gtl_note`): the timestamp pairs of the held submissions, stamped with the time
+  they really go to the queue (`ts_queue_ns`), as a held part waits here and not in the queue. `hold_pend`: closed by
+  `ts_submitted` for the submission `queue_submit` takes next (`sub_lock`); `hold_pairs`: those of the held ones (queue
+  lock).
+- `ts_queue_ns`: per pair (`TS_PAIRS`): when its submission went to the queue.
+- `held_t0`: when the oldest held submission was held (`kern_now_ns`).
+- `queued_v`: the newest timeline value handed to the queue.
+
+### The executed timeline
+
+The wait after a frame's first submission (`runtime/nvn/nvn_api_core.c` `nvnQueueSubmitCommands`) is there so that the
+GPU has run that submission's passes before the game rewrites what they read. With `NX2SARIA_WB_SPLIT=0` it is the
+fence's wait. With 1, the default, it is a wait on `exec_tl`, after which the waiting thread itself runs the results the
+game reads (`results_run`, the last paragraph but one below). `exec_tl` is a second timeline that reaches a submission's
+value when the GPU has executed its own commands: the replay ends the part before the write-backs
+(`runtime/vk/vk_exec.c`, `vk_sync_split_exec`; `runtime/vk/vk_memory.c` `vk_mem_mirror_end()`: what the shaders wrote
+into VRAM mirrors goes back to guest memory), that part signals `exec_tl`, and the write-backs follow in a part of their
+own, which signals the timeline as before. A submission without that split signals both at its end. Every other wait,
+the fences the game asks for among them, is the fence's either way. That was the default for a day, on the thought that
+the wait covered 3 to 4 ms of write-backs a frame that nothing needed before the game went on. It left out more than GPU
+work. A value counts as done only when the completion thread has run its side effects and those of every value before
+it, and among them is what the game's CPU reads next: the occlusion counts, counter reports and event values
+(`runtime/vk/vk_exec_xfer.c` `oq_cb()`, `counter_cb()`, `event_cb()`), and the stamps that tell the texture checks which
+pages the GPU wrote (`vk_gpu_written`). A frame's first submission is small and runs right behind the last frame's large
+one, so its signal on `exec_tl` comes while the completion thread is still at that one's callbacks. One frame with the
+wait on `exec_tl`:
+
+- The GPU finishes the last frame's main submission; the completion thread wakes and starts on its callbacks, 800 to
+  1,000 occlusion counts among them in Hyrule Field;
+- The GPU finishes this frame's first submission and signals `exec_tl`: the wait returns and the game goes on;
+- The game reads its occlusion counts (a 0 culls what the query tested) while some still hold the frame before's; half a
+  millisecond later, more when the CPUs are busy, the callbacks are through.
+
+Measured in Hyrule Field with the camera turning (RTX 5090, lazy write-back on, 2026-11-11; `NX2SARIA_TRACE=perf`,
+"waits after a submit on the executed timeline"): 2,267 of 2,320 such waits returned before those side effects had run,
+which were through 0.45 to 0.8 ms later on average and 12.6 ms at most; in that time 770 to 1,015 occlusion counts, 21
+to 28 counter reports and 17 event values a frame were written into guest memory. The submission the game waits for
+wrote nothing back in any window of those runs, so its own write-backs were never what the wait left out. A player saw a
+patch of grass near the camera change from frame to frame there, and less of it with the fence's wait; no scripted run
+showed such a frame with either wait, so that the late counts are what the player saw is not shown. The fence's wait
+takes 0.65 to 0.7 ms more of a frame there: 85.5 against 86 and 92 frames a second in the field, 80.7 against 85.8, and
+98 against 105 in a village, in single runs beside other work. Later a player's capture showed it plainly: in Hyrule
+Field, the camera nearly still, trees, ground and walls lost their direct light for single frames about every 36 frames
+(the game's own cycle there), 57 of 1,800 frames, with the wait on `exec_tl` alone and 28,000 to 33,000 occlusion counts
+per 60 frames written after the game had gone on. The fence's wait covers them but waits for everything else the
+completion thread does for the last frame's submissions as well: of its 0.49 ms a frame, 0.11 ms are the occlusion
+counts and 0.23 to 0.40 ms one loop that stamps the pages those submissions' shaders wrote
+(`runtime/vk/vk_exec_draw.c` `cb_done()`), which the game does not read. So the results the game reads have a queue of
+their own (`vk_completion_add_result`: occlusion counts, counter reports, event values), and the waiter runs those of
+its submission and of the ones before it as soon as `exec_tl` is reached (`results_run`; the GPU ran those submissions
+first, so their queries are complete). The completion thread runs them the same way when it reaches a value, before its
+other callbacks, and one runner at a time keeps them in the order they were queued. What stays behind the wait: the
+write-backs and the page stamps, as with the bare wait. A player's hand test of this wait at the place of that capture
+showed none of those frames (2026-11-11). No scripted run has measured it: the one run made for it, with the wait on
+`exec_tl` alone, standing in the same field, had 8,147 of 8,160 waits back early and 1,170 occlusion counts a frame
+written after them, and showed no such frame either, so the scripted scene does not reproduce what the player saw. What
+the wait costs against the bare one is not measured; the results it runs take 0.11 ms a frame on the completion thread
+there. `NX2SARIA_WB_SPLIT=3` is the wait on `exec_tl` alone, as it was, to measure against. With shadow storage
+(`runtime/vk/vk_memory.c`) `NX2SARIA_WB_SPLIT=1` keeps the fence's wait as well: there the write-backs themselves reach
+guest memory in a completion callback. With an import a write-back stores into guest memory on the GPU, right behind the
+passes. With a shadow copy it stores into the copy, and the bytes reach guest memory in the fence's completion callback
+(`shadow_wb_cb`), after the write-back part, the fence and the callbacks queued before it, while the game is already
+rewriting for its next frame what those passes wrote. A write-back that lands after such a rewrite puts the GPU's older
+bytes over it in guest memory and moves the page's base copy along, so the next copy-in finds nothing the CPU changed;
+and a rewrite with the value the base copy holds (a reset to zero) is no difference at any time. The GPU then goes on
+from its own last output, as the game's lighting accumulators do, which the shaders add to and the CPU resets. Measured:
+with the split the whole 3D scene came out brighter for single frames (3.8 of 255, the interface as it was), each of
+them a frame whose main work was held at its CPU event wait and replayed late, together with the next frame's: standing
+outdoors, 695, 624, 443, 323 and 2 of 1,800 frames in five runs, and none in eight runs without the split (RTX 5090 with
+`NX2SARIA_SHADOW=1`, 2026-11-10). A player on Linux (RX 7800 XT, RADV) saw the open field lit in one frame and flat in
+the next; that it is the same fault is not confirmed on their machine. Which words the write-backs overtook was not
+traced: `NX2SARIA_SHADOW_CHECK` counts no byte that both sides changed to different values, which fits a reset to the
+base copy's value. `NX2SARIA_WB_SPLIT=2` keeps the split with shadow storage too, to measure that fault.
+
+- `exec_sig`: `sub_lock`: the newest value a submitted part signals on `exec_tl`.
+
+### A lost device in the timelines' values (`runtime/vk/vk_sync_hw.h`)
+
+The newest value any signal of the timeline (`tl_hw`) and of `exec_tl` (`ex_hw`) carries, noted before the signal can
+happen: by `hold_flush_locked` before `vkQueueSubmit2`, by the host's own signals before `vkSignalSemaphore`. A value
+read above the note ends the run as a lost device (`timeline_beyond`). Reaching those values is no proof the device
+lives: a driver that reports every pending signal as done after a reset reads at or below the note, and the line an
+occlusion query left unwritten logs (`runtime/vk/vk_exec_xfer.c` `oq_cb()`, `vk_sync_state_text`) shows which of the two
+a report had.
+
+- `wb_results`: the wait on `exec_tl` also runs the results the game reads (not with 3).
+- `exw_n`: What a wait on `exec_tl` leaves behind: the completion thread's side effects for the values up to the
+  waiter's. Counted for `NX2SARIA_TRACE=perf` (`runtime/vk/vk_exec.c` logs them): the waits that returned with such side
+  effects still to run, how long after the return they were through, and (`vk_sync_effect_late`, asked by the callbacks
+  that write into guest memory) how many of those ran in that time.
+
+  since the last `vk_sync_exec_stats`.
+- `exw_value`: the newest wait that returned early: its value and when; 0 none.
+- `cb_late`: the callback being run belongs to a value such a waiter is past.
+- `cb_value`: The value whose side effect the calling thread is running, 0 when it is not the completion thread inside
+  one.
+- `CBT_N`: `NX2SARIA_TRACE=perf`: the completion thread's time by callback (`st_lock`), since the last
+  `vk_sync_cb_stats`. A callback is named by its distance from `vk_completion_add`, which the build's link map turns
+  into its function.
+
+### `lost_at_due()`
+
+`NX2SARIA_DEVICE_LOST_AT=n` (a test of the lost device's end, `runtime/vk/vk_device.c` `vk_device_lost_check()`): the
+n-th hand-over to the queue is not made and counts as one the driver answered with a lost device. 0 or unset: never.
+
+- `return at && ++calls == at`: queue lock held.
+
+### `hold_flush_locked()`
+
+- `if (vk_device_is_lost())`: the run is ending: the held submissions are dropped, nothing reaches the queue.
+- Every value this hand-over signals is noted before the queue can reach it ("a lost device in the timelines' values").
+
+### `vk_sync_flush_held()`
+
+- `if (!H.n) return`: queue lock held: H is stable.
+
+### `queue_submit()`
+
+The replay's submission si (signalling value, 0 for a part without a signal), held or handed to the queue.
+
+- The present holds this lock for its whole flip. A slow flip (frame generation allocating, a swapchain remade) makes
+  the submitting thread wait here; counted as a present wait, so the slow-frame line no longer shows such a frame with
+  nothing blocked.
+- `if (si->signalSemaphoreInfoCount)`: at most two: the timeline and the executed timeline (`exec_tl`).
+- NVIDIA's low latency on (`runtime/pacing/vk_lowlat.c`): the submission carries the number of the frame being replayed,
+  so the driver counts its GPU time to that frame. The callers' submissions have no chain of their own.
+- A part of a long submission (no value) goes at once with whatever is held: parts exist to start the GPU early. So do
+  held submissions that have waited `HOLD_NS`, and a full batch.
+
+### `hold_release()`
+
+Hands the held submissions to the queue when value is among them (a waiter needs it) or they have waited `HOLD_NS`
+(aged). The completion thread passes `try_only`: it never waits for the queue lock, whose holders may wait for it.
+
+- `if (!vk_queue_trylock_raw()) return`: the holder's thread is submitting: it flushes or holds on.
+
+### `vk_sync_release_held()`
+
+The replay thread is about to wait for what submission `value` leaves (`runtime/vk/vk_memory.c` `apply_wait()`,
+`NX2SARIA_MERGE_CPU`): a held submission that signals it goes to the queue now, or the wait would last out the hold.
+
+### GPU time
+
+(`NX2SARIA_TRACE=perf`): each submission part (`vk_sync_split`) writes a timestamp when it starts and when it ends, into
+a ring of query pairs. The completion thread reads a pair once the part's value is reached and adds the part's interval
+to the busy time, counting overlap with the previous part once. Off (one log line) when the queue family has no
+timestamp bits or the period is 0. Upload batches (`runtime/vk/vk_memory.c`) are not timed.
+
+- `ts_state`: 0 not set up, 1 on, -1 off.
+- `ts_period`: ns per tick.
+- `ts_mask`: valid bits of a timestamp.
+- `ts_next`: submitting thread (`sub_lock`): next pair.
+- `ts_busy`: written until the completion thread read the pair.
+- `ts_cur`: the pair of the part being recorded, -1 untimed.
+- `ts_last_end`: completion thread: end of the latest part read (ticks).
+- `ts_busy_all`: The same durations, never reset: dynamic resolution differences it across presented frames (the perf
+  window consumes `ts_busy_ns`, so a reader that sampled it would steal from the perf line and see a reset every
+  window).
+- `ts_sub_ns`: GPU idle (with calibrated timestamps): the gap before each timed part, split by whether the part was
+  submitted after the previous one had ended (the GPU waited for the CPU: starved) or before (it waited for untimed work
+  or a wait).
+
+  CPU time the part was handed to `vkQueueSubmit2`.
+- `TsRead`: A pair to read at its value. mirror: the copies of a mirror prologue (`runtime/vk/vk_sync.c` prologue),
+  counted apart as well. mirror: `GTL_PART`, `GTL_MIRROR` or `GTL_PRE` (the GPU timeline's kinds, below); cb: the
+  command buffer it times.
+- `TS_UNSENT`: Closed and not yet submitted (`sub_lock`): with cuts a submission carries up to `SUB_CBS` command
+  buffers, each timed; with room for 4 the rest went to the completion queue at once, without a submit time and out of
+  the GPU's order, and their gaps counted as idle "with it queued".
+- `ts_mirror_ns`: of `ts_busy_ns`, the mirror prologues' copies.
+- `ts_last_end_ns`: completion thread: `ts_last_end` on the CPU clock.
+- `cal_tick`: completion thread: a calibrated (GPU tick, CPU ns) pair and when it was taken; the GPU timeline's notes
+  read them from other threads.
+
+### `ts_setup()`
+
+On the first submission that wants timing (`perf_gpu_timing`: `NX2SARIA_TRACE=perf` or the full performance overlay).
+
+### `cal_refresh()`
+
+Completion thread: refresh the GPU tick / CPU clock pair every 250 ms; 0 when there is no calibration. The host domain
+is the clock `plat_now_ns` reads (QPC on Windows, `CLOCK_MONOTONIC` elsewhere), `plat_counter_hz` ticks a second.
+
+### `tick_ns()`
+
+- `if (cal_fn(c->device, 2, ci, v, &dev) != VK_SUCCESS)`:
+  - `if (!cal_at)`: the domain pair is not supported: no split.
+
+### The GPU timeline
+
+(`NX2SARIA_TRACE=perf`, `runtime/vk/vk.h` `vk_gtl_note()`): every timed piece of GPU work, with the CPU time it was
+handed to the queue and its GPU start and end on the CPU clock (calibrated timestamps). The replay's parts, their mirror
+prologues and pre-pass command buffers come from here, the upload batches from `runtime/vk/vk_memory.c`, the presents
+from `runtime/gfx/gfx_present.c`. Every 60 frames (`vk_gtl_log`) the pieces are put in GPU order and each gap between
+them is split: starved, nothing handed to the queue yet, or queued, the next piece handed over and not started; the
+queued part is summed by the kind of the piece that started after it. A gap with work queued is a wait inside the queue
+(a semaphore, the present's acquire) or the driver's and the system's delay to start work on an idle GPU.
+
+- `GtlEv`: call: handed to `vk_sync`'s submit; sub: to the queue.
+- `PART_RING`: The last timed pieces, for the line of a frame whose render thread waited long for the GPU
+  (`vk_gpu_parts_log`): each piece's hand-over to the queue, GPU start and end (`plat_now_ns`) and its kind
+  (`runtime/vk/vk.h` `GTL_*`). Every kind enters, through `vk_gtl_note_ns` under `gtl_lock`: the replay's parts as the
+  completion thread reads them, the upload batches when their batch retires (`runtime/vk/vk_memory.c` `up_ts_read()`),
+  the presents when their slot is used again (`runtime/gfx/gfx_present.c` `pts_read()`). So the entries are not in GPU
+  order; the reader sorts what it takes. It takes the newest `PART_RING` / 2 entries, which the writers do not reach
+  before it has read them unless that many pieces end meanwhile (an area load adds hundreds of upload batches).
+
+### The game's waits for GPU work
+
+(`NX2SARIA_TRACE=perf`): for each submission value, when the game handed it to the replay (`vk_sync_reserve`; the submit
+itself without asynchronous replay), when the replay had recorded and submitted it (issued) and when it was done (GPU
+and completion). A fence wait of any thread but the replay's is split into its time until the waited submission was
+submitted (the replay still recording it or those before it) and its time after (the GPU, the submit batching's hold,
+the completion thread). Every 60 frames with the GPU timeline (`vk_gtl_log`).
+
+- `gw_need_kind`: `VK_RES_KINDS`; `gw_rec`: `vk_sync_recorded_wait`, those it ended.
+
+### `gw_at()`
+
+`gw_lock` held.
+
+### `gw_wait()`
+
+The waits: t0 to t1 for value; newest: the newest value handed out at t0, sent: the newest submitted at t0.
+
+### `vk_gtl_log()`
+
+- `double held = 0, held_idle = 0`: replay pieces: held in the submit batching; of it, while the GPU was idle.
+- `if (e->start > end)`: a gap before e.
+- `if (e->sub >= end) lat[e->kind] += (double)(e->start - e->sub), nlat[e->kind]++`: handed to an idle GPU.
+
+### `ts_submitted()`
+
+Just before `vkQueueSubmit2` (`sub_lock` held): the parts closed since the last submit leave the CPU now. Their reads
+are queued in the order the GPU runs them: a mirror prologue is closed after the part it was made for but runs first.
+Read after its part, its copies counted neither as busy time nor as a gap of their own: they showed up as idle time with
+work queued, 7-8 ms a frame over PCIe 3.0 in Kokiri Forest, and the frame as CPU-bound. cbi: the submission's command
+buffers in queue order; their pairs are read in that order (a part's pre-pass command buffer and a cut part's are closed
+in another order than they run).
+
+- `for (uint32_t k = 0; k <= ncb; k++)`: k == ncb: whatever no command buffer named, last.
+
+### `ts_read_cb()`
+
+Completion thread, in submission order.
+
+- `vk_gtl_note_ns(t->mirror, sub, q ? q : sub, sn, en)`: also the parts' ring (`vk_gpu_parts_log`).
+- `} else plat_inc64(&ts_missed)`: the counter wrapped.
+
+### `part_by_start()`
+
+`NX2SARIA_TRACE=perf` (`runtime/diag/perf.c`): a frame whose render thread waited 20 ms or more for GPU fences gets, at
+the next present, a line of the timed parts that ended in its interval [t0, t1]: how many, the GPU time they took, the
+longest ones with their kind and the time they waited in the queue, and the longest gap between two. In a session of
+2026-11-13 frames of 60-96 ms followed each area load by 2 to 6 frames, the render thread waiting 59-86 ms for the GPU,
+and no line said which work the GPU did then. Read from the ring `vk_gtl_note_ns` fills, without its lock: nothing here
+waits for the GPU or for another thread. "In the queue" is the time from a piece's hand-over to the queue to its GPU
+start (for a replay part held by the submit batching, from the batch's hand-over, not from its submit call).
+
+### `vk_gpu_parts_log()`
+
+- `for (uint64_t i = from; i < n; i++)`: those that ended in the interval, then in GPU order: the gaps need it.
+
+### Frame timeline
+
+`NX2SARIA_GPU_TIMELINE=<frame>`: from that presented frame on, `TL_FRAMES` frames of what the CPU and the GPU did go to
+the log once they are complete, in milliseconds from the first of those presents: each replay's begin and end and its
+thread, each timed part's submit, GPU start and end (calibrated timestamps, so with `NX2SARIA_TRACE=perf`), the waits
+for the GPU after a frame's first submission, the replay workers' groups, chunks and the submitting thread's waits for
+them, and the presents. It tells whether the GPU waits for the replay, for a wait, or for the CPU behind one. Off (and
+one load per note) without the setting.
+
+### `gfx_tl_present()`
+
+- `if (f == tl_from + TL_FRAMES + 3)`: the parts of the last frame have been read back by now.
+
+### `ts_open()`
+
+At the start of a command buffer (`sub_lock` held): the pair it times, -1 untimed.
+
+- `ts_setup(vk_ctx())`: the overlay turned full: timestamps from now on.
+
+### `ts_close()`
+
+At its end, before `vkEndCommandBuffer`; fence: the value whose completion covers it. The read is queued at the submit
+(`ts_submitted`).
+
+- `else vk_completion_add(fence, ts_read_cb, t)`: more than a part and its prologue between two submits.
+
+### `ts_begin()`
+
+The pair of the part being recorded.
+
+### `ts_drop()`
+
+An empty submission records no command buffer: its pair is never written.
+
+### `vk_exec_mesh_flush()`
+
+Without `runtime/vk/vk_exec_draw.c`: nothing is queued.
+
+### `vk_reg_replay_begin()`
+
+Without `runtime/vk/vk_backend.c`: nothing registers through a back end, so no registration waits for a submission.
+
+### `vk_exec_record()`
+
+Weak stand-in for `runtime/vk/vk_exec.c`'s replay: only empty recordings ({`OP_BEGIN`, `OP_END`}) can be submitted.
+
+### `vk_exec_held()`
+
+Without `runtime/vk/vk_exec.c` (the probes): no submission is held back for an event.
+
+### `timeline_beyond()`
+
+Raw, read from the timeline whose signals hw notes: above every one of them the device is lost, and the run ends here
+(`vk_device_lost_check`) after a line with the two values.
+
+### `vk_sync_state_text()`
+
+No lock: the thread that reports a lost device may hold any (`runtime/vk/vk_device.c` `device_fault_report()`).
+
+### `vk_sync_progress()`
+
+The hang watch's reading (`runtime/diag/hang_watch.c`): the newest value submitted and the newest done, without a lock
+or a device call.
+
+### `completion_main()`
+
+- Held submissions that have waited long enough go to the queue; while some are held, the wait is short so their age is
+  checked again (submit batching).
+- `VkResult r = vkWaitSemaphores(c->device, &wi, tmo)`: 100 ms: stop is checked between waits.
+- A lost device is reported here, where it is first seen. Unchecked, the value was taken as it came: the callbacks of
+  submissions that never ran were called as if their work were done (one report's first sign was an occlusion query "not
+  available after its fence"), and the game went on recording until the next checked queue call failed, an upload's,
+  which then read as the cause.
+- Both calls may succeed on a lost device and give a value its submissions never reached. A value above every one the
+  timeline's signals carry ends the run ("a lost device in the timelines' values"); then, before a new value counts, the
+  device is asked once more with a call of its own (`runtime/vk/vk_device.c` `vk_device_lost_poll()`, which ends the run
+  when it is lost). That poll alone did not see the losses of the RX 6000 reports of 0.9.1 and 0.9.2: their callbacks
+  ran for work the GPU never finished.
+- Another thread saw the device lost (`vk_lost`): no value counts from here on and no callback runs. Theirs is work that
+  never finished: frees of what the GPU may still hold, records handed out again, counter reports. done stays where it
+  is, the waiters stay asleep, and the thread that saw the loss ends the process.
+- The merge lists first (`NX2SARIA_MERGE_CPU`): the results the game reads come after the write-backs before them, as
+  with the GPU's merge.
+- `results_run(reached)`: what the game reads first; a waiter after its submit may have run them already.
+- `if (ev && reached >= ev)`: the side effects a waiter on `exec_tl` went ahead of are through.
+- The waiters go first (a fence wait, the frame's first submission, the acquire): freeing what the finished submissions
+  held (`vk_mem_collect`: upload batches, destroyed images, views and buffers, each checked against the timeline itself)
+  is nothing they read, and it takes `cmd_lock`, which the upload path holds, so done waited behind uploads. It only
+  tries that lock (`vk_mem_collect_try`): an upload flush can hold it while it waits behind a present for the queue
+  lock, and the next value's done waited too.
+- `if (tv && reached >= tv)`: the tail a wait went ahead of is through: how long it took from there.
+
+### `vk_sync_start()`
+
+- `sync_hw_raise(&tl_hw, now > issued ? now : issued)`: before the restart's signal below.
+- `sync_hw_raise(&ex_hw, now > issued ? now : issued)`: the executed timeline below starts there.
+- `if (issued > now)`: a new device after `vk_shutdown`: values keep increasing for the front end.
+- The executed timeline starts where the timeline is; without it every exec wait is a fence wait.
+- `vk_astc_mode()`: decides `NX2SARIA_ASTC` and builds the ASTC decoder now, not at the first ASTC upload.
+
+### `claim_slot()`
+
+The index of a command buffer the GPU no longer uses, claimed for value `fence`. Called with `sub_lock` held; may move
+`slots[]`.
+
+### The part's pre-pass command buffer
+
+(`runtime/vk/vk.h` `vk_sync_pre()`; `runtime/vk/vk_exec_draw.c` mesh emulation, `NX2SARIA_MESH_EMU_BATCH`) Begun at the
+first call of a part, submitted right before the part (after the mirror prologue) and ended there. Its own pool: with
+the recorder on, the recorder thread records the part (`cmd_pool`) while the replay records this.
+
+### `vk_sync_pre()`
+
+- `pre_slots[i].fence = cur_fence`: the submission's value: its parts are done by then.
+- Everything earlier in queue order (the parts before, the mirror prologue) before what it records.
+
+### `pre_end()`
+
+- `chain`: Command buffers of the submission that a cut (`vk_sync_cut`) ended and that go to the queue with the next
+  part, in order before it: a cut part's pre-pass command buffer, then the part.
+
+The pre-pass command buffer of the part that goes now, ended; `VK_NULL_HANDLE` without one.
+
+- `vk_exec_mesh_flush(cb)`: the stages of the pass's emulated draws, by stage.
+- `vk_meshfb_pre_end(cb)`: the mesh fallback's batched draws (`runtime/vk/vk_mesh_fb.c`): their barrier, and their parts
+  start over.
+
+### `prologue()`
+
+The copies the replay's first accesses to VRAM mirrors queued (`runtime/vk/vk_memory.c`), in a command buffer of their
+own that is submitted right before the part that needs them and timed like a part; `VK_NULL_HANDLE` when there are none.
+After the part was recorded, `sub_lock` held; may move `slots[]`. First brings the shadow storage up to date with the
+CPU's writes, which needs no command buffer.
+
+- `vk_mem_shadow_sync(fence)`: shadow storage: the CPU's writes go in before the part is submitted.
+- `vk_mem_lazy_part_end()`: what the part left in the mirror and has to write back after all joins the snapshots.
+- `int i = claim_slot(c, fence)`: before reading slots: the claim may move it.
+
+### `chain_infos()`
+
+What goes to the queue for a part: the mirror prologue, the parts cut before it with their pre-pass command buffers and
+pieces (the chain, emptied), the part's own pre-pass command buffer, the part's earlier pieces (`vk_sync_append`: the
+replay's and its workers', emptied), the part's last command buffer. Any of them may be missing.
+
+### `vk_sync_cut()`
+
+A cut: the part ends and the replay goes on in a new command buffer, as at a split, but nothing goes to the queue: the
+part (its pre-pass command buffer, its pieces and itself) waits in the chain for the next part that does. The texture
+pool set stays as it is, as nothing of the submission has been handed to the GPU. `VK_NULL_HANDLE` when the chain is
+full.
+
+- `if (!part_cbs[i]) return VK_NULL_HANDLE`: a replay worker's piece not filled yet: the part goes on.
+- `CmdSlot *s = take_slot(c, cur_fence)`: the cut part keeps its slot until the value is reached.
+
+### `vk_sync_append_room()`
+
+The replay workers (`runtime/vk/vk_exec.c` "replay workers"): the replay's command buffer being recorded ends and joins
+the part's list, then n places for the command buffers the workers record, in that order, and a new command buffer of
+the same part is begun and returned: the same timeline value, timed and submitted with the rest, so the workers'
+commands run between the replay's commands before and after. The places are filled (`vk_sync_append_fill`) before the
+part is submitted, which `chain_infos` checks. `vk_sync_append_room`: whether the list has room for n more.
+
+### `vk_sync_append_later()`
+
+- `if (!rec_end_cb(cb, 0, 0)) vkEndCommandBuffer(cb)`: every command of it is in cb, ended by its recorder.
+- `CmdSlot *s = take_slot(c, cur_fence)`: the ended one keeps its slot until the value is reached.
+
+### `vk_sync_worker_begin()`
+
+- `SYNC_WORKERS`: the replay workers (at most 16) and the submitting thread.
+
+The replay workers' command buffers: each worker has a command pool of its own (a pool belongs to one thread at a time)
+and claims command buffers from it for the submission being recorded, as the replay claims its slots. Called on the
+worker while the submitting thread holds `sub_lock` and records on (`NX2SARIA_REPLAY_PIPE`) or waits for it: the part
+with the worker's command buffer is not submitted before it is done, so `cur_fence` stays put.
+
+### The early tail
+
+(`runtime/vk/vk_exec.c` "the early tail"). The replay cut the part where the tail began (`vk_sync_cut`), so the chain
+holds what came before and the command buffer being recorded is the tail's. `vk_sync_tail_hold` sets that one aside,
+ended and timed as a part of its own, and begins the one the write-backs are recorded into; `vk_sync_tail_release` hands
+the chain and the write-backs to the queue with the executed timeline's signal (`split_part`), and puts the tail into
+the chain for the submission's last part, which signals the timeline. The queue runs them in that order, so the GPU's
+work is what it was with the write-backs moved before the tail.
+
+### `vk_sync_tail_hold()`
+
+- `CmdSlot *s = take_slot(c, cur_fence)`: the tail keeps its slot until the value is reached.
+
+### `wait_target()`
+
+The newest value up to `value` whose GPU work a wait of the game is for: the empty submissions after it are passed over.
+`*early`: that one's write-backs went before its tail, so the executed timeline reaches it there.
+
+### `vk_sync_split_exec()`
+
+The part that ends here is the last with the submission's own commands: it signals the executed timeline.
+
+### `split_part()`
+
+- `if (!rec_end_cb(cb, 0, 0)) vkEndCommandBuffer(cb)`: every command of the part is in cb, ended by its recorder.
+- `vk_upload_flush(0)`: the uploads this part asked for precede it in queue order.
+- `uint32_t ncb = chain_infos(cbi, pro, pre, cb)`: the mirror copies, the cut parts, the pre-pass work, the part.
+- `queue_submit(c, &si, 0)`: held or handed to the queue (submit batching).
+- `vk_mem_note_submit(cur_fence)`: objects destroyed from here on may be in use by the part just submitted.
+- `CmdSlot *s = take_slot(c, cur_fence)`: the submitted part keeps its slot until the value is reached.
+
+### `vk_sync_reserve()`
+
+Asynchronous replay (`runtime/vk/vk_backend.c`): the value the next queued submission or present will signal. Values are
+handed out in queue order and the replay thread submits them in that order, so each `vk_sync_submit` gets exactly its
+value.
+
+### `submit()`
+
+own: NULL for the replay of handles; else the caller's commands in the replay's place (`vk_sync_submit_own`).
+
+- The run is ending (`runtime/vk/vk_device.c` `vk_device_lost_check()`): nothing is recorded or submitted and no value
+  is issued. The value returned is the last one issued; a wait for it sleeps until the process ends.
+- `vk_present_frames_owed()`: frames presented while another thread replayed close before this replay begins.
+- `if (n > 0 && !own) vk_sub_in_frame_publish()`: this submission's place in its frame, for the replay.
+- `vk_mem_dirty_submit()`: `NX2SARIA_TRACE=perf`: what a mirror would upload before this submit.
+- `NX2SARIA_REPLAY_TIME`: the replaying thread's CPU time over the replay too (`perf_replay_cpu`), against its wall
+  time.
+- `vk_gpu_passes_fence(fence)`: the submission the parts and results that follow belong to.
+- The game's registrations made from here to the queue call below take effect after it (`runtime/vk/vk_backend.c`
+  "registrations in submit order"): the replay writes the submission's texture pool set as it goes.
+- `s = &slots[cur_slot]`: the last part (`vk_sync_split`).
+- The recorder is done with the part: the end-of-submission crumb, then the end, by the recorder when it records.
+- After the recording: the uploads it asked for (and every earlier one) precede it in queue order.
+- `int sent = recorded || nchain || npart_cbs`: a cut part or a piece goes with the part after it, which goes too.
+- The timeline, and the executed timeline unless a part of this submission signalled it already (`split_part`).
+- `queue_submit(c, &si, fence)`: held or handed to the queue (submit batching).
+- After the last part's prologue: every staged copy of the submission is taken; a probe's submit leaves the note to the
+  replay's submission it may have come in the middle of.
+- `plat_cond_broadcast(&cv_done)`: `vk_sync_recorded_wait`.
+- `if (subs % (4096 * 8) == 4096)`: statistics only: read without the queue lock.
+
+### `vk_sync_submit_own()`
+
+The upload batch is no place for a probe's commands: it is submitted before the memory prologue.
+
+### `vk_present_frames_owed()`
+
+`runtime/vk/vk_backend.c`'s, which run the frames' bookkeeping (`runtime/vk/vk_frame_owed.h`) and set the place in the
+frame of the submission being recorded; builds without the back end have neither.
+
+### `pending_push()`
+
+`st_lock` held: p at the end of the queue `*q`.
+
+### `vk_completion_add_first()`
+
+As `vk_completion_add`, in a queue the completion thread runs first: the merge lists the CPU stores into guest memory
+(`NX2SARIA_MERGE_CPU`), which the results and the other callbacks of the same value come after. From the replay thread
+alone, in value order.
+
+### `vk_completion_add()`
+
+- The completion thread sleeps only while nothing is issued beyond done: a callback for a later value (the replay's, for
+  the submission it records: counter reports, freed resources) becomes due through the submit, which wakes it.
+
+### `vk_completion_add_result()`
+
+A side effect the game's CPU reads once the GPU has run submission fence's own commands: it runs before the other side
+effects of the values reached, and a wait after a submit runs it itself (`vk_sync_exec_wait`).
+
+### `results_run()`
+
+Runs the results queued for the values up to upto, which the GPU has passed: on the completion thread for each value it
+reaches, and on a guest thread whose wait on `exec_tl` has just returned. `st_lock` not held.
+
+### `vk_sync_result_mask()`
+
+The game's wait after a frame's first submission (`runtime/nvn/nvn_api_core.c` `NX2SARIA_SUBMIT_FINISH`): until the
+replay has submitted value, which took every copy of guest memory the submission reads; then also until the GPU has run
+it when its GPU reads guest memory itself (`vk_mem_take_live`) or `NX2SARIA_SUBMIT_FINISH_GPU=1`. 1 when reached.
+
+### `vk_sync_recorded_wait()`
+
+- `const char *km = cfg_get("NX2SARIA_SUBMIT_FINISH_KINDS")`: a number (`rt_knob` reads only 0, 1 and ab).
+- `gpu = rt_knob("SUBMIT_FINISH_GPU", "1") != 0`: the low-end GPU mode set 0 up to 0.10.1.
+- `if (value > issued && value > reserved) ok = 0`: never handed over.
+- `uint64_t need = 0`: the newest submission up to value whose completion hands the CPU results.
+- `uint64_t lneed = known ? live_last_of[value & (LIVE_RING - 1)] : value`: the newest reading guest memory.
+- `if (!live) gw_wait(value, w0, w1, newest > sent ? newest : sent, sent)`: a GPU wait counts there.
+- `if (need < value)`: what the submissions between need and value had that the mask leaves out.
+
+### `fence_wait_impl()`
+
+- `hold_release(value, 0, 0)`: a held submission the waiter needs goes to the queue now.
+- `ok = 0`: never submitted nor queued: never reached (as in the null back end).
+
+### `vk_sync_exec_wait()`
+
+The wait after a submit: the fence's (`vk_sync_fence_wait`), or with `NX2SARIA_WB_SPLIT` until the GPU has executed
+submission value's own commands (the executed timeline) and the results the game reads are in its memory
+(`results_run`), its write-backs and the completion thread's other side effects for it and for the submissions before it
+still to come. 1 when reached.
+
+- The fence's wait unless the split is asked for ("the executed timeline" above says what the game reads that a wait on
+  `exec_tl` leaves out). With shadow storage (`vk_mem_shadow_storage`) what the GPU wrote reaches guest memory in such a
+  callback too: a wait that returned before it let the game rewrite a pool that an older write-back then overwrote
+  (Kokiri Forest: a sky coefficient the game had reset came back, and the world flickered washed out). The run is ending
+  (`runtime/vk/vk_device.c` `vk_device_lost_check()`): no wait on the lost device, and none for a value that will not be
+  reached.
+- The early tail: a value whose GPU work is that of an earlier submission with its write-backs before its tail (the
+  submissions since handed the GPU nothing) is reached where that one's executed signal is, its tail still to run.
+- `hold_release(asked, 0, 0)`: a held submission the waiter needs goes to the queue now.
+- `if (r == VK_SUCCESS)`: a lost device may end the wait too: the results below would be read from work never run.
+- The results the game reads, of this submission and of those before it, which the GPU ran first: here, not when the
+  completion thread gets to them behind the other side effects of the last frame's submissions. The merge lists the CPU
+  stores (`NX2SARIA_MERGE_CPU`) up to the value asked for, as the GPU's merges are by now.
+- `uint64_t none = 0`: the first wait back for this tail starts its clock (the completion thread ends it).
+
+### `vk_sync_game_wait()`
+
+The game's own wait for a fence (`runtime/nvn/nvn_api_core.c` `nvnSyncWait`): the fence's wait, or with the early tail
+the wait for the results of the submission the value's GPU work belongs to (`vk_sync_exec_wait`), when that one's tail
+is all the GPU still has of it: the tail reads nothing the game can change and hands it nothing.
+
+### `vk_sync_shutdown()`
+
+- `qhead = qn = rqhead = rqn = fqhead = fqn = 0`: callbacks of values never submitted.
+- The pre-pass command buffers' pool (`vk_sync_pre`: the mesh emulation's and the mesh fallback's batches); it stayed
+  past the device's end, a leak each time the device was made again (the probes, a device made anew).
+
+### --probe-devlost
+
+(`runtime/host.h`): the end of a run whose device is lost, without a lost device and without a window. The device itself
+stays healthy, so what the driver answers after a real loss is not covered here.
+
+- A callback queued for the next value runs when the timeline reaches it (the check that step 2 can fail).
+- With `vk_lost` set, as after another thread saw the loss: a callback queued for the next value does not run although
+  the timeline reaches it, done stays, and a submit, an upload flush and a wait for a submission's commands return at
+  once without issuing a value.
+- With `vk_lost` clear again, four threads report a lost device at the same moment: the process must end with
+  `RT_LOST_EXIT`, one report and one FATAL line in the output (`tests/device_lost_check.py` counts them). Reaching the
+  end of this function is the failure.
+
+### `probe_lost_advance()`
+
+Makes the timeline reach the next value as a finished submission would: issued moves on, the semaphore is signalled from
+the host, and the completion thread is woken. Returns the value.
+
+- `sync_hw_raise(&tl_hw, v)`: a host signal: noted before it ("a lost device in the timelines' values").
+
+### `vk_sync_probe_devlost()`
+
+- `plat_sleep_ms(500)`: five of the completion thread's 100 ms waits.
+
+### `vk_sync_sizes()`
+
+`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): command buffer slots (read without `sub_lock`, which a whole
+replay holds), the completion queue and the submissions held back.
 
 ## `runtime/vk/vk_sync_hw.h`
 
@@ -3670,7 +4863,7 @@ Uniform blocks as of the submit call. NVN starts the GPU when `nvnQueueSubmitCom
 constants soon after; here the replay records for several milliseconds, and the GPU reads a pool's bytes when it runs
 the part that uses them (the VRAM mirror's sync copies run then, `runtime/vk/vk_memory.c` "VRAM mirror"). Meanwhile the
 game, having handed the frame over, rewrites per-object uniform blocks on other threads with no fence: late draws read
-another object's matrix (phantom rocks, a flat far field; NX2Saria 1.2.1's producer `f_70008c6460`, 14-24 ms after the
+another object's matrix (phantom rocks, a flat far field; the 1.2.1 game's producer `f_70008c6460`, 14-24 ms after the
 submit). So at the start of a submission's recording every uniform range it binds is copied into an arena of its own,
 and the uniform bindings of the replay use the copy.
 
