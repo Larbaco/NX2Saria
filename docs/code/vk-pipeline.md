@@ -897,7 +897,7 @@ unless a file cannot be read or written.
 
 ### `mesh_libs()`
 
-1 when a mesh pipeline entered now is linked from stage libraries (comment at `mesh_lib_init()`): it then gets a
+1 when a mesh pipeline entered now is linked from stage libraries (see `mesh_lib_init()`): it then gets a
 stage-independent layout (`pipe_miss()`), which is how the rest of the file tells (`no_libs()`).
 
 ### `no_libs()`
@@ -1261,7 +1261,7 @@ as a point sprite's (`mesh_fill()`), and 1 when the library lists the fragment s
 
 Builds one library from the pipeline's state; key is the library's key (PrKey: fin holds the added outputs).
 
-- `int mesh = is_mesh(s)`: the libraries of a mesh pipeline (comment at `mesh_lib_init()`).
+- `int mesh = is_mesh(s)`: the libraries of a mesh pipeline (see `mesh_lib_init()`).
 - `if (kind == LIB_PR && mesh)`: what a whole mesh pipeline lists: as `create_graphics()`.
 - `} else if (kind == LIB_PR && ((const PrKey *)key)->lines)`: the rasterization state is this library's: as
   `create_graphics()`.
@@ -1442,7 +1442,7 @@ rewritten. Bump `KEYS_VERSION` when `VkPipeState` or the record changes meaning 
 - `uint32_t gate_ended`: boot builders the memory gate ended (`warm_builder()`).
 - `double t0`: `now_ms()` when the prebuild started.
 - `int prep`: t0 is the preparation's start (`seed_pipelines()`), not the ready device's.
-- `double until`: `now_ms()` after which the boot builders stop (comment at `prewarm_run()`); 0 none.
+- `double until`: `now_ms()` after which the boot builders stop (see `prewarm_run()`); 0 none.
 
 ### `seen_add()`
 
@@ -1883,7 +1883,7 @@ to make. Returns the libraries queued.
 
 ### Boot prewarm from the key file
 
-Comment at "pipeline keys".
+See "Pipeline keys" above.
 
 ### `warm_builder()`
 
@@ -1913,7 +1913,7 @@ the prepared variants.
 1 while the start waits for the builders of the whole warm: they run at normal priority on every core then, and as in
 play (idle priority, the background's thread counts) from the moment the game starts.
 
-`BF`: The whole warm on the boot screen after a driver change (comment at `bf_decide()`).
+`BF`: The whole warm on the boot screen after a driver change (see `bf_decide()`).
 
 - `int on`: this start waits for all of it.
 - `int lw`: `lb_start()` left the library warm's start to `bf_wait()`.
@@ -2467,7 +2467,7 @@ A compute pipeline created at a dispatch took ms. Caller holds `P.lock`.
 
 ### `vk_pipeline_compute()`
 
-`BG`: The background builder of large compute shaders (comment at `bg_main()`).
+`BG`: The background builder of large compute shaders (see `bg_main()`).
 
 - `const GfxShader *volatile building`: the shader on the driver now, NULL between builds.
 - `volatile int32_t raised`: a dispatch waited for it and raised the thread.
@@ -2500,7 +2500,7 @@ A compute shader over `LB.big_words` that no pipeline cache holds: its first dis
 First dispatch as before) The boot prebuild leaves a compute shader over `LB.big_words` that no pipeline cache holds
 (`lb_compute()`). Its first dispatch then compiled it on the replay thread: frames of 0.65-1.9 s in Kokiri Forest on an
 RTX 5090 after a translator change. One thread builds them instead, once the boot prebuild is done, one at a time and
-the smallest first: four compiled side by side grew the process by 16-19 GB on an RTX 4090 (comment at `LB_BIG_WORDS`).
+the smallest first: four compiled side by side grew the process by 16-19 GB on an RTX 4090 (see `LB_BIG_WORDS`).
 The shader being built is in `cs_flight`, so a dispatch that needs it waits for this build (`vk_pipeline_compute()`
 raises the thread to normal priority then) instead of compiling a second copy. What is built is entered for the process,
 as `lb_compute()`'s pipelines are, and lands in `pipeline-cache.bin` for the next boot.
@@ -2578,7 +2578,7 @@ a two-hour update, with the PC's 16 GB of RAM nearly full, for pipelines the gam
 ### `lb_compute()`
 
 Keep 0: the pipeline is built for the pipeline cache only and destroyed at once, unless a dispatch came to wait for it
-meanwhile; a shader over `LB.big_words` is then not built at all (comment at `compute-used.bin`). cs may be a copy the
+meanwhile; a shader over `LB.big_words` is then not built at all (see `compute-used.bin`). cs may be a copy the
 caller releases afterwards when keep is 0: nothing here holds on to it then.
 
 - `struct { const GfxShader *cs; uint64_t compute; } k = {cs, 1}`: no padding: the key is hashed and compared as bytes.
@@ -2781,7 +2781,7 @@ recorded graphics variants.
 
 ### `bf_wait()`
 
-The whole warm's wait (comment at `bf_decide()`), on the prewarm thread after the recorded pipelines: the compute
+The whole warm's wait (see `bf_decide()`), on the prewarm thread after the recorded pipelines: the compute
 pipelines `lb_start()` has just started, then the library warm. The counts go to the boot screen
 (`vk_pipeline_prewarm_progress()`). It ends with the warm, at the warm's time limit, or when the boot stops waiting
 (`vk_pipeline_prewarm_detach()`); in the last two the builders go on beside the game.
