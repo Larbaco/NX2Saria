@@ -1,13 +1,3 @@
-// GPU breadcrumbs for a lost device (vk.h vk_crumb). VK_AMD_buffer_marker writes a 32-bit code into a buffer from
-// the command stream: at TOP_OF_PIPE once the command processor reaches the marker, at BOTTOM_OF_PIPE once every
-// command before it has finished. Each crumb writes both, into two words of one host-coherent buffer, so after a
-// device loss word 0 names the newest point the GPU reached and word 1 the newest point it had finished: the hang lies
-// between them. A code is the crumb kind in the top 4 bits and its number in the low 28. The markers cost two small
-// writes per crumb, and crumbs mark submissions, upload batches, ASTC chunks and presents, not draws.
-//
-// Pass marks (vk.h vk_pass_mark_begin) use words 2 and 3 of the same buffer: the replay marks the start and the end of
-// every render pass and dispatch, and a ring of records says what each mark was. The design: a mark
-// per pass and dispatch, numbers in a ring of 4096, text only at the device loss.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,25 +8,21 @@
 #include "nvn_api.h"
 #include "vk.h"
 
-// vk_pass_mark_cmd also runs on the recorder thread (vk_rec.c R_PassMark), where vk.h's macro would turn the timestamp
-// into a new packet for the part being recorded: a second producer on the ring, which corrupts it ("vk_rec: unknown
-// packet" with NX2SARIA_PASS_TIMES=1 on NVIDIA, where the recorder is on). The command goes straight into cb.
 #undef vkCmdWriteTimestamp
 
 static PFN_vkCmdWriteBufferMarkerAMD write_marker;
 static VkBuffer buf;
 static VmaAllocation alloc;
-static volatile uint32_t *words;   // 0, 1: crumbs; 2, 3: pass marks; 4, 5: draw marks
+static volatile uint32_t *words;
 
-// Pass marks (below)
 int vk_pass_marks_on;
-static int pm_amd;                          // marks into words 2 and 3
+static int pm_amd;
 static PFN_vkCmdSetCheckpointNV set_checkpoint;
 static void pass_marks_init(VkCtx *c);
 static void pass_times_init(VkCtx *c);
 static void pass_times_poll(void);
-static VkQueryPool pt_pool;           // pass times (below): two timestamps per ring slot
-static volatile uint8_t pt_timed[VK_PASS_MARKS];   // the slot's mark writes timestamps; cleared once they are read
+static VkQueryPool pt_pool;
+static volatile uint8_t pt_timed[VK_PASS_MARKS];
 
 
 static void buffer_init(VkCtx *c) {
@@ -98,16 +84,10 @@ void vk_crumbs_report(void) {
     rt_log("vk: GPU breadcrumbs: the GPU last reached %s; everything before %s had finished", reached, finished);
 }
 
-// ---- pass marks
 
-// Cost per pass or dispatch: about twenty stores into the ring and two commands, one at the start and one at the end,
-// each a marker write or a checkpoint. Per draw nothing, except that the branch of vk_exec_draw.c prepare_draw that
-// records changed pipeline state also notes the shaders of a pass's first draw. A full barrier already precedes every
-// pass and dispatch (vk_exec.c vk_exec_pass_begin, vk_exec_draw.c op_dispatch), so the end-of-pipe write adds no wait.
 static VkPassMark ring[VK_PASS_MARKS];
-static uint32_t seq;                        // marks made; only the replay thread writes it
+static uint32_t seq;
 
-// NX2SARIA_PASS_CRUMBS: unset, buffer marks where VK_AMD_buffer_marker exists; 1, also NVIDIA checkpoints; 0, neither.
 int vk_pass_marks_want_nv(void) {
     const char *e = cfg_get("NX2SARIA_PASS_CRUMBS");
     return e && *e && strcmp(e, "0") != 0;
@@ -119,7 +99,6 @@ static void pass_marks_init(VkCtx *c) {
     set_checkpoint = c->has_nv_checkpoints
                          ? (PFN_vkCmdSetCheckpointNV)vk_dpa(c->device, "vkCmdSetCheckpointNV") : NULL;
     pm_amd = !off && write_marker && words;
-    // Timestamp profiling needs pass labels, but no vendor breadcrumb extension.
     const char *timing = cfg_get("NX2SARIA_GPU_PASSES");
     int timestamps = timing && *timing && strcmp(timing, "0");
     vk_pass_marks_on = pm_amd || set_checkpoint || timestamps;
@@ -140,36 +119,22 @@ static void pass_marks_init(VkCtx *c) {
         rt_log("vk: draw marks off: NX2SARIA_DRAW_CRUMBS needs the pass marks of VK_AMD_buffer_marker");
 }
 
-// ---- draw marks (NX2SARIA_DRAW_CRUMBS=1, off by default; with VK_AMD_buffer_marker only)
-// A pass mark names the pass the GPU was in and the shaders of its first and last draw. The losses reported on RDNA 2
-// cards end inside one scene pass of 30 to 100 draws, and which draw the GPU never finished is not known. With this
-// on, the replay writes a mark each time the shaders or the pipeline state change inside a pass (vk_exec_draw.c
-// prepare_draw_ex), into words 4 and 5 of the breadcrumb buffer as a pass mark goes into words 2 and 3, and a ring
-// keeps the pass, the draw's index in it and the two shaders of each. After a loss word 5 names the last mark before
-// which every draw had finished: the draw that hung was recorded after it, with its shaders or those of one of the few
-// marks up to the one in word 4. It costs two marker writes per change, a few thousand a frame, so it is for the
-// player who can reproduce a loss, not for everyone.
-// The marks are numbered as they are recorded, by the replay thread and by its workers when a pass's chunks are
-// recorded side by side (vk_exec.c): the number is taken atomically and each number has its own slot of the ring, so
-// no two threads write one. The two marks the GPU names are exact either way. The numbers between them are in queue
-// order only where one thread recorded the pass; with workers some of them belong to chunks that ran earlier, which
-// the report says.
-#define VK_DRAW_MARKS 8192   // power of two
+#define VK_DRAW_MARKS 8192
 typedef struct { uint32_t id, pass, draw; const GfxShader *vs, *fs; } DrawMark;
 static DrawMark dring[VK_DRAW_MARKS];
-static volatile uint32_t dseq;   // draw marks made; any recording thread takes the next number
+static volatile uint32_t dseq;
 int vk_draw_marks_on;
 
 void vk_draw_mark(VkCommandBuffer cb, const VkPassMark *m, const GfxShader *vs, const GfxShader *fs, uint32_t draw) {
     if (!vk_draw_marks_on || !cb) return;
     uint32_t id = __atomic_add_fetch(&dseq, 1, __ATOMIC_RELAXED);
-    if (!id) id = __atomic_add_fetch(&dseq, 1, __ATOMIC_RELAXED);   // 0 means no mark
+    if (!id) id = __atomic_add_fetch(&dseq, 1, __ATOMIC_RELAXED);
     dring[id & (VK_DRAW_MARKS - 1)] = (DrawMark){id, m ? m->id : 0, draw, vs, fs};
     rec_pass_mark(cb, id, 2);
 }
 
 void vk_pass_mark_cmd(VkCommandBuffer cb, uint32_t id, int end) {
-    if (end == 2) {   // a draw mark (vk_draw_mark): the same two points, into its own words
+    if (end == 2) {
         if (!pm_amd) return;
         write_marker(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, buf, 16, id);
         write_marker(cb, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, buf, 20, id);
@@ -184,29 +149,19 @@ void vk_pass_mark_cmd(VkCommandBuffer cb, uint32_t id, int end) {
     if (set_checkpoint) set_checkpoint(cb, (const void *)(uintptr_t)((uint64_t)id << 1 | (end != 0)));
 }
 
-// ---- NX2SARIA_GPU_PASSES=1 (diagnosis, needs the pass marks): every GP_PERIOD presents the render passes and dispatches
-// of GP_FRAMES frames get GPU timestamps around them. Some presents later the results are summed by what the pass is
-// (targets, shaders) and the most expensive are logged in ms per frame. The timestamps run on the replay's command
-// buffers, through the recorder like the marks.
 #define GP_SLOTS 16384
 #define GP_PERIOD 240
 #define GP_FRAMES 4
-#define GP_LATER 30   // presents after the capture before the results are read: the GPU is done with them by then
+#define GP_LATER 30
 #define GP_TOP 30
 typedef struct { uint8_t kind, used; uint32_t w, h, d, draws, layer; int c0; uint64_t vs, fs; } GpLabel;
 static GpLabel gp_labels[GP_SLOTS];
-// The gap ledger: what the timed frames' parts spend outside their passes and dispatches. A part (vk_sync.c: one command
-// buffer of a submission) takes a slot of its own, kind GP_KIND_PART, with a timestamp at its start and its end. A gap
-// runs from the part's start or the end of a mark to the start of the next mark or the part's end; vk_gpu_gap_note
-// names the kinds of commands the replay records in the gap it is in (copies, clears, the upscaler, the write-back
-// merge). A gap nobody noted holds barriers and state only. The report sums the gaps by the kinds noted in them. A pass
-// split over two parts (vk_sync_split) keeps its own time, the wait for the second part included, and makes no gap.
-#define GP_KIND_PART 3   // beside VK_MARK_PASS and VK_MARK_DISPATCH
+#define GP_KIND_PART 3
 #define GP_GAPS 16384
-typedef struct { uint32_t from, to, kinds; } GpGap;   // query numbers in gp_pool; kinds: bits of VK_GAP_*
+typedef struct { uint32_t from, to, kinds; } GpGap;
 static GpGap gp_gaps[GP_GAPS];
 static uint32_t gp_ngaps, gp_gap_from = UINT32_MAX, gp_gap_kinds, gp_part = UINT32_MAX;
-static int gp_in_mark;                                // between a mark's start and its end
+static int gp_in_mark;
 static uint64_t gp_kind_n[VK_GAP_N], gp_kind_units[VK_GAP_N];
 static const char *const gp_kind_names[] = {
     "buffer copies", "buffer to texture copies", "texture to buffer copies", "texture copies", "buffer fills",
@@ -214,42 +169,35 @@ static const char *const gp_kind_names[] = {
     "depth twin copies", "texture pool marks", "mesh draw counts", "block-compressed target copies",
     "groups of draws the replay workers recorded, whose passes have no marks"};
 _Static_assert(sizeof gp_kind_names / sizeof gp_kind_names[0] == VK_GAP_N, "a name for every VK_GAP_* kind");
-static VkQueryPool gp_pool, gp_prims;   // gp_prims: mesh primitives generated per pass (with meshShaderQueries)
-static VkQueryPool gp_stats;            // fragment shader invocations per pass
-static int gp_state, gp_phase, gp_capture;   // state 0 not set up, 1 on, -1 off; phase 0 idle, 1 capturing, 2 waiting
+static VkQueryPool gp_pool, gp_prims;
+static VkQueryPool gp_stats;
+static int gp_state, gp_phase, gp_capture;
 static uint32_t gp_n;
 static uint64_t gp_start;
 
 static unsigned long long shader_id(const GfxShader *s);
-uint32_t vk_exec_mesh_counts(const uint32_t **out);   // vk_exec_draw.c
+uint32_t vk_exec_mesh_counts(const uint32_t **out);
 
-// The hash NX2SARIA_SKIP_SHADERS takes and the frame dump prints: FNV-1a over the shader's SPIR-V.
 static uint64_t gp_shader_hash(const GfxShader *s) {
     static struct { const GfxShader *s; uint64_t h; } memo[1024];
     if (!s) return 0;
     uint32_t i = (uint32_t)(((uintptr_t)s * 0x9E3779B97F4A7C15ull) >> 54);
     if (memo[i].s == s) return memo[i].h;
-    uint64_t h = gfx_shader_spirv_fnv(s);   // kept by the shader: nothing is decoded here
+    uint64_t h = gfx_shader_spirv_fnv(s);
     memo[i].s = s, memo[i].h = h;
     return h;
 }
 
 static int kind_is_pass(const VkPassMark *m) { return m->kind == VK_MARK_PASS; }
 
-// Result points (gpu_passes): where in a submission's GPU time the results the CPU waits for are done. The replay
-// notes a result (vk_exec_note_results: an event, a counter or occlusion report, a GPU write of unmirrored memory, a
-// mirror write-back) as it records it; the next timestamp the capture writes after it (a pass's or dispatch's start or
-// end, a part's end) is when the GPU is done with it at the latest. The report compares that, for the submissions the
-// game's wait after a frame's first submission waited for (vk_sync_recorded_wait), with the submission's end: how much
-// earlier the wait could end if it ended at the results instead of at the whole submission's completion.
 #define GP_RES 16384
-typedef struct { uint64_t fence; uint32_t q; uint8_t kind; } GpRes;   // q: query in gp_pool, UINT32_MAX until written
+typedef struct { uint64_t fence; uint32_t q; uint8_t kind; } GpRes;
 static GpRes gp_res[GP_RES];
 static uint32_t gp_nres, gp_res_open;
 static uint64_t gp_fence, gp_part_fence[GP_SLOTS];
 #define GP_WAITED 256
 static uint64_t gp_waited[GP_WAITED];
-static uint32_t gp_nwaited;   // atomic: the game's threads add
+static uint32_t gp_nwaited;
 
 static void gp_resolve(uint32_t q) {
     for (uint32_t i = gp_res_open; i < gp_nres; i++) gp_res[i].q = q;
@@ -277,8 +225,6 @@ static void gp_gap_close(uint32_t to) {
     gp_gap_from = UINT32_MAX, gp_gap_kinds = 0;
 }
 
-// The kinds of commands noted since the last mark ended (bits of VK_GAP_*), for a lost device's report: the next mark
-// takes them as the commands recorded before it (VkPassMark.gap). Replay thread only, as the notes are.
 static uint32_t gap_now;
 
 void vk_gpu_gap_note(int kind, uint64_t units) {
@@ -310,7 +256,7 @@ void vk_gpu_passes_part(VkCommandBuffer cb, int end) {
 static void gp_begin(VkCommandBuffer cb, VkPassMark *m) {
     m->gp = 0;
     if (!gp_capture || gp_n >= GP_SLOTS) return;
-    if (gp_part != UINT32_MAX) gp_gap_close(gp_n * 2);   // the gap before this mark ends at its start
+    if (gp_part != UINT32_MAX) gp_gap_close(gp_n * 2);
     gp_labels[gp_n].used = 0;
     vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, gp_pool, gp_n * 2);
     gp_resolve(gp_n * 2);
@@ -332,10 +278,9 @@ static void gp_end(VkCommandBuffer cb, const VkPassMark *m) {
     l->c0 = m->kind == VK_MARK_PASS && m->ncolor ? (int)m->color[0] : 0;
     l->vs = gp_shader_hash(m->first[0]), l->fs = m->kind == VK_MARK_PASS ? gp_shader_hash(m->first[1]) : 0;
     l->used = 1;
-    if (gp_part != UINT32_MAX) gp_gap_from = i * 2 + 1, gp_gap_kinds = 0;   // the next gap starts at this mark's end
+    if (gp_part != UINT32_MAX) gp_gap_from = i * 2 + 1, gp_gap_kinds = 0;
 }
 
-// One timestamp of gp_pool in ticks; 0 when it is not there.
 static int gp_tick(VkCtx *c, uint32_t q, uint64_t *t) {
     uint64_t v[2] = {0};
     if (vkGetQueryPoolResults(c->device, gp_pool, q, 1, sizeof v, v, sizeof v,
@@ -345,8 +290,6 @@ static int gp_tick(VkCtx *c, uint32_t q, uint64_t *t) {
     return 1;
 }
 
-// The gaps of the timed frames, summed by the kinds noted in them, and the parts' own time for comparison with the
-// perf line's GPU time (which counts the mirror prologues too and leaves out the time between parts).
 static void gp_report_gaps(double tick_ms, double parts_ms, uint32_t parts) {
     enum { MAX_SETS = 64 };
     static struct { uint32_t kinds, n; double ms; } sets[MAX_SETS];
@@ -368,7 +311,7 @@ static void gp_report_gaps(double tick_ms, double parts_ms, uint32_t parts) {
     }
     rt_log("gpu passes:   outside the passes and dispatches: %.2f ms per frame in %u gaps; the parts themselves %.2f ms per "
            "frame in %u parts", total / GP_FRAMES, read, parts_ms / GP_FRAMES, parts);
-    for (int k = 0; k < n && k < 12; k++) {   // the most expensive sets first
+    for (int k = 0; k < n && k < 12; k++) {
         int top = k;
         for (int j = k + 1; j < n; j++)
             if (sets[j].ms > sets[top].ms) top = j;
@@ -392,7 +335,6 @@ static void gp_report_gaps(double tick_ms, double parts_ms, uint32_t parts) {
                    gp_kind_names[b], (double)gp_kind_n[b] / GP_FRAMES, gp_kind_units[b] / 1e6 / GP_FRAMES);
 }
 
-// The result points of the timed frames (vk_gpu_passes_result), for the submissions the game's wait waited for.
 static void gp_report_results(double tick_ms) {
     VkCtx *c = vk_ctx();
     static const char *const names[VK_RES_KINDS] = {"events", "counter reports", "occlusion reports",
@@ -410,7 +352,7 @@ static void gp_report_results(double tick_ms) {
         if (dup) continue;
         seen[ns++] = f;
         uint64_t t0 = UINT64_MAX, t1 = 0, t;
-        for (uint32_t i = 0; i < gp_n; i++) {   // the submission's parts: its first start, its last end
+        for (uint32_t i = 0; i < gp_n; i++) {
             if (gp_labels[i].kind != GP_KIND_PART || !gp_labels[i].used || gp_part_fence[i] != f) continue;
             if (gp_tick(c, i * 2, &t) && t < t0) t0 = t;
             if (gp_tick(c, i * 2 + 1, &t) && t > t1) t1 = t;
@@ -477,13 +419,12 @@ static void gp_report(uint64_t frame) {
             continue;
         }
         double ms = (double)(q[2] - q[0]) * tick_ms;
-        if (l->kind == GP_KIND_PART) {   // a part of a submission: for the gap ledger's line only
+        if (l->kind == GP_KIND_PART) {
             parts_ms += ms, parts++;
             continue;
         }
         read++;
         total += ms;
-        // a pass of many draws and its neighbours differ in the draw count: the sum is by targets and shaders alone
         int s = 0;
         while (s < n && !(sums[s].l.kind == l->kind && sums[s].l.w == l->w && sums[s].l.h == l->h && sums[s].l.c0 == l->c0 && sums[s].l.layer == l->layer &&
                           sums[s].l.vs == l->vs && sums[s].l.fs == l->fs))
@@ -507,7 +448,7 @@ static void gp_report(uint64_t frame) {
     qsort(sums, (size_t)n, sizeof sums[0], gp_sum_cmp);
     rt_log("gpu passes: frame %llu: %.2f ms per frame in %u passes and dispatches over %d frames (%u not read, %d kinds)",
            (unsigned long long)frame, total / GP_FRAMES, read, GP_FRAMES, unread, n);
-    {   // the mesh workgroup counts of the indirect mesh draws (vk_exec_draw.c mesh_ring_entry)
+    {
         const uint32_t *mc;
         uint32_t mn = vk_exec_mesh_counts(&mc);
         uint64_t sum = 0;
@@ -537,7 +478,6 @@ static void gp_report(uint64_t frame) {
     }
 }
 
-// NX2SARIA_SET_AT=<frame>:<key>=<value>[;...]: settings changed by a test run while the game plays, as the menu would.
 static void set_at_frame(uint64_t frame) {
     static char buf[512];
     static const char *next;
@@ -612,11 +552,10 @@ VkPassMark *vk_pass_mark_begin(VkCommandBuffer cb, int kind, uint64_t fence) {
     if (!vk_pass_marks_on || !cb) return NULL;
     if (pt_pool) pass_times_poll();
     uint32_t id = ++seq;
-    if (!id) id = ++seq;   // 0 means no mark
+    if (!id) id = ++seq;
     VkPassMark *m = &ring[id & (VK_PASS_MARKS - 1)];
     m->id = id, m->kind = (uint8_t)kind, m->fence = fence, m->draws = UINT32_MAX, m->mesh = m->mesh_ind = 0;
-    m->gap = gap_now, gap_now = 0;   // what was recorded between the mark before and this one
-    // timed unless the slot's previous mark is still waiting to be read (its queries are not reset yet)
+    m->gap = gap_now, gap_now = 0;
     if (pt_pool) pt_timed[id & (VK_PASS_MARKS - 1)] = !pt_timed[id & (VK_PASS_MARKS - 1)] ? 1 : 2;
     rec_pass_mark(cb, id, 0);
     gp_begin(cb, m);
@@ -629,7 +568,7 @@ void vk_pass_mark_end(VkCommandBuffer cb, const VkPassMark *m) {
     gp_in_mark = 0;
     gp_end(cb, m);
     rec_pass_mark(cb, m->id, 1);
-    gap_now = 0;   // the gap after this mark starts empty
+    gap_now = 0;
 }
 
 int vk_pass_marks_read(uint32_t *started, uint32_t *finished) {
@@ -643,7 +582,6 @@ const VkPassMark *vk_pass_mark_record(uint32_t id) {
     return id && m->id == id ? m : NULL;
 }
 
-// The first 8 bytes of the shader's input id (gfx_shader.c), the start of its stored input's name <cache>/in/<id>.in.
 static unsigned long long shader_id(const GfxShader *s) {
     if (!s) return 0;
     const uint8_t *iid = gfx_shader_input_id(s);
@@ -683,8 +621,6 @@ static void describe_mark(uint32_t id, char *o, size_t size) {
         n += (size_t)snprintf(o + n, size - n, ", %u draws; first vs %016llx fs %016llx, last vs %016llx fs %016llx",
                               m->draws, shader_id(m->first[0]), shader_id(m->first[1]), shader_id(m->last[0]),
                               shader_id(m->last[1]));
-    // The mesh draws among them: the RX 6000 losses whose marks named a pass were in passes that start with one, and
-    // whether a pass held any (and how many took their count from the GPU) is what tells such a loss from another.
     if (n < size && (m->mesh || m->mesh_ind))
         snprintf(o + n, size - n, "; %u mesh draws, %u of them with the GPU's count", (unsigned)m->mesh + m->mesh_ind,
                  (unsigned)m->mesh_ind);
@@ -709,10 +645,6 @@ static void log_lines(char *t) {
     }
 }
 
-// vkGetQueueCheckpointData2NV, else vkGetQueueCheckpointDataNV, on the graphics queue (the replay's): one entry per
-// stage with the last checkpoint that stage executed. A checkpoint is the mark's id times 2, plus 1 at its end, so the
-// top-of-pipe entry names the last start or end the GPU reached, and the bottom-of-pipe entry the last one before which
-// everything had finished: at a start, that is the end of the mark before it.
 static void nv_report(void) {
     VkCtx *c = vk_ctx();
     if (!c || !set_checkpoint) return;
@@ -755,7 +687,6 @@ static void nv_report(void) {
     log_lines(t);
 }
 
-// The kinds of bits (VK_GAP_*) as text; "barriers and state only" when none was noted.
 static void gap_text(uint32_t kinds, char *o, size_t size) {
     size_t n = 0;
     o[0] = 0;
@@ -764,10 +695,6 @@ static void gap_text(uint32_t kinds, char *o, size_t size) {
     if (!n) snprintf(o, size, "barriers and state only");
 }
 
-// A GPU that finished the last mark it started stopped between two marks, where the two lines of
-// vk_pass_marks_format name nothing: in a player's log both were one compute dispatch, with 51 later marks made and
-// none of them started. This adds the mark that never started and what the replay recorded between the two (the gap
-// notes: copies, clears, the upscaler, write-backs), or what it recorded after the last mark of all.
 static void report_between(uint32_t started, uint32_t finished) {
     if (!finished || started != finished) return;
     char what[512], next[640];
@@ -796,8 +723,6 @@ static void describe_draw_mark(uint32_t id, char *o, size_t size) {
                  shader_id(d->fs));
 }
 
-// Words 4 and 5 (vk_draw_mark): the draws the GPU had not finished were recorded after the mark in word 5, so its
-// shaders and those of the marks up to the one in word 4 are the candidates; up to DRAW_MARK_LINES of them are listed.
 #define DRAW_MARK_LINES 12
 static void draw_marks_report(void) {
     if (!vk_draw_marks_on || !words) return;
@@ -816,7 +741,7 @@ static void draw_marks_report(void) {
     }
     if (reached >= finished && reached - finished + 1 > n)
         rt_log("vk:   and %u more up to draw mark %u", (unsigned)(reached - finished + 1 - n), (unsigned)reached);
-    if (reached < finished || reached - finished + 1 > n) {   // the mark the GPU last reached, when the list left it out
+    if (reached < finished || reached - finished + 1 > n) {
         describe_draw_mark(reached, t, sizeof t);
         rt_log("vk:   draw mark %u, the last the GPU reached: %s", (unsigned)reached, t);
     }
@@ -835,15 +760,6 @@ void vk_pass_marks_report(void) {
     nv_report();
 }
 
-// ---- pass times (NX2SARIA_PASS_TIMES=1): GPU time per render pass and dispatch, for GPUs no vendor profiler supports
-// (RGP covers RDNA only, so an RX 580 has none, and RenderDoc cannot capture this program). Every pass mark also
-// writes a timestamp at its two points (TOP_OF_PIPE before the pass, BOTTOM_OF_PIPE after it), into the query slot
-// pair of its ring slot. pass_times_poll, on the replay thread at each new mark, takes in the marks whose submission
-// has finished, resets their slots on the host (hostQueryReset) and sums their time per kind of pass: its size,
-// attachment formats and its first fragment (or compute) shader. Every 600 presented frames the log lists the passes
-// with the most GPU time per frame. Passes overlap on the GPU, so the times are each pass's span, not its exclusive
-// share; their order is what matters. A slot whose mark was not read yet when the ring comes round is not timed
-// (pt_timed 2) for that turn.
 #define PT_SUMS 1024
 #define PT_REPORT_FRAMES 600
 #define PT_TOP 15
@@ -855,10 +771,10 @@ typedef struct {
     unsigned long long sid;
     double us;
     uint64_t n, draws;
-    uint32_t vw, vh;   // the largest viewport its draws set
+    uint32_t vw, vh;
 } PtSum;
 static PtSum pt_sum[PT_SUMS];
-static uint32_t pt_read;                 // the newest mark id taken in
+static uint32_t pt_read;
 static double pt_ns_per_tick, pt_total_us;
 static uint64_t pt_mask, pt_frame0, pt_marks, pt_lost;
 
@@ -911,7 +827,7 @@ static void pt_add(const VkPassMark *m, double us) {
         e->us += us, e->n++, e->draws += m->draws == UINT32_MAX ? 0 : m->draws;
         return;
     }
-    pt_lost++;   // table full: counted in the total only
+    pt_lost++;
 }
 
 static int pt_cmp(const void *a, const void *b) {
@@ -944,7 +860,6 @@ static void pt_report(uint64_t frames) {
     pt_total_us = 0, pt_marks = 0, pt_lost = 0;
 }
 
-// Replay thread (vk_pass_mark_begin).
 static void pass_times_poll(void) {
     VkCtx *c = vk_ctx();
     uint64_t done = vk_sync_fence_done();
@@ -954,9 +869,7 @@ static void pass_times_poll(void) {
         uint32_t slot = id & (VK_PASS_MARKS - 1);
         const VkPassMark *m = &ring[slot];
         if (m->id == id) {
-            if (!m->fence || m->fence > done) break;   // its submission is still being recorded or running
-            // the submission finished: both timestamps are in, or one was never written (a pass whose end was not
-            // recorded), which leaves that mark out
+            if (!m->fence || m->fence > done) break;
             if (pt_timed[slot] == 1 && m->draws != UINT32_MAX) {
                 uint64_t r[4] = {0};
                 VkResult q = vkGetQueryPoolResults(c->device, pt_pool, slot * 2, 2, sizeof r, r, 16,
