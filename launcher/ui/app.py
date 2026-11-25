@@ -1,35 +1,3 @@
-"""The launcher's window, laid out like the game's options menu (docs/launcher.md, "Look"): a wooden title band with
-the leaf sprig and NX2Saria name in the game's Cetra Display across the whole top (the window's own title bar: drag it to move the
-window, minimise and close at its right end), a list of rows on the left (a bronze label cell and a dark value cell each), a white
-glowing cursor on the selected row, filigree dividers between groups and a description box on the right that
-explains the selected row.
-
-The window is one Tk canvas at 1000 x 640 logical pixels, scaled to the display. The pictures come from art.py; text,
-flat cells and the orange choices are canvas items. Screens:
-
-    first_run   the dump, the install folder, three choices and Begin Installation
-    home        Play, Updates, the game folder, Saves, Rebuild the Game, Customize Launcher, Settings
-    customize   the colour scheme, the player's own background picture, animations and sounds; Add to Steam
-    color       the Custom scheme's colour picker: a colour square, a hue bar and the hex code
-    saves       Export Save (a zip for a bug report or another player), Import a Save (such a zip), a save folder
-    job         the steps of an install, update or rebuild, with their progress, and Cancel; after a failure Try Again
-                and Copy Report
-    settings    the launcher's choices, the folders, the logs and Uninstall
-    reports     session reports and comments (launcher/telemetry.py): Session Reports, See What Is Sent, Send a
-                Comment
-    consent     the question about session reports, at the first start of each new version while they are not on:
-                Send (focused), Don't Send, See What Is Sent, and a countdown that turns them on
-    sent_view   the exact JSON a session report sends, in a read-only text box in the description's place
-    comment     Send a Comment: a text box for the comment, Attach the Last Log Lines, Send and Cancel
-    uninstall   what to remove, then Uninstall or Cancel
-
-Mouse, keyboard (arrows, Enter or Space, Esc, F5) and an XInput gamepad (d-pad or stick, A, B, Y) all move the cursor.
-
-The look is the player's (Customize Launcher): art.set_theme fills the palette every picture is drawn from, a picture
-of the player's own can replace the backdrop (picture.py), and unless Animations is off the cursor glides between
-rows, a new screen slides in, sparks drift over the backdrop and the sprig bobs in the title band (animate). sound.py
-plays the game's own decide and cancel sounds, read from the player's game, for a choice and for going back.
-"""
 import argparse
 import collections
 import colorsys
@@ -56,39 +24,33 @@ from ..platform import game_executable
 from . import art, picture, sound
 
 W, H = 1000, 640
-BAND = (0, 1000, 56)            # x0, x1, height: the whole top of the window, which is also its title bar
-PIC_TOP = 60                    # the player's background picture starts under the band and its two lines
-TITLE_BUTTONS = (('min', 908, 954), ('close', 954, 1000))   # x ranges on the band
-PANEL = (112, 60, 580)          # x0, top, x1
-ROWS = (140, 552, 96)           # x0, x1, top
-LABEL_W = 222                   # 54 % of the row
+BAND = (0, 1000, 56)
+PIC_TOP = 60
+TITLE_BUTTONS = (('min', 908, 954), ('close', 954, 1000))
+PANEL = (112, 60, 580)
+ROWS = (140, 552, 96)
+LABEL_W = 222
 GAP = 12
-DESC = (614, 336)               # x, width
-P = art.PALETTE                 # the colour scheme in use: art.set_theme changes it in place
-FRAME_MS = 15                   # between two steps of the animations; they move by the time that really passed
-# On X11, Tk blends every picture with transparency in software and reads the screen back to do it, so each step
-# costs far more than on Windows: the animations step half as often there and look the same.
+DESC = (614, 336)
+P = art.PALETTE
+FRAME_MS = 15
 if os.name != 'nt':
     FRAME_MS = 33
-SPARKS = 22                     # the dust drifting over the backdrop
+SPARKS = 22
 DEPTH = {'first_run': 0, 'home': 0, 'job': 1, 'saves': 1, 'settings': 1, 'customize': 1, 'uninstall': 2,
          'color': 2, 'mods': 1, 'mod_order': 2, 'udmabuf': 2, 'reports': 2, 'consent': 1, 'sent_view': 3,
          'comment': 3, 'crash_offer': 1}
-MODS_PAGE = 7     # mods on a page of the Mods screen, beside its other rows
-ORDER_PAGE = 10   # ... of the Load Order screen
-# the Custom scheme's picker (draw_picker), logical pixels: its box (x, top, width, height), the colour square and
-# the hue bar (x0, y0, x1, y1)
+MODS_PAGE = 7
+ORDER_PAGE = 10
 PICKER_BOX = (614, 100, 336, 452)
 SQUARE = (667, 160, 897, 390)
 BAR = (667, 408, 897, 430)
 CUSTOM_LABELS = {'background': 'Background Color', 'panel': 'Panel Color', 'buttons': 'Button Color'}
 CUSTOM_DESC = {'background': 'The color behind the menus.', 'panel': 'The color of the panels and the top bar.',
                'buttons': 'The color of the buttons.'}
-DIMS = (0, 20, 40, 60, 80)      # Background Dimming, in percent
+DIMS = (0, 20, 40, 60, 80)
 SOUND_LEVELS = (('off', 'Off'), ('low', 'Low'), ('medium', 'Medium'), ('high', 'High'))
-REPORT_VALUES = {'': 'Not Asked Yet', 'on': 'On', 'off': 'Off'}   # the settings' telemetry, as Session Reports shows it
-# the text boxes of See What Is Sent and Send a Comment, in the description box's place (PICKER_BOX): the JSON's box
-# and the comment's (x0, y0, x1, y1), logical pixels
+REPORT_VALUES = {'': 'Not Asked Yet', 'on': 'On', 'off': 'Off'}
 SENT_BOX = (632, 200, 932, 520)
 COMMENT_BOX = (640, 158, 924, 312)
 COMMENT_WARNING = ('Your text is sent as you write it: leave out your e-mail or name if you do not want them sent. '
@@ -106,7 +68,7 @@ class Row:
         default_h = {'divider': 26, 'action': 54, 'pair': 44}.get(kind, 64 if big else 40)
         self.h = height or default_h
         self.rect = self.value_rect = None
-        self.parts = []              # pair: [(rect, label, callback)]
+        self.parts = []
 
     @property
     def focusable(self):
@@ -117,9 +79,6 @@ _measured = {}
 
 
 def measure(font, text):
-    """font.measure(text), remembered: the same labels are measured at every redraw (fit_font, fit and the rows'
-    values), and on Linux each measure is a round trip to the X server's fonts that took 1 to 2 ms. A Font's name is
-    never reused, so a font made again (reload_fonts) is measured again."""
     key = (font.name, text)
     w = _measured.get(key)
     if w is None:
@@ -130,7 +89,6 @@ def measure(font, text):
 
 
 def fit(font, text, width):
-    """text shortened in the middle with an ellipsis so it fits width pixels."""
     if measure(font, text) <= width:
         return text
     lo, hi = 1, len(text)
@@ -164,9 +122,6 @@ REPORTS_ON_NOTICE = 'Session reports are on. You can change this in Settings > S
 
 
 def partial_image_gb(game_dir):
-    """The size of what an install that was cut short left of the RomFS image (romfs/romfs.bin.part, up to 26 GB).
-    The next install writes the image anew (tools/make_game.py step_romfs), so that space is the install's to use:
-    the first-run screen counts it as free."""
     try:
         return (Path(game_dir) / 'romfs' / 'romfs.bin.part').stat().st_size / 1e9
     except OSError:
@@ -174,24 +129,14 @@ def partial_image_gb(game_dir):
 
 
 def drop_partial_image(game_dir):
-    """Removes that file (partial_image_gb), so that it does not count against the free space an install asks
-    for."""
     try:
         (Path(game_dir) / 'romfs' / 'romfs.bin.part').unlink(missing_ok=True)
     except OSError:
         pass
 
 
-# Seconds after an update check before the Updates row or F5 starts another. Each check is a request to GitHub,
-# which allows 60 an hour for an address: a player who selected the row 25 times in 90 seconds used the allowance
-# up, and every check of the next hour was refused.
 FORCED_CHECK_PAUSE = 60
 
-# How long an update's rebuild takes, for the Updates row. No single figure holds: a version that changed little
-# compiles a few files and links, minutes; one that changed the lifter translates and compiles the game's code again,
-# and one that changed what the shaders are built with builds all of them into the graphics driver's cache again
-# (tools/make_game.py warm_driver_cache). Players' updates took 24, 34 and 45 minutes where the text said "a few
-# minutes".
 UPDATE_TAKES = ('That takes a few minutes when little changed, and half an hour or more when the game\'s code or '
                 'its shaders are built again.')
 
@@ -204,7 +149,7 @@ class App:
     def __init__(self, root, ctx, args):
         self.root, self.ctx, self.args = root, ctx, args
         self.opened = time.monotonic()
-        self.closed = ''   # why the window was closed, once on_close has run
+        self.closed = ''
         self.layout, self.settings = ctx.layout, ctx.settings
         self.s = self.compute_scale()
         self.sprites = {}
@@ -223,37 +168,33 @@ class App:
         self.check_error = ''
         self.checked_at = 0.0
         self.check_started = 0.0
-        # the update fetched in the background and installed when the game is not running; a checkout and the
-        # selftest have nothing to switch to
         self.bg = jobs.BackgroundUpdate(ctx, lambda a: winsys.restart(self.layout, a),
                                         enabled=not self.layout.dev and not args.selftest)
         self.row_gap = GAP
         self.message = ''
-        self.look_message = ''   # why the last background picture was not taken, in Customize Launcher's descriptions
-        self.save_message = ''   # the last import's result, shown in the import rows' descriptions
-        self.export_message = ''   # the last Export Save result, shown in its description
-        self.steam_message = ''   # the last Add to Steam result, shown in its description
-        self.mods_message = ''   # what the last change on the Mods screen did, shown in its descriptions
-        self.mods_page = 0       # the page of the Mods and Load Order screens
-        self.mods_failed = []    # the mods whose code a build before Play could not take in: Play no longer waits
-        self.steam_busy = False   # Add to Steam is making the pictures or writing Steam's files
+        self.look_message = ''
+        self.save_message = ''
+        self.export_message = ''
+        self.steam_message = ''
+        self.mods_message = ''
+        self.mods_page = 0
+        self.mods_failed = []
+        self.steam_busy = False
         self.steam_flatpak_logged = False
-        self.pick = None   # the colour picker: {'slot', 'h', 's', 'v'} (HSV in 0..1) of the colour being picked
-        self.pick_drag = None   # 'square' or 'bar' while the mouse drags on the picker
-        self.hex_entry = None   # the box the hex code is typed into
-        self.look_after = None   # the redraw a picked colour waits for (look_soon)
+        self.pick = None
+        self.pick_drag = None
+        self.hex_entry = None
+        self.look_after = None
         self.dumps = None
         self.dump_search = None
         self.uninstall_game = False
-        self.game_run = None   # the Play being followed (GameRun), until watch_game sees its end
-        # session reports and comments (launcher/telemetry.py): the requests run on threads (tasks, polled by tick)
+        self.game_run = None
         telemetry.forget_install_id(self.settings, ctx.log)
         self.reporter = telemetry.Reporter(self.settings, ctx.version, ctx.log)
         self.tasks = telemetry.Tasks()
-        self.question = None            # the question about session reports while it is open: 'ask' (its answer
-                                        # counts) or 'preview' (--screen consent and the selftest: nothing changes)
-        self.question_deadline = None   # time.monotonic() at which the open question turns reports on; None: stopped
-        self.question_left = None       # the seconds its countdown last drew
+        self.question = None
+        self.question_deadline = None
+        self.question_left = None
         self.reports_started = False
         self.offer = None
         self.offer_opened = 0.0
@@ -261,16 +202,16 @@ class App:
         if telemetry.enabled():
             crash_offer.log_state(self.settings, ctx.log)
         self.sent_note = ''
-        self.sent_return = 'home'       # ... and See What Is Sent
-        self.sent_text = ''             # the text See What Is Sent shows: the bytes a report sends
-        self.sent_example = False       # ... made from an example, as the game has written no summary yet
-        self.session_sending = False    # a session report is on its way
-        self.comment_draft = ''         # the comment as typed so far
-        self.comment_log = False        # Attach the Last Log Lines
-        self.comment_message = ''       # the last Send's result
+        self.sent_return = 'home'
+        self.sent_text = ''
+        self.sent_example = False
+        self.session_sending = False
+        self.comment_draft = ''
+        self.comment_log = False
+        self.comment_message = ''
         self.comment_busy = False
-        self.overlay = None             # the text box of See What Is Sent or Send a Comment
-        self.typing = False             # the comment's box has the keyboard
+        self.overlay = None
+        self.typing = False
         self.cursor_frames, self.cursor_k = [], 0
         self.last_second = 0
         self.gamepad = winsys.Gamepad()
@@ -278,14 +219,10 @@ class App:
         self.tb_hover = None
         self.drag = None
         self.ico = None
-        # the look: the colour scheme, the player's background picture at the window's size (None: the scheme's own
-        # backdrop), the sounds (none while the selftest draws the screens)
         art.set_theme(self.settings.get('theme'), self.custom_colors())
         self.bg_store = self.layout.data / 'background.npy'
         self.picture = None
         self.sounds = sound.Sounds(self.layout.cache, 'off' if args.selftest else self.settings.get('sounds'), ctx.log)
-        # the animations' state (animate): the clock and the last step's time, the cursor's place on its way to the
-        # focused row, how far the screen still stands from its place after a change, the sparks, the sprig and its halo
         self.anim_t = 0.0
         self.anim_last = time.perf_counter()
         self.cur_xy = self.cur_target = None
@@ -295,9 +232,9 @@ class App:
         self.sparks = []
         self.sprig_xy = None
         self.halo = []
-        self.sprig_at = self.halo_k = None   # where step_backdrop last put the sprig, the halo's frame
-        self.lit = None       # the row drawn as the focused one (render, refocus)
-        self.moving = False   # animate is stepping (Animations on, the window shown and in front)
+        self.sprig_at = self.halo_k = None
+        self.lit = None
+        self.moving = False
 
         root.title(NAME)
         root.resizable(False, False)
@@ -318,10 +255,8 @@ class App:
         self.root.after(50, self.poll_gamepad)
         self.root.after(60000, self.minute)
         self.center()
-        self.framed = not winsys.frameless(root)   # Windows: the band is the title bar
+        self.framed = not winsys.frameless(root)
         self.root.after(60, self.native_window)
-
-    # ---------------------------------------------------------------- scale, icon, fonts
 
     def compute_scale(self):
         try:
@@ -343,8 +278,6 @@ class App:
         self.root.geometry(f'{w}x{h}+{x}+{y}')
 
     def set_icon(self):
-        """The leaf sprig as the window's icon: Tk's photo icon everywhere, and on Windows the .ico set on the window
-        itself, so the taskbar button shows NX2Saria rather than Python's icon."""
         try:
             self.photos['icon'] = art.photo(self.root, art.sprig_icon(64))
             self.root.iconphoto(True, self.photos['icon'])
@@ -365,8 +298,6 @@ class App:
             pass
 
     def load_fonts(self):
-        """The game's Cetra Display when this PC has decoded it from the player's game (data/cache/fonts), else the
-        system's interface font."""
         fams = {}
         for role, (path, family) in gamefiles.cached_fonts(self.layout).items():
             if winsys.register_font(path):
@@ -374,7 +305,6 @@ class App:
         available = set(tkfont.families(self.root))
         fallback = next((f for f in ('Segoe UI', 'Source Sans 3', 'Noto Sans', 'DejaVu Sans', 'Helvetica')
                          if f in available), 'TkDefaultFont')
-        # Every text is in the game's Cetra Display; only the build log keeps a monospaced face so its lines align.
         text = title = fams.get('title') if fams.get('title') in available else fallback
         mono = next((f for f in ('Consolas', 'Cascadia Mono', 'DejaVu Sans Mono', 'Courier New') if f in available),
                     'TkFixedFont')
@@ -395,7 +325,6 @@ class App:
                   'badge': F(text, 15, 'bold'), 'action_big': F(text, 21)}
 
     def fit_font(self, font, text, width, smallest=0.72):
-        """font, or the same face a few pixels smaller so text fits width (down to smallest of its size)."""
         if measure(font, text) <= width:
             return font
         family, px, weight = self.fspec[id(font)]
@@ -408,8 +337,6 @@ class App:
         return self.fcache[(family, max(7, int(px * smallest)), weight)]
 
     def fonts_from_game(self, game_dir='', dump=''):
-        """Decode the game's fonts and its interface sounds in the background, redraw with the fonts and take up
-        the sounds."""
         fonts, sounds = not self.game_fonts, not self.sounds.game
         if not fonts and not sounds:
             return
@@ -418,9 +345,6 @@ class App:
             got = heard = {}
             try:
                 if fonts:
-                    # The cached files are registered (load_fonts) and were not usable, or this would not run:
-                    # registered, Windows keeps them open, and decoding them again failed with "Permission denied"
-                    # at every start, so a cache file that had gone bad was never replaced.
                     for path, _family in gamefiles.cached_fonts(self.layout).values():
                         winsys.unregister_font(path)
                     got = gamefiles.extract_fonts(self.layout, game_dir, dump)
@@ -444,22 +368,15 @@ class App:
         self.draw_static()
         self.render()
 
-    # ---------------------------------------------------------------- pictures
-
     def sprite(self, key, make):
         if key not in self.sprites:
             self.sprites[key] = art.photo(self.root, make())
         return self.sprites[key]
 
     def animated(self):
-        """Animations on (Customize Launcher); never while the selftest draws the screens, whose pictures must not
-        depend on the moment they are taken."""
         return bool(self.settings.get('animations')) and not self.args.selftest
 
     def load_picture(self):
-        """The player's background at the size of the window below the title band, when one is set and its kept copy
-        is readable. A copy an older launcher kept for the whole window is made again from the picture when the file
-        is still there, so no more of it is cut off than the new shape needs."""
         self.picture = None
         src = self.settings.get('background')
         if src:
@@ -474,7 +391,6 @@ class App:
                 self.ctx.log(f'background: {self.bg_store} is missing or unreadable; the colour scheme\'s backdrop')
 
     def see_through(self):
-        """How solid the panel and the description box are: a little see-through over the player's own picture."""
         return 0.8 if self.picture is not None else 1.0
 
     def draw_static(self):
@@ -484,7 +400,7 @@ class App:
         c.create_image(0, 0, anchor='nw', tags='static',
                        image=self.sprite('backdrop', lambda: art.backdrop(self.X(W), self.X(H), s, self.picture, dim,
                                                                           self.X(PIC_TOP))))
-        self.make_sparks()   # over the backdrop, under the panel and the band
+        self.make_sparks()
         bx0, bx1, bh = BAND
         px0, ptop, px1 = PANEL
         c.create_image(self.X(px0), self.X(ptop), anchor='nw', tags='static',
@@ -498,14 +414,13 @@ class App:
         title_w = measure(self.f['band'], NAME)
         gap = self.X(12)
         x = self.X(W / 2) - (ew + gap + title_w) // 2
-        # A soft green halo behind the sprig pulses while the animations run.
         size = self.X(bh) - 2
         if ('halo', size) not in self.sprites:
             self.sprites[('halo', size)] = [art.photo(self.root, f) for f in art.halo_frames(size)]
         self.halo = self.sprites[('halo', size)]
         c.create_image(x + ew // 2, self.X(bh / 2), image=self.halo[0], tags=('static', 'halo'))
         self.sprig_xy = (x, self.X(bh / 2))
-        self.sprig_at = self.halo_k = None   # drawn again at its place and first frame: step_backdrop starts over
+        self.sprig_at = self.halo_k = None
         c.create_image(x, self.X(bh / 2), anchor='w', image=emblem, tags=('static', 'sprig'))
         tx = x + ew + gap
         c.create_text(tx + 1, self.X(bh / 2) + self.X(2), text=NAME, anchor='w', font=self.f['band'],
@@ -517,8 +432,6 @@ class App:
         self.draw_title_buttons()
 
     def make_sparks(self):
-        """The dust over the backdrop: SPARKS soft dots of three sizes, each with its own speed, sway and twinkle, at
-        places of their own from the first frame on. None while Animations is off."""
         self.sparks = []
         if not self.animated():
             return
@@ -526,7 +439,6 @@ class App:
         for i in range(SPARKS):
             size = self.X((5, 8, 12)[i % 3])
             pics = [self.sprite(('spark', size, a), lambda sz=size, al=a: art.spark(sz, al)) for a in (0.9, 0.55, 0.25)]
-            # logical pixels: its speed upwards a second, how far it sways to each side and how fast
             sp = {'x': rnd.uniform(0, W), 'y': rnd.uniform(BAND[2], H), 'vy': rnd.uniform(4, 14),
                   'sway': rnd.uniform(4, 16), 'rate': rnd.uniform(0.4, 1.1), 'phase': rnd.uniform(0, 6.28),
                   'pics': pics, 'shown': 0}
@@ -534,7 +446,6 @@ class App:
             self.sparks.append(sp)
 
     def apply_look(self):
-        """Draw everything again after the colour scheme, the background or Animations changed."""
         art.set_theme(self.settings.get('theme'), self.custom_colors())
         self.sprites.clear()
         self.root.configure(background=P['window'])
@@ -544,7 +455,6 @@ class App:
         self.render()
 
     def draw_title_buttons(self):
-        """Minimise and close at the band's right end, lit when the mouse is over them."""
         c, X = self.canvas, self.X
         c.delete('tb')
         bh = X(BAND[2])
@@ -563,8 +473,6 @@ class App:
             if self.X(x0) <= x < self.X(x1):
                 return kind
         return None
-
-    # ---------------------------------------------------------------- input
 
     def bind_input(self):
         r = self.root
@@ -609,7 +517,7 @@ class App:
 
     def move(self, d):
         self.question_touched()
-        if self.screen == 'sent_view' and self.overlay:   # up and down scroll the JSON; Back is the only row
+        if self.screen == 'sent_view' and self.overlay:
             self.overlay.yview_scroll(d * 3, 'units')
             return
         if self.typing:
@@ -630,14 +538,14 @@ class App:
         if not r:
             return
         if r.kind == 'toggle':
-            r.on(d < 0)                     # left = On, right = Off
+            r.on(d < 0)
         elif r.kind == 'enum':
             (r.left if d < 0 else r.right)()
         elif r.kind == 'pair':
             r.pick = max(0, min(len(r.actions) - 1, getattr(r, 'pick', 0) + d))
         else:
             return
-        if r.kind != 'pair':   # a switch or a choice changed
+        if r.kind != 'pair':
             self.sounds.play('select')
         self.render()
 
@@ -662,11 +570,10 @@ class App:
         self.render()
 
     def home_row(self, label):
-        """The index of the home screen's row with this label, for coming back to it."""
         return next((i for i, r in enumerate(self.rows_home()) if r.label == label), None)
 
     def back(self):
-        if self.screen == 'comment' and self.typing:   # B or Esc first leaves the comment's box
+        if self.screen == 'comment' and self.typing:
             self.leave_comment_box()
             return
         if self.offer_guarded():
@@ -676,7 +583,7 @@ class App:
             self.sounds.play('back')
         if self.screen == 'crash_offer':
             self.offer_end('closed')
-        elif self.screen == 'consent':   # Esc or B closes the question, which turns reports on as the screen says
+        elif self.screen == 'consent':
             self.question_end('closed')
         elif self.screen == 'sent_view':
             self.show(self.sent_return, self.return_focus(self.sent_return, 'See What Is Sent'))
@@ -722,7 +629,7 @@ class App:
         if self.pick_drag:
             self.picker_at(e.x, e.y, self.pick_drag)
             return
-        if self.drag:   # moving the window without the system's help (Linux)
+        if self.drag:
             dx, dy = self.drag
             self.root.geometry(f'+{e.x_root - dx}+{e.y_root - dy}')
 
@@ -757,7 +664,7 @@ class App:
             self.set_tb_hover(None)
             winsys.minimize(self.root)
             return
-        if e.y < self.X(BAND[2]):   # the band moves the window, like a title bar
+        if e.y < self.X(BAND[2]):
             if not winsys.start_drag(self.root):
                 self.drag = (e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y())
             return
@@ -798,14 +705,9 @@ class App:
             self.pick_changed(final=True)
 
     def on_close(self, why='closed by the player', signalled=None):
-        """Close the window: the × of the title band or of the system's frame, Alt+F4, or a signal that ends the
-        process (main, errors.on_end_signals), whose handler ran at time.monotonic() signalled. The line it logs tells
-        a closed window from one that died, whose log ends without it, and for a signal how long the close took."""
         if self.closed:
             return
         self.closed = why
-        # The player closed the window over the open question: reports turn on, as the screen says. A signal that
-        # ends the process is no answer: the next start asks again.
         if self.question == 'ask' and signalled is None:
             self.question, self.question_deadline = None, None
             self.reporter.answer_question('closed')
@@ -821,55 +723,47 @@ class App:
                      f'{time.monotonic() - self.opened:.0f} s{late}{busy}')
         if self.job and self.job.result is None:
             self.job.cancel()
-        if self.bg.staging():   # what it downloaded is resumed, and its unfinished folder replaced, next time
+        if self.bg.staging():
             self.bg.job.cancel()
         self.sounds.stop()
         self.root.destroy()
-
-    # ---------------------------------------------------------------- screens
 
     def start(self):
         a = self.args
         gd = self.settings.get('game_dir')
         if a.rolled_back:
             self.ctx.log(f'the stub went back from {a.rolled_back} to {self.layout.version}')
-            self.settings['rolled_back'] = versions.display(a.rolled_back)   # never installed again by itself
+            self.settings['rolled_back'] = versions.display(a.rolled_back)
             self.settings.save()
-        if self.ctx.zstd_missing:   # told at once, not when Begin Installation stops at the build tools
+        if self.ctx.zstd_missing:
             self.message = self.ctx.zstd_missing
-        left = None if a.selftest else jobs.interrupted(self.ctx)   # before any job of this start leaves its own
+        left = None if a.selftest else jobs.interrupted(self.ctx)
         if left:
             self.ctx.log(f'the launcher was stopped during {left["task"]} (started '
                          f'{time.strftime("%Y-%m-%d %H:%M", time.localtime(left.get("started") or 0))}, game folder '
                          f'{left.get("game_dir") or "none"})')
         for pattern in ('python.old*', 'python.failed*'):
-            for old in self.layout.root.glob(pattern):   # the Python an update replaced (launcher/native/nx2saria.c)
+            for old in self.layout.root.glob(pattern):
                 shutil.rmtree(old, ignore_errors=True)
         if gd or self.settings.get('dump'):
             self.fonts_from_game(gd, self.settings.get('dump'))
         if a.uninstall:
             self.show('uninstall')
         elif a.continue_update is not None and not a.rolled_back:
-            # after a rollback the stub passes the failed version's --continue-update on to this one: the game was
-            # never rebuilt for the new version, so there is nothing to finish, and home tells why the version is back
             if not a.selftest and build.installed(gd) and self.reporter.question_due():
                 self.ctx.log('telemetry: the question waits for the update to finish')
             self.run_job(jobs.ContinueUpdateJob(self.ctx, gd if build.installed(gd) else '',
                                                 a.continue_update, self.settings.get('dump')), 'home')
         elif build.installed(gd):
-            # also a game whose last update stopped in the compile (build.installed): home, where Play starts the
-            # build from before the update and Rebuild the Game finishes it, not the first-run screen and its dump
             self.show('home')
             self.after_update_notice()
             if left and not self.message:
-                # make_game.py keeps the old exe until the new one is linked and records each finished step, so the
-                # game folder is playable and a rebuild goes on from there; the player is told that it is due
                 self.message = (f'NX2Saria was closed or stopped during {left["task"]}, which did not finish. Play '
                                 'starts the last finished build; Rebuild the Game finishes what was left.')
                 self.render()
             if self.install_staged('a staged update waited for the launcher to start'):
                 return
-            if a.play:   # Play from Steam with a mod's code to build in first (play_only)
+            if a.play:
                 self.play()
                 return
             if self.settings.get('auto_check'):
@@ -892,10 +786,6 @@ class App:
         self.start_reports(after)
 
     def start_reports(self, after=''):
-        """Session reports on the first home screen of an installed game in a run of the launcher (never over the
-        first run's screen or a job's): a summary left by a run this launcher did not watch (Steam, a shortcut, a
-        crash) goes if reports are on; reports the question's countdown or its closing turned on are told once; and
-        the first start of a new version asks while they are not on (telemetry.Reporter.question_due)."""
         self.after_game_reports(startup=True)
         if not self.message and self.reporter.take_notice():
             self.message = REPORTS_ON_NOTICE
@@ -908,8 +798,6 @@ class App:
             self.offer_crash_log()
 
     def open_screen(self, name):
-        """--screen: one of the session reports' screens at once, for looking at it or taking its picture
-        (docs/launcher.md). Nothing is sent by opening one. Without a server (telemetry.enabled) none opens."""
         if not telemetry.enabled():
             self.ctx.log(f'--screen {name}: no telemetry server is set (NX2SARIA_TELEMETRY_URL); the screen is hidden')
             return
@@ -929,7 +817,6 @@ class App:
 
     def show(self, screen, focus=None):
         if screen != self.screen and self.screen is not None and self.animated():
-            # another screen slides into place: from the right when it lies deeper, from the left on the way back
             deeper = DEPTH.get(screen, 1) >= DEPTH.get(self.screen, 0)
             self.slide = float(self.X(44) if deeper else -self.X(44))
         self.close_hex()
@@ -944,11 +831,7 @@ class App:
             self.open_overlay()
         self.render()
 
-    # ---- first run
-
     def log_first_run(self):
-        """The first-run screen's folder and dump into launcher.log: the line that tells, in a log that ends here,
-        that the window was up and what it offered."""
         gd = self.game_dir()
         chosen = 'chosen' if self.settings.get('game_dir') else 'default'
         dump = self.settings.get('dump')
@@ -1015,7 +898,7 @@ class App:
                             else '') + '.',)
         gd = self.game_dir()
         need = 34
-        free = free_gb(gd) + partial_image_gb(gd)   # Begin Installation removes the partial image (begin_install)
+        free = free_gb(gd) + partial_image_gb(gd)
         folder_desc = (f'The game is built into this folder. {free:.0f} GB free on {drive_of(gd)}; the game needs '
                        f'about {need} GB. Select this row to choose another folder.',)
         ready = bool(dump)
@@ -1063,14 +946,7 @@ class App:
                          'released, which may have new problems.',))
 
     def discord_row(self, game_dir):
-        """The game's discord_rpc setting (runtime/discord_rpc.c), kept in nx2saria.ini or an existing nx2navi.ini as the game's own
-        menu keeps it; the game reads it when it starts. On unless the file says 0, as the game reads it (cfg_bool,
-        default on)."""
         def on(v):
-            # Not while the game runs, as the mods' switches (switch_mod): the game writes the same file when a menu
-            # setting changes. Each side reads the file, changes its own lines and puts a new file in place, so of
-            # two changes in the same moment the second drops the first. The game reads this setting only when it
-            # starts, and its own menu switches it meanwhile.
             if self.game_busy(game_dir):
                 self.message = ('Quit the game first, or switch Discord Status in the game\'s menu (Game tab): the '
                                 'game writes its settings file while it runs.')
@@ -1084,7 +960,7 @@ class App:
         def get():
             try:
                 return gameini.get(game_dir, 'discord_rpc') != '0'
-            except OSError:   # settings file there but unreadable: the game's default
+            except OSError:
                 return True
         return Row('toggle', 'Discord Status', on=on, get=get,
                    desc=('Set your own Discord application ID as NX2SARIA_DISCORD_APP_ID or discord_app_id in '
@@ -1127,12 +1003,12 @@ class App:
             self.choose_dump()
             return
         gd = self.game_dir()
-        too_long = long_path_problem(gd)   # told here, not as a missing file halfway through the build
+        too_long = long_path_problem(gd)
         if too_long:
             self.message = App.friendly(too_long)
             self.render()
             return
-        drop_partial_image(gd)   # before the free space is measured
+        drop_partial_image(gd)
         if free_gb(gd) < 34 and not (Path(gd) / 'romfs' / 'romfs.bin').is_file():
             self.message = f'{drive_of(gd)} has {free_gb(gd):.0f} GB free; the game needs about 34 GB.'
             self.render()
@@ -1142,8 +1018,6 @@ class App:
         if self.settings.get('desktop_shortcut'):
             winsys.desktop_shortcut(self.layout, True)
         self.run_job(jobs.InstallJob(self.ctx, dump, gd), 'home', back='first_run')
-
-    # ---- home
 
     def rows_home(self):
         gd = self.settings.get('game_dir')
@@ -1177,7 +1051,6 @@ class App:
             upd = Row('value', 'Updates', f'Version {mine}', 'normal', big=True, icon='refresh',
                       on=lambda: self.check_now(force=True),
                       desc=(f'You have NX2Saria {mine}. Select this row to look for a new version.',))
-        # an update that stopped in the compile left no finished build on record, but the exe of the build before it
         unfinished = not built and build.installed(gd)
         rebuild_value = (f'Built with {versions.display(built)}' if built else
                          'Not Finished' if unfinished else 'Not built')
@@ -1211,8 +1084,6 @@ class App:
                 desc=('Updates, the game folder, the logs and uninstalling.',)),
         ]
 
-    # ---- customize
-
     def rows_customize(self):
         names = list(art.THEMES)
         custom = bool(self.settings.get('background'))
@@ -1220,8 +1091,6 @@ class App:
         def scheme(d):
             self.settings['theme'] = names[(names.index(art.theme) + d) % len(names)]
             self.settings.save()
-            # the rows again: Background Color and Button Color are there only while the scheme is Custom; the
-            # cursor stays on Color Scheme, the first row
             art.set_theme(self.settings['theme'], self.custom_colors())
             self.rows = self.rows_customize()
             self.apply_look()
@@ -1247,7 +1116,7 @@ class App:
             self.settings['sounds'] = keys[max(0, min(len(keys) - 1, at + d))]
             self.settings.save()
             self.sounds.set_level(self.settings['sounds'])
-            self.sounds.play('select')   # the new loudness, heard at once
+            self.sounds.play('select')
 
         bg_desc = ('Use a picture of your own as the background.',)
         if self.look_message:
@@ -1291,8 +1160,6 @@ class App:
         ]
         return rows
 
-    # ---- the Custom scheme's colour picker
-
     def custom_colors(self):
         return {slot: self.settings.get('custom_' + slot, '') for slot in art.CUSTOM_SLOTS}
 
@@ -1307,7 +1174,6 @@ class App:
         return art.hexcode(*colorsys.hsv_to_rgb(p['h'], p['s'], p['v']))
 
     def pick_step(self, key, d):
-        """Hue by 5 degrees along the hue bar, saturation and brightness by 5 % (the arrows and the gamepad)."""
         p = self.pick
         if key == 'h':
             p['h'] = (round(p['h'] * 72) + d) % 72 / 72.0
@@ -1316,8 +1182,6 @@ class App:
         self.pick_changed(final=True)
 
     def pick_changed(self, final):
-        """The picked colour into the settings and onto the screen: the picker at once, the launcher's colours a
-        moment later (look_soon), so dragging over the square stays smooth. final: saved to launcher.json."""
         if not self.pick:
             return
         self.settings['custom_' + self.pick['slot']] = self.pick_hex()
@@ -1372,8 +1236,6 @@ class App:
         ]
 
     def picker_at(self, x, y, part=None):
-        """The colour under the mouse at (x, y) on the square or the bar into the picker; which of the two it was
-        (part: the one being dragged, which takes the mouse also outside it), or None."""
         X, p = self.X, self.pick
 
         def inside(box, m=0):
@@ -1397,7 +1259,6 @@ class App:
         return part
 
     def type_hex(self):
-        """A box over the Hex Code row to type a colour into, like #3A7BD5; Enter takes it, Esc leaves it."""
         r = self.focused()
         if self.hex_entry or not r or not r.value_rect:
             return
@@ -1430,7 +1291,6 @@ class App:
 
     @staticmethod
     def parse_hex(text):
-        """(r, g, b) in 0..255 of a typed hex code (#3A7BD5, 3A7BD5 or #37D), or None."""
         t = text.strip().lstrip('#').lower()
         if len(t) == 3:
             t = ''.join(ch * 2 for ch in t)
@@ -1459,8 +1319,6 @@ class App:
                 pass
 
     def draw_picker(self):
-        """The colour picker in the description box's place: the slot's name, the colour square of the picked hue
-        with a ring on the picked colour, the hue bar, and the colour itself with its hex code."""
         c, X, s, p = self.canvas, self.X, self.s, self.pick
         bx, by, bw, bh = self.side_box()
         self.text(X(bx + 26), X(by + 34), CUSTOM_LABELS[p['slot']], self.f['heading'], P['text_bright'])
@@ -1485,7 +1343,6 @@ class App:
         self.text(X(bx + 26), X(526), 'Click or drag the square and the bar.', self.f['small'], P['muted'])
 
     def steam_row(self):
-        """Add to Steam: the game in the Steam library, started from there without the launcher (launcher/steam.py)."""
         found = steam.find_steam()
         if sys.platform.startswith('linux') and found and steam.is_flatpak_root(found[0]) and \
                 not steam.native_steam_roots():
@@ -1540,7 +1397,7 @@ class App:
                 text, ok = steam.add(self.layout, gd, dump, self.ctx.log), True
             except steam.SteamError as e:
                 text, ok = str(e), False
-            except Exception as e:   # a Steam folder in a state nobody expected: say so instead of dying
+            except Exception as e:
                 import traceback
                 self.ctx.log('steam: ' + traceback.format_exc())
                 text, ok = f'Adding to Steam failed: {e}', False
@@ -1592,7 +1449,6 @@ class App:
         self.show('customize', 1)
 
     def save_waiting(self, gd):
-        """A save put into the game folder's saves folder (a shared zip, a save folder), waiting to be imported."""
         if gd and Path(gd).is_dir():
             try:
                 saves.ensure_saves_dir(gd)
@@ -1602,7 +1458,6 @@ class App:
         return False
 
     def saves_row(self, gd):
-        """Saves: the screen that exports and imports saves; orange while a save waits in the saves folder."""
         ready = self.save_waiting(gd)
         desc = ('Export your save into one zip, to attach to a bug report or give to another player, or import a '
                 'save someone shared, a Switch save backup or an emulator\'s save.',)
@@ -1610,8 +1465,6 @@ class App:
             desc += ('A save waits in the saves folder of the game folder: select this row, then Import a Save.',)
         return Row('value', 'Saves', 'Import Waiting' if ready else '', 'orange_arrow' if ready else 'arrow',
                    on=lambda: self.show('saves'), desc=desc)
-
-    # ---- saves
 
     def export_dir(self):
         d = self.settings.get('save_export_dir')
@@ -1686,7 +1539,7 @@ class App:
             else:
                 extra = ' with the game\'s log and settings' if r['extras'] else ''
                 self.export_message = f'Exported {r["files"]} files{extra} to {r["path"]}.'
-                if not r['files']:   # a game that stopped before its first save: the report files alone
+                if not r['files']:
                     self.export_message = (f'The game has no save yet: exported its log and settings alone to '
                                            f'{r["path"]}.')
                 try:
@@ -1696,8 +1549,6 @@ class App:
         self.show('saves', self.focus)
 
     def import_saves(self, folder):
-        """Import a Save (folder False): what waits in the saves folder, else a zip the player picks. Import a Save
-        Folder (folder True): a folder the player picks; the saves folder itself takes what waits there."""
         gd = self.settings.get('game_dir')
         if not gd or not Path(gd).is_dir():
             self.save_message = 'Install the game first.'
@@ -1725,7 +1576,6 @@ class App:
 
     @staticmethod
     def imported_text(r):
-        """What an import did, for the import rows' descriptions."""
         m = r.get('manifest')
         if m:
             text = (f'Save imported from {r["source"].name} (exported {str(m.get("exported", ""))[:10]} with NX2Saria '
@@ -1736,11 +1586,7 @@ class App:
             text = f'Save imported: {r["files"]} files from {r["source"].name}.'
         return text + (f' Your old save is in {shown_path("saves", r["backup"].name)}.' if r['backup'] else '')
 
-    # ---- mods
-
     def mod_list(self, gd, details=True):
-        """The game folder's mods in the game's load order ([] before the game is installed or when the folder cannot
-        be read)."""
         if not gd or not Path(gd).is_dir():
             return []
         try:
@@ -1750,7 +1596,6 @@ class App:
             return []
 
     def mods_row(self, gd):
-        """Mods: the screen of the game's mods; orange while a mod's code waits to be built into the game."""
         found = self.mod_list(gd, details=False)
         try:
             waiting = mods.code_waiting(gd) if found else []
@@ -1952,7 +1797,6 @@ class App:
                 'notes_version': r.version}
 
     def staged_desc(self, m):
-        """The Updates row of a release downloaded in the background (BackgroundUpdate.ready)."""
         nv, mine = m['version'], versions.display(self.layout.version)
         notes = feed.plain_notes(m.get('notes', ''))
         if self.settings.get('auto_install'):
@@ -2004,7 +1848,7 @@ class App:
 
     def check_done(self):
         c = self.check
-        self.bg.checked()   # the release found is staged at the next tick, also one whose staging failed before
+        self.bg.checked()
         if c.result == 'ok':
             self.release = c.release
             self.checked_at = time.time()
@@ -2064,9 +1908,6 @@ class App:
         self.root.after(1000, self.watch_game)
 
     def watch_game(self):
-        """Once a second while the game Play started runs, its Restart's copies too (GameRun.running); then the window
-        comes back and the end goes into launcher.log, into the game's log when that has no line of it, and on home
-        when there is something to tell (game_end)."""
         run = self.game_run
         if run and run.running():
             self.root.after(1000, self.watch_game)
@@ -2074,7 +1915,7 @@ class App:
         self.game_run = None
         self.root.deiconify()
         self.root.lift()
-        try:   # the pad and the animations follow the keyboard focus (winsys.in_front)
+        try:
             self.root.focus_force()
         except tk.TclError:
             pass
@@ -2098,8 +1939,6 @@ class App:
             self.render()
 
     def start_update(self):
-        """The Updates row: install the release staged in the background, have the one downloading install once it
-        is staged, or else download it here with its steps on screen (as when the background download failed)."""
         gd = self.settings.get('game_dir')
         if gd and build.game_running(gd):
             self.message = 'Close the game first: the update rebuilds it.'
@@ -2120,8 +1959,6 @@ class App:
         self.run_job(jobs.UpdateDownloadJob(self.ctx, self.release), 'home')
 
     def install_staged(self, why, asked=False):
-        """Install the release staged in the background when nothing stops it (BackgroundUpdate.install) and close
-        for the restart into it; True when it was installed."""
         if self.job and self.job.result is None:
             return False
         running = bool(self.game_run and self.game_run.alive())
@@ -2138,12 +1975,10 @@ class App:
         return True
 
     def background_event(self, ev):
-        """A background staging started or ended (BackgroundUpdate.poll)."""
         if ev in ('staged', 'failed') and (self.bg.asked or self.bg.waiting):
             if self.install_staged('the download finished'):
                 return
             if ev == 'failed' and self.bg.asked:
-                # the player chose to update: download it here instead, where its error and Try Again show
                 self.bg.asked = False
                 gd = self.settings.get('game_dir')
                 if (self.screen == 'home' and self.release and jobs.update_available(self.ctx, self.release)
@@ -2157,8 +1992,6 @@ class App:
     def start_rebuild(self):
         gd = self.settings.get('game_dir')
         self.run_job(jobs.RebuildJob(self.ctx, gd, self.settings.get('dump')), 'home')
-
-    # ---- settings
 
     def rows_settings(self):
         gd = self.settings.get('game_dir')
@@ -2271,25 +2104,19 @@ class App:
         self.message = 'No system changes were made.'
         self.show('settings')
 
-    # ---- session reports and comments (launcher/telemetry.py, docs/telemetry.md)
-
     @staticmethod
     def row_index(rows, label):
         return next((i for i, r in enumerate(rows) if r.label == label), None)
 
     def return_focus(self, screen, label=None):
-        """The row to come back to on screen: label's, else home's Play or the reports screen's first row."""
         if screen == 'home':
             return 0
         rows = getattr(self, 'rows_' + screen)()
         return self.row_index(rows, label) if label else None
 
     def after_game_reports(self, startup=False):
-        """After the game ended (watch_game) or when the launcher opens (start): with session reports on, the
-        pending summary goes in the background; else nothing is sent. The question about them is asked by start,
-        not here. Always False (no screen opens)."""
         gd = self.settings.get('game_dir')
-        if not gd or not telemetry.enabled():   # no server: no question, nothing made or sent
+        if not gd or not telemetry.enabled():
             return False
         if startup:
             telemetry.synthesize_crash(gd, self.ctx.log)
@@ -2300,8 +2127,6 @@ class App:
         return False
 
     def send_pending(self):
-        """The pending session report, sent on a thread (Reporter.prepare_session refuses it unless reports are
-        on)."""
         gd = self.settings.get('game_dir')
         if self.session_sending or not gd:
             return
@@ -2315,12 +2140,6 @@ class App:
             self.reporter.finish_session(gd, req, answer)
         self.tasks.start(lambda: self.reporter.post(req), done)
 
-    # The question about session reports (docs/telemetry.md "When the launcher asks"). start opens it at the first
-    # start of a launcher version while reports are not on. Send is focused. It ends with Send or Don't Send; closing
-    # it (Esc, B, the window's close) and QUESTION_SECONDS without any input turn reports on as well, which the
-    # screen says in its first line, with the seconds left. Any input stops the countdown for good: a key, a button,
-    # the mouse moving over the window, opening See What Is Sent.
-
     def open_question(self, preview=False, countdown=True):
         self.question = 'preview' if preview else 'ask'
         self.question_deadline = time.monotonic() + telemetry.QUESTION_SECONDS if countdown and not preview else None
@@ -2328,7 +2147,6 @@ class App:
         self.show('consent')
 
     def question_touched(self):
-        """Any input while the question is open: the countdown stops and does not start again."""
         if self.question and self.question_deadline is not None:
             self.question_deadline = None
             self.ctx.log('telemetry: the question\'s countdown stopped at the first input')
@@ -2336,13 +2154,11 @@ class App:
                 self.render()
 
     def question_seconds(self):
-        """The whole seconds left on the open question's countdown; None when it is stopped."""
         if self.question_deadline is None:
             return None
         return max(0, math.ceil(self.question_deadline - time.monotonic()))
 
     def question_tick(self):
-        """From tick: the countdown's end turns reports on; each new second is drawn."""
         if self.question != 'ask' or self.question_deadline is None or self.screen != 'consent':
             return
         left = self.question_seconds()
@@ -2352,20 +2168,16 @@ class App:
             self.render()
 
     def set_waiting_aside(self):
-        """The summary that waited when the question was answered is never sent: the first report is the one of the
-        next session played."""
         gd = self.settings.get('game_dir')
         if gd:
             telemetry.mark_sent(gd)
 
     def question_end(self, how):
-        """The question's end: 'send', "don't send", 'closed' or 'timeout' (telemetry.Reporter.answer_question). A
-        preview changes nothing."""
         was, self.question, self.question_deadline = self.question, None, None
         if was == 'ask':
             self.reporter.answer_question(how)
             self.set_waiting_aside()
-            if how in ('closed', 'timeout'):   # said now, and once more at the next start (start_reports)
+            if how in ('closed', 'timeout'):
                 self.message = REPORTS_ON_NOTICE
         self.show('home', 0)
         if was == 'ask':
@@ -2503,8 +2315,6 @@ class App:
         ]
 
     def open_sent(self, came_from):
-        """See What Is Sent: the bytes the pending report would send (telemetry.body of telemetry.payload), or an
-        example's when the game has written none."""
         self.question_touched()
         summary = telemetry.pending_summary(self.settings.get('game_dir'))
         self.sent_example = summary is None
@@ -2572,8 +2382,6 @@ class App:
         ]
 
     def send_comment(self):
-        """Send on the comment screen. Pressing it is the player's consent for this comment: it goes also with
-        session reports off (telemetry.Reporter.prepare_feedback)."""
         if self.comment_busy:
             return
         self.save_comment_draft()
@@ -2600,10 +2408,7 @@ class App:
         self.tasks.start(lambda: self.reporter.post(req), done)
         self.render()
 
-    # the text boxes: one Tk Text over the description box's place
-
     def open_overlay(self):
-        """The text box of sent_view (read-only, the JSON) or comment (the comment being written)."""
         X = self.X
         x0, y0, x1, y1 = SENT_BOX if self.screen == 'sent_view' else COMMENT_BOX
         sent = self.screen == 'sent_view'
@@ -2618,8 +2423,6 @@ class App:
         else:
             t.insert('1.0', self.comment_draft)
             t.edit_modified(False)
-            # the window's own keys (arrows, Enter, Space, Esc) are not the box's: without the window's tag in its
-            # bindings they reach only the box while it has the keyboard
             t.bindtags((str(t), 'Text', 'all'))
             t.bind('<Escape>', lambda ev: (self.leave_comment_box(), 'break')[1])
             t.bind('<<Modified>>', self.comment_changed)
@@ -2643,7 +2446,6 @@ class App:
             self.comment_draft = self.overlay.get('1.0', 'end-1c')[:telemetry.TEXT_LIMIT]
 
     def comment_changed(self, ev=None):
-        """Each change of the comment: cut to TEXT_LIMIT characters, the count on its row and under the box."""
         t = self.overlay
         if not t or not t.edit_modified():
             return
@@ -2671,12 +2473,11 @@ class App:
         if self.typing != on:
             self.typing = on
             if on:
-                self.focus = 0   # the cursor on Your Comment while the box has the keyboard
+                self.focus = 0
             if self.screen == 'comment':
                 self.render()
 
     def side_box(self):
-        """The description box's frame in its place (PICKER_BOX), for the screens that put a text box in it."""
         c, X = self.canvas, self.X
         bx, by, bw, bh = PICKER_BOX
         key = ('desc', X(bw), X(bh) // 4)
@@ -2720,8 +2521,6 @@ class App:
                                 tags='dyn')
             y = c.bbox(tid)[3] + X(10)
 
-    # ---- uninstall
-
     def rows_uninstall(self):
         def on(v):
             self.uninstall_game = bool(v)
@@ -2749,8 +2548,6 @@ class App:
         winsys.uninstall(self.layout, gd, self.ctx.log, keep=keep)
         self.root.destroy()
 
-    # ---- jobs
-
     def run_job(self, job, return_to, back=None):
         self.job, self.job_return, self.job_back = job, return_to, back or return_to
         self.job_rev = -1
@@ -2762,7 +2559,7 @@ class App:
     def rows_job(self):
         j = self.job
         rows = []
-        with j.locked():   # each step as one change of the worker left it, not a state with the value before it
+        with j.locked():
             steps = [(st.id, st.label, st.state, st.value, st.fraction) for st in j.steps]
         for sid, label, state, value, fraction in steps:
             if state == jobs.RUNNING:
@@ -2784,7 +2581,6 @@ class App:
         return rows
 
     def job_focus(self):
-        """The cursor sits on the running step, or on Try Again after a failure."""
         for i, r in enumerate(self.rows):
             if self.job.result == 'failed' and r.kind == 'pair':
                 return i
@@ -2857,7 +2653,6 @@ class App:
                   f'Job: {j.kind}, step: {j.current().label}', f'Error: {j.error}', '', 'Last lines:']
         report += j.last_lines(60)
         self.root.clipboard_clear()
-        # the account's folders short (tools/private_paths.py): a report is pasted into public issues
         self.root.clipboard_append(shorten('\n'.join(report)))
         self.message = 'Report copied.'
         self.render()
@@ -2887,7 +2682,7 @@ class App:
                 self.message = 'The update is ready: start NX2Saria again to finish it.'
             elif j.after == 'staged':
                 self.message = 'The update was downloaded; a checkout keeps running from the repository.'
-            elif j.after == 'play':   # the mods' code is built in (play): the game starts
+            elif j.after == 'play':
                 self.message, self.mods_failed = '', mod_outcome[1]
                 self.show('home', self.home_row('Play'))
                 self.play(built=True)
@@ -2901,7 +2696,7 @@ class App:
                 self.message = 'The game is rebuilt and up to date.' if j.kind == 'rebuild' else \
                     f'NX2Saria is now {versions.display(self.layout.version)}.'
                 self.release = None
-            note = getattr(j, 'note', '')   # what the file check found (jobs.Job.note_scan)
+            note = getattr(j, 'note', '')
             if note and j.after is None:
                 self.message = f'{self.message} {note}'.strip()
             self.reload_fonts_if_new()
@@ -2922,8 +2717,6 @@ class App:
     def reload_fonts_if_new(self):
         if not self.game_fonts and gamefiles.cached_fonts(self.layout):
             self.reload_fonts()
-
-    # ---------------------------------------------------------------- timers
 
     def tick(self):
         try:
@@ -2947,14 +2740,11 @@ class App:
                     self.render()
             self.question_tick()
             self.last_second = int(time.time())
-        except Exception as e:   # a drawing error must not stop the timer
+        except Exception as e:
             self.ctx.log(f'tick: {e!r}')
         self.root.after(150, self.tick)
 
     def minute(self):
-        """Once a minute, also while the window is hidden during play: look for a new version an hour after the last
-        look (a new one then downloads in the background), and install a staged release that waited for a copy of
-        the game the launcher did not start to close."""
         try:
             if not self.args.selftest and self.screen in ('home', 'settings'):
                 last = max(self.settings.get('last_check', 0.0), self.check_started)
@@ -2967,12 +2757,6 @@ class App:
         self.root.after(60000, self.minute)
 
     def animate(self):
-        """One step of everything that moves: the cursor on its way to the focused row and its breath, the screen
-        sliding into place, the sparks and sprig. Each moves by the time since the last step (the timer comes when
-        Tk gets to it, 16 to 50 ms apart), at most a tenth of a second's worth. With Animations off, while the
-        window is hidden or minimised, and while another window is in front, nothing moves and the timer runs slowly.
-        The last covers a launcher left open behind the game (Hide Launcher While Playing off): drawing every 15 ms
-        took about 0.6 of a CPU core from the game for a window nobody saw."""
         moving = False
         try:
             now = time.perf_counter()
@@ -2985,14 +2769,14 @@ class App:
                 self.step_slide(dt)
                 self.step_cursor(dt)
                 self.step_backdrop(dt)
-        except Exception as e:   # a drawing error must not stop the timer
+        except Exception as e:
             self.ctx.log(f'animate: {e!r}')
         self.root.after(FRAME_MS if moving else 300, self.animate)
 
     def step_slide(self, dt):
         if not self.slide:
             return
-        left = self.slide * math.exp(-dt * 16)   # most of the way in a fifth of a second
+        left = self.slide * math.exp(-dt * 16)
         if abs(left) < 1:
             left = 0.0
         self.canvas.move('dyn', int(left) - self.slide_applied, 0)
@@ -3000,14 +2784,14 @@ class App:
 
     def step_cursor(self, dt):
         c = self.canvas
-        if self.cursor_frames:   # one breath in 1.6 s
+        if self.cursor_frames:
             k = int(self.anim_t / 1.6 * len(self.cursor_frames)) % len(self.cursor_frames)
             if k != self.cursor_k:
                 self.cursor_k = k
                 c.itemconfigure('cursor', image=self.cursor_frames[k])
         if self.cur_xy and self.cur_target and self.cur_xy != self.cur_target:
             (x, y), (tx, ty) = self.cur_xy, self.cur_target
-            f = 1 - math.exp(-dt * 22)   # there in about a tenth of a second
+            f = 1 - math.exp(-dt * 22)
             x, y = x + (tx - x) * f, y + (ty - y) * f
             if abs(tx - x) < 0.6 and abs(ty - y) < 0.6:
                 x, y = tx, ty
@@ -3015,12 +2799,8 @@ class App:
             c.coords('cursor', round(x) + self.slide_applied, round(y))
 
     def step_backdrop(self, dt):
-        """The sparks, the sprig and its halo, each touched only when it lands on another pixel or picture: they
-        drift less than a pixel a step, and Tk draws an item again whenever it is moved or changed, also to where it
-        was. On X11 that drawing blends each picture with what is under it in software, and the sparks moved at every
-        step took two thirds of the window's processor time."""
         c, t = self.canvas, self.anim_t
-        for sp in self.sparks:   # up, swaying, and back in at the bottom once under the title band
+        for sp in self.sparks:
             sp['y'] -= sp['vy'] * dt
             if sp['y'] < BAND[2] - 8:
                 sp['y'] = H + 8
@@ -3028,11 +2808,11 @@ class App:
             if at != sp.get('at'):
                 sp['at'] = at
                 c.coords(sp['id'], *at)
-            k = int((math.sin(t * sp['rate'] * 2.3 + sp['phase'] * 3) + 1) * 1.49)   # 0, 1 or 2: its twinkle
+            k = int((math.sin(t * sp['rate'] * 2.3 + sp['phase'] * 3) + 1) * 1.49)
             if k != sp['shown']:
                 sp['shown'] = k
                 c.itemconfigure(sp['id'], image=sp['pics'][k])
-        if self.sprig_xy:   # the sprig rises and sinks two pixels every 2.4 s while its halo pulses
+        if self.sprig_xy:
             x, y = self.sprig_xy
             at = (x, y + round(math.sin(t * 2.6) * self.X(2)))
             if at != getattr(self, 'sprig_at', None):
@@ -3043,8 +2823,6 @@ class App:
                 if k != getattr(self, 'halo_k', None):
                     self.halo_k = k
                     c.itemconfigure('halo', image=self.halo[k])
-
-    # ---------------------------------------------------------------- drawing
 
     def render(self):
         c = self.canvas
@@ -3071,11 +2849,10 @@ class App:
         else:
             self.draw_desc()
         self.slide_applied = int(self.slide)
-        if self.slide_applied:   # drawn in place, then put where the slide has got to (step_slide)
+        if self.slide_applied:
             c.move('dyn', self.slide_applied, 0)
 
     def draw_row_tagged(self, i, x0, y0, x1, y1):
-        """Row i drawn with its items tagged row<i>, so refocus can draw it again alone."""
         c = self.canvas
         last = max(c.find_all() or (0,))
         self.draw_row(self.rows[i], x0, y0, x1, y1)
@@ -3084,13 +2861,7 @@ class App:
                 c.addtag_withtag(f'row{i}', item)
 
     def refocus(self, old):
-        """The focus went from row old to self.focus on the same screen: only those two rows, the cursor and the
-        description are drawn again. The whole screen was drawn again for each row the mouse crossed, about 55 ms
-        on Linux, where Tk blends each picture with what is under it in software, so the cursor lagged behind the
-        mouse. The whole screen still when it slides in, on a job's screen (its rows change as it runs) and with the
-        colour picker open."""
         c, rows = self.canvas, self.rows
-        # the row drawn lit may not be old: a click or a cancelled chooser moves the focus without drawing it
         again = sorted({i for i in (self.lit, old, self.focus) if i is not None})
         if (self.slide_applied or self.screen == 'job' or (self.screen == 'color' and self.pick)
                 or not all(0 <= i < len(rows) and rows[i].rect for i in again)):
@@ -3107,9 +2878,6 @@ class App:
         self.draw_desc()
 
     def fit_rows(self, top, bottom):
-        """The height of each row and the gap between rows (logical pixels) that end the rows above bottom. A screen
-        with more rows than the window holds (Settings with every row, a job with every step) narrows its gaps
-        first, then its dividers, and last makes its rows a little lower."""
         rows = self.rows
         hs = [r.h for r in rows]
         gaps = max(1, len(rows) - 1)
@@ -3239,7 +3007,7 @@ class App:
             self.canvas.create_text(sx, cy, text=r.value, font=vfont, fill=P['on_text'], anchor='w', tags='dyn')
             img = self.sprite(('chev', cw, ch, False, 'on'), lambda: art.chevron(cw, ch, P['on_text']))
             c.create_image(sx + label_w + X(10), cy, anchor='w', image=img, tags='dyn')
-        elif r.style == 'swatch':   # a colour of the Custom scheme: a patch of it and its hex code
+        elif r.style == 'swatch':
             cw, ch = X(9), X(12)
             img = self.sprite(('chev', cw, ch, False, 'dim'), lambda: art.chevron(cw, ch, P['chevron_dim']))
             c.create_image(x1 - X(16), cy, anchor='e', image=img, tags='dyn')
@@ -3253,7 +3021,7 @@ class App:
             cw, ch = X(9), X(12)
             img = self.sprite(('chev', cw, ch, False, 'dim'), lambda: art.chevron(cw, ch, P['chevron_dim']))
             c.create_image(x1 - X(16), cy, anchor='e', image=img, tags='dyn')
-            if r.value:   # a value, centred in the cell's room left of the arrow
+            if r.value:
                 right = x1 - X(16) - cw - X(10)
                 avail = right - vx0 - X(16)
                 vfont = self.fit_font(vfont, r.value, avail, 0.8)
@@ -3295,10 +3063,7 @@ class App:
         frames, mg = self.glow(x1 - x0, y1 - y0)
         self.cursor_frames = frames
         self.cursor_k %= len(frames)
-        # The cursor is drawn where it has got to and animate takes it on to the row (step_cursor); on a new screen,
-        # while one slides in and with Animations off it stands on the row at once.
         target = (float(x0 - mg), float(y0 - mg))
-        # not while animate stands still (another window in front): the cursor would stay behind on the old row
         glide = self.moving and self.cur_xy and self.cur_screen == self.screen and not self.slide
         self.cur_xy = self.cur_xy if glide else target
         self.cur_target, self.cur_screen = target, self.screen
@@ -3360,11 +3125,10 @@ class App:
             add('notes', d['bullets'])
         if d.get('log'):
             add('log', d['log'])
-        for t in d.get('fine', []):   # paragraphs in the small font: a long explanation under its leading lines
+        for t in d.get('fine', []):
             add('text', t, self.f['small'], P['desc_text'], X(7))
         if d.get('note'):
             add('text', d['note'], self.f['small'], P['muted'], X(4))
-        # measure: draw at a provisional top, then move everything to the final top
         top0 = X(112)
         y = top0 + pady
         made = []
@@ -3500,7 +3264,7 @@ class App:
                   if self.notes_canvas and self.notes_scrollbar else y - top0 + pady - X(4))
         top = X(236) if height < X(200) else X(112)
         top = min(top, X(H - 30) - height) if top + height > X(H - 30) else top
-        top = max(top, X(112))   # never up behind the screen's heading: a block's first lines are the ones to read
+        top = max(top, X(112))
         dy = top - top0
         if dy:
             c.move('desc', 0, dy)
@@ -3532,14 +3296,10 @@ def parse_args(argv):
 
 
 def single_instance(layout, wait):
-    """The launcher folder's lock (launcher/locks.py) for this window's life. locks.Busy, naming the holder, when
-    another launcher or a command of launcher/cli.py still holds it after wait seconds (the launcher an update
-    restart replaces may still be closing)."""
     return locks.FileLock(layout.instance_lock, 'the launcher window', wait=wait, where=layout.root)
 
 
 def tell(text):
-    """A sentence for the player before the window is up: a message box that waits for OK."""
     try:
         if os.name == 'nt':
             import ctypes
@@ -3550,22 +3310,15 @@ def tell(text):
             root.withdraw()
             messagebox.showinfo(NAME, text, parent=root)
             root.destroy()
-    except Exception:   # no display, no toolkit: the terminal that started it
+    except Exception:
         print(text, file=sys.stderr)
 
 
 def play_only(ctx):
-    """--play, from the Steam shortcut (launcher/steam.py): the game starts from its folder with its console hidden, as
-    Play starts it, and this process waits until it and the copies its own Restart starts have ended, so Steam shows
-    the game as running all that time. None when there is no built game: the launcher's window opens instead."""
     gd = ctx.settings.get('game_dir')
     exe = game_executable(gd) if gd else None
     if not exe or not exe.is_file():
         return None
-    # The window or a command may run a job in the game folder meanwhile (a rebuild, an update's install, the mods'
-    # build): the game started now would be the build that job is replacing, which then fails to replace it, and
-    # mods.prepare would unpack into the folder the job reads. Such a job holds the launcher folder's lock and leaves
-    # jobs.MARKER. The lock is only tried, and let go at once: held, it would keep the window from opening.
     try:
         locks.FileLock(ctx.layout.instance_lock, 'play from Steam', where=ctx.layout.root).release()
     except locks.Busy:
@@ -3584,7 +3337,7 @@ def play_only(ctx):
     except OSError as e:
         ctx.log(f'play from Steam: mods: {e}')
         waiting = []
-    if waiting:   # the window builds the mods' code in, then starts the game (App.start with --play)
+    if waiting:
         ctx.log(f'play from Steam: the game is built again first for the code of {", ".join(waiting)}')
         return None
     if not commit.confirm_play_memory(gd, ctx.log, settings=ctx.settings):
@@ -3599,13 +3352,11 @@ def play_only(ctx):
     time.sleep(2)
     while run.running():
         time.sleep(1)
-    # The end is told as Play's is (App.watch_game), with no window: a box for an end worth one. The logs come first,
-    # since the box waits for OK and Steam may end this process meanwhile.
     end = run.end()
     ctx.log(f'play from Steam: {end.log}')
     kind, asked = game_session.end_kind(run.code(), end), game_session.end_asked(gd, run.code())
     if telemetry.enabled():
-        telemetry.synthesize_crash(gd, ctx.log)   # before the note ends the log's run; the window sends it when it opens
+        telemetry.synthesize_crash(gd, ctx.log)
     if end.note:
         note_exit_in_log(gd, end.note)
     crash_offer.game_ended(ctx.settings, gd, kind, asked, end.message, ctx.log)
@@ -3629,14 +3380,12 @@ def main(argv=None):
         try:
             lock = single_instance(ctx.layout, 20 if (a.continue_update or a.rolled_back) else 2)
         except locks.Busy as e:
-            # A second window on the same folder would run its own jobs into the same game folder and settings. The
-            # first one may be out of sight (hidden while the game runs), so the player is told who holds the folder
             ctx.log(f'not started: {e}')
             tell(f'NX2Saria is already running: {e}.\n\nIts window may be hidden while the game runs; it comes back '
                  'when you quit the game.')
             return 0
     from .. import errors
-    errors.install(ctx)   # the window's errors; finish() below
+    errors.install(ctx)
     code = 0
     unwake = None
     try:
@@ -3645,24 +3394,22 @@ def main(argv=None):
         app = App(root, ctx, a)
 
         def end_signal(name):
-            # Python runs this between two steps of whatever the window was doing (a redraw, a timer): closing here
-            # would destroy the canvas under that code. The window closes from the event loop instead.
             nonlocal code
             code = 128 + getattr(signal, name)
             at = time.monotonic()
             try:
                 root.after(0, lambda: app.on_close(f'ended by {name}', at))
-            except tk.TclError:   # the window is already gone
+            except tk.TclError:
                 pass
         taken = errors.on_end_signals(end_signal)
-        if taken:   # an idle window would act on them only at its next event (errors.wake_for_signals)
+        if taken:
             how, unwake = errors.wake_for_signals(root)
             ctx.log(f'window: {" and ".join(taken)} {"close" if len(taken) > 1 else "closes"} it, {how}')
         if a.selftest:
             from .selftest import run
             root.after(300, lambda: run(app, a.shots))
         root.mainloop()
-        if not app.closed:   # Uninstall, or the selftest, ends the window without on_close
+        if not app.closed:
             ctx.log(f'window ended on the {app.screen} screen after {time.monotonic() - app.opened:.0f} s')
     finally:
         if unwake:
