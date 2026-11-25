@@ -4776,8 +4776,9 @@ A program without the stage this draw starts from gets no lookup: it has no libr
 
 The camera pass (`runtime/vk/vk_dlaa.c` `mv_pass()`) gives everything the camera's motion, so a character that moves
 with the camera, or on its own, gets the wrong one and DLSS throws its history away there. Each solid scene draw whose
-position reads an object's own uniform blocks (bones c5, place c7, c6; `mvobj_draw_` says which are left out and why) is
-therefore drawn a second time (listed during the replay, MQ, and recorded by `mv_pass`) with its vertex shader's
+position reads an object's own uniform blocks (bones c5, place c7, c6; `mvobj_pick()` says which are left out and why)
+is therefore drawn a second time (listed during the replay, `MQ`, and recorded from `mv_pass` by `vk_mvobj_execute()`)
+with its vertex shader's
 last-frame variant (translator patch 0015: the position again from last frame's blocks, bound at slot bank + 15, and
 last frame's camera, written to a spare output) and the fragment shader of `mvobj_fs_spv.h`, which writes last frame's
 window position minus this frame's. The draw keeps everything else of the original: vertex and index buffers, the other
@@ -4787,89 +4788,91 @@ GEQUAL) without writes, so only the visible surface writes its vector. Last fram
 last-frame blocks are not in the snapshot, keeps the camera's motion. `NX2SARIA_DLAA_OBJMV=0` turns it off
 (`runtime/vk/vk_mvprev.c`).
 
-- `MO`:
-  - `const GfxShader *fs[16], *link_fs[16]`: per input Location.
-  - `uint64_t ns_part[3], n_part[3], misses, cyc[3], ncyc, big`: checks: filter, data and stillness (memo misses),
-    variant and pipeline; time spent: checks and lookups of every candidate; recording the draws again; cand: draws
-    whose vertex shader reads c5 or c7.
-  - `uint64_t why[5]`: nodata by cause: camera, bones, place, bones copy, place copy.
-  - `uint64_t no_out, storage, no_fs`: variant without the extra output, with storage resources; no fs.
-  - `uint64_t other_cam`: listed draws left out: their camera block is not the scene camera.
-  - `uint64_t lk[14][5]`: last-frame lookups per binding index: none, self, side, nearer, refused (another object).
-  - `uint64_t e_draws, e_pipe, e_dyn, e_push, e_pushw, e_sets, e_vb, e_setw, e_setreuse`: emitted commands (summary).
-- `MoDraw`: The motion draws of the frame, kept as a list while the scene replays and recorded into the replay's own
-  command buffer by `vk_mvobj_execute`, through the recorder thread (`runtime/vk/vk_rec.h`) like every other draw:
-  recording them straight into a secondary command buffer made the driver's work for each one on the replay thread. What
-  a draw shares with the one before it (pipeline, dynamic state, viewport, buffers, descriptors) is recorded once; a
-  push descriptor set is pushed again only where a binding changed (pushes update the set in place while its layout
-  stays bound).
-  - `uint32_t st, desc, vb`: indices into MQ.st, MQ.desc (the draw's packed descriptors) and MQ.vb.
-  - `VkDescriptorSet set[2]`: allocated sets; `VK_NULL_HANDLE` for a pushed one.
-  - `uint64_t cam`: the draw's camera block, this frame's.
-  - `int skin`: `runtime/vk/vk_skin_motion.inc`: 0 not a skinned character's draw; 1 one, 2 one checked against last
-    frame's depth; -1 one `skin_resolve` left to the camera.
-- `MQ`:
-  - `uint64_t frame, fence`: the frame and submission the list belongs to.
-  - `NVNbufferRange vin[17]`: the vertex ranges `MQ.vb[nvb - 1]` was resolved from, under `vk_mem_gen` vgen.
-  - `float sup_in[3]`: the support buffer last filled for the list and its inputs.
-  - `float par_in[8]`: the fragment shader's parameters last written and their inputs.
-  - `VkDescriptorSetLayout aset_layout[2]`: the last allocated set per set number, with its descriptors.
-- `MM`: The position bank masks of the draws considered (`gfx_shader_mvprev_banks`), with counts, for the summary.
+The motion draws of the frame (`MoDraw`) are kept as a list (`MQ`) while the scene replays and recorded into the
+replay's own command buffer by `vk_mvobj_execute()`, through the recorder thread (`runtime/vk/vk_rec.h`) like every
+other draw: recording them straight into a secondary command buffer made the driver's work for each one on the replay
+thread. What a draw shares with the one before it (pipeline, dynamic state, viewport, buffers, descriptors) is recorded
+once; a push descriptor set is pushed again only where a binding changed (pushes update the set in place while its
+layout stays bound).
 
-  ubo, ssbo, tex: the first vertex shader's.
-- `mo_gen`: the list's snapshot (`mo_prev_cached`), bumped by `mo_begin`.
-- `MF`: this list's draws per position banks and changed banks.
-- `fm_last`: the last executed list's, formatted (`vk_mvobj_frame_masks`).
+In a `MoDraw`, `st`, `desc` and `vb` are indices into `MQ.st`, `MQ.desc` (the draw's packed descriptors) and `MQ.vb`;
+`set[2]` are the allocated sets, `VK_NULL_HANDLE` for a pushed one; `cam` is the draw's camera block, this frame's;
+`skin` (`runtime/vk/vk_skin_motion.inc`) is 0 for a draw that is not a skinned character's, 1 for one, 2 for one checked
+against last frame's depth and -1 for one `skin_resolve` left to the camera.
+
+In `MQ`, `frame` and `fence` are the frame and submission the list belongs to; `vin[17]` the vertex ranges
+`MQ.vb[nvb - 1]` was resolved from, under `vk_mem_gen` `vgen`; `sup` and `sup_in[3]` the support buffer last filled for
+the list and its inputs; `par` and `par_in[8]` the fragment shader's parameters last written and their inputs; `aset`,
+`aset_layout` and `aset_d` the last allocated set per set number, with its descriptors.
+
+The statistics, for the summary lines `vk_mvobj_execute()` logs:
+
+- `MO.fs[16]`, `link_fs[16]`: the two fragment shaders, per input Location.
+- `cand`: the draws whose vertex shader reads a user bank besides the camera's (the log line calls them "draws read
+  place or bones"); `still`, `draws`, `nodata`, `building`, `ran`, `dropped` are that line's other counts.
+- `ns_check`, `ns_rec`, `ns_emit`: time spent on the checks and lookups of every candidate, and on recording the draws
+  again. `ns_part[3]`, `n_part[3]`: the checks: filter, data and stillness (`misses`: memo misses), variant and
+  pipeline.
+- `why[5]`: `nodata` by cause: camera, bones, place, bones copy, place copy.
+- `no_out`, `storage`, `no_fs`: variant without the extra output, with storage resources; no fragment shader.
+- `other_cam`: listed draws left out: their camera block is not the scene camera.
+- `lk[14][5]`: last-frame lookups per binding index: none, self, side, nearer, refused (another object).
+- `e_*`: the commands emitted.
+- `MM` (`mo_mask_note()`): the position bank masks of the draws considered (`gfx_shader_mvprev_banks`), with counts;
+  `ubo`, `ssbo`, `tex` are the first vertex shader's resource counts.
+- `MF`: this list's draws per position banks and changed banks; `fm_last`: the last executed list's, formatted
+  (`vk_mvobj_frame_masks()`).
+
+`mo_gen` identifies the list's snapshot for `mo_prev_cached()`; `mo_begin()` bumps it.
 
 ### `mo_begin()`
 
 Starts this frame's list (the old one, never executed, is dropped).
 
-### `link_motion_fs()`
+### `mo_fs()`, `link_motion_fs()`
 
-- `OpDecorate` Location 15 uniquely identifies the previous clip position in `runtime/shaders/link_motion.frag`.
+The fragment shader for a vertex variant whose previous position leaves at input Location `loc`, made once per
+Location by patching the Location word of the prebuilt SPIR-V. In `link_motion_spv.h` the word is found by its
+decoration: `OpDecorate` Location 15 uniquely identifies the previous clip position in
+`runtime/shaders/link_motion.frag`.
 
 ### `mo_write()`
 
-The write of binding b from its packed descriptors.
-
-- `w.pBufferInfo = &d->buffer`: `VkDescSlot` is 24 bytes, as `VkDescriptorBufferInfo`: arrays line up.
+The write of binding b from its packed descriptors. `VkDescSlot` is 24 bytes, as `VkDescriptorBufferInfo`, so an array
+of slots lines up as an array of buffer infos.
 
 ### `mo_desc()`
 
-The descriptors of a motion draw, packed into MQ.desc at `q->desc` without the binding caches of the command buffer
-being replayed (B, DS, RS), which then stay true for its next draw: uniform buffers (through `ubo_info`, so with
-`mo_ovr`), the support buffer and sampled textures. An allocated set is written here (or the last one reused when it
-would hold the same); a pushed set is pushed by `mo_emit`. 0 for a pipeline with storage buffers, images or texel
-buffers (not drawn again).
-
-- `memset(d, 0, total * sizeof *d)`: unused bytes zero: equal descriptors compare equal.
-- `} else if (b->kind == GFX_RES_SSBO && !(r->flags & 1))`: read only: instance data of foliage and such.
+The descriptors of a motion draw, packed into `MQ.desc` at `q->desc` without the binding caches of the command buffer
+being replayed (`B`, `DS`, `RS`), which then stay true for its next draw: uniform buffers (through `ubo_info()`, so with
+`mo_ovr`), the support buffer, sampled textures and storage buffers the shader only reads (instance data of foliage and
+such). An allocated set is written here (or the last one reused when it would hold the same); a pushed set is pushed by
+`mo_emit()`. 0 for a pipeline with written storage buffers, images, texel buffers or the texture pools (not drawn
+again). The slots are zeroed first, so unused bytes are zero and equal descriptors compare equal.
 
 ### `mo_vertex_buffers()`
 
-The draw's vertex buffers as `bind_vertex_buffers` resolves them, into MQ.vb; the previous entry again while the ranges
-and `vk_mem_gen` are the same (most motion draws in a row are one model's parts).
+The draw's vertex buffers as `bind_vertex_buffers()` resolves them, into `MQ.vb`; the previous entry again while the
+ranges and `vk_mem_gen` are the same (most motion draws in a row are one model's parts).
 
 ### `mo_emit()`
 
 Records the list into cb (the replay's command buffer, inside the motion pass's rendering), skipping what the draw
-before already set.
-
-- `int pdesc[2] = {-1, -1}`: the pushed set's descriptors (MQ.desc index) under lay/pinfo, -1 none.
-- The bindings that differ from the last push of this layout and pipeline (all after another).
+before already set. For a pushed set it remembers the descriptors last pushed under the layout and pipeline (`pdesc`,
+an index into `MQ.desc`, -1 none) and pushes only the bindings that differ from them; all of them after another layout
+or pipeline.
 
 ### `mvobj_draw()`
 
 The chunks of a parallel group (`runtime/vk/vk_exec.c`) add to the frame's list at once: whether a draw is listed at all
-is decided by its own draw context (`mvobj_pick`, its memo per context), and only the frame's list, its memos and
+is decided by its own draw context (`mvobj_pick()`, its memo per context), and only the frame's list, its memos and
 statistics go under `mo_lock` there: under one lock for the whole check, the chunks' scene draws waited for each other.
 The order of the list does not change the picture: its draws write motion without blending, tested against the scene
 depth they do not write.
 
-- The upscaler, or frame generation without one (`vk_dlaa_fg_only`), takes the motion.
-- `if (timed < 0) timed = rt_knob("MVOBJ_TIMES", "0")`: `NX2SARIA_MVOBJ_TIMES=1`: the summary's times (the clock reads
-  cost).
+With version 1.1.1 of the game (`RT_V111`) the draws are listed when the upscaler, or frame generation without one
+(`vk_dlaa_fg_only`), takes the motion, and the pose or skin motion is on; otherwise when `vk_mvprev_on`.
+`NX2SARIA_MVOBJ_TIMES=1` turns the summary's times on (the clock reads cost).
 
 ### `mvobj_banks()`
 
@@ -4882,93 +4885,109 @@ since the same shader's draw last frame, logged at frame 3000: where the time th
 same. The cap: the game's world positions are in the thousands, and 10 % of them let another object's block a few units
 away pass as this one moved; nothing moves 4 units in a frame.
 
-- Word by word as integers; float arithmetic only on two normal floats (the blocks hold integers too, and denormal
-  arithmetic took this loop 1.9 million cycles a block).
-- `if (!ex || ex == 0xff || !ey || ey == 0xff) continue`: not both normal floats: an integer or a tiny value.
+The blocks are compared word by word as integers; float arithmetic runs only on two normal floats (the blocks hold
+integers too, and denormal arithmetic took this loop 1.9 million cycles a block). A pair that is not two normal floats
+(an integer or a tiny value) is passed over.
 
 ### `mo_prev_block()`
 
-Last frame's copy of a block, accepted when it is this frame's block a little changed (`mo_similar`, which see): a block
-of another object the address rule found would make motion up. 1 and `*out`: found (the block itself when it is
-unchanged, `*changed` 0); 0: none, the draw keeps this frame's block there.
+Last frame's copy of a block, accepted when it is this frame's block a little changed (`mo_similar()`): a block of
+another object the address rule found would make motion up. 1 and `*out`: found (the block itself when it is unchanged,
+`*changed` 0); 0: none, the draw keeps this frame's block there.
 
-- c9 and c11 keep this frame's block. With the copies the address rule finds for c11 and last frame's c9, the c4 c7 c9
-  c11 draws (walls, cliffs, arches) got several pixels of motion under a still camera (`NX2SARIA_MV_CHECK`, those draws
-  alone: 34 % of the picture moving; with c11 kept, 0.8 %). With c11 kept, their c9 still changes every frame while
-  nothing moves (the check's per-draw line: about 120 such draws a frame changed in c9 alone), the object scale the
-  picture shows is 0.6-0.8 of theirs, and with Link stopped against a cliff 40-77 % of the picture got 1-3 px of motion
-  that flipped direction, three times the warp error of the camera's vectors. With c9 kept too, the turning run is as
-  good (object warp error 0.46 of the camera's). Why their copies are wrong is not known.
-  `NX2SARIA_MVPREV_SKIP=<hex bank mask>` (test) replaces the default a00 (bit n: cn).
-- `if (how == MVPREV_SELF) return 1`: bound at the same address last frame: not written again.
-- `static long trust = -2`: `NX2SARIA_MVPREV_TRUST=<hex bank mask>` (test): the copy found is taken without the check.
+c9 and c11 keep this frame's block. With the copies the address rule finds for c11 and last frame's c9, the c4 c7 c9 c11
+draws (walls, cliffs, arches) got several pixels of motion under a still camera (`NX2SARIA_MV_CHECK`, those draws alone:
+34 % of the picture moving; with c11 kept, 0.8 %). With c11 kept, their c9 still changes every frame while nothing moves
+(the check's per-draw line: about 120 such draws a frame changed in c9 alone), the object scale the picture shows is
+0.6-0.8 of theirs, and with Link stopped against a cliff 40-77 % of the picture got 1-3 px of motion that flipped
+direction, three times the warp error of the camera's vectors. With c9 kept too, the turning run is as good (object warp
+error 0.46 of the camera's). Why their copies are wrong is not known. `NX2SARIA_MVPREV_SKIP=<hex bank mask>` (test)
+replaces the default a00 (bit n: cn).
+
+A block bound at the same address last frame (`MVPREV_SELF`) is taken without the comparison: it was not written again.
+`NX2SARIA_MVPREV_TRUST=<hex bank mask>` (test): the copy found is taken without the check.
 
 ### `mo_prev_cached()`
 
-`mo_prev_block` once per block and list: many draws share their blocks (the scene's c14, a model's c7 and c9 across its
-parts), and the lookup with its comparison was most of the checks' time.
+`mo_prev_block()` once per block and list: many draws share their blocks (the scene's c14, a model's c7 and c9 across
+its parts), and the lookup with its comparison was most of the checks' time.
 
 ### `mo_legacy_previous()`
 
-- `have |= 1u << b, moving |= changed << b`: the banks whose block changed.
+Last frame's blocks of the position's banks (not c4), for a draw that is neither the player's nor a skinned character's;
+kept per frame for each set of banks and block addresses. 0: none of the blocks changed, so the draw is still and is not
+listed. `*have_out`: the banks whose last-frame block was found; `*changed_mask`: the banks whose block changed.
 
 ### `mvobj_pick()`
 
-Whether the draw goes on to the frame's list (`mvobj_draw_`), with its motion variant and the banks its position reads;
-this draw context alone decides (no lock in a chunk): the draw's state, and the variant memo per context.
+Whether the draw goes on to the frame's list (`mvobj_draw_()`), with its motion variant and the banks its position
+reads; this draw context alone decides (no lock in a chunk): the draw's state, and the variant memo per context. In
+order:
 
-- `if (!vk_exec_in_chunk()) mvobj_banks(ex)`: a test's log of every scene draw (its tables are not shared).
-- Solid geometry only, which tests and writes the scene depth: effects, particles and screen quads write none, and drawn
-  again they would put their motion on the surfaces behind them (DLSS takes those from the surface).
-- An opaque colour pass can use EQUAL against a depth prepass. Its geometry is already in the scene depth.
-- The player's own draw (ownership records), else any other skinned character's (`runtime/vk/vk_skin_motion.inc`).
-- A vertex shader that reads a user bank besides the camera's (c4) may move on its own.
-- The variant: the translation of the same code and answers, kept per shader once found; it names the banks the position
-  depends on (0: none, the shader is skipped from then on).
-- `if (!RT_V111) vk_mvprev_want((banks & ~(1u << 4)) >> 3)`: binding index = bank - 3.
-- A position without the scene camera (c4) has a view of its own (c8 c9 c10 `[c13]`: its c8 is at a new address every
-  frame, last frame's is never found): drawn again it would get this frame's view and no camera motion
-  (`NX2SARIA_MV_CHECK` while turning: 6.2 px end-point error against the camera vectors' 1.7).
-- `if (noc4 < 0) noc4 = rt_knob("MVOBJ_NOC4", "0")`: `NX2SARIA_MVOBJ_NOC4=1` (test): drawn again all the same.
-- Only positions that read an object's own blocks: bones (c5), place (c7) or c6. The rest (terrain and grass: c14 c15
-  c16, with or without c9) measured no better than the camera's motion (`NX2SARIA_MV_CHECK`, turning, those draws alone:
-  object warp error 0.112 against the camera's 0.113, the object part 0.4 of what the picture shows) and were half the
-  draws checked and listed. `NX2SARIA_MVOBJ_ALL=1` (test) takes them again.
-- `NX2SARIA_MVOBJ_ONLY=<hex bank mask>` (test): only draws whose position reads no bank outside the mask (bit n: cn).
-- `static long exact = -2`: `NX2SARIA_MVOBJ_EXACT=<hex bank mask>` (test): only draws with exactly these position banks.
+1. `mvobj_banks()`, a test's log of every scene draw, outside a chunk (its tables are not shared).
+2. Only draws into the scene depth (`D32_SFLOAT`, at least `DLAA_SCENE_MIN_W` wide, one sample).
+3. Solid geometry only, which tests and writes the scene depth: effects, particles and screen quads write none, and
+   drawn again they would put their motion on the surfaces behind them (DLSS takes those from the surface). With version
+   1.1.1 an opaque colour pass that tests EQUAL against a depth prepass is taken too: its geometry is already in the
+   scene depth.
+4. With version 1.1.1: the player's own draw (ownership records), else any other skinned character's
+   (`runtime/vk/vk_skin_motion.inc`).
+5. A vertex shader that reads a user bank besides the camera's (c4) may move on its own; one that reads none is left.
+6. The variant: the translation of the same code and answers, kept per shader once found; it names the banks the
+   position depends on (0: none, the shader is skipped from then on). Without version 1.1.1 the banks are told to
+   `vk_mvprev_want` (binding index = bank - 3).
+7. A position without the scene camera (c4) has a view of its own (c8 c9 c10 `[c13]`: its c8 is at a new address every
+   frame, last frame's is never found): drawn again it would get this frame's view and no camera motion
+   (`NX2SARIA_MV_CHECK` while turning: 6.2 px end-point error against the camera vectors' 1.7).
+   `NX2SARIA_MVOBJ_NOC4=1` (test): drawn again all the same.
+8. Only positions that read an object's own blocks: bones (c5), place (c7) or c6. The rest (terrain and grass: c14 c15
+   c16, with or without c9) measured no better than the camera's motion (`NX2SARIA_MV_CHECK`, turning, those draws
+   alone: object warp error 0.112 against the camera's 0.113, the object part 0.4 of what the picture shows) and were
+   half the draws checked and listed. `NX2SARIA_MVOBJ_ALL=1` (test) takes them again.
+9. `NX2SARIA_MVOBJ_ONLY=<hex bank mask>` (test): only draws whose position reads no bank outside the mask (bit n: cn).
+   `NX2SARIA_MVOBJ_EXACT=<hex bank mask>` (test): only draws with exactly these position banks.
 
 ### `mvobj_draw_()`
 
-A draw `mvobj_pick` took, onto the frame's list (in a chunk under `mo_lock`): the list begins at the first such draw of
-the frame's submission (`mo_emit` drops a list of another frame, submission or depth format).
+A draw `mvobj_pick()` took, onto the frame's list (in a chunk under `mo_lock`): the list begins at the first such draw
+of the frame's submission (`vk_mvobj_execute()` drops a list of another frame, submission or depth format).
 
-- Last frame's camera and blocks; held still when none of the position's blocks changed (most of the scenery).
-- Missing visibility evidence is not evidence that this valid pose vector is wrong. Keep the raw vector, with the normal
-  current-depth and history-validity checks.
-- Another skinned character's draw: its blocks, and whether a bone turned sharply (`runtime/vk/vk_skin_motion.inc`);
-  which draw of last frame it continues is decided when the vectors are made (`skin_resolve`).
-- `pose_visibility_guard = 0`: as for the player: no depth of last frame to check against, the plain vector.
-- Blending off (`blend_en` below); the factors stay the game's, valid NVN values.
-- `ms.chmask.mask = 0x3`: r and g of target 0.
-- The game's own test with its equal case (LESS -> LEQUAL, GREATER -> GEQUAL): the surface the draw left in the scene
-  depth passes, anything nearer hides it (`NX2SARIA_MVOBJ_EQUAL=1`: EQUAL, for comparison).
-- The pipeline per state, kept: the lookup hashes and locks the whole state.
-- `static int plast = -1`: the entry of the last draw: a model's parts in a row share the state, no hash then.
-- `pipe = __atomic_load_n(&info->pipeline, __ATOMIC_ACQUIRE)`: its optimised build once swapped in.
-- `if (t0) MO.ns_check -= t1 - t0`: counted as recording below.
-- Into the frame's list, past the primary's binding caches (`mo_desc`); `mo_emit` records it.
-- Where `skin_resolve` puts last frame's bytes of each block, once it knows whose they are.
-- `for (int i = 0; i < 16; i++)`: the frame's draws per position banks and changed banks (`vk_mvobj_frame_masks`).
+1. Last frame's camera and blocks:
+   - The player's draw (a pose): when the visibility guard is wanted but last frame's depth is not there, the guard is
+     dropped: missing visibility evidence is not evidence that this valid pose vector is wrong. The raw vector is kept,
+     with the normal current-depth and history-validity checks.
+   - Another skinned character's draw: its blocks, and whether a bone turned sharply (`runtime/vk/vk_skin_motion.inc`);
+     which draw of last frame it continues is decided when the vectors are made (`skin_resolve`). As for the player,
+     with no depth of last frame to check against it gets the plain vector.
+   - Any other draw: `vk_dlaa_prev_camera` and `mo_legacy_previous()`; the draw is held still when none of the
+     position's blocks changed (most of the scenery).
+2. The state: the variant and the motion fragment shader (`mo_fs()`, or `link_motion_fs()` with the visibility guard),
+   one `RG16F` target with only r and g written, blending off (`blend_en`; the factors stay the game's, valid NVN
+   values), no depth write. The depth test is the game's own with its equal case (LESS -> LEQUAL, GREATER -> GEQUAL):
+   the surface the draw left in the scene depth passes, anything nearer hides it. A pose or skin draw, and every draw
+   with `NX2SARIA_MVOBJ_EQUAL=1` (for comparison), tests EQUAL.
+3. The pipeline per state, kept (`pmemo`, 64 entries): the lookup hashes and locks the whole state. The entry of the
+   last draw is tried first: a model's parts in a row share the state, and no hash is needed then. A kept entry's
+   pipeline is read again from its info: its optimised build once swapped in.
+4. Into the frame's list, past the primary's binding caches (`mo_desc()`); `mo_emit()` records it. The time from here
+   on is taken off the checks' time and counted as recording. The uniform bindings replaced (`DrawCtx.mo_ovr`): the
+   pose's bytes of last frame; for a skinned draw, where `skin_resolve` puts last frame's bytes of each block once it
+   knows whose they are; else last frame's camera and blocks at slot bank + 15.
+5. `MF` counts the frame's draws per position banks and changed banks (`vk_mvobj_frame_masks()`).
 
 ### `vk_mvobj_execute()`
 
-- `if (exec < 0) exec = rt_knob("MVOBJ_EXEC", "1")`: `NX2SARIA_MVOBJ_EXEC=0`: listed, never recorded (test).
-- Only draws with the scene camera block (`runtime/vk/vk_dlaa.c` `mv_pass()`'s): last frame's camera they get is that
-  block's, and a draw of another view would move by the difference between the two views.
-- `(!MQ.d[i].skin || (MQ.d[i].skin > 0 && SK.resolved)))`: a skinned draw: one `skin_resolve` paired.
-- `else if (!MQ.d[i].skin) MO.other_cam++`: a skinned draw left out has its own count (`skin_status`).
-- `vkCmdBeginRendering(cb, &ri)`: through the recorder (`runtime/vk/vk_rec.h`), in order with the draws and the end.
-- The draws left their pipeline, descriptors, buffers and dynamic state bound: the next game draw sets everything.
+Logs the summaries (every 60 and 600 calls), then records the list. `NX2SARIA_MVOBJ_EXEC=0`: listed, never recorded
+(test). A list of another frame, submission or depth format is dropped.
+
+Only draws with the scene camera block (the one `runtime/vk/vk_dlaa.c` `mv_pass()` passes) are kept: last frame's camera
+they get is that block's, and a draw of another view would move by the difference between the two views. A pose draw is
+kept when its view was selected, a skinned draw when `skin_resolve` paired it; a skinned draw left out has its own count
+(`skin_status`), not `other_cam`.
+
+The rendering begins and ends through the recorder (`runtime/vk/vk_rec.h`), in order with the draws. The draws leave
+their pipeline, descriptors, buffers and dynamic state bound, so the replay's held state is cleared
+(`vk_exec_draw_new_cb()`, every dynamic state dirty): the next game draw sets everything.
 
 ### `draw_mesh_fn()`
 
