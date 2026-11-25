@@ -3,13 +3,12 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/context.py`,
-`launcher/native/common.h`, `launcher/native/nx2saria.c`, `launcher/native/res.rc`, `launcher/native/setup.c`,
-`launcher/net.py`, `launcher/paths.py`, `launcher/platform/__init__.py`, `launcher/platform/linux.py`,
-`launcher/saves.py`, `launcher/settings.py`, `launcher/start.pyw`, `launcher/steam.py`, `launcher/telemetry.py`,
-`launcher/toolchain.py`, `launcher/ui/__init__.py`, `launcher/ui/app.py`, `launcher/ui/art.py`,
-`launcher/ui/picture.py`, `launcher/ui/selftest.py`, `launcher/ui/sound.py`, `launcher/updater.py`,
-`launcher/versions.py`, `launcher/winsys.py`, and `launcher/build.py`.
+names. These files still keep their comments until their notes are here: `launcher/context.py`, `launcher/net.py`,
+`launcher/paths.py`, `launcher/platform/__init__.py`, `launcher/platform/linux.py`, `launcher/saves.py`,
+`launcher/settings.py`, `launcher/start.pyw`, `launcher/steam.py`, `launcher/telemetry.py`, `launcher/toolchain.py`,
+`launcher/ui/__init__.py`, `launcher/ui/app.py`, `launcher/ui/art.py`, `launcher/ui/picture.py`,
+`launcher/ui/selftest.py`, `launcher/ui/sound.py`, `launcher/updater.py`, `launcher/versions.py`,
+`launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -850,9 +849,9 @@ an update over each other. So:
 
 - `FileLock` is a lock between processes: a file locked by the operating system (`msvcrt.locking` on Windows, `flock`
   elsewhere), which lets go of it when the process ends, however it ends. The window takes the one of its folder
-  (`instance_lock` of `launcher/paths.py` `Layout`) for as long as it is open, `launcher/cli.py` for a command, and every
-  job that changes files while it runs (`launcher/jobs.py` `Job`). A process that holds it already shares it with its
-  own jobs. Who holds it is written beside it (`<lock>.owner`), so that the one refused can say so.
+  (`instance_lock` of `launcher/paths.py` `Layout`) for as long as it is open, `launcher/cli.py` for a command, and
+  every job that changes files while it runs (`launcher/jobs.py` `Job`). A process that holds it already shares it
+  with its own jobs. Who holds it is written beside it (`<lock>.owner`), so that the one refused can say so.
 - `claim()` is the lock between the jobs of one process: a job names what it changes (the `claims` of
   `launcher/jobs.py` `Job`: the game folder and its build tools, the app folder), and a second job on the same thing is
   refused with the first one's name.
@@ -1088,6 +1087,100 @@ screen or retry. Tk preserves its existing result timing. A worker calls with `r
 
 With Keep Build Cache off it deletes the lifted C and the objects (about 1.5 GB) but keeps `state.json`, which an
 update needs to rebuild without the dump; the next build then lifts and compiles everything again.
+
+## `launcher/native/common.h`
+
+Shared by `NX2Saria.exe` (`launcher/native/nx2saria.c`) and `NX2Saria-Setup.exe` (`launcher/native/setup.c`): paths,
+small files, shortcuts and the uninstall entry. Wide-character Win32 throughout, so folder names in any language work.
+
+`APP_USER_MODEL_ID` is the launcher window's taskbar identity (`launcher/winsys.py` `app_id()`): a shortcut that
+carries it is the one the taskbar groups and pins the window under, with the shortcut's icon.
+
+- `read_line()`: the first line of a small UTF-8 text file, trimmed, as wide text; 0 when absent or empty.
+- `version_cmp()`: compares dotted versions ("0.3.11" > "0.3.9"); build metadata after `+` is ignored.
+- `make_shortcut()`: a `.lnk` that starts the target (with its own icon).
+- `shortcut_path()`: the Desktop or Start menu shortcut's path.
+- `shortcut_in_root()`: a legacy shortcut may belong to a separate install, so it is replaced or removed only when it
+  points into this root.
+- `set_shortcut()`: creates (`on`) or removes the Desktop or the Start menu shortcut to `root\NX2Saria.exe`.
+- `write_uninstall_entry()`: the entry in Settings > Apps that runs `NX2Saria.exe --uninstall`.
+
+## `launcher/native/nx2saria.c`
+
+`NX2Saria.exe`: the launcher's own program, in the launcher folder (`launcher/paths.py`).
+
+1. A Python staged by an update (`python.next`) replaces `python\` while nothing runs from it.
+2. The release named by `app\current.txt` starts: `python\pythonw.exe app\<version>\launcher\start.pyw` with this
+   program's arguments, the launcher folder as working folder and in `NX2SARIA_LAUNCHER_ROOT`.
+3. When that release fails to start (exit code 86 from `launcher/start.pyw`, or any non-zero exit within six seconds)
+   and `app\previous.txt` names another complete release, `current.txt` goes back to it and it starts with
+   `--rolled-back <version>`.
+
+Its own commands, for the launcher and the setup: `--desktop-shortcut on|off` and `--shortcuts on|off` (Desktop and
+Start menu). It has no console window (`-mwindows`).
+
+### `swap_python()`
+
+When `python\` cannot be moved aside it is in use: the swap is tried again at the next start.
+
+### `start_release()`
+
+Starts the release; returns its exit code if it ended within `QUICK_MS`, else -1 (still running).
+
+## `launcher/native/res.rc`
+
+The resources of `NX2Saria.exe` and `NX2Saria-Setup.exe`: the original leaf sprig icon (`nx2saria.ico`, written by
+`tools/make_launcher.py` from `launcher/ui/art.py` `sprig_ico()` into the build folder and found through `-I`) and
+the manifest, `launcher/native/app.manifest`.
+
+## `launcher/native/setup.c`
+
+`NX2Saria-Setup.exe`: the one-click setup. It is this program with the launcher's folder appended as a zip
+([launcher.md](../launcher.md#releases)).
+
+It unpacks the zip into `%LOCALAPPDATA%\Programs\NX2Saria` (no administrator rights), adds the Start menu and Desktop
+shortcuts and the entry in Settings > Apps, and starts `NX2Saria.exe` with `--from <the setup's folder>`, where the
+launcher looks for the player's dump first. A small window in the launcher's colours shows while it unpacks. When the
+folder already holds a newer version than the setup carries, the setup leaves the files alone (the launcher updates
+itself) and only repairs the shortcuts.
+
+The end of the file is a trailer: "NX2NSET1", the zip's offset and size (u64 little endian) and the version (24 bytes,
+NUL padded), written by `tools/make_launcher.py`. The zip is read here with zlib's inflate, so the setup needs nothing
+from Windows beyond its own DLLs.
+
+Options: `--dest DIR`, `--no-shortcuts`, `--no-launch`, `--quiet` (no window; for tests).
+
+The `result` of the `Setup` state is 0 when all went well, else the id of an error message.
+
+### `draw_sprig()`
+
+An original three-leaf sprig in the launcher's forest palette; no artwork derived from the game.
+
+### `make_dirs()`
+
+Makes every folder above the path, which is a file's.
+
+### `unzip()`
+
+The end-of-central-directory record is read as the last 22 bytes: the zip has no comment.
+
+### `installed_ok()`
+
+Whether the installed release can start: its launcher (`launcher/native/nx2saria.c` `release_ok()`) and the Python it
+runs on.
+
+### `work()`
+
+A newer launcher (one that updated itself) stays, unless it cannot start: the stub sends the player to this setup to
+repair just that, and the setup's own release then replaces it.
+
+### `wWinMain()`
+
+- Without `--dest` and without the known folder, the target comes from `LOCALAPPDATA`: `GetEnvironmentVariableW`
+  returns 0 when the variable is unset and `PATHN` or more when it does not fit (the buffer is then left unwritten);
+  16 characters of room are kept for `\Programs`.
+- The current install's folder is preferred; when only the folder of the port's earlier name exists, it is updated in
+  place.
 
 ## `launcher/play.py`
 
