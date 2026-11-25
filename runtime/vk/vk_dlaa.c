@@ -10,6 +10,7 @@
 #include "cfg.h"
 #include "gfx.h"
 #include "host.h"
+#include "ngx_lock.h"
 #include "nvn_api.h"
 #include "platform/platform.h"
 #include "vk.h"
@@ -87,6 +88,15 @@ static struct {
     VkFormat fmt;
     int failed, reset, evals;
 } FG;
+
+static NgxLock NL;
+
+static void ngx_lock_log(void) {
+    if (!N.ngx_up) return;
+    char line[512];
+    ngx_lock_line(&NL, line, sizeof line);
+    rt_log("dlaa: %s", line);
+}
 
 int vk_ngxfg_wanted(void) {
 #ifdef _WIN32
@@ -254,7 +264,9 @@ static const char *fg_keep(const char *name) {
 void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max) {
     unsigned ni = 0, nd = 0;
     const char **ie = NULL, **de = NULL;
-    if (!vk_dlaa_wanted() || fsr3() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
+    if (!vk_dlaa_wanted() || fsr3() || !core_load() ||
+        !NGX_OK(NGX_CALL(&NL, NGX_AT_SETUP, N.req_ext(&ni, &ie, &nd, &de))))
+        return;
     for (unsigned i = 0; i < ni; i++)
         if (!listed(ext, *n, ie[i]) && *n < max) ext[(*n)++] = ie[i];
     if (vk_ngxfg_wanted() && N.feat_inst_req) {
@@ -266,7 +278,7 @@ void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max) {
         d.path = here;
         uint32_t k = 0;
         VkExtensionProperties *pr = NULL;
-        if (NGX_OK(((PFN_FeatInstReq)N.feat_inst_req)(&d, &k, &pr)) && pr)
+        if (NGX_OK(NGX_CALL(&NL, NGX_AT_SETUP, ((PFN_FeatInstReq)N.feat_inst_req)(&d, &k, &pr))) && pr)
             for (uint32_t i = 0; i < k; i++) {
                 const char *nm = fg_keep(pr[i].extensionName);
                 if (nm && !listed(ext, *n, nm) && *n < max) ext[(*n)++] = nm, rt_log("ngxfg: instance extension %s", nm);
@@ -278,7 +290,9 @@ void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, cons
                          uint32_t max) {
     unsigned ni = 0, nd = 0;
     const char **ie = NULL, **de = NULL;
-    if (!vk_dlaa_wanted() || fsr3() || !core_load() || !NGX_OK(N.req_ext(&ni, &ie, &nd, &de))) return;
+    if (!vk_dlaa_wanted() || fsr3() || !core_load() ||
+        !NGX_OK(NGX_CALL(&NL, NGX_AT_SETUP, N.req_ext(&ni, &ie, &nd, &de))))
+        return;
     for (unsigned i = 0; i < nd; i++) {
         int ok = 0;
         for (uint32_t k = 0; k < nhave && !ok; k++) ok = !strcmp(have[k].extensionName, de[i]);
@@ -289,7 +303,7 @@ void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, cons
 
 static int vtable_ok(void) {
     NgxParam *p = NULL;
-    if (!NGX_OK(N.alloc_params(&p)) || !p) return 0;
+    if (!NGX_OK(NGX_CALL(&NL, NGX_AT_SETUP, N.alloc_params(&p))) || !p) return 0;
     int i = 0;
     unsigned u = 0;
     float f = 0;
@@ -300,7 +314,7 @@ static int vtable_ok(void) {
     p_setp(p, "NX2Saria.Test.P", (void *)p);
     int ok = p_geti(p, "NX2Saria.Test.I", &i) && i == -12345 && p_getu(p, "NX2Saria.Test.U", &u) && u == 4000000000u &&
              p_getf(p, "NX2Saria.Test.F", &f) && f == 1.25f && p_getp(p, "NX2Saria.Test.P", &v) && v == (void *)p;
-    if (N.destroy_params) N.destroy_params(p);
+    if (N.destroy_params) NGX_CALL(&NL, NGX_AT_SETUP, N.destroy_params(p));
     if (!ok) rt_log("dlaa: NGX parameter layout check failed (i=%d u=%u f=%g p=%p): DLAA off", i, u, f, v);
     return ok;
 }
@@ -348,8 +362,8 @@ void vk_dlaa_init(void) {
     }
 #endif
     const VkCtx *c = vk_ctx();
-    NgxResult r = N.init(231313132ull, wdir, c->instance, c->phys, c->device, vkGetInstanceProcAddr,
-                         vkGetDeviceProcAddr, NGX_VERSION_API, NULL);
+    NgxResult r = NGX_CALL(&NL, NGX_AT_SETUP, N.init(231313132ull, wdir, c->instance, c->phys, c->device,
+                                                      vkGetInstanceProcAddr, vkGetDeviceProcAddr, NGX_VERSION_API, NULL));
     if (!NGX_OK(r)) {
         rt_log("dlaa: NGX init failed (%08x): DLAA off", (unsigned)r);
         return;
@@ -360,7 +374,7 @@ void vk_dlaa_init(void) {
     if (!vtable_ok()) return;
     NgxParam *caps = NULL;
     int avail = 0, driver = 0;
-    if (NGX_OK(N.caps(&caps)) && caps) {
+    if (NGX_OK(NGX_CALL(&NL, NGX_AT_SETUP, N.caps(&caps))) && caps) {
 #ifndef _WIN32
         N.caps_map = caps;
 #endif
@@ -381,6 +395,20 @@ void vk_dlaa_init(void) {
         rt_log("ngxfg: DLSS Frame Generation %s (up to %dx)",
                fga ? "available" : "NOT available (is libnvidia-ngx-dlssg.so.<version> next to the executable?)", FG.max + 1);
     }
+#ifdef _WIN32
+    const char *fg_why = "it is Linux only";
+#else
+    const char *fg_why = !vk_ngxfg_wanted() ? "not wanted in this run" : "not available";
+#endif
+    if (FG.max)
+        rt_log("dlaa: NGX calls go through one lock (NGX is not thread safe): DLSS's from the replay thread, its idle "
+               "releases from the frame's bookkeeping, DLSS Frame Generation's from the present thread, which can wait "
+               "there for a DLSS call (the NGX lock line says how long)");
+    else
+        rt_log("dlaa: NGX calls go through one lock (NGX is not thread safe): DLSS's from the replay thread and its "
+               "idle releases from the frame's bookkeeping; no DLSS Frame Generation through NGX (%s), so the lock is "
+               "almost never waited for",
+               fg_why);
 }
 
 int vk_dlaa_available(void) { return vk_dlaa_wanted() && N.available; }
@@ -609,9 +637,9 @@ void vk_upscaler_device_idle(void) {
     perf_mark_end(PERF_M_UPWAIT, t0, 0);
 }
 
-static void feat_release(NgxHandle *f) {
+static void feat_release(NgxHandle *f, int at) {
     uint64_t t0 = perf_mark_begin();
-    N.release(f);
+    NGX_CALL(&NL, at, N.release(f));
     perf_mark_end(PERF_M_UPREL, t0, 0);
 }
 
@@ -631,7 +659,7 @@ static void dead_release(const UpdEntry *e, void *teardown) {
     const VkCtx *c = vk_ctx();
     uint64_t t0 = perf_mark_begin();
     if (e->kind == UPD_FEAT) {
-        if (N.release) N.release((NgxHandle *)e->handle);
+        if (N.release) NGX_CALL(&NL, teardown ? NGX_AT_SETUP : NGX_AT_REPLAY, N.release((NgxHandle *)e->handle));
     } else if (e->kind == UPD_VIEW) {
         if (teardown) vkDestroyImageView(c->device, (VkImageView)e->handle, NULL);
         else vk_defer_view((VkImageView)e->handle);
@@ -716,7 +744,7 @@ static void retire_feat(struct Size *s, int count) {
     if (count) feat_released = 1;
 }
 
-static void destroy_size(struct Size *e) {
+static void destroy_size(struct Size *e, int at) {
     const VkCtx *c = vk_ctx();
     if (e->out_view) vkDestroyImageView(c->device, e->out_view, NULL);
     if (e->mv_view) vkDestroyImageView(c->device, e->mv_view, NULL);
@@ -732,7 +760,7 @@ static void destroy_size(struct Size *e) {
         if (e->dist_view[i]) vkDestroyImageView(c->device, e->dist_view[i], NULL);
         if (e->dist[i]) vmaDestroyImage(c->vma, e->dist[i], e->dist_mem[i]);
     }
-    if (e->feat && N.release) feat_release(e->feat), feat_released = 1;
+    if (e->feat && N.release) feat_release(e->feat, at), feat_released = 1;
     if (D.host == e) D.host = NULL;
     memset(e, 0, sizeof *e);
 }
@@ -1458,13 +1486,13 @@ void vk_dlaa_release(void) {
     if (!c) return;
     upd_take_all(&dead, dead_release, (void *)1);
     for (int i = 0; i < 5; i++)
-        if (D.sizes[i].feat) N.release(D.sizes[i].feat), D.sizes[i].feat = NULL;
-    if (FG.feat) N.release(FG.feat);
-    if (FG.p) N.destroy_params(FG.p);
+        if (D.sizes[i].feat) NGX_CALL(&NL, NGX_AT_SETUP, N.release(D.sizes[i].feat)), D.sizes[i].feat = NULL;
+    if (FG.feat) NGX_CALL(&NL, NGX_AT_SETUP, N.release(FG.feat));
+    if (FG.p) NGX_CALL(&NL, NGX_AT_SETUP, N.destroy_params(FG.p));
     memset(&FG, 0, sizeof FG);
-    if (D.params) N.destroy_params(D.params);
-    if (N.caps_map) N.destroy_params(N.caps_map);
-    for (int i = 0; i < 5; i++) destroy_size(&D.sizes[i]);
+    if (D.params) NGX_CALL(&NL, NGX_AT_SETUP, N.destroy_params(D.params));
+    if (N.caps_map) NGX_CALL(&NL, NGX_AT_SETUP, N.destroy_params(N.caps_map));
+    for (int i = 0; i < 5; i++) destroy_size(&D.sizes[i], NGX_AT_SETUP);
     for (int i = 0; i < SNAPS; i++) destroy_snap(&R.s[i]);
     hl_destroy();
     pb_destroy();
@@ -1487,9 +1515,10 @@ void vk_dlaa_release(void) {
     if (!N.device) return;
     unsigned left = 0;
     vk_queue_lock();
-    NgxResult r = N.shutdown1(N.device, &left);
+    NgxResult r = NGX_CALL(&NL, NGX_AT_SETUP, N.shutdown1(N.device, &left));
     vk_queue_unlock();
     rt_log("dlaa: NGX shut down (%08x, %u devices left)", (unsigned)r, left);
+    ngx_lock_log();
     N.device = NULL, N.caps_map = NULL, N.ngx_up = 0, N.available = 0;
 #endif
 }
@@ -1682,7 +1711,8 @@ static void query_vram(void) {
     void *cb = NULL;
     unsigned long long n = 0;
     if (fsr3() || !N.capsp || !p_getp(N.capsp, "DLSSGetStatsCallback", &cb) || !cb) return;
-    if (NGX_OK(((NgxResult (*)(NgxParam *))cb)(N.capsp)) && p_getull(N.capsp, "SizeInBytes", &n))
+    if (NGX_OK(NGX_CALL(&NL, NGX_AT_REPLAY, ((NgxResult (*)(NgxParam *))cb)(N.capsp))) &&
+        p_getull(N.capsp, "SizeInBytes", &n))
         __atomic_store_n(&dlss_vram, (int64_t)n, __ATOMIC_RELAXED);
 }
 
@@ -1891,7 +1921,7 @@ static int range_query(uint32_t ow, uint32_t oh, int q, unsigned opt[2], unsigne
     p_setu(c, "Height", oh);
     p_seti(c, "PerfQualityValue", q);
     p_seti(c, "RTXValue", 0);
-    if (!NGX_OK(((NgxResult (*)(NgxParam *))cb)(c))) return 0;
+    if (!NGX_OK(NGX_CALL(&NL, NGX_AT_REPLAY, ((NgxResult (*)(NgxParam *))cb)(c)))) return 0;
     if (!p_getu(c, "OutWidth", &opt[0]) || !p_getu(c, "OutHeight", &opt[1])) return 0;
     lo[0] = hi[0] = opt[0], lo[1] = hi[1] = opt[1];
     p_getu(c, "DLSS.Get.Dynamic.Max.Render.Width", &hi[0]);
@@ -1988,7 +2018,8 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
         __atomic_store_n(&size_changed, 1, __ATOMIC_RELEASE);
     } else if (use_range && host != D.host) D.reset = 1, D.why[0]++;
     if (!fsr && !N.ngx_up) return;
-    if (!fsr && !D.params && !NGX_OK(N.alloc_params(&D.params))) return dl_fail("parameter allocation", 0);
+    if (!fsr && !D.params && !NGX_OK(NGX_CALL(&NL, NGX_AT_REPLAY, N.alloc_params(&D.params))))
+        return dl_fail("parameter allocation", 0);
     NgxParam *p = D.params;
     VkImageView zv = vk_exec_target_view(z->img, z->format, VK_IMAGE_VIEW_TYPE_2D, VK_IMAGE_ASPECT_DEPTH_BIT, z->level,
                                          z->base_layer, 1, 0);
@@ -2064,7 +2095,7 @@ own_feature:
         p_setu(p, "DLSS.Hint.Render.Preset.Performance", (unsigned)pm);
         p_setu(p, "DLSS.Hint.Render.Preset.UltraPerformance", (unsigned)pl);
         uint64_t t0 = perf_mark_begin();
-        NgxResult r = N.create(cb, NGX_FEATURE_SUPERSAMPLING, p, &host->feat);
+        NgxResult r = NGX_CALL(&NL, NGX_AT_REPLAY, N.create(cb, NGX_FEATURE_SUPERSAMPLING, p, &host->feat));
         perf_mark_end(PERF_M_NGX, t0, 0);
         const int inflight = !NGX_OK(r) || !host->feat ? upd_count(&dead, UPD_FEAT) : 0;
         if (inflight) {
@@ -2074,7 +2105,7 @@ own_feature:
             const double waited = (plat_now_ns() - w0) / 1e6;
             host->feat = NULL;
             t0 = perf_mark_begin();
-            r = N.create(cb, NGX_FEATURE_SUPERSAMPLING, p, &host->feat);
+            r = NGX_CALL(&NL, NGX_AT_REPLAY, N.create(cb, NGX_FEATURE_SUPERSAMPLING, p, &host->feat));
             perf_mark_end(PERF_M_NGX, t0, 0);
             rt_log("dlaa: DLSS feature creation refused (%08x) with %d released feature(s) still in flight: waited %.1f "
                    "ms for them, %s", (unsigned)r0, inflight, waited,
@@ -2127,7 +2158,7 @@ own_feature:
     }
     p_setf(p, "FrameTimeDeltaInMsec", frame_ms);
     c0 = timed ? kern_now_ns() : 0;
-    NgxResult r = N.evaluate(cb, host->feat, p, NULL);
+    NgxResult r = NGX_CALL(&NL, NGX_AT_REPLAY, N.evaluate(cb, host->feat, p, NULL));
     host->feat_fence = vk_exec_recording_fence();
     if (timed) T.cpu_ngx += kern_now_ns() - c0;
     if (!NGX_OK(r) && host != e) {
@@ -2188,6 +2219,7 @@ evaluated:
                (unsigned long long)D.cam_none_draw, (unsigned long long)D.cam_none_snap, (unsigned long long)D.cam_kept,
                (unsigned long long)D.cam_kept_max, KEEP_MAX, (unsigned long long)D.cam_at_draw,
                (unsigned long long)D.steps_kept, (unsigned long long)D.steps_made);
+    if (D.evals == 1 || D.evals == 300 || D.evals % 3600 == 0) ngx_lock_log();
     window_line();
 }
 
@@ -2681,7 +2713,7 @@ static void idle_release(void) {
             if (s->feat) {
                 rt_log("dlaa: the DLSS feature at %ux%u went unused for %d presents with the upscaler off: released; "
                        "its size's motion images stay for frame generation", s->w, s->h, IDLE_FREE_PRESENTS);
-                feat_release(s->feat), s->feat = NULL, feat_released = 1;
+                feat_release(s->feat, NGX_AT_FRAME), s->feat = NULL, feat_released = 1;
             }
             if (D.host == s) D.host = NULL;
             continue;
@@ -2689,7 +2721,7 @@ static void idle_release(void) {
         if (s->out || s->feat) {
             rt_log("dlaa: the DLSS size %ux%u -> %ux%u went unused for %d presents with the upscaler off: freed",
                    s->w, s->h, s->ow, s->oh, IDLE_FREE_PRESENTS);
-            destroy_size(s), n++;
+            destroy_size(s, NGX_AT_FRAME), n++;
         }
     }
     if (n && !D.fgo)
@@ -2978,14 +3010,14 @@ int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage
         FG.reset = 1;
         return 0;
     }
-    if (!FG.p && !NGX_OK(N.alloc_params(&FG.p))) {
+    if (!FG.p && !NGX_OK(NGX_CALL(&NL, NGX_AT_PRESENT, N.alloc_params(&FG.p)))) {
         FG.failed = 1;
         rt_log("ngxfg: parameter allocation failed: frame generation off");
         return 0;
     }
     NgxParam *p = FG.p;
     if (FG.feat && (FG.w != bb->w || FG.h != bb->h || FG.fmt != bb->fmt)) {
-        N.release(FG.feat);
+        NGX_CALL(&NL, NGX_AT_PRESENT, N.release(FG.feat));
         FG.feat = NULL;
     }
     if (!FG.feat) {
@@ -2995,7 +3027,7 @@ int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage
         p_setu(p, "Height", bb->h);
         p_setu(p, "DLSSG.BackbufferFormat", (unsigned)bb->fmt);
         uint64_t t0 = perf_mark_begin();
-        NgxResult r = N.create(cb, NGX_FEATURE_FRAME_GENERATION, p, &FG.feat);
+        NgxResult r = NGX_CALL(&NL, NGX_AT_PRESENT, N.create(cb, NGX_FEATURE_FRAME_GENERATION, p, &FG.feat));
         perf_mark_end(PERF_M_NGX, t0, 0);
         if (!NGX_OK(r) || !FG.feat) {
             FG.failed = 1, FG.feat = NULL;
@@ -3068,7 +3100,7 @@ int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage
         NgxResourceVK ro = res_image(out[i].view, out[i].img, out[i].fmt, out[i].w, out[i].h, VK_IMAGE_ASPECT_COLOR_BIT, 1);
         p_setp(p, "DLSSG.OutputInterpolated", &ro);
         p_setu(p, "DLSSG.MultiFrameIndex", (unsigned)(i + 1));
-        NgxResult r = N.evaluate(cb, FG.feat, p, NULL);
+        NgxResult r = NGX_CALL(&NL, NGX_AT_PRESENT, N.evaluate(cb, FG.feat, p, NULL));
         if (!NGX_OK(r)) {
             static int told;
             if (told++ < 5) rt_log("ngxfg: evaluation %d of %d failed (%08x)", i + 1, count, (unsigned)r);
@@ -3079,6 +3111,6 @@ int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage
     full_barrier(cb);
     FG.reset = 0;
     if (made && (++FG.evals == 1 || FG.evals % 3600 == 0))
-        rt_log("ngxfg: %d frames with generation (%d generated per rendered frame)", FG.evals, made);
+        rt_log("ngxfg: %d frames with generation (%d generated per rendered frame)", FG.evals, made), ngx_lock_log();
     return made;
 }

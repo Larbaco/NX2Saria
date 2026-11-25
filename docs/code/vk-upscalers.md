@@ -3256,6 +3256,45 @@ edge.
 - Bin 0 is exactly black, and a percentile that falls in it is given as 0.
 - The histogram and the code-to-nits table are static: one caller at a time.
 
+## `runtime/vk/ngx_lock.h`
+
+The lock every NGX call of `runtime/vk/vk_dlaa.c` goes through. NGX is not thread safe (the SDK's headers: "Methods in
+this library are NOT thread safe. It is up to the client to ensure that thread safety is enforced as needed"), and three
+threads call it: DLSS's parameter allocation, creates, evaluations, optimal-settings and statistics callbacks and the
+releases of its `dead` list on the replay thread (`vk_dlaa_pass()` and what it runs); the idle releases on the frame's
+bookkeeping (`vk_dlaa_frame()` `idle_release()`); DLSS Frame Generation's allocation, create, release and evaluations on
+the present thread (`vk_ngxfg_evaluate()`, from `runtime/gfx/gfx_present.c` `ng_record()`, Linux only). Before it, a
+DLSS evaluation on the replay thread and a frame generation evaluation on the present thread ran inside NGX at the same
+time every frame. Own header so `tests/ngx_lock_check.c` checks it without a GPU.
+
+Only the library's entry points and the callbacks it hands out are inside: the parameter objects are not shared between
+threads (`D.params` the replay's, `FG.p` the present's, the capability parameters the replay's after `vk_dlaa_init()`),
+and nothing else is called while the lock is held, so it is always the innermost lock (`vk_dlaa_release()` takes it
+inside the queue lock for the shutdown). A wait for the GPU after a refused create (`vk_upscaler_gpu_wait()`) happens
+between two calls, outside it.
+
+What a thread can wait: the longest single call the other threads make. That is DLSS's feature creation (a size, a mode
+or a model change), and the present thread then waits for it before its own frame generation call: the frame's present
+is that much later, and the generated frames shown with it too. `tests/ngx_lock_check.c` with a 30 ms create on the
+replay thread: the present thread waited 30.0 ms at most. Uncontended, a call costs about 40 ns more (the try, the lock
+and two clock reads): nothing on Windows, where no other thread calls NGX in play.
+
+- `NGX_AT_REPLAY`, `NGX_AT_PRESENT`, `NGX_AT_FRAME`, `NGX_AT_SETUP`: who calls, for the counts. Setup is
+  `vk_dlaa_init()`, the extension lists before the device exists and `vk_dlaa_release()`'s teardown (`dead_release()`
+  with its teardown flag, `destroy_size()` from there).
+- `calls`, `waits`, `wait_max` per caller; `hold_max` and `hold_max_at`: the longest a call held the lock, and whose.
+  Written with the lock held.
+
+### `ngx_lock_take()`, `ngx_lock_give()`, `NGX_CALL()`
+
+A try first: an uncontended call reads the clock only for the hold. `NGX_CALL(lock, at, expr)` takes the lock, evaluates
+the call and gives the value back, so the call sites keep their shape.
+
+### `ngx_lock_line()`
+
+The counts as one log line, copied under the lock: calls per caller, the waits, the present thread's apart (longest),
+the others' (longest), and the longest hold with its caller.
+
 ## `runtime/vk/vk_dlaa.h`
 
 What `runtime/vk/vk_dlaa.c` promises its callers: DLSS or FSR 3.1 on the scene, behind `NX2SARIA_DLAA` (`dlaa = 1` in
@@ -3386,6 +3425,11 @@ set-then-get round trip before anything relies on it.
 
 NGX and DLAA's resources live as long as the device: `vk_dlaa_init()` brings NGX up on the new device, and
 `vk_dlaa_release()` (Linux) frees everything DLAA made and shuts NGX down before the device is destroyed.
+
+Every NGX call goes through one lock, `NL` (`runtime/vk/ngx_lock.h`, `NGX_CALL()`), with the caller named for the
+counts; `tests/ngx_lock_check.py` fails on a call to an NGX entry point or callback outside it. `ngx_lock_log()` writes
+`ngx_lock_line()` as a "dlaa:" line with the DLSS line (first evaluation, 300th, every 3600th), with frame generation's
+(first, every 3600th) and after NGX's shutdown; nothing while NGX is not up (FSR 3.1).
 
 The NGX types declared here: `NgxResult` is `NVSDK_NGX_Result` (1 success, `0xBAD00000 | n` failures); `NGX_PERFQ_DLAA`
 (5) is a `NVSDK_NGX_PerfQuality_Value` (0 performance, 1 balanced, 2 quality, 3 ultra performance); `NgxImageView` is
@@ -3531,6 +3575,9 @@ In the order of the function:
    library evaluated 5 generated frames without an error on NVIDIA's 615 driver, and NVIDIA ships up to 6x on RTX 50
    cards: a GPU that reports 3 or more gets up to 5 (6x); one that reports 1 or 2 gets that. The log line gives the
    multiplier, `FG.max` + 1.
+7. One line says who calls NGX through the lock: with frame generation through NGX available, the present thread too,
+   which can wait there for a DLSS call; without it why (Windows: it is Linux only; else not wanted or not available),
+   and the lock is then almost never waited for.
 
 ### Where DLAA runs in the game's frame
 
@@ -3763,7 +3810,8 @@ queue.
 
 ### `feat_release()`
 
-A DLSS feature's release, timed as "upscaler releases" (`NX2SARIA_TRACE=perf`).
+A DLSS feature's release, timed as "upscaler releases" (`NX2SARIA_TRACE=perf`). `at`: who releases, for the NGX lock's
+counts (`idle_release()` the frame's bookkeeping, `destroy_size()` its caller's).
 
 ### What the upscalers let go of while the GPU may still use it
 
@@ -3785,7 +3833,8 @@ together with a DLSS feature's create). Nothing waits for them now:
   DLSS's creates and evaluations. NGX is not thread safe (its SDK header says so), and this thread is not the only one
   that calls it: `vk_ngxfg_evaluate()` runs on the present thread (`runtime/gfx/gfx_present.c` `ng_record()`, from
   `runtime/vk/vk_backend.c` `present_main()`), and `idle_release()` runs in `vk_dlaa_frame()`, the frame's
-  bookkeeping, on the presenting thread or whichever thread closes the frame;
+  bookkeeping, on the presenting thread or whichever thread closes the frame; every call goes through one lock
+  (`runtime/vk/ngx_lock.h`);
 - An image frame generation can read at a present (a size's motion vectors, the HUD-less picture) goes into `dead`
   behind a present gate (`FG_LATE_PRESENTS`), and from there to the deferred destruction;
 - FSR contexts go into lists of their own in `runtime/vk/vk_ffx.cpp` and `runtime/vk/vk_ffx4.cpp` (outside Windows FSR
@@ -3873,7 +3922,8 @@ A size's feature alone (`release_kept()`, `stale_sizes()`), released once the GP
 ### `destroy_size()`
 
 The images and views of a size, then its feature. The device must be idle, or the GPU past every use of them:
-`vk_dlaa_release()` (teardown), `idle_release()` (unused for `IDLE_FREE_PRESENTS` presents). Whatever was not made is
+`vk_dlaa_release()` (teardown, `NGX_AT_SETUP`), `idle_release()` (unused for `IDLE_FREE_PRESENTS` presents,
+`NGX_AT_FRAME`). Whatever was not made is
 skipped, so a half-made size goes the same way.
 
 ### `free_size()`
@@ -5008,8 +5058,9 @@ give the same (`fg_only_frame()`, no jitter).
 
 `bb` is the frame's picture with the HUD, `hudless` the one without it (NULL: none), `out` the `count` images the
 generated frames go to, `real` the image the rendered frame's copy goes to. It returns the frames generated, 0 for none.
-Its NGX calls are made where the present is recorded (`runtime/gfx/gfx_present.c` `ng_record()`), not from DLAA's pass
-hook. In the order of the function:
+Its NGX calls are made where the present is recorded (`runtime/gfx/gfx_present.c` `ng_record()`), on the present thread,
+not from DLAA's pass hook; each goes through the NGX lock as `NGX_AT_PRESENT` and may wait there for a DLSS call on the
+replay thread (`runtime/vk/ngx_lock.h`). In the order of the function:
 
 1. Nothing without `vk_ngxfg_max()` (NGX up with DLSS available, frame generation available, no failure so far);
    `count` is cut to `FG.max`.
@@ -5040,4 +5091,5 @@ hook. In the order of the function:
     "DLSSG.OutputInterpolated" that frame's image and "DLSSG.MultiFrameIndex" 1 to `count`. The first evaluation that
     fails ends the loop (logged for the first 5): the frames made before it are returned, nothing is switched off, and
     the next present tries again.
-11. `FG.reset` is cleared, also when no frame was made. One line at the first frame with generation and every 3600.
+11. `FG.reset` is cleared, also when no frame was made. One line at the first frame with generation and every 3600,
+    with the NGX lock's line after it.
