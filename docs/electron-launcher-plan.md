@@ -35,7 +35,7 @@ Milestones may overlap where dependencies allow; they do not authorize publishin
 
 ## Parity inventory and acceptance
 
-All entries below are **not yet implemented or verified in Electron**. For each, track implementation, automated results on Windows and Linux, owner-observed evidence where applicable, and remaining gaps. The existing behavior is described in `docs/launcher.md`; this checklist is an inventory, not evidence of passing tests.
+Each entry stays open until implementation and the required verification are complete. Track automated results on Windows and Linux, owner-observed evidence where applicable, and remaining gaps. `docs/launcher.md` describes the existing behavior.
 
 - [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery.
 - [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints.
@@ -47,7 +47,7 @@ All entries below are **not yet implemented or verified in Electron**. For each,
 - [ ] Mods: add files/folders, enable/disable, ordering, rebuild and errors.
 - [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
-- [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings.
+- [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads the saved Hide Launcher While Playing preference. Add a control in Electron to change that preference before replacing the installed launcher.
 - [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. Electron still needs the existing question, choices, preview, comments, sending and recovery behavior before parity.
 - [ ] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. This remains outside the current worker milestone; no new sending or question is implemented here.
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
@@ -250,7 +250,13 @@ The Linux x86-64 test archive ships the same Electron and worker application bui
 ZIP. It uses the selected AppImage installation's Python and tools. For a read-only readiness check,
 call the same `inspect_installation()` used by the worker before opening the lock. A normal app session
 takes `data/launcher.lock`, records its owner in `data/launcher.lock.owner`, and writes to the launcher logs.
-The owner can test on Preview 0.26.0-rc.2 when it is available. Synthetic windows use Xvfb and a fake game.
+Synthetic windows use Xvfb and a fake game.
+
+The owner tested Linux build `b62829a5` on a real Preview 0.26.0-rc.2 installation. The logs confirmed
+automatic detection, the installed Python runtime, hide and restore, two normal game exits in the same
+window and refusal of a second instance while the game was running. When the owner explicitly closed the
+launcher during play, the worker followed the game through its normal end and exited. The closed launcher
+stayed closed. A mod rebuild and an abnormal exit were covered by synthetic tests.
 
 ### Worker implementation: handshake and inspection
 
