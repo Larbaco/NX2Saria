@@ -1,28 +1,3 @@
-// AMD FSR 3.1 temporal upscaling recorded by the runtime: the upscaler's compute passes (runtime/shaders/fsr3_*.comp,
-// over the headers in runtime/shaders/ffx3, built into runtime/fsr3_*_spv.h by tools/build_shaders.py). vk_ffx.cpp
-// sends vk_ffx_upscale here in the builds that load no amd_fidelityfx_vk.dll (all but Windows). Frame generation is not
-// here: it runs through that library's own API calls (vk_fg.cpp), so not in those builds.
-//
-// The inputs are vk_dlaa.c's, the ones vk_ffx.cpp hands the library: the scene light (linear HDR), its D32F depth
-// (OpenGL-style, 0 near and 1 far, with the frame's near and far planes; not inverted), motion vectors at the render
-// size in render pixels from the current frame to the previous one, without the jitter, and the jitter in render
-// pixels. The passes are built with the options of runtime/shaders/fsr3_options.h for those inputs (HDR, low-resolution
-// motion vectors, depth not inverted) and run with auto exposure. Every image is in GENERAL and stays there.
-//
-// One call (vk_fsr3_upscale) records, in this order: the clears (history on a reset, the reconstructed depth and the
-// SPD mips every time), then prepare inputs (dilated depth and motion, the previous frame's nearest depth
-// reconstructed, luma, farthest depth), luma pyramid (SPD: auto exposure and the farthest depth at half size), shading
-// change pyramid (SPD again over the luma change), shading change, prepare reactivity (disocclusion, locks,
-// accumulation), luma instability, accumulate (the upscale itself) and, with sharpening, RCAS on the accumulated colour
-// into the output. A global compute barrier separates the passes. fill_constants computes the constants the passes
-// read; the history images alternate between calls.
-//
-// Contexts (ctx_for): one per render size and output size, or with the game's dynamic resolution one per output size
-// for every render size up to it, at most CTX_MAX; one no upscale used for 90 seconds goes, and all of them go while
-// the upscaler is off (vk_fsr3_release_idle). A context that goes is let go of (retire_ctx) and its images are
-// destroyed once the GPU is past the submission of its last upscale (g_dead, vk_dlaa.c "what the upscalers let go of"),
-// as vk_ffx.cpp does with the library's contexts. The constants live in a host-visible ring of RING slots; a slot is
-// reused RING calls later, after the GPU passed the submission that last read it.
 #include "vk.h"
 
 #include <float.h>
@@ -47,15 +22,13 @@
 #include "fsr3_shading_change_pyramid_spv.h"
 #include "fsr3_shading_change_spv.h"
 
-// ---- the images of a context
-
 enum { SZ_RENDER, SZ_HALF, SZ_OUT, SZ_ONE };
 enum {
-    I_ACC0, I_ACC1,     // accumulation (locks' age), this call's and the last one's, alternating
-    I_LUMA0, I_LUMA1,   // current and previous luma, alternating
-    I_LH0, I_LH1,       // luma history (four frames), alternating
-    I_UP0, I_UP1,       // the upscaled colour, alternating
-    I_INTER,            // farthest depth, then luma instability: one image, which the first has left by the second
+    I_ACC0, I_ACC1,
+    I_LUMA0, I_LUMA1,
+    I_LH0, I_LH1,
+    I_UP0, I_UP1,
+    I_INTER,
     I_SHADE, I_LOCKS, I_SPD, I_FDMIP1, I_ATOMIC, I_DREACT, I_FINFO, I_DDEPTH, I_DMV, I_RECON, I_N
 };
 static const struct {
@@ -73,7 +46,7 @@ static const struct {
     [I_INTER] = {VK_FORMAT_R16_SFLOAT, SZ_RENDER},
     [I_SHADE] = {VK_FORMAT_R8_UNORM, SZ_HALF},
     [I_LOCKS] = {VK_FORMAT_R8_UNORM, SZ_OUT},
-    [I_SPD] = {VK_FORMAT_R16G16_SFLOAT, SZ_HALF},   // with every mip
+    [I_SPD] = {VK_FORMAT_R16G16_SFLOAT, SZ_HALF},
     [I_FDMIP1] = {VK_FORMAT_R16_SFLOAT, SZ_HALF},
     [I_ATOMIC] = {VK_FORMAT_R32_UINT, SZ_ONE},
     [I_DREACT] = {VK_FORMAT_R8G8B8A8_UNORM, SZ_RENDER},
@@ -82,18 +55,13 @@ static const struct {
     [I_DMV] = {VK_FORMAT_R16G16_SFLOAT, SZ_RENDER},
     [I_RECON] = {VK_FORMAT_R32_UINT, SZ_RENDER},
 };
-#define SPD_VIEWS 6   // the SPD passes write mips 0-5 through views of their own
-
-// ---- what the passes bind (the binding numbers of runtime/shaders/fsr3_*.comp)
+#define SPD_VIEWS 6
 
 enum {
-    // sampled images
     S_COLOR, S_DEPTH, S_MV, S_DMV, S_DDEPTH, S_RECON, S_REACTIVE, S_TC, S_ACC, S_SHADE, S_CLUMA, S_PLUMA, S_EXPOSURE,
     S_FINFO, S_LH, S_FDMIP1, S_FD, S_UP, S_LUT, S_DREACT, S_LINST, S_SPD, S_RCAS_IN,
-    // storage images
     U_FIRST, U_DMV = U_FIRST, U_DDEPTH, U_RECON, U_FD, U_CLUMA, U_ATOMIC, U_FINFO, U_SPD0, U_SPD1, U_SPD2, U_SPD3,
     U_SPD4, U_SPD5, U_FDMIP1, U_SHADE, U_DREACT, U_LOCKS, U_ACC, U_LH, U_LINST, U_UP, U_OUT,
-    // uniform buffers
     C_FIRST, C_MAIN = C_FIRST, C_SPD, C_RCAS,
 };
 typedef struct {
@@ -138,7 +106,6 @@ static const struct {
 #undef B
 #define MAX_BINDS 13
 
-// The constants of every pass but RCAS and the SPD ones (std140 cbFSR3Upscaler: all 4-byte members, in this order).
 typedef struct {
     int32_t render[2], prev_render[2], upscale[2], prev_upscale[2], max_render[2], max_upscale[2];
     float device_to_view[4];
@@ -156,62 +123,52 @@ _Static_assert(sizeof(Consts) == 148, "cbFSR3Upscaler is 148 bytes");
 _Static_assert(__builtin_offsetof(Consts, device_to_view) == 48, "a vec4 at a 16-byte boundary in std140");
 _Static_assert(sizeof(SpdConsts) == 24, "cbSPD is 24 bytes");
 
-// ---- state
-
 #define CTX_MAX 4
-#define CTX_RECENT 8   // calls: a context used this recently may sit in a command buffer not yet submitted
-// A context no upscale used for this long goes (vk_fsr3_upscale): a second scene's (the pause screen's) a while after it
-// closed, or one of an output size the window no longer has. Unused that long, no command buffer names it.
+#define CTX_RECENT 8
 #define CTX_IDLE_NS (90ull * 1000000000ull)
-#define RING 256       // constant slots (calls), each one Consts, SpdConsts and the RCAS words
+#define RING 256
 typedef struct {
-    uint32_t mw, mh, ow, oh;   // the render size it was made for (the largest it takes with drs); the output size
-    int drs;                   // made for dynamic resolution: every render size up to mw x mh
-    uint64_t used, used_ns;    // G.tick and the time when ctx_for last returned it
-    uint64_t fence;            // the submission of its last upscale (vk_exec_recording_fence), 0 none
+    uint32_t mw, mh, ow, oh;
+    int drs;
+    uint64_t used, used_ns;
+    uint64_t fence;
     VkImage img[I_N];
     VmaAllocation mem[I_N];
     VkImageView view[I_N];
     VkImageView spd_mip[SPD_VIEWS];
     uint32_t spd_levels;
-    int fresh;           // the images were never recorded into: transition and clear them first
-    int odd;             // which of the alternating images this call writes
-    Consts k;            // carried from call to call (previous sizes, jitter, frame index)
-    float pre_exposure;  // the previous call's
+    int fresh;
+    int odd;
+    Consts k;
+    float pre_exposure;
 } Ctx;
 
 static struct {
-    volatile int32_t state;   // -1: not tried; 0: off; 1: ready
+    volatile int32_t state;
     PFN_vkCmdPushDescriptorSetKHR push;
     VkSampler point, linear;
     VkDescriptorSetLayout dsl[P_N];
     VkPipelineLayout layout[P_N];
     VkPipeline pipe[P_N];
-    // shared by every context: the Lanczos table and the 1x1 masks that stand for the reactive and transparency ones
     VkImage lut, zero;
     VmaAllocation lut_mem, zero_mem;
     VkImageView lut_view, zero_view;
-    VkBuffer lut_src;   // the table's upload source, kept (256 bytes)
+    VkBuffer lut_src;
     VmaAllocation lut_src_mem;
     int shared_fresh;
     VkBuffer ring;
     VmaAllocation ring_mem;
     uint8_t *ring_map;
-    uint32_t slot_bytes, block;   // one ring slot, and one block of it (the uniform buffer offset alignment)
+    uint32_t slot_bytes, block;
     uint32_t ring_next;
-    uint64_t ring_fence[RING];    // the submission that last read each slot (0: none)
+    uint64_t ring_fence[RING];
     Ctx ctx[CTX_MAX];
     uint64_t tick;
-    int made;   // contexts made so far (vk_fsr3_contexts_made)
+    int made;
 } G = {.state = -1};
 
-// The contexts let go of (retire_ctx), destroyed once the GPU is past their last upscale (vk_fsr3_dead_take, which
-// vk_ffx.cpp vk_ffx_dead_take calls at vk_dlaa.c's takes). Each entry's handle is a heap copy of the context (its images
-// and views). Only the thread that makes the upscales (vk_dlaa.c's pass hooks) touches it; vk_fsr3_release at teardown.
 static UpdList g_dead;
-enum { DEAD_CTX = 1 };   // its one kind
-
-// ---- setup
+enum { DEAD_CTX = 1 };
 
 static VkImageView make_view(VkImage img, VkFormat fmt, uint32_t base, uint32_t levels) {
     VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = img,
@@ -267,7 +224,6 @@ static int make_pass(const VkCtx *c, int p) {
                             : r >= U_FIRST ? VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
                                            : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE};
     }
-    // s_PointClamp and s_LinearClamp of the passes' headers, fixed in the layout: nothing to push for them
     b[n++] = (VkDescriptorSetLayoutBinding){.binding = 1000, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
                                             .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
                                             .pImmutableSamplers = &G.point};
@@ -308,7 +264,6 @@ static int make_shared(const VkCtx *c) {
         !(G.lut_view = make_view(G.lut, VK_FORMAT_R16_SNORM, 0, 1)) ||
         !(G.zero_view = make_view(G.zero, VK_FORMAT_R8_UNORM, 0, 1)))
         return 0;
-    // The reprojection's Lanczos-2 weights over [0, 2] in 128 steps, as 16-bit signed normalised values
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = 256,
                              .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT};
     VmaAllocationCreateInfo ai = {.usage = VMA_MEMORY_USAGE_AUTO,
@@ -322,7 +277,6 @@ static int make_shared(const VkCtx *c) {
     int16_t *wts = info.pMappedData;
     for (int i = 0; i < 128; i++) wts[i] = (int16_t)roundf(lanczos2(2.0f * (float)i / 127.0f) * 32767.0f);
     vmaFlushAllocation(c->vma, G.lut_src_mem, 0, VK_WHOLE_SIZE);
-    // The constant ring
     uint32_t align = (uint32_t)c->props.limits.minUniformBufferOffsetAlignment;
     if (align < 16) align = 16;
     G.block = (uint32_t)((sizeof(Consts) + align - 1) / align * align);
@@ -366,9 +320,7 @@ int vk_fsr3_init(void) {
     int s = __atomic_load_n(&G.state, __ATOMIC_ACQUIRE);
     if (s >= 0) return s;
     const VkCtx *c = vk_ctx();
-    if (!c) return 0;   // asked again once the device exists
-    // The present's thread (vk_dlaa_frame) and the replay's (evaluate) may both ask first: one makes the passes, the
-    // other finds them not ready yet, as before the device existed
+    if (!c) return 0;
     static volatile int32_t making;
     if (__atomic_exchange_n(&making, 1, __ATOMIC_ACQ_REL)) return 0;
     s = __atomic_load_n(&G.state, __ATOMIC_ACQUIRE);
@@ -411,10 +363,6 @@ int vk_fsr3_available(void) { return __atomic_load_n(&G.state, __ATOMIC_ACQUIRE)
 
 int vk_fsr3_contexts_made(void) { return G.made; }
 
-// ---- contexts
-
-// A context's images and views destroyed at once: for one no submission names (half made), one the GPU is past
-// (dead_release) and teardown (the device idle).
 static void free_ctx(Ctx *x) {
     const VkCtx *c = vk_ctx();
     for (int i = 0; i < SPD_VIEWS; i++)
@@ -426,7 +374,6 @@ static void free_ctx(Ctx *x) {
     memset(x, 0, sizeof *x);
 }
 
-// One entry of g_dead, as upd_take hands it out, timed as "upscaler releases" (NX2SARIA_TRACE=perf).
 static void dead_release(const UpdEntry *e, void *arg) {
     (void)arg;
     uint64_t t0 = perf_mark_begin();
@@ -436,17 +383,12 @@ static void dead_release(const UpdEntry *e, void *arg) {
     perf_mark_end(PERF_M_UPREL, t0, 0);
 }
 
-// A context let go of while the GPU may still run a command buffer that names it: its images and views go once the GPU
-// is past the submission of its last upscale (g_dead), and the slot is free at once. The caller calls
-// vk_upscaler_let_go after it (or its own caller does: vk_dlaa.c retire_idle after vk_fsr3_release_idle).
 static void retire_ctx(Ctx *x, const char *why, int log) {
     if (log)
         rt_log("fsr3: the context for %ux%u (render size %ux%u) let go of (destroyed once the GPU is past its last "
                "upscale): %s", x->ow, x->oh, x->mw, x->mh, why);
     Ctx *d = malloc(sizeof *d);
     if (!d) {
-        // no room for the entry: the images go to vk_memory.c's deferred destruction, stamped with the submission
-        // being recorded, which comes after every submission that named them
         for (int i = 0; i < SPD_VIEWS; i++) vk_defer_view(x->spd_mip[i]);
         for (int i = 0; i < I_N; i++) vk_defer_view(x->view[i]), vk_defer_image(x->img[i], x->mem[i]);
         memset(x, 0, sizeof *x);
@@ -454,8 +396,6 @@ static void retire_ctx(Ctx *x, const char *why, int log) {
     }
     *d = *x;
     if (!upd_put(&g_dead, DEAD_CTX, d, NULL, x->fence, 0)) {
-        // full, which the GPU's progress does not let happen: room after a wait for the device, or else all of them go,
-        // the device idle
         vk_upscaler_settle();
         if (!upd_put(&g_dead, DEAD_CTX, d, NULL, x->fence, 0)) {
             upd_take_all(&g_dead, dead_release, NULL);
@@ -467,8 +407,6 @@ static void retire_ctx(Ctx *x, const char *why, int log) {
 
 static uint32_t at_least_1(uint32_t v) { return v ? v : 1; }
 
-// The images for render sizes up to mw x mh (the passes take the size of each call from the constants and read only
-// that part of an image) and the output size ow x oh.
 static int make_ctx(Ctx *x, uint32_t mw, uint32_t mh, uint32_t ow, uint32_t oh) {
     memset(x, 0, sizeof *x);
     x->mw = mw, x->mh = mh, x->ow = ow, x->oh = oh;
@@ -485,19 +423,18 @@ static int make_ctx(Ctx *x, uint32_t mw, uint32_t mh, uint32_t ow, uint32_t oh) 
         }
         if (!make_image(iw, ih, levels, IMG[i].fmt, u, &x->img[i], &x->mem[i]) ||
             !(x->view[i] = make_view(x->img[i], IMG[i].fmt, 0, levels))) {
-            free_ctx(x);   // half made: no submission names it
+            free_ctx(x);
             return 0;
         }
     }
     for (uint32_t m = 0; m < SPD_VIEWS; m++) {
-        uint32_t level = m < x->spd_levels ? m : x->spd_levels - 1;   // a small scene has fewer mips than the passes name
+        uint32_t level = m < x->spd_levels ? m : x->spd_levels - 1;
         if (!(x->spd_mip[m] = make_view(x->img[I_SPD], IMG[I_SPD].fmt, level, 1))) {
             free_ctx(x);
             return 0;
         }
     }
     x->fresh = 1;
-    // The constants that stay for the context's life: the largest sizes and the passes' tuning at its defaults
     x->k.max_render[0] = (int32_t)mw, x->k.max_render[1] = (int32_t)mh;
     x->k.max_upscale[0] = (int32_t)ow, x->k.max_upscale[1] = (int32_t)oh;
     x->k.velocity_factor = 1.0f;
@@ -532,14 +469,6 @@ int vk_fsr3_dead_take(uint64_t done) {
 
 uint64_t vk_fsr3_dead_fence(void) { return upd_max_fence(&g_dead); }
 
-// One context per render size and output size, as vk_ffx.cpp context_for keeps the library's: a render size of its own
-// starts a new history, as the library's new context does. With the game's dynamic resolution on (NX2SARIA_DYN_RES,
-// dynres.c), whose steps change the render size every few seconds, one context per output size takes every render
-// size up to the output's, each call's own size coming from the constants. A context of another render size goes once
-// no command buffer still being recorded can name it (CTX_RECENT), and the game's second scenes, of another output
-// size, keep their own. When all are taken, the least recently used one goes for the new size. A context that goes is
-// let go of (retire_ctx): the GPU may still run a command buffer that names it. Images that cannot be made while
-// contexts let go of are still in flight are tried once more after the GPU is past those and they are destroyed.
 static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     G.tick++;
     uint64_t now = plat_now_ns();
@@ -552,10 +481,10 @@ static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
             found = x;
     }
     int gone = 0;
-    for (int i = 0; i < CTX_MAX; i++) {   // the contexts of this output size for another render size, once not recent
+    for (int i = 0; i < CTX_MAX; i++) {
         Ctx *x = &G.ctx[i];
         if (x->img[0] && x != found && x->ow == ow && x->oh == oh && G.tick - x->used >= CTX_RECENT)
-            retire_ctx(x, "the render size changed", 1), gone++;   // their work may be in flight
+            retire_ctx(x, "the render size changed", 1), gone++;
     }
     if (gone) vk_upscaler_let_go();
     if (found) {
@@ -573,19 +502,14 @@ static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
     }
     if (!slot && lru) {
         static int told;
-        retire_ctx(lru, "its slot went to another output size", told++ < 20);   // its work may still be in flight
+        retire_ctx(lru, "its slot went to another output size", told++ < 20);
         vk_upscaler_let_go();
         slot = lru;
     }
     if (!slot) return NULL;
-    // the render size itself; for dynamic resolution, every size up to the output's (and a scene at the output size)
     uint32_t mw = !drs ? w : w > ow ? w : ow, mh = !drs ? h : h > oh ? h : oh;
     int made = make_ctx(slot, mw, mh, ow, oh);
     if (!made && vk_ffx_dead_fence()) {
-        // Refused while contexts let go of (this file's and the other upscalers') are still in flight: most often their
-        // video memory. The GPU finishes with them (vk_upscaler_gpu_wait: those submissions only, not the device), they
-        // go, and the images are made once more, as vk_ffx.cpp context_for does for the library's contexts, rather
-        // than the upscaler failing.
         const uint64_t w0 = plat_now_ns();
         const int gone2 = vk_ffx_dead_take(vk_upscaler_gpu_wait(vk_ffx_dead_fence()));
         const double waited = (double)(plat_now_ns() - w0) / 1e6;
@@ -604,8 +528,6 @@ static Ctx *ctx_for(uint32_t w, uint32_t h, uint32_t ow, uint32_t oh) {
            drs ? "render sizes up to " : "", mw, mh, slot->spd_levels);
     return slot;
 }
-
-// ---- recording
 
 static void barrier(VkCommandBuffer cb, VkPipelineStageFlags2 ss, VkAccessFlags2 sa, VkPipelineStageFlags2 ds,
                     VkAccessFlags2 da) {
@@ -638,10 +560,6 @@ static void to_general(VkCommandBuffer cb, const VkImage *img, int n) {
     vkCmdPipelineBarrier2(cb, &d);
 }
 
-// The constants of this call: sizes, jitter, the depth to view-space conversion of the camera's near and far planes
-// (depth not inverted, 0 at the near plane; a projection without a far plane has VK_DLAA_FAR_INFINITE there, far
-// enough to be the same), the frame index and the jitter phase count, which steps towards its new value one phase per
-// call.
 static void fill_constants(Ctx *x, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh, float jx, float jy, int reset,
                            float dt_ms, float fov_y, float znear, float zfar, float meters) {
     Consts *k = &x->k;
@@ -650,10 +568,8 @@ static void fill_constants(Ctx *x, uint32_t w, uint32_t h, uint32_t ow, uint32_t
     k->prev_render[0] = k->render[0], k->prev_render[1] = k->render[1];
     k->render[0] = (int32_t)w, k->render[1] = (int32_t)h;
     float aspect = (float)w / (float)h;
-    k->tan_half_fov = tanf(atanf(tanf(fov_y / 2) * aspect));   // tan of half the horizontal angle
+    k->tan_half_fov = tanf(atanf(tanf(fov_y / 2) * aspect));
     k->view_to_meters = meters;
-    // view depth from device depth d: device_to_view[1] / (d - device_to_view[0]), with q the projection's far / (near
-    // - far)
     float lo = fminf(znear, zfar), hi = fmaxf(znear, zfar), q = hi / (lo - hi);
     k->device_to_view[0] = -q;
     k->device_to_view[1] = q * lo;
@@ -663,10 +579,10 @@ static void fill_constants(Ctx *x, uint32_t w, uint32_t h, uint32_t ow, uint32_t
     k->prev_upscale[0] = k->upscale[0], k->prev_upscale[1] = k->upscale[1];
     k->upscale[0] = (int32_t)ow, k->upscale[1] = (int32_t)oh;
     k->downscale[0] = (float)w / (float)ow, k->downscale[1] = (float)h / (float)oh;
-    k->delta_pre_exposure = x->pre_exposure > 0 ? 1.0f / x->pre_exposure : 1.0f;   // the pre-exposure is always 1
+    k->delta_pre_exposure = x->pre_exposure > 0 ? 1.0f / x->pre_exposure : 1.0f;
     x->pre_exposure = 1.0f;
-    k->mv_scale[0] = 1.0f / (float)w, k->mv_scale[1] = 1.0f / (float)h;   // render pixels to UV
-    k->mv_jitter_cancel[0] = k->mv_jitter_cancel[1] = 0;                  // the vectors carry no jitter
+    k->mv_scale[0] = 1.0f / (float)w, k->mv_scale[1] = 1.0f / (float)h;
+    k->mv_jitter_cancel[0] = k->mv_jitter_cancel[1] = 0;
     float r = (float)ow / (float)w;
     int32_t phases = (int32_t)(8.0f * r * r);
     if (reset || k->jitter_phases == 0) k->jitter_phases = (float)phases;
@@ -677,15 +593,14 @@ static void fill_constants(Ctx *x, uint32_t w, uint32_t h, uint32_t ow, uint32_t
     k->frame_index = reset ? 0.0f : k->frame_index + 1.0f;
 }
 
-// IEEE half of a float in (0, 1] (the RCAS constant), rounded to nearest
 static uint16_t half_bits(float f) {
     uint32_t u;
     memcpy(&u, &f, 4);
     int32_t e = (int32_t)((u >> 23) & 0xff) - 127 + 15;
     uint32_t m = u & 0x7fffff;
-    if (e <= 0) return (uint16_t)((u >> 16) & 0x8000);   // below the halves' normal range: 0 (never here)
+    if (e <= 0) return (uint16_t)((u >> 16) & 0x8000);
     uint32_t h = (u >> 16 & 0x8000) | (uint32_t)e << 10 | m >> 13;
-    if (m & 0x1000) h++;   // round half up on the dropped bits
+    if (m & 0x1000) h++;
     return (uint16_t)h;
 }
 
@@ -693,11 +608,11 @@ static uint32_t ring_slot(void) {
     uint32_t s = G.ring_next;
     G.ring_next = (s + 1) % RING;
     uint64_t f = G.ring_fence[s];
-    if (f && f > vk_sync_fence_done() && !vk_sync_fence_wait(f, 100000000ull)) {   // RING calls ago: done long since
+    if (f && f > vk_sync_fence_done() && !vk_sync_fence_wait(f, 100000000ull)) {
         static int told;
         if (told++ < 4) rt_log("fsr3: constant slot %u still in use by submission %llu", s, (unsigned long long)f);
     }
-    G.ring_fence[s] = vk_sync_issued() + 1;   // the submission being recorded
+    G.ring_fence[s] = vk_sync_issued() + 1;
     return s;
 }
 
@@ -715,13 +630,11 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
     trim(plat_now_ns());
     Ctx *x = ctx_for(w, h, ow, oh);
     if (!x) return 0;
-    x->fence = vk_exec_recording_fence();   // cb names its images from here on
-    // the frame's camera, or where it is not known the values vk_ffx.cpp vk_ffx_upscale gives the library then
+    x->fence = vk_exec_recording_fence();
     float fov_y = cam && cam->fov_y > 0 && cam->fov_y < 3.14159f ? cam->fov_y : 1.0f;
     float znear = cam && cam->znear > 0 ? cam->znear : 0.1f, zfar = cam && cam->zfar > 0 ? cam->zfar : 1e8f;
     float meters = cam && cam->meters > 0 ? cam->meters : 1.0f;
 
-    // what drew the inputs, and the last call's reads of what this one writes, come first
     barrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, XF | CS,
             VK_ACCESS_2_TRANSFER_WRITE_BIT | CS_RW);
     if (G.shared_fresh) {
@@ -733,7 +646,7 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
         G.shared_fresh = 0;
     }
     int first = x->fresh;
-    if (x->fresh) {   // every image cleared once, so nothing reads what memory held before
+    if (x->fresh) {
         to_general(cb, x->img, I_N);
         for (int i = 0; i < I_N; i++) clear(cb, x->img[i], 0, 0, 0, 0);
         x->fresh = 0;
@@ -744,39 +657,36 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
     fill_constants(x, w, h, ow, oh, jx, jy, reset, dt_ms, fov_y, znear, zfar, meters);
 
     if (reset) {
-        clear(cb, x->img[odd ? I_ACC1 : I_ACC0], 0, 0, 0, 0);   // the accumulation this call reads
-        clear(cb, x->img[I_FINFO], -1.0f, 1.0f, 0, 0);           // auto exposure starts again
+        clear(cb, x->img[odd ? I_ACC1 : I_ACC0], 0, 0, 0, 0);
+        clear(cb, x->img[I_FINFO], -1.0f, 1.0f, 0, 0);
     }
-    // every call: the reconstructed nearest depth (to the far value, as bits of 1.0f), the SPD mips and their counter
     clear(cb, x->img[I_RECON], 1.0f, 1.0f, 1.0f, 1.0f);
     clear(cb, x->img[I_SPD], 0, 0, 0, 0);
     clear(cb, x->img[I_ATOMIC], 0, 0, 0, 0);
     barrier(cb, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT, CS, CS_RW);
 
-    // the constants: this call's slot of the ring
     uint32_t slot = ring_slot();
     VkDeviceSize base = (VkDeviceSize)slot * G.slot_bytes;
     uint8_t *at = G.ring_map + base;
     memcpy(at, &x->k, sizeof x->k);
     uint32_t groups[2], offset[2];
-    {   // SPD over the render size (the luma and shading change pyramids)
+    {
         offset[0] = offset[1] = 0;
         groups[0] = (w - 1) / 64 + 1, groups[1] = (h - 1) / 64 + 1;
         uint32_t big = w > h ? w : h, mips = 0;
-        while (big >>= 1) mips++;   // floor(log2(max(w, h)))
+        while (big >>= 1) mips++;
         SpdConsts s = {mips > 12 ? 12 : mips, groups[0] * groups[1], {offset[0], offset[1]}, {w, h}};
         memcpy(at + G.block, &s, sizeof s);
     }
-    {   // RCAS: the slider's 0..1 as stops of sharpness reduction (0 = most), packed as the pass reads it
+    {
         float stops = -2.0f * sharpness + 2.0f, lin = exp2f(-stops);
         uint32_t con[4] = {0, 0, 0, 0}, hb = (uint32_t)half_bits(lin);
         memcpy(&con[0], &lin, 4);
-        con[1] = hb | hb << 16;   // the same as a pair of halves, for a 16-bit build of the pass
+        con[1] = hb | hb << 16;
         memcpy(at + 2 * (size_t)G.block, con, sizeof con);
     }
     vmaFlushAllocation(vk_ctx()->vma, G.ring_mem, base, G.slot_bytes);
 
-    // what each binding names this call
     VkImageView v[C_FIRST] = {0};
     v[S_COLOR] = color->view, v[S_DEPTH] = depth->view, v[S_MV] = mv->view;
     v[S_DMV] = v[U_DMV] = x->view[I_DMV];
@@ -786,7 +696,7 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
     v[S_ACC] = x->view[odd ? I_ACC1 : I_ACC0], v[U_ACC] = x->view[odd ? I_ACC0 : I_ACC1];
     v[S_SHADE] = v[U_SHADE] = x->view[I_SHADE];
     v[S_CLUMA] = v[U_CLUMA] = x->view[odd ? I_LUMA1 : I_LUMA0], v[S_PLUMA] = x->view[odd ? I_LUMA0 : I_LUMA1];
-    v[S_EXPOSURE] = v[S_FINFO] = v[U_FINFO] = x->view[I_FINFO];   // auto exposure: the frame info is the exposure
+    v[S_EXPOSURE] = v[S_FINFO] = v[U_FINFO] = x->view[I_FINFO];
     v[S_LH] = x->view[odd ? I_LH1 : I_LH0], v[U_LH] = x->view[odd ? I_LH0 : I_LH1];
     v[S_FDMIP1] = v[U_FDMIP1] = x->view[I_FDMIP1];
     v[S_FD] = v[U_FD] = v[S_LINST] = v[U_LINST] = x->view[I_INTER];
@@ -833,7 +743,6 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
         rec_push(G.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, G.layout[p], 0, PASS[p].n, wr);
         vkCmdDispatch(cb, order[i].n[0], order[i].n[1], 1);
     }
-    // the caller's barrier (vk_dlaa.c evaluate) orders its reads of the output after these writes
     static int told;
     if (!told++)
         rt_log("fsr3: first upscale %ux%u -> %ux%u recorded (%d passes, sharpening %s)", w, h, ow, oh, passes,
@@ -841,7 +750,6 @@ int vk_fsr3_upscale(VkCommandBuffer cb, const VkFfxImage *color, const VkFfxImag
     return 1;
 }
 
-// Teardown and the probe: the device is idle.
 void vk_fsr3_release(void) {
     if (!vk_ctx()) return;
     for (int i = 0; i < CTX_MAX; i++)
@@ -850,5 +758,5 @@ void vk_fsr3_release(void) {
     destroy_global();
     memset(G.ring_fence, 0, sizeof G.ring_fence);
     G.ring_next = 0, G.tick = 0, G.shared_fresh = 0;
-    __atomic_store_n(&G.state, -1, __ATOMIC_RELEASE);   // a new device makes everything again
+    __atomic_store_n(&G.state, -1, __ATOMIC_RELEASE);
 }

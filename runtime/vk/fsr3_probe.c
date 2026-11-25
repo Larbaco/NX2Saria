@@ -1,28 +1,3 @@
-// --probe-fsr3: AMD FSR 3.1 upscaling with the runtime's passes (vk_fsr3.c) on a synthetic scene, no game files. The
-// scene is a zone plate (rings whose frequency rises with the radius, up to the render size's limit at its edge) with
-// thin bars and a bright HDR patch, panning at a constant speed; each frame renders it on the CPU at the render size
-// with the frame's jitter (Halton 2, 3 over FSR's phase count), with a flat depth and the motion vectors of the pan,
-// and the passes upscale it, 960x540 to 1920x1080. After 48 frames the output is read back and compared with the scene
-// rendered at the output size (4x4 supersampled, no jitter), as PSNR over the rings (rings_mask) and over the whole
-// picture, against a bilinear enlargement of the same frame rendered without jitter. Runs: the pan; the pan with the
-// jitter's sign reversed and with the motion vectors' sign reversed (the conventions vk_dlaa.c hands over: a pixel
-// samples the scene at its centre minus the jitter, motion goes from the current frame to the previous one); the pan
-// sharpened; the scene still, plain and sharpened; then the scene still at 1280x720 on the same output (other_size), on
-// a context of its own, and with the game's dynamic resolution on (NX2SARIA_DYN_RES) on the context made for 960x540.
-// Checks: no NaN or infinity; on the rings FSR 3.1 beats bilinear by 0.5 dB panning, sharpened FSR 3.1 by 0.5 dB still
-// and plain FSR 3.1 is within 0.5 dB of it still (at both render sizes); the reversed jitter does worse and the
-// reversed motion much worse; the second render size makes a context of its own, and none with dynamic resolution,
-// where its picture is within 3 of 255 of the one of its own context; no validation error from the passes (run with
-// NX2SARIA_VK_VALIDATION=1). Then the GPU time of one upscale at the docked sizes (1707x960 -> 2560x1440, the Quality
-// mode) with and without sharpening, and outside Windows the upscaler switched off: vk_ffx_release_idle leaves no
-// context, and the next upscale makes one. The pan, (1, 0.5) render pixels a frame, moves the picture by whole output
-// pixels; at most other speeds (NX2SARIA_FSR3_PROBE_PAN=vx,vy) FSR 3.1's picture of these rings comes out softer, below
-// bilinear, and on a pan slower than about 0.2 render pixels a frame it runs about a third of a render pixel ahead of
-// the scene. amd_fidelityfx_vk.dll, given the same inputs, does the same: its output and the passes' are within 3 of
-// 255 (level) for the pan of (1, 0.5) and the still scene at 960x540, the still scene at 1280x720 on a context of its
-// own and on one for every size up to the output's, and a pan of (1.33, 0.67) render pixels at 960x540, where both
-// score about 28 dB on the rings, 7 dB below the pan of (1, 0.5). NX2SARIA_FSR3_PROBE_PPM=<dir> writes the outputs, the
-// bilinear ones and the references as PPM images.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,22 +59,19 @@ static void free_buf(VkCtx *c, Buf *b) {
     memset(b, 0, sizeof *b);
 }
 
-// ---- the scene, in render pixels of the 960x540 render (s = how many output pixels make one of them)
-
 static float scene(float x, float y) {
-    const float cx = 480.0f, cy = 270.0f, k = 3.14159265f / 2400.0f;   // at r = 600 the rings reach 1 per pixel
+    const float cx = 480.0f, cy = 270.0f, k = 3.14159265f / 2400.0f;
     float dx = x - cx, dy = y - cy, r2 = dx * dx + dy * dy, v = 0.5f + 0.4f * cosf(k * r2);
-    if (r2 > 600.0f * 600.0f) v = 0.5f;                                         // a flat field around the plate
-    float bx = fmodf(x + 4000.0f, 37.0f), by = fmodf(y + 4000.0f, 53.0f);       // thin dark bars, 0.6 px wide
+    if (r2 > 600.0f * 600.0f) v = 0.5f;
+    float bx = fmodf(x + 4000.0f, 37.0f), by = fmodf(y + 4000.0f, 53.0f);
     if (bx < 0.6f || by < 0.6f) v *= 0.15f;
-    float px = x - 140.0f, py = y - 120.0f;                                      // a bright patch: HDR values
+    float px = x - 140.0f, py = y - 120.0f;
     if (px > 0 && px < 40 && py > 0 && py < 25) v = 4.0f;
     return v;
 }
 
 static float scene_at(float x, float y, float t, float vx, float vy) { return scene(x - vx * t, y - vy * t); }
 
-// Halton sequence value for index i (1-based) in base b
 static float halton(int i, int b) {
     float f = 1, r = 0;
     for (; i > 0; i /= b) f /= (float)b, r += f * (float)(i % b);
@@ -157,7 +129,7 @@ static void copy_in(VkCommandBuffer cb, Buf *b, Img *m, VkImageAspectFlags a) {
 
 static void record(VkCommandBuffer cb, void *arg) {
     Frame *f = arg;
-    if (f->upload == 2) {   // the first frame: the images into GENERAL
+    if (f->upload == 2) {
         general(cb, f->color.img, VK_IMAGE_ASPECT_COLOR_BIT);
         general(cb, f->depth.img, VK_IMAGE_ASPECT_DEPTH_BIT);
         general(cb, f->mv.img, VK_IMAGE_ASPECT_COLOR_BIT);
@@ -178,7 +150,6 @@ static void record(VkCommandBuffer cb, void *arg) {
                fz = {f->depth.img, f->depth.fmt, f->w, f->h, 0, f->depth.view},
                fm = {f->mv.img, f->mv.fmt, f->w, f->h, 1, f->mv.view},
                fo = {f->out.img, f->out.fmt, f->ow, f->oh, 1, f->out.view};
-    // a camera like the game's in Hyrule Field (vk_dlaa.c proj_planes): near 0.1, far 25,000, in metres
     const VkFfxCamera cam = {1.0f, 0.1f, 25000.0f, 1.0f};
     f->ok = vk_fsr3_upscale(cb, &fc, &fz, &fm, &fo, f->jx, f->jy, f->reset, 16.67f, &cam, f->sharpen, f->sharpness);
     full(cb);
@@ -195,8 +166,6 @@ static int submit_wait(Frame *f) {
     return v && vk_sync_fence_wait(v, 10000000000ull) && f->ok;
 }
 
-// The inputs of frame i of a run: the scene at time i, sampled at each pixel's centre minus the jitter (sign: the
-// jitter's sign as handed to the passes, -1 reversed); motion from this frame to the previous one is minus the pan.
 static void fill_inputs(Frame *f, int i, float vx, float vy, int phases, float sign, float mvsign) {
     f->jx = halton(i % phases + 1, 2) - 0.5f, f->jy = halton(i % phases + 1, 3) - 0.5f;
     uint16_t *c = f->up_color.map, *m = f->up_mv.map;
@@ -215,9 +184,8 @@ static void fill_inputs(Frame *f, int i, float vx, float vy, int phases, float s
     vmaFlushAllocation(vk_ctx()->vma, f->up_mv.mem, 0, VK_WHOLE_SIZE);
 }
 
-// The 8-bit level of a picture's value in the PPM images (and in the comparison of two pictures, other_size)
 static int level(float v) {
-    float x = v / (1.0f + v) * 2.0f;   // a soft roll-off so the HDR patch stays visible
+    float x = v / (1.0f + v) * 2.0f;
     return (int)(powf(x < 0 ? 0 : x > 1 ? 1 : x, 1 / 2.2f) * 255.0f + 0.5f);
 }
 
@@ -236,7 +204,6 @@ static void write_ppm(const char *dir, const char *name, const float *v, uint32_
     printf("probe-fsr3: wrote %s\n", path);
 }
 
-// PSNR over [0, 1] (the HDR patch clamped) of a against the reference, over the pixels where mask is set (NULL: all)
 static double psnr(const float *a, const float *ref, const uint8_t *mask, size_t n) {
     double se = 0;
     size_t m = 0;
@@ -248,10 +215,6 @@ static double psnr(const float *a, const float *ref, const uint8_t *mask, size_t
     return se > 0 ? 10.0 * log10((double)m / se) : 99.0;
 }
 
-// The rings alone at time t: output pixels at least 2.5 render pixels from a bar, away from the HDR patch and the
-// image's border. The bars are 0.6 render pixels wide: thinner than any reconstruction from render-size samples can
-// keep at full contrast, so they weigh on the whole picture's PSNR the same for every upscaler (and favour the
-// bilinear one, whose unjittered samples sit on them).
 static void rings_mask(uint8_t *m, uint32_t w, uint32_t ow, uint32_t oh, float t, float vx, float vy) {
     const float s = (float)w / ow;
     for (uint32_t y = 0; y < oh; y++)
@@ -265,8 +228,6 @@ static void rings_mask(uint8_t *m, uint32_t w, uint32_t ow, uint32_t oh, float t
         }
 }
 
-// One run of n frames; fills out[] with the last output (luma = the red channel, the scene is grey). Returns 0 when a
-// frame failed or the output holds a NaN or an infinity.
 static int run(Frame *f, int n, float vx, float vy, float sign, float mvsign, float *out) {
     int phases = (int)(8.0f * ((float)f->ow / f->w) * ((float)f->ow / f->w));
     for (int i = 0; i < n; i++) {
@@ -290,8 +251,6 @@ static int run(Frame *f, int n, float vx, float vy, float sign, float mvsign, fl
     return !bad;
 }
 
-// The reference for time t (the scene, 4x4 samples per output pixel) and the bilinear enlargement of the frame at t
-// rendered without jitter (lr: render-size scratch)
 static void reference(float *ref, float *bil, float *lr, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh, float t,
                       float vx, float vy) {
     const float s = (float)w / ow;
@@ -317,13 +276,6 @@ static void reference(float *ref, float *bil, float *lr, uint32_t w, uint32_t h,
         }
 }
 
-// Another render size on the same output (w x h -> ow x oh), the scene still, as the menu switches it while the game
-// runs. Without dynamic resolution it gets a context of its own (vk_fsr3.c ctx_for: one per render size); with it, the
-// context made for the first size (*first, which has run before) serves it, and its picture must be the one its own
-// context gives. *q and *q_bil: PSNR on the rings of FSR 3.1 (its own context) and of bilinear; *made and *made_drs:
-// the contexts made for it without and with dynamic resolution; *diff: the largest difference between the two
-// pictures, in 8-bit levels (level). 0 when a test image could not be made or a frame failed. NX2SARIA_DYN_RES is 0
-// afterwards.
 static int other_size(VkCtx *c, Frame *first, uint32_t w, uint32_t h, uint32_t ow, uint32_t oh, int frames,
                       const char *dir, double *q, double *q_bil, int *made, int *made_drs, int *diff) {
     Frame g = {.w = w, .h = h, .ow = ow, .oh = oh, .upload = 2};
@@ -348,10 +300,10 @@ static int other_size(VkCtx *c, Frame *first, uint32_t w, uint32_t h, uint32_t o
     if (!ok) printf("probe-fsr3: FAIL test images at %ux%u\n", w, h);
     if (ok) ok = run(&g, frames, 0, 0, 1.0f, 1.0f, o);
     *made = vk_fsr3_contexts_made() - before;
-    if (ok) {   // dynamic resolution: one context made anew at the first size (the GPU is idle after each frame)
+    if (ok) {
         cfg_set("NX2SARIA_DYN_RES", "1");
         vk_fsr3_release();
-        ok = run(first, 8, 0, 0, 1.0f, 1.0f, o2);   // o2: scratch until the run below
+        ok = run(first, 8, 0, 0, 1.0f, 1.0f, o2);
         before = vk_fsr3_contexts_made();
         if (ok) ok = run(&g, frames, 0, 0, 1.0f, 1.0f, o2);
         *made_drs = vk_fsr3_contexts_made() - before;
@@ -381,7 +333,6 @@ int probe_fsr3(void) {
         return 0;
     }
     VkCtx *c = vk_ctx();
-    // what an older validation layer reports about the device's creation (structures newer than it) is not ours
     long errors0 = vk_validation_errors_total();
     printf("probe-fsr3: GPU %s\n", c->props.deviceName);
     int bad = 0;
@@ -393,9 +344,9 @@ int probe_fsr3(void) {
         vk_shutdown();
         return 0;
     }
-    const uint32_t w = 960, h = 540, ow = 1920, oh = 1080;   // Performance mode (2x)
+    const uint32_t w = 960, h = 540, ow = 1920, oh = 1080;
     const int frames = 48;
-    float vx = 1.0f, vy = 0.5f;   // the pan, render pixels per frame (NX2SARIA_FSR3_PROBE_PAN=vx,vy: another)
+    float vx = 1.0f, vy = 0.5f;
     const char *pan = cfg_get("NX2SARIA_FSR3_PROBE_PAN");
     if (pan && sscanf(pan, "%f,%f", &vx, &vy) == 2) printf("probe-fsr3: pan %.3f, %.3f\n", vx, vy);
     Frame f = {.w = w, .h = h, .ow = ow, .oh = oh, .upload = 2};
@@ -428,7 +379,6 @@ int probe_fsr3(void) {
         rings_mask(smk, w, ow, oh, 0, 0, 0);
         p_bil = psnr(bil, ref, NULL, n), p_sbil = psnr(sbil, sref, NULL, n);
         q_bil = psnr(bil, ref, mk, n), q_sbil = psnr(sbil, sref, smk, n);
-        // the pan as it should be, with the jitter reversed, with the motion reversed, sharpened; then still
         const float jit[6] = {1, -1, 1, 1, 1, 1}, mvs[6] = {1, 1, -1, 1, 1, 1};
         for (int r = 0; r < 6 && !bad; r++) {
             int still = r >= 4;
@@ -458,7 +408,6 @@ int probe_fsr3(void) {
         write_ppm(dir, "fsr3_static_reference", sref, ow, oh);
         write_ppm(dir, "bilinear_static", sbil, ow, oh);
     }
-    // the Quality mode's render size on the same output, as the menu switches it while the game runs
     if (!bad) {
         double q2 = 0, q2_bil = 0;
         int made = 0, made_drs = 0, diff = 0;
@@ -470,13 +419,9 @@ int probe_fsr3(void) {
             if (!(q2 > q2_bil - 0.5)) printf("probe-fsr3: FAIL FSR 3.1 is worse than bilinear at 1280x720\n"), bad = 1;
             if (made != 1) printf("probe-fsr3: FAIL another render size did not get a context of its own\n"), bad = 1;
             if (made_drs) printf("probe-fsr3: FAIL another render size made a context with dynamic resolution\n"), bad = 1;
-            // A context for render sizes up to the output's gives FSR 3.1 larger images than the render size, and its
-            // picture moves by a few levels: amd_fidelityfx_vk.dll's two pictures of this run, with and without
-            // FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION and its larger maxRenderSize, differ by up to 3.
             if (diff > 3) printf("probe-fsr3: FAIL the shared context's picture is not the one of its own\n"), bad = 1;
         }
     }
-    // GPU time at the docked sizes, the inputs uploaded once
     if (!bad) {
         Frame g = {.w = 1707, .h = 960, .ow = 2560, .oh = 1440, .upload = 2};
         VkQueryPoolCreateInfo qi = {.sType = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO,
@@ -519,10 +464,7 @@ int probe_fsr3(void) {
             }
         }
         if (!ok) printf("probe-fsr3: FAIL the timing run\n"), bad = 1;
-#ifndef _WIN32   // where vk_ffx.cpp hands FSR 3.1 to vk_fsr3.c
-        // The upscaler switched off (vk_dlaa.c retire_idle, the GPU idle after each frame here): vk_ffx_release_idle
-        // lets the contexts go, vk_upscaler_let_go destroys them (the GPU is past them), and the next upscale makes
-        // one again.
+#ifndef _WIN32
         if (ok) {
             int held = vk_ffx_holds(), made = vk_fsr3_contexts_made();
             vk_ffx_release_idle();
@@ -548,7 +490,6 @@ int probe_fsr3(void) {
     vk_fsr3_release();
     vk_mem_shutdown();
     long errors = vk_validation_errors_total() - errors0;
-    // what the device's destruction reports is about objects other parts of the runtime made, not counted either
     vk_shutdown();
     long at_end = vk_validation_errors_total() - errors0 - errors;
     if (errors0) printf("probe-fsr3: %ld validation errors at device creation, before the passes, not counted\n", errors0);
