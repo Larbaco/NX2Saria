@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/telemetry.md source-hash=baf06a9bb81854476201b7f24149b01ad959ef8f reviewed=no -->
+<!-- translation: lang=ru source=docs/telemetry.md source-hash=7331b5eac7a99634a7c569275e543770deb746ec reviewed=no -->
 <!-- languages -->
 [English](../telemetry.md) · [Português (Brasil)](../pt-BR/telemetry.md) · **Русский** · [简体中文](../zh-Hans/telemetry.md)
 
