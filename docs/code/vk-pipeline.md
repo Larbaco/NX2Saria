@@ -1232,7 +1232,7 @@ monolithic build with the same modules), which replaces the fast one in the Pipe
 live until `vk_pipeline_shutdown()`. No library is made to be optimised at its link: the optimised pipeline is that
 whole build, so the links take what the libraries hold as it is.
 
-A mesh pipeline is linked from three of them, its pre-rasterization library holding the task and mesh stages (comment at
+A mesh pipeline is linked from three of them, its pre-rasterization library holding the task and mesh stages (see
 `mesh_lib_init()`).
 
 Background build signalling, both with `P.lock`: `work_cv` wakes the pipeline workers, `done_cv` wakes threads waiting
@@ -2196,7 +2196,7 @@ Two places build what a draw would otherwise build while the game waits:
   `P.lock` sections and shader loads at normal priority, so a preempted thread never holds the lock the replay needs; a
   compute pipeline's compile below normal priority, `lb_compute()`): compute pipelines of every recorded and prepared
   compute shader (`vk_pipeline_compute()` builds compute synchronously on the replay thread; 163 prepared): those of the
-  shaders dispatched most recently stay, the others are built into the pipeline cache and destroyed (comment at
+  shaders dispatched most recently stay, the others are built into the pipeline cache and destroyed (see
   `compute-used.bin`). Then the libraries of the first `NX2SARIA_LIB_PREBUILD_KEEP` variants play recorded (priority 0),
   kept in `libs[]` with their shaders. KEEP defaults to 0: a kept library costs 140-460 KB of process memory (10,000
   kept took 9 GB in run 1) to save a rebuild the driver cache makes 0.1 ms.
