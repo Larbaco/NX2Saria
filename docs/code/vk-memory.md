@@ -9,7 +9,7 @@ without a device (`vk_mem_heap.h`, `vk_scratch_lru.h`, `vk_up_defer.h`).
 
 What the Switch's GPU and NVN do with memory pools that a port must reproduce: [maxwell.md](../maxwell.md). Where the
 area sits in the host: "4. Graphics" in [architecture.md](../architecture.md). The lines the memory report writes:
-[logging.md](../logging.md). The images and the textures that live in this memory: [vk-texture.md](vk-texture.md).
+[logging.md](../logging.md). The images and the textures that live in this memory: `vk-texture.md`.
 
 ## `runtime/vk/vk_mem_heap.h`
 
