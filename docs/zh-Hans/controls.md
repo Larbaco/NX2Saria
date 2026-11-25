@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=3e1215cb4eabd364dac0d0f0c1e4c0a6487cc2ce reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=babe27d98602764cbc9c05e515afe69e4a719db6 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -173,6 +173,17 @@ bind_Y = pad:north, key:mouse_l
 在游戏 1.1.1 中，鼠标可以在游戏自身的菜单中使用：标题画面及其存档、暂停菜单及其各页、Options 以及存档对话框。当某个菜单拥有焦点，并且最后使用的是鼠标或键盘按键时，光标会从鼠标视角中释放出来，显示在拥有焦点的按钮上。把鼠标移到某个按钮上会选中它，就像十字键那样（带有游戏的高亮和音效）；在按钮上单击左键相当于在它上面按 A，在任意位置单击右键相当于 B，滚轮每滚动一格相当于十字键的上或下，因此列表移动一行。在暂停菜单中，点击顶部的页面名称会切换到该页，在名称上方滚动滚轮则翻页。拿起手柄会隐藏光标，菜单就和在主机上一样；菜单关闭时，镜头会重新接管鼠标。设置菜单（F1 或 Esc）打开时优先获得鼠标。在超宽画面上，指针会跟随 `wide_menus` 和 `wide_hud` 放置菜单的位置。
 
 `NX2SARIA_MENU_CURSOR`（`menu_cursor`，操作标签页上的*在游戏菜单中使用鼠标*行，立即生效；默认 1）设为 0 时关闭此功能。`NX2SARIA_MENU_CURSOR_LOG=1` 会记录焦点进入的每个菜单画面。日志在启动时有 `menu_mouse: on for 1.1.1 ...`，为最先打开的几个菜单各有一行 `menu_mouse: screen <name>: ...`，并为每个使用过鼠标的菜单写一行，包含焦点移动、点击、滚轮格数和命中测试次数。工作原理：[menu-mouse.md](../menu-mouse.md)（英文）。
+
+## 退出游戏
+
+在游戏 1.1.1 中，游戏自己的菜单里有退出入口，方便手里只有手柄的时候使用。该选项以游戏语言显示，用的是游戏自己的文字（简体中文为*结束游戏*）。
+
+- **标题画面：**列表在游戏原有的三项下面多了第四项。在它上面按 A 关闭游戏。
+- **暂停菜单：**在*系统*页，*返回标题画面*会打开游戏的确认框，其中多了第三个按钮：*返回标题画面*、*取消*、*结束游戏*。焦点起初在*取消*上。在*结束游戏*上按 A 关闭游戏；未保存的进度会丢失，正如确认框所说。
+
+键盘和鼠标在那里的用法与游戏的其他菜单相同。也可以通过设置菜单（F1 或 Esc，*退出游戏*）、关闭窗口或 Alt+F4 来关闭游戏。游戏正在写入存档时，关闭会等它完成。
+
+`NX2SARIA_QUIT_MENU`（`nx2saria.ini` 中的 `quit_menu`；默认 1，启动时读取）设为 0 时关闭这两处：游戏菜单与主机上一样。日志在启动时有 `quit_menu: on ...`，写明每个画面是否开启；使用时有 `quit_menu: title: Quit Game chosen; closing the game` 或 `quit_menu: pause: ...`。工作原理：[quit-menu.md](../quit-menu.md)。
 
 ## Switch 手柄的 HD 振动
 

@@ -1635,6 +1635,17 @@ position (the Switch's places) the game's own layout is right; by label the Comm
 not open yet this early, so auto counts as by label, as for the prompts' folders (`input_prompts_folder` of
 `runtime/input/input_map.c`). `action_prompt_for` is what `romfs_action_prompt()` returns.
 
+### `quit_menu_overlay()`
+
+The labels of Quit Game in the game's own menus (`runtime/ui/quit_menu_text.c`, [quit-menu.md](../quit-menu.md)): the
+message archive of the game's language (`Mals/<region>.Product.<n>.sarc.zs`, the region from
+`runtime/ui/ui_text.c` `ui_text_game_lang_mals()` for `ov_language()`; every message archive when the language has no
+region in that list) is served with the labels added, written to `<profile>/quit-menu/`. The base is the file the game
+would read (a prompts folder's or a mod's, else the RomFS's). The archive grows, so its resource size is raised
+(`restbl_room()`); an archive that cannot be raised, written or edited counts as not made, and
+`runtime/ui/quit_menu.c` `quit_menu_texts()` turns the feature off unless all were made. One language's archive takes
+about 0.1 s; the sixteen of the game took 1.1 s, most of it the size table packed again for each.
+
 ### `wide_hud_overlay()`
 
 The HUD at the picture's edges (`NX2SARIA_WIDE_HUD = edges`) and the loading screen's icon in the middle 16:9
