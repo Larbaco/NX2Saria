@@ -1,19 +1,3 @@
-"""The pictures of the game's Steam shortcut (launcher/steam.py), made from the player's own game: nothing ships.
-
-    logo        the title screen's logo with the Master Sword and the Hylian Shield (Logo_USEU_00), cut to its outline
-    hero        the title screen's moonlit field, a frame of its first movie (Event/Movie/Dm_Title_0005.webm), 1920 x 620
-    portrait    that frame with the logo over it, 600 x 900 (the library's cover)
-    wide        the same at 920 x 430 (the library's wide tile)
-
-The textures come from the interface archive UI/Layout2Archive/Title...bntx.zs as runtime/ui/menu_assets.c reads them:
-a BNTX's BRTI records give format, size, block height and data; the level is block linear in the Switch 2 GOB layout
-(runtime/gfx/tex_deswizzle.c tex_bl_copy); BC4 masks become white with the mask as alpha; ASTC 4x4 goes through the
-runtime's own decoder, runtime/gfx/tex_astc.c, built here into a library with the toolchain's clang (the launcher builds
-the game with it, so it is on every PC that has a game to add). The movie is WebM with AV1 video: the frames from the
-key frame before TITLE_AT up to it go into an IVF file for the toolchain's dav1d.exe, whose last picture (8-bit 4:2:0,
-limited range BT.709) becomes the background. Every picture is written as PNG with art.png_bytes; nothing here needs
-an imaging package.
-"""
 import ctypes
 import hashlib
 import os
@@ -30,7 +14,7 @@ from . import gamefiles
 TITLE_ARCHIVE = 'UI/Layout2Archive/Title.Product.100.Nin_Ounce_NVN2.bntx.zs'
 LOGO = 'Logo_USEU_00'
 TITLE_MOVIE = 'Event/Movie/Dm_Title_0005.webm'
-TITLE_AT = 12.0     # seconds into it: the field under the full moon, as the title screen shows it first
+TITLE_AT = 12.0
 KIND_BC4, KIND_ASTC4 = 0x1d, 0x2d
 NO_WINDOW = 0x08000000 if os.name == 'nt' else 0
 
@@ -39,15 +23,12 @@ class ArtError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- BNTX
-
 def _u16(b, at): return struct.unpack_from('<H', b, at)[0]
 def _u32(b, at): return struct.unpack_from('<I', b, at)[0]
 def _u64(b, at): return struct.unpack_from('<Q', b, at)[0]
 
 
 def bntx_textures(b):
-    """Each texture of a BNTX file: name, format, size, block height, data offset and size."""
     out = []
     count, arr = _u32(b, 0x24), _u64(b, 0x28)
     for i in range(count):
@@ -62,7 +43,6 @@ def bntx_textures(b):
 
 
 def deswizzle(t, b, row, rows):
-    """The first level as tightly packed rows of `row` bytes (runtime/gfx/tex_deswizzle.c tex_bl_copy)."""
     th = t['th']
     gobs, unit, block = (row + 63) // 64, 8 << th, 512 << th
     need = gobs * ((rows + unit - 1) // unit) * block
@@ -79,7 +59,6 @@ def deswizzle(t, b, row, rows):
 
 
 def bc4(lin, wb, hb, w, h):
-    """White with the mask as alpha (runtime/ui/menu_assets.c bc4_decode)."""
     blocks = lin.reshape(hb, wb, 8).astype(np.uint32)
     a, b = blocks[..., 0], blocks[..., 1]
     pal = np.zeros((hb, wb, 8), dtype=np.uint32)
@@ -103,13 +82,10 @@ def bc4(lin, wb, hb, w, h):
     return rgba
 
 
-# The runtime's folders by subsystem, as tools/build_game.py RUNTIME_DIRS (tests/runtime_dirs_check.py): tex_astc.c's
-# headers include others by name from them.
 RUNTIME_DIRS = ('audio', 'cfg', 'diag', 'gfx', 'hle', 'input', 'nvn', 'pacing', 'patches', 'ui', 'vk')
 
 
 def astc_library(layout):
-    """runtime/gfx/tex_astc.c of this release as a library in data/cache, built once per source with the toolchain."""
     src = layout.app / 'runtime' / 'gfx' / 'tex_astc.c'
     rt = layout.app / 'runtime'
     inc = [a for d in (rt, *(rt / n for n in RUNTIME_DIRS)) for a in ('-I', str(d))]
@@ -155,7 +131,6 @@ def astc_library(layout):
 
 
 def texture(bntx, name, lib):
-    """The named texture as an HxWx4 uint8 array (BC4 or ASTC 4x4), or None when the file has no such texture."""
     for t in bntx_textures(bntx):
         if t['name'] != name:
             continue
@@ -173,9 +148,7 @@ def texture(bntx, name, lib):
     return None
 
 
-# ---------------------------------------------------------------- the title movie
-
-_MASTERS = {0x18538067, 0x1F43B675, 0xA0, 0x1654AE6B, 0xAE, 0xE0}   # Segment, Cluster, BlockGroup, Tracks, TrackEntry, Video
+_MASTERS = {0x18538067, 0x1F43B675, 0xA0, 0x1654AE6B, 0xAE, 0xE0}
 
 
 def _vint(b, at, keep_marker):
@@ -192,7 +165,6 @@ def _vint(b, at, keep_marker):
 
 
 def webm_frames(b):
-    """(time in ms, key frame, data) of every block of a single-track WebM, and the video's width and height."""
     out, info = [], {}
 
     def walk(at, end, cluster):
@@ -200,7 +172,7 @@ def webm_frames(b):
             eid, n1 = _vint(b, at, True)
             size, n2 = _vint(b, at + n1, False)
             body = at + n1 + n2
-            if size == (1 << (7 * n2)) - 1:   # unknown size: to the end of the parent
+            if size == (1 << (7 * n2)) - 1:
                 size = end - body
             if eid in _MASTERS:
                 walk(body, min(body + size, end), cluster)
@@ -210,7 +182,7 @@ def webm_frames(b):
                 info['w'] = int.from_bytes(b[body:body + size], 'big')
             elif eid == 0xBA:
                 info['h'] = int.from_bytes(b[body:body + size], 'big')
-            elif eid in (0xA3, 0xA1):   # SimpleBlock (its flags say key frame), Block
+            elif eid in (0xA3, 0xA1):
                 _track, n = _vint(b, body, False)
                 rel = struct.unpack_from('>h', b, body + n)[0]
                 key = eid == 0xA3 and bool(b[body + n + 2] & 0x80)
@@ -224,7 +196,6 @@ def webm_frames(b):
 
 
 def movie_frame(layout, data, at_s, work):
-    """The picture of movie data at at_s seconds, decoded by dav1d or ffmpeg on Linux."""
     import sys
     linux = sys.platform.startswith('linux')
     dav1d = shutil.which('dav1d') if linux else layout.msys / 'bin' / 'dav1d.exe'
@@ -265,15 +236,11 @@ def movie_frame(layout, data, at_s, work):
     u = (u.repeat(2, 0).repeat(2, 1)[:h, :w] - 128) * (255 / 224)
     v = (v.repeat(2, 0).repeat(2, 1)[:h, :w] - 128) * (255 / 224)
     y = (y - 16) * (255 / 219)
-    rgb = np.stack([y + 1.5748 * v, y - 0.1873 * u - 0.4681 * v, y + 1.8556 * u], -1)   # BT.709
+    rgb = np.stack([y + 1.5748 * v, y - 0.1873 * u - 0.4681 * v, y + 1.8556 * u], -1)
     return np.clip(rgb + 0.5, 0, 255).astype(np.uint8)
 
 
-# ---------------------------------------------------------------- pictures
-
 def resize(img, w, h):
-    """img (HxWxC uint8 or float) at w x h: whole-pixel box averaging first when it shrinks by 2 or more, then
-    bilinear. Returns float32."""
     a = img.astype(np.float32)
     fy, fx = a.shape[0] // h, a.shape[1] // w
     if fy >= 2 or fx >= 2:
@@ -293,7 +260,6 @@ def resize(img, w, h):
 
 
 def premultiplied_resize(rgba, w, h):
-    """Resize with the colours weighted by alpha, so transparent texels add no dark fringe; uint8 straight alpha out."""
     a = rgba.astype(np.float32)
     a[..., :3] *= a[..., 3:4] / 255
     r = resize(a, w, h)
@@ -302,7 +268,6 @@ def premultiplied_resize(rgba, w, h):
 
 
 def trim(rgba, pad=8):
-    """rgba cut to the box of its visible texels, pad texels around."""
     ys, xs = np.nonzero(rgba[..., 3] > 4)
     if not len(ys):
         return rgba
@@ -312,7 +277,6 @@ def trim(rgba, pad=8):
 
 
 def place(dst, src, x, y):
-    """src (uint8 RGBA, straight alpha) over dst (uint8 RGB) at x, y."""
     h, w = src.shape[:2]
     s = src.astype(np.float32)
     d = dst[y:y + h, x:x + w].astype(np.float32)
@@ -321,7 +285,6 @@ def place(dst, src, x, y):
 
 
 def crop(frame, w, h, cx, cy):
-    """The largest w:h part of frame centred near (cx, cy) as fractions, scaled to w x h (uint8 RGB)."""
     H, W = frame.shape[:2]
     if W * h > H * w:
         ch, cw = H, H * w // h
@@ -333,7 +296,6 @@ def crop(frame, w, h, cx, cy):
 
 
 def with_logo(bg, logo, width_share, cy):
-    """bg (RGB) with the logo scaled to width_share of its width, centred at height cy (a fraction)."""
     H, W = bg.shape[:2]
     lw = int(W * width_share)
     lh = int(lw * logo.shape[0] / logo.shape[1])
@@ -351,8 +313,6 @@ def rgba_of(rgb):
 
 
 def make(layout, game_dir='', dump=''):
-    """{name: HxWx4 uint8} for logo, hero, portrait and wide, from the player's game. ArtError when the game's files
-    or the tools to read them are not there."""
     romfs = gamefiles.open_romfs(layout, game_dir, dump)
     if romfs is None:
         raise ArtError('the game\'s files were not found (the game folder\'s romfs, or the dump)')
@@ -368,7 +328,6 @@ def make(layout, game_dir='', dump=''):
     logo = trim(logo)
     with tempfile.TemporaryDirectory(dir=str(layout.cache)) as work:
         frame = movie_frame(layout, movie, TITLE_AT, work)
-    # the moon sits right of the middle and high: every cut keeps it, and the hero keeps the horizon too
     hero = crop(frame, 1920, 620, 0.5, 0.42)
     portrait = with_logo(crop(frame, 600, 900, 0.68, 0.5), logo, 0.88, 0.70)
     wide = with_logo(crop(frame, 920, 430, 0.5, 0.45), logo, 0.52, 0.55)

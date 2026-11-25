@@ -1,14 +1,3 @@
-/* NX2Saria.exe: the launcher's own program, in the launcher folder (launcher/paths.py).
-
-   1. A Python staged by an update (python.next) replaces python\ while nothing runs from it.
-   2. The release named by app\current.txt starts: python\pythonw.exe app\<version>\launcher\start.pyw with this
-   program's arguments, the launcher folder as working folder and in NX2SARIA_LAUNCHER_ROOT.
-   3. When that release fails to start (exit code 86 from start.pyw, or any non-zero exit within six seconds) and
-      app\previous.txt names another complete release, current.txt goes back to it and it starts with
-      --rolled-back <version>.
-
-   Its own commands, for the launcher and the setup: --desktop-shortcut on|off, --shortcuts on|off (Desktop and Start
-   menu). No console window (-mwindows). */
 #include "common.h"
 
 #define STARTUP_FAILED 86
@@ -33,11 +22,10 @@ static void swap_python(const wchar_t *root)
     if (!is_dir(next)) return;
     swprintf(cur, PATHN, L"%ls\\python", root);
     swprintf(old, PATHN, L"%ls\\python.old-%lu", root, (unsigned long)GetTickCount());
-    if (is_dir(cur) && !MoveFileExW(cur, old, 0)) return;   /* in use: try again at the next start */
+    if (is_dir(cur) && !MoveFileExW(cur, old, 0)) return;
     if (!MoveFileExW(next, cur, 0)) MoveFileExW(old, cur, 0);
 }
 
-/* Start the release; returns its exit code if it ended within QUICK_MS, else -1 (still running). */
 static long start_release(const wchar_t *root, const wchar_t *ver, const wchar_t *args, const wchar_t *extra)
 {
     static wchar_t cmd[32768];

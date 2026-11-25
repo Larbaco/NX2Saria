@@ -1,17 +1,3 @@
-"""The game's own settings, nx2saria.ini (or the legacy nx2navi.ini) in the game folder.
-
-Read the way runtime/cfg/cfg.c reads the file: a UTF-8 byte order mark is skipped, lines starting with #, ; or [ are
-not settings, a key is matched without regard to case and with or without a prefix (NX2SARIA_, or the older
-NX2NAVI_ one), a value in double quotes loses them, an empty value leaves the setting as it was (its default, or an
-earlier line's value), and the last line with a value wins. For a key whose row in runtime/cfg/cfg.c has a set of
-values (choices=True: numbers, ranges, words), a blank followed by ';' or '#' starts a comment after a value that is
-not in double quotes, as cfg.c cut_comment reads it; free text (a path, a name, the list of mods) keeps its whole
-value. Sections do not matter to the game; a key the file does not have yet goes under its section, as the game
-writes it.
-A change rewrites only the line it touches, through a temporary file: the other lines keep their bytes (the byte
-order mark, line ends, text that is not UTF-8). A file that exists but cannot be read is never rewritten, as
-runtime/cfg/cfg.c cfg_save_to does not: rebuilding it from nothing would lose its lines.
-"""
 import os
 import re
 from pathlib import Path
@@ -21,19 +7,16 @@ BOM = '﻿'
 
 
 def _path(game_dir):
-    """nx2saria.ini in the game folder. An nx2navi.ini there without one, the name before NX2Saria, is renamed to it the
-    first time the launcher looks, as the game does at its start (runtime/cfg/cfg.c find_ini), so the folder keeps one
-    settings file with every setting in it; where the rename fails, the old file is read and written under its name."""
     folder = Path(game_dir)
     current, legacy = folder / 'nx2saria.ini', folder / 'nx2navi.ini'
     if not current.exists() and legacy.exists():
-        if not legacy.is_file():   # something else by that name is left as it is, and read (and refused) as before
+        if not legacy.is_file():
             return legacy
         try:
             if os.name == 'nt':
-                legacy.rename(current)   # Windows refuses to replace an existing file
+                legacy.rename(current)
             else:
-                os.link(legacy, current)   # refuses an existing file too, where rename would replace it
+                os.link(legacy, current)
                 legacy.unlink()
         except OSError:
             return legacy if not current.exists() else current
@@ -48,8 +31,6 @@ def _key(text):
 
 
 def _text(game_dir):
-    """The file's text with its own line ends (bytes that are not UTF-8 kept as surrogates), '' when it does not exist.
-    Any other error is raised."""
     try:
         with open(_path(game_dir), encoding='utf-8', errors='surrogateescape', newline='') as f:
             return f.read()
@@ -58,8 +39,6 @@ def _text(game_dir):
 
 
 def _setting(line, choices=False):
-    """(key, value) of a settings line, or None. choices: the key has a set of values, so its value ends at a comment
-    (the first blank followed by ';' or '#' after the '=', "key = ; note" giving ''), unless it is in double quotes."""
     s = line.lstrip(BOM).strip()
     if not s or s[0] in '#;[' or '=' not in s:
         return None
@@ -76,8 +55,6 @@ def _setting(line, choices=False):
 
 
 def get(game_dir, key, choices=False):
-    """The value the file gives key ('' when it gives none: the game's default applies); choices as _setting. Raises
-    OSError when the file exists but cannot be read."""
     want, value = _key(key), ''
     for line in _text(game_dir).splitlines():
         kv = _setting(line, choices)
@@ -87,10 +64,6 @@ def get(game_dir, key, choices=False):
 
 
 def put(game_dir, section, key, value, choices=False):
-    """Write key = value: on the key's last line that has a value as the game reads it (choices as _setting; else its
-    last line) when the file has one, else under [section] (made at the end when the file has none). The line is
-    written again whole, without a comment it had, as runtime/cfg/cfg.c cfg_save_to writes it. Raises OSError, the file
-    unchanged, when it exists but cannot be read or the new one cannot be put in place."""
     text = _text(game_dir)
     bom = BOM if text.startswith(BOM) else ''
     lines = text[len(bom):].splitlines(keepends=True)
@@ -106,7 +79,7 @@ def put(game_dir, section, key, value, choices=False):
     else:
         head = next((i for i, line in enumerate(lines) if line.strip().lower() == f'[{section.lower()}]'), -1)
         if head >= 0:
-            if not lines[head].endswith(('\n', '\r')):   # the header is the file's last line
+            if not lines[head].endswith(('\n', '\r')):
                 lines[head] += nl
             lines.insert(head + 1, entry + nl)
         else:

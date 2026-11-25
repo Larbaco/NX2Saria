@@ -3,8 +3,6 @@ from pathlib import Path
 
 
 def drop_build_cache(self):
-    """Keep Build Cache off: delete the lifted C and the objects (about 1.5 GB) but keep state.json, which an
-        update needs to rebuild without the dump; the next build then lifts and compiles everything again."""
     gd = self.settings.get('game_dir')
     if not gd:
         return

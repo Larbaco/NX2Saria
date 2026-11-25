@@ -1,7 +1,3 @@
-"""The launcher's long tasks, run on a worker thread: install, update, rebuild, the update check and the background
-staging of an update. Each job is a list of steps the window shows as rows; the window reads the job's state on a
-timer (rev changes on every change) and never blocks on it. The same jobs run headless from launcher/cli.py.
-BackgroundUpdate decides when a staged update installs."""
 import collections
 import json
 import os
@@ -12,25 +8,17 @@ import traceback
 from . import build, feed, gamefiles, locks, net, paths, toolchain, updater, versions, winsys
 from .context import shorten
 
-RECHECK = 3600   # seconds between update checks while the launcher stays open, hidden during play included
+RECHECK = 3600
 
 PENDING, RUNNING, DONE, SKIPPED, FAILED = 'pending', 'running', 'done', 'skipped', 'failed'
 
-# Failures whose message says all there is to say: the log gets one line for them (failure_line), not a traceback.
-# A refused update check wrote 22 lines of two tracebacks into launcher.log each time.
 PLAIN_FAILURES = (feed.FeedError, build.BuildError, locks.Busy)
 
 
-# data/job-running.json: the job that is writing into the game folder, from its start to its end (Job._main). A job
-# that ends, also by Cancel or an error, removes it and has told its result on screen. One the launcher was stopped
-# in (closed by the system, a power cut, a crash) leaves it, and the next start says so (interrupted).
 MARKER = 'job-running.json'
 
 
 def interrupted(ctx):
-    """The job the launcher was stopped in, as it wrote it ({'task', 'kind', 'game_dir', 'started'}), or None. The
-    marker is removed: it is told once. Call it while this process holds the launcher folder's lock and runs no
-    job, or the marker read is a running job's."""
     path = ctx.layout.data / MARKER
     try:
         with open(path, encoding='utf-8') as f:
@@ -45,9 +33,6 @@ def interrupted(ctx):
 
 
 def running_job(ctx):
-    """The job writing into the game folder as MARKER says it ({'task', 'kind', 'game_dir', 'started'}), or None. The
-    marker stays. Only worth asking while another process holds the launcher folder's lock: one that a launcher
-    stopped in its job left behind reads the same (interrupted tells it and removes it)."""
     try:
         with open(ctx.layout.data / MARKER, encoding='utf-8') as f:
             job = json.load(f)
@@ -57,7 +42,6 @@ def running_job(ctx):
 
 
 def failure_line(e):
-    """A failure in one line for the log: its kind, its message and what it came from."""
     cause = e.__cause__
     return f'{type(e).__name__}: {e}' + (f' ({type(cause).__name__}: {cause})' if cause else '')
 
@@ -88,9 +72,6 @@ WEIGHTS = {'tools': 12, 'tools_update': 4, 'check': 1, 'exefs': 2, 'romfs': 14, 
            'compile_changed': 55, 'shaders': 18, 'prompts': 4, 'scan': 5, 'ready': 0, 'download': 8, 'verify': 1, 'swap': 6}
 
 
-# The game files tools/romfs_check.py reports as damaged on every copy of the game looked at so far: they are that
-# way in the game's own data, not through a player's dump, so a new dump does not change them. The three textures
-# get a stand-in; the game does without the fourth file.
 SCAN_EXPECTED = frozenset((
     'Tex/CmnTex_Map_Soil_FairyFountain_Floor_D_Nrm.bntx.zs',
     'Tex/RBake_Scene_GanonStage_G_2_1_d0_t0.bntx.zs',
@@ -100,10 +81,6 @@ SCAN_EXPECTED = frozenset((
 
 
 def scan_summary(damaged, stood_in):
-    """(the scan row's value, a sentence for the home screen) for what the check of the game files found
-    (build.scan_report); ('', '') when nothing is damaged. The files of SCAN_EXPECTED are told as what they are, the
-    same ones as on every copy: the player learns what the check did and that nothing needs doing. Other files are
-    counted and pointed to, without advice the check cannot back."""
     n = len(damaged)
     if not n:
         return '', ''
@@ -119,7 +96,6 @@ def scan_summary(damaged, stood_in):
 
 
 def prompt_rows(ctx):
-    """The prompts row, for a version with button art (make_game.py draws the prompts after the shaders), or none."""
     return ['prompts'] if build.has_prompt_art(ctx.layout) else []
 
 
@@ -134,18 +110,14 @@ class Step:
         self.id, self.label, self.desc = sid, label.format(ver=ver), desc
         self.state, self.value, self.fraction, self.detail = PENDING, 'Waiting', 0.0, ''
         self.t0, self.seconds = None, 0.0
-        self.pace = collections.deque(maxlen=400)   # (time, fraction) of recent progress, for Job.eta
+        self.pace = collections.deque(maxlen=400)
 
 
 class Job:
     kind = 'job'
     title = ''
-    # What the job changes while it runs, for the lock between jobs (launcher/locks.py claim): 'game' is the game
-    # folder and the build tools, 'app' the app folder's versions and the downloads. A job with claims also holds the
-    # launcher folder's lock between processes while it runs; one without (the update check) changes no file and
-    # runs beside anything.
     claims = ()
-    task = ''   # the job as the holder of a lock is named (doing)
+    task = ''
 
     def __init__(self, ctx, step_ids, ver=''):
         self.ctx = ctx
@@ -153,19 +125,15 @@ class Job:
         self.rev = 0
         self.cancel_flag = threading.Event()
         self.proc = None
-        self.result = None          # None while running, then 'ok', 'failed' or 'cancelled'
+        self.result = None
         self.error = ''
         self.lines = collections.deque(maxlen=500)
         self.started = time.time()
         self.finished = None
-        self.after = None           # what the window does next ('restart', ...)
-        self.note = ''              # a sentence for the home screen after the job (note_scan)
-        # Held for every change of a step and of rev, and by a reader that wants the steps as one change left them
-        # (locked). The worker, the thread that reads the build's output and the window's thread (cancel) all change
-        # the job. Reentrant: progress() begins a step, and every change ends in _touch().
+        self.after = None
+        self.note = ''
         self._lock = threading.RLock()
 
-    # ---- state the window reads
     def step(self, sid):
         for s in self.steps:
             if s.id == sid:
@@ -187,12 +155,6 @@ class Job:
         return min(1.0, got / total)
 
     def eta(self):
-        # The step running now from its recent pace (its progress over the last minute), and the steps still to come
-        # from the seconds per weight of the steps already done. A job-wide fraction does not work: a step can take
-        # far more or less time than its weight says (Compile Changed Files is over half the weight of an update and
-        # can take seconds), and the shader step then read "about 1 minute left" with 20 minutes to go. A step's own
-        # average does not either: Prepare the Shaders fills the first half of its bar with the translation and the
-        # second with the much slower build into the driver's cache.
         now = time.time()
         if now - self.started < 20:
             return None
@@ -202,7 +164,7 @@ class Job:
             recent = [p for p in cur.pace if now - p[0] <= 60]
             if len(recent) < 2 or recent[-1][0] - recent[0][0] < 10 or recent[-1][1] <= recent[0][1]:
                 return None
-            rate = (recent[-1][1] - recent[0][1]) / (recent[-1][0] - recent[0][0])   # fraction per second
+            rate = (recent[-1][1] - recent[0][1]) / (recent[-1][0] - recent[0][0])
             left = (1 - cur.fraction) / rate
         done_w = sum(WEIGHTS[s.id] for s in self.steps if s.state == DONE and s.seconds > 0)
         done_s = sum(s.seconds for s in self.steps if s.state == DONE and s.seconds > 0)
@@ -217,29 +179,20 @@ class Job:
         return (self.finished or time.time()) - self.started
 
     def locked(self):
-        """The lock to read the steps under (`with job.locked():`): they are then as one change left them, a step's
-        state with the value and fraction that belong to it. Held only to copy what is read, never across a
-        wait."""
         return self._lock
 
-    # ---- changes, from the worker
     def _touch(self):
-        # Under the lock: "rev += 1" from two threads at once can write an older count back, and a reader that had
-        # seen the newer one then takes the next change for one it has drawn already. The job's last change is its
-        # result, so the window stayed on the job screen of a job that had ended.
         with self._lock:
             self.rev += 1
 
     def log(self, line):
-        line = shorten(str(line))   # the job screen and Copy Report show these lines: the account's folders short
+        line = shorten(str(line))
         with self._lock:
             self.lines.append(line)
-        self.ctx.log(line)   # outside the lock: it waits for the disk
+        self.ctx.log(line)
         self._touch()
 
     def last_lines(self, n):
-        """The last n lines of the job's output, copied under the lock: the thread that reads the build's output
-        appends while the window draws them, and a deque changed while it is read raises."""
         with self._lock:
             return list(self.lines)[-n:]
 
@@ -290,7 +243,6 @@ class Job:
             self.proc.cancel()
         self._touch()
 
-    # ---- running
     def start(self):
         threading.Thread(target=self._main, name=f'job-{self.kind}', daemon=True).start()
         return self
@@ -300,13 +252,9 @@ class Job:
         return self
 
     def doing(self):
-        """The job in a few words ("the rebuild of the game"), for the one a lock refuses because of it."""
         return self.task or f'a {self.kind} job'
 
     def _hold(self):
-        """Take what the job needs to itself before it runs (launcher/locks.py): the launcher folder against other
-        processes, then its claims against the other jobs of this one. locks.Busy, with nothing held, when either is
-        taken. Returns what _main lets go of when the job has ended."""
         if not self.claims:
             return None, None
         layout = self.ctx.layout
@@ -321,7 +269,6 @@ class Job:
             raise
 
     def _mark(self):
-        """Leave MARKER for the time the job writes into the game folder; True when it was written."""
         if 'game' not in self.claims:
             return False
         try:
@@ -345,7 +292,7 @@ class Job:
             self.result = 'ok'
         except net.Cancelled:
             self.result = 'cancelled'
-        except Exception as e:   # every failure ends the job with a message; the log has the traceback
+        except Exception as e:
             if self.cancelled():
                 self.result = 'cancelled'
             else:
@@ -371,12 +318,7 @@ class Job:
     def run(self):
         raise NotImplementedError
 
-    # ---- shared pieces
     def note_scan(self, game_dir):
-        """After a build: what the check of the game files found goes into its row, and when the check ran in this
-        job, into the note the home screen shows and into the log. The check itself only printed its counts into
-        the build's lines, which scroll away, so a player never learned that files were flagged or that stand-ins
-        are in use. A check kept from an earlier build shows its count in the row only."""
         s = self.step('scan')
         found = build.scan_report(game_dir)
         if not s or s.state not in (DONE, SKIPPED) or not found:
@@ -424,7 +366,6 @@ class Job:
             self.finish(sid)
 
     def make_game(self, args, step_map, link_step=None):
-        """Run make_game.py; its steps drive ours through step_map (make_game step -> our step id or None)."""
         def on_event(ev):
             kind = ev.get('ev')
             sid = step_map.get(ev.get('step'))
@@ -444,7 +385,7 @@ class Job:
                     self.skip(sid, 'Kept' if sid in ('exefs', 'romfs') else 'Unchanged')
                     if link_step and sid in ('compile', 'compile_changed'):
                         self.skip(link_step, 'Unchanged')
-            elif kind == 'progress' and sid and 'fraction' in ev:   # a step that words its own progress (shaders)
+            elif kind == 'progress' and sid and 'fraction' in ev:
                 self.progress(sid, float(ev.get('fraction') or 0), ev.get('detail', ''))
             elif kind == 'progress' and sid:
                 done, total, unit = ev.get('done', 0), max(ev.get('total', 1), 1), ev.get('unit', '')
@@ -464,8 +405,6 @@ class Job:
             elif kind == 'error':
                 self.error = ev.get('message', '')
 
-        # Cancel pressed before the build started (while the tools were checked) found no process to stop: it stops
-        # here, and one pressed while the process starts stops it at once
         if self.cancelled():
             raise net.Cancelled()
         self.proc = build.Run(build.command(self.ctx.layout, args), on_event, self.log)
@@ -492,16 +431,12 @@ class InstallJob(Job):
         self.dump, self.game_dir = str(dump), str(game_dir)
 
     def args(self):
-        """make_game.py's arguments. A game folder whose game files an earlier run already unpacked and checked
-        (build.can_rebuild, build.unpacked) is built on from those, for this processor's level as a first build is:
-        the dump is not read again, so an install that stopped after the RomFS image goes on although the dump
-        was moved or deleted since, and the 26 GB image is not packed a second time."""
         if build.can_rebuild(self.game_dir) and build.unpacked(self.game_dir):
             return build.rebuild_args(self.ctx.layout, self.game_dir, retune=True)
         return build.install_args(self.ctx.layout, self.dump, self.game_dir)
 
     def run(self):
-        too_long = paths.long_path_problem(self.game_dir)   # the window asks first (begin_install); the command line here
+        too_long = paths.long_path_problem(self.game_dir)
         if too_long:
             raise build.BuildError(too_long)
         self.ensure_tools('tools')
@@ -523,7 +458,7 @@ class RebuildJob(Job):
     title = 'Rebuilding'
     claims = ('game',)
     task = 'the rebuild of the game'
-    retune = True   # Rebuild the Game: the game's code for this processor's level (build.rebuild_args)
+    retune = True
 
     def __init__(self, ctx, game_dir, dump=''):
         super().__init__(ctx, ['tools_update', 'lift', 'compile_changed', 'swap', 'shaders', *prompt_rows(ctx), 'scan'])
@@ -549,8 +484,6 @@ class RebuildJob(Job):
 
 
 class ModsRebuildJob(RebuildJob):
-    """Play with a mod whose code cheats or ExeFS patches the game was not built with (launcher/mods.py
-    code_waiting): the game is built again with them, compiling only what they change, and then starts (App.play)."""
     title = 'Building Your Mods In'
     retune = False
 
@@ -560,7 +493,6 @@ class ModsRebuildJob(RebuildJob):
 
 
 class UpdateDownloadJob(Job):
-    """Before the restart: download, check and stage the release, then switch app/current.txt to it."""
     kind = 'update'
     claims = ('app',)
 
@@ -590,7 +522,7 @@ class UpdateDownloadJob(Job):
         if not (folder / 'launcher' / 'start.pyw').is_file():
             raise updater.UpdateError(f'{folder} is incomplete')
         self.finish('verify', 'Checksum OK')
-        if layout.dev:   # a checkout runs from the repository: nothing to switch to
+        if layout.dev:
             self.after = 'staged'
             return
         if linux_runtime:
@@ -601,10 +533,9 @@ class UpdateDownloadJob(Job):
 
 
 class ContinueUpdateJob(RebuildJob):
-    """After the restart, in the new version: bring the tools to its lock and rebuild the game."""
-    retune = False   # an update keeps the compiled game's level, so it compiles only what changed
+    retune = False
     kind = 'update'
-    claims = ('game', 'app')   # the rebuild, then updater.prune in the app folder
+    claims = ('game', 'app')
 
     def __init__(self, ctx, game_dir, old, dump=''):
         Job.__init__(self, ctx, ['download', 'verify', 'tools_update', 'lift', 'compile_changed', 'swap', 'shaders',
@@ -646,9 +577,6 @@ def update_available(ctx, release):
 
 
 class StageJob(Job):
-    """A release downloaded, checked and unpacked beside the running version without switching to it
-    (updater.stage), while the launcher runs and the game too. Its thread runs at background priority, so the game
-    shares only the network with it. No screen shows it: the home screen's Updates row reads it."""
     kind = 'stage'
     claims = ('app',)
 
@@ -668,31 +596,19 @@ class StageJob(Job):
 
 
 class BackgroundUpdate:
-    """The update the launcher fetches by itself, and when it goes in (docs/launcher.md, "Updating"). The window
-    calls poll() on its timer, checked() after each update check, and install() when the launcher starts, when the
-    game exits, when a game that held an install up has closed, and when the player selects Updates.
-
-    A newer release is staged once per update check (StageJob); a staging that fails is logged and tried again after
-    the next check. A staged release installs only while no copy of the game runs, no job holds the window and no
-    staging is under way, and by itself only with Install Updates Automatically on. Installing switches
-    app/current.txt to it and restarts the launcher (restart(args), the stub), whose new version finishes in
-    ContinueUpdateJob. A checkout has nothing to switch to: there (enabled False) nothing is staged or installed."""
-
     def __init__(self, ctx, restart, enabled=True):
         self.ctx, self.restart, self.enabled = ctx, restart, enabled
-        self.job = None            # the StageJob running, or the last one
-        self.tried = ''            # the release staged, or found staged, since the last update check
-        self.asked = False         # the player selected Updates during the download: it installs once staged
-        self.waiting = False       # an install had to wait (the game ran, a download ran): the window tries again
-        self.restarting = False    # the last install restarted the launcher
-        self.error = ''            # why the last install failed
+        self.job = None
+        self.tried = ''
+        self.asked = False
+        self.waiting = False
+        self.restarting = False
+        self.error = ''
 
     def staging(self):
         return self.job is not None and self.job.result is None
 
     def ready(self, release=None):
-        """The staged release an install would take now (updater.staged_info's dict), or None. With release (the
-        last check's answer), a staged release newer than it is passed over: the feed no longer offers it."""
         if not self.enabled:
             return None
         s = self.ctx.settings
@@ -702,13 +618,9 @@ class BackgroundUpdate:
         return m
 
     def checked(self):
-        """An update check ended: the release it found is staged at the next poll, also one that failed before."""
         self.tried = ''
 
     def poll(self, release, busy=False):
-        """Report a staging that ended ('staged' or 'failed'), or start staging release when it is newer than the
-        running version and not staged yet ('started'); None when nothing changed. busy: a job holds the window
-        (an install, update or rebuild); staging waits for it, as an update's prune() clears the same folders."""
         j = self.job
         if j and j.result is not None and not getattr(j, 'seen', False):
             j.seen = True
@@ -732,11 +644,6 @@ class BackgroundUpdate:
         return 'started'
 
     def install(self, game_dir, release=None, why='', asked=False, running=False):
-        """Install the staged release now unless something stops it, and restart into it. asked: the player
-        selected Updates (now or during the download), which Install Updates Automatically off does not stop;
-        running: the window knows the game runs (the process it started); game_dir: a copy started elsewhere counts
-        too (build.game_running). Returns the version installed, or '' (then waiting says whether it is worth trying
-        again)."""
         if not self.enabled or not (asked or self.asked or self.ctx.settings.get('auto_install')):
             return ''
         m = self.ready(release)
@@ -763,7 +670,7 @@ class BackgroundUpdate:
         self.ctx.log(f'background update: installing {ver}' + (f' ({why})' if why else ''))
         try:
             self.restarting = bool(self.restart(['--continue-update', old]))
-        except OSError as e:   # the stub did not start: the new version runs at the launcher's next start
+        except OSError as e:
             self.ctx.log(f'background update: the launcher could not restart: {e}')
             self.restarting = False
         return ver

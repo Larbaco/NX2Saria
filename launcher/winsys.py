@@ -1,6 +1,3 @@
-"""What the launcher needs from the operating system: crisp drawing on scaled displays, the game's fonts for this
-process only, starting the game and the stub, shortcuts, the uninstall entry and a gamepad. Windows first; the
-other branches exist so the window can be developed and tested on Linux."""
 import ctypes
 import os
 import subprocess
@@ -19,7 +16,6 @@ WINDOWS_LOW_COMMIT_ADVICE = (
 
 
 def dpi_aware():
-    """Draw at the display's real resolution instead of letting Windows stretch a 96-dpi window (blurry)."""
     if os.name != 'nt':
         return
     try:
@@ -32,7 +28,6 @@ def dpi_aware():
 
 
 def app_id():
-    """Group the window under the launcher's own taskbar icon rather than python's."""
     if os.name == 'nt':
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('NX2Saria.Launcher')
@@ -46,7 +41,6 @@ WS_EX_APPWINDOW, WS_EX_TOOLWINDOW = 0x00040000, 0x00000080
 
 
 def _hwnd(root):
-    """The Win32 window of a Tk toplevel (the wrapper around Tk's child window)."""
     user32 = ctypes.windll.user32
     user32.GetParent.restype = ctypes.c_void_p
     user32.GetParent.argtypes = [ctypes.c_void_p]
@@ -54,10 +48,6 @@ def _hwnd(root):
 
 
 def _post(hwnd, msg, wparam, lparam):
-    """Queue a message for the window instead of sending it. A sent message runs the window's handler inside this
-    ctypes call, which has released Python's lock; when that handler dispatches Tk events (the move loop of a title
-    bar drag does), Tk calls back into Python without the lock and Python aborts. A posted message is handled by Tk's
-    own event loop, where calling back into Python is allowed."""
     user32 = ctypes.windll.user32
     user32.PostMessageW.restype = ctypes.c_int
     user32.PostMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_ssize_t]
@@ -65,8 +55,6 @@ def _post(hwnd, msg, wparam, lparam):
 
 
 def frameless(root):
-    """Windows: drop the system title bar (the window draws its own), but keep a taskbar button, Alt+Tab, minimise
-    from the taskbar and Alt+F4. False elsewhere, where the window keeps its frame."""
     if os.name != 'nt':
         return False
     try:
@@ -79,7 +67,7 @@ def frameless(root):
         hwnd = _hwnd(root)
         put(hwnd, GWL_EXSTYLE, (get(hwnd, GWL_EXSTYLE) & ~WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW)
         put(hwnd, GWL_STYLE, get(hwnd, GWL_STYLE) | WS_MINIMIZEBOX | WS_SYSMENU)
-        root.withdraw()            # the taskbar takes a changed window style only when the window is shown again
+        root.withdraw()
         root.after(10, root.deiconify)
         return True
     except (AttributeError, OSError, Exception):
@@ -87,21 +75,18 @@ def frameless(root):
 
 
 def minimize(root):
-    """Tk refuses to iconify a window without a frame, so ask Windows; asynchronously, for the reason in _post."""
     if os.name == 'nt':
-        ctypes.windll.user32.ShowWindowAsync(ctypes.c_void_p(_hwnd(root)), 6)   # SW_MINIMIZE
+        ctypes.windll.user32.ShowWindowAsync(ctypes.c_void_p(_hwnd(root)), 6)
     else:
         root.iconify()
 
 
 def start_drag(root):
-    """Windows: let the system move the window from the mouse's current press (as on a title bar, with snapping).
-    False elsewhere: the caller moves the window itself."""
     if os.name != 'nt':
         return False
     try:
         ctypes.windll.user32.ReleaseCapture()
-        return bool(_post(_hwnd(root), 0x00A1, 2, 0))   # WM_NCLBUTTONDOWN, HTCAPTION
+        return bool(_post(_hwnd(root), 0x00A1, 2, 0))
     except (AttributeError, OSError):
         return False
 
@@ -110,7 +95,6 @@ _ICONS = []
 
 
 def set_window_icon(root, ico):
-    """Windows: the window's and the taskbar button's icon, straight from an .ico (the large and the small size)."""
     if os.name != 'nt':
         return False
     try:
@@ -119,23 +103,22 @@ def set_window_icon(root, ico):
         user32.LoadImageW.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_uint, ctypes.c_int, ctypes.c_int,
                                       ctypes.c_uint]
         hwnd = _hwnd(root)
-        for which, (mx, my) in ((1, (11, 12)), (0, (49, 50))):   # ICON_BIG: SM_CXICON; ICON_SMALL: SM_CXSMICON
+        for which, (mx, my) in ((1, (11, 12)), (0, (49, 50))):
             h = user32.LoadImageW(None, str(ico), 1, user32.GetSystemMetrics(mx), user32.GetSystemMetrics(my),
-                                  0x10)   # IMAGE_ICON, LR_LOADFROMFILE
+                                  0x10)
             if h:
                 _ICONS.append(h)
-                _post(hwnd, 0x0080, which, h)   # WM_SETICON
+                _post(hwnd, 0x0080, which, h)
         return True
     except (AttributeError, OSError):
         return False
 
 
 def register_font(path):
-    """Make a font file usable by this process only (Tk then finds it by family name). True on success."""
     path = str(path)
     if os.name == 'nt':
         try:
-            return ctypes.windll.gdi32.AddFontResourceExW(ctypes.c_wchar_p(path), 0x10, None) > 0   # FR_PRIVATE
+            return ctypes.windll.gdi32.AddFontResourceExW(ctypes.c_wchar_p(path), 0x10, None) > 0
         except (AttributeError, OSError):
             return False
     try:
@@ -147,12 +130,10 @@ def register_font(path):
 
 
 def unregister_font(path):
-    '''Give up a font file register_font added, so the file can be written again: Windows keeps a registered font
-    file open, and writing it then fails with "Permission denied".'''
     if os.name != 'nt':
         return
     try:
-        ctypes.windll.gdi32.RemoveFontResourceExW(ctypes.c_wchar_p(str(path)), 0x10, None)   # FR_PRIVATE
+        ctypes.windll.gdi32.RemoveFontResourceExW(ctypes.c_wchar_p(str(path)), 0x10, None)
     except (AttributeError, OSError):
         pass
 
@@ -166,7 +147,6 @@ def open_path(path):
 
 
 def reveal(path):
-    """Show a file in its folder, selected in Explorer (a file to drag into a bug report); elsewhere open the folder."""
     path = Path(path)
     if os.name == 'nt':
         subprocess.Popen(['explorer', f'/select,{path}'])   # noqa: S603, S607
@@ -181,9 +161,6 @@ KNOWN_FOLDERS = {'downloads': '{374DE290-123F-4565-9164-39C4925E467B}',
 
 
 def known_folder(name):
-    """The folder the desktop keeps for name ('downloads', 'desktop', 'documents', 'pictures'): on Windows the shell's,
-    also when the player moved it to another drive; on Linux the one user-dirs.dirs names, translated on a desktop set
-    up in another language (launcher/platform/linux.py user_dir). None when there is none."""
     if sys.platform.startswith('linux'):
         from .platform.linux import user_dir
         return user_dir(name)
@@ -195,7 +172,7 @@ def known_folder(name):
         class GUID(ctypes.Structure):
             _fields_ = [('d1', wintypes.DWORD), ('d2', wintypes.WORD), ('d3', wintypes.WORD),
                         ('d4', ctypes.c_ubyte * 8)]
-        ole32, shell32 = ctypes.WinDLL('ole32'), ctypes.WinDLL('shell32')   # private handles: argtypes stay here
+        ole32, shell32 = ctypes.WinDLL('ole32'), ctypes.WinDLL('shell32')
         ole32.CLSIDFromString.argtypes = (wintypes.LPCWSTR, ctypes.POINTER(GUID))
         ole32.CoTaskMemFree.argtypes = (ctypes.c_void_p,)
         shell32.SHGetKnownFolderPath.argtypes = (ctypes.POINTER(GUID), wintypes.DWORD, wintypes.HANDLE,
@@ -214,11 +191,6 @@ def known_folder(name):
 
 
 def pick(root, kind, title, initialdir, filetypes=(), log=None, mustexist=False):
-    """A file (kind 'file') or folder ('folder') the player chooses, or '' when they cancel. On Linux the desktop's
-    chooser (zenity or kdialog, launcher/platform/linux.py pick_path), which has the desktop's places and bookmarks
-    and reaches the drives under /mnt and /media; Tk's own, a bare list of folders, only where neither is installed.
-    Windows: Tk's, which is the system's. mustexist: Tk's folder chooser takes only a folder that exists (the desktop's
-    always do). One line into the log: which chooser, and what it gave."""
     from tkinter import filedialog
     tool, path = None, ''
     patterns = [(label, '*' if pattern in ('*', '*.*') else pattern) for label, pattern in filetypes]
@@ -249,7 +221,6 @@ class _PerformanceInformation(ctypes.Structure):
 
 
 def system_commit_info():
-    """System-wide commit used, current limit and physical RAM in MiB. None off Windows."""
     if os.name != 'nt':
         return None
     query = ctypes.WinDLL('psapi', use_last_error=True).GetPerformanceInfo
@@ -265,7 +236,6 @@ def system_commit_info():
 
 
 def page_file_is_system_managed():
-    """True for a system-managed page file, False for fixed-size or disabled, None when Windows cannot say."""
     if os.name != 'nt':
         return None
     try:
@@ -283,8 +253,7 @@ def page_file_is_system_managed():
 
 
 def page_files_system_managed(values):
-    """Classify PagingFiles entries like runtime/platform/win32.c; None means malformed or unknown."""
-    if not values:   # the value exists and Windows has no page files configured
+    if not values:
         return False
     managed = True
     for entry in values:
@@ -305,26 +274,22 @@ def page_files_system_managed(values):
 
 
 def confirm_play(text, root=None):
-    """Yes plays anyway. No cancels. Steam calls without a parent window."""
     box = ctypes.WinDLL('user32', use_last_error=True).MessageBoxW
     box.argtypes = [ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_uint32]
     box.restype = ctypes.c_int
-    flags = 0x4 | 0x30 | 0x10000   # MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND; Yes is the default button
+    flags = 0x4 | 0x30 | 0x10000
     result = box(_hwnd(root) if root is not None else None, text, 'NX2Saria', flags)
     if not result:
         raise ctypes.WinError(ctypes.get_last_error())
-    return result != 7   # IDNO
+    return result != 7
 
 
 def start_game(exe):
-    """Start the game from its own folder; returns the process to watch. ocarina.exe is a console program and the
-    launcher has no console, so without CREATE_NO_WINDOW Windows opened an empty console window beside the game,
-    titled with the exe's path. With it the game still has a console (hidden), which its restarts inherit."""
     exe = Path(exe)
     if os.name == 'nt':
         flags = {'creationflags': CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP}
     else:
-        if sys.platform.startswith('linux'):   # the Restart's copy becomes ours to wait for (platform/linux.py)
+        if sys.platform.startswith('linux'):
             from .platform.linux import child_subreaper
             try:
                 child_subreaper(True)
@@ -396,10 +361,6 @@ class LauncherParent:
 
 
 class GameCopy:
-    """A process of the game this launcher did not start, held by a handle so that its exit code can still be read
-    once it has ended (game_copy). poll(), returncode and pid as subprocess.Popen has them; ended is True once it has
-    ended, also when its code could not be read (returncode then stays None)."""
-
     def __init__(self, handle, pid):
         self.handle, self.pid, self.returncode, self.ended = handle, pid, None, False
 
@@ -417,9 +378,6 @@ class GameCopy:
 
 
 def game_finished(exe, skip=None):
-    """The run of the game is over (GameRun.running): on Linux the launcher stops adopting orphans and waits for the
-    copies of the game it adopted that ended before it looked (platform/linux.py child_subreaper, ended_copies), whose
-    exit codes it returns, the latest last. Nothing to do elsewhere: []."""
     if not sys.platform.startswith('linux'):
         return []
     from .platform import linux
@@ -431,11 +389,6 @@ def game_finished(exe, skip=None):
 
 
 def game_copy(exe, skip=None):
-    """Windows: the running process whose image is the file exe, other than the process id skip, as a GameCopy; None
-    when there is none or it cannot be opened. The game's own Restart (runtime/gfx/gfx_present.c gfx_window_closed) starts
-    the exe again (runtime/platform/win32.c plat_restart) and ends the process before it with code 0: following the
-    copy is how the launcher learns the code the game really ended with. The image is compared as a file, not as a
-    name, so the game of another install is not taken for this one."""
     if os.name != 'nt':
         if sys.platform.startswith('linux'):
             from .platform.linux import game_copy as linux_game_copy
@@ -487,8 +440,6 @@ def start_detached(cmd, cwd=None):
 
 
 def restart(layout, args=()):
-    """Start the launcher again through its stub (which swaps in a staged Python and starts app/current.txt's
-    version). False in a checkout, which has no stub."""
     if os.name != 'nt':
         if layout.dev:
             return False
@@ -511,7 +462,6 @@ def make_game_toolchain_args(layout):
 
 
 def stub_run(layout, args, timeout=30):
-    """Run the stub for one of its own commands (shortcuts); True when it succeeded."""
     if not layout.stub.is_file():
         return False
     flags = {'creationflags': CREATE_NO_WINDOW} if os.name == 'nt' else {}
@@ -537,14 +487,11 @@ def keep_awake(on, log=None):
 
 
 def background_thread():
-    """Windows: put the calling thread in background mode (SetThreadPriority THREAD_MODE_BACKGROUND_BEGIN), which
-    lowers its processor, disk and memory priority, so work done beside the game takes only what the game leaves.
-    False where that is not possible."""
     if os.name != 'nt':
         return False
     try:
         from ctypes import wintypes
-        k = ctypes.WinDLL('kernel32')   # a private handle: the argument types set here touch no other caller
+        k = ctypes.WinDLL('kernel32')
         k.GetCurrentThread.restype = wintypes.HANDLE
         k.SetThreadPriority.argtypes = (wintypes.HANDLE, ctypes.c_int)
         return bool(k.SetThreadPriority(k.GetCurrentThread(), 0x00010000))
@@ -552,14 +499,10 @@ def background_thread():
         return False
 
 
-# What the launcher puts in its folder (launcher/paths.py, the stub's python.next and python.old-<n>). Uninstall deletes
-# only these: the default game folder is <root>\game, and a folder given to the setup with --dest may hold other things.
 OWNED = ('NX2Saria.exe', 'NX2navi.exe', 'app', 'python', 'python.next', 'pydeps', 'data', 'toolchain')
 
 
 def uninstall_plan(layout, remove_game=''):
-    """(paths to delete with all they hold, folders to delete only when that left them empty), in order. A kept game
-    folder stays whether or not it lies inside the launcher's folder."""
     root = Path(layout.root)
     gone = [Path(remove_game)] if remove_game else []
     gone += [root / n for n in OWNED]
@@ -568,16 +511,13 @@ def uninstall_plan(layout, remove_game=''):
     except OSError:
         pass
     empty = [root]
-    if Path(layout.toolchain).parent != root:   # the toolchain went to C:\NX2Saria (launcher/paths.py ansi_safe)
+    if Path(layout.toolchain).parent != root:
         gone.append(Path(layout.toolchain))
         empty.append(Path(layout.toolchain).parent)
     return gone, empty
 
 
 def uninstall_script(gone, empty):
-    """The cmd.exe line that deletes them once the launcher has exited: a file with del, a folder with rmdir /s, the
-    folders that must be empty with a plain rmdir (which leaves a folder that still holds something). A path holding
-    % is left out: cmd.exe expands %NAME% even inside quotes, so a folder named C:\\%HOMEPATH% would delete another."""
     steps = ['ping -n 3 127.0.0.1 >nul']
     for p in gone:
         if '%' not in str(p):
@@ -587,10 +527,6 @@ def uninstall_script(gone, empty):
 
 
 def uninstall(layout, remove_game='', log=print, keep=()):
-    """Remove the shortcuts, the uninstall entry and, once this process has exited, what the launcher put in its folder
-    (and the game folder when remove_game names it). A kept game folder and its saves stay, also when it lies inside
-    the launcher's folder. keep: on Linux, paths that stay whatever folder holds them (the game folder when it is not
-    removed, the dump)."""
     stub_run(layout, ['--shortcuts', 'off'])
     gone, empty = uninstall_plan(layout, remove_game)
     if os.name == 'nt':
@@ -606,15 +542,13 @@ def uninstall(layout, remove_game='', log=print, keep=()):
                     pass
         except OSError:
             pass
-        # one command line as cmd.exe reads it: a list would have its quotes escaped as \", which cmd.exe does not
-        # understand, and no rmdir would find its folder
         kept = [str(p) for p in list(gone) + list(empty) if '%' in str(p) and os.path.exists(p)]
         if kept:
             log('uninstall: remove these yourself (their names hold %): ' + ', '.join(kept))
         start_detached(f'cmd.exe /c "{uninstall_script(gone, empty)}"', cwd=os.environ.get('TEMP', 'C:\\'))
     elif getattr(layout, 'dev', False):
         log('uninstall: a checkout is not uninstalled; nothing was removed')
-    else:   # Linux: the AppImage's install, deleted by sh once this process has gone (platform/linux.py uninstall_plan)
+    else:
         from .platform import linux
         if not linux.appimage_install(layout.root):
             log(f'uninstall: {layout.root} holds no AppImage install; nothing was removed')
@@ -627,8 +561,6 @@ def uninstall(layout, remove_game='', log=print, keep=()):
         start_detached(linux.uninstall_command(os.getpid(), gone, empty, Path(layout.logs) / 'launcher.log'),
                        cwd='/')
 
-
-# ---------------------------------------------------------------- gamepad (XInput)
 
 class _XInputGamepad(ctypes.Structure):
     _fields_ = [('wButtons', ctypes.c_ushort), ('bLeftTrigger', ctypes.c_ubyte), ('bRightTrigger', ctypes.c_ubyte),
@@ -645,18 +577,12 @@ BUTTONS = {0x0001: 'up', 0x0002: 'down', 0x0004: 'left', 0x0008: 'right', 0x1000
 
 
 def in_front(root):
-    """Whether the window the user is typing into belongs to this process. XInput reads the pad whichever window is in
-    front, so without this check the launcher, left open behind the game, took the presses meant for the game: A
-    activated its focused row (it started the game five times in five minutes and tried a rebuild), the stick moved
-    its focus and Y checked for updates. Elsewhere Tk knows whether one of its windows has the keyboard focus, which
-    the window manager gives the window in front (SDL3 reads the pad there whichever window is in front too). True
-    where it cannot tell."""
     if os.name != 'nt':
         if os.environ.get('GAMESCOPE_WAYLAND_DISPLAY') or os.environ.get('SteamDeck'):
-            return True   # Steam's Game Mode shows one window at a time, and the pad is the only input there
+            return True
         try:
             return root.focus_displayof() is not None
-        except Exception:   # tk.TclError, or a stand-in window without Tk
+        except Exception:
             return True
     try:
         user32 = ctypes.windll.user32
@@ -665,7 +591,7 @@ def in_front(root):
         user32.GetWindowThreadProcessId.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint)]
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
-            return False   # no window in front (the desktop is switching, a lock screen): nothing is meant for us
+            return False
         pid = ctypes.c_uint(0)
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
         return pid.value == os.getpid()
@@ -674,10 +600,6 @@ def in_front(root):
 
 
 class _WindowsGamepad:
-    """Polls the first XInput pad; poll() returns the buttons pressed since the last call (edges), the left stick
-    counted as the d-pad. poll(False) still reads the pad but returns nothing: a button held while another window was
-    in front does not count as pressed when this one comes back."""
-
     def __init__(self):
         self.dll = None
         self.held = set()
@@ -723,7 +645,6 @@ class _WindowsGamepad:
 
 
 class Gamepad:
-    """Stable gamepad facade: XInput on Windows and SDL3 GameController on Linux."""
     def __init__(self):
         if os.name != 'nt':
             from .platform.linux import Gamepad as LinuxGamepad

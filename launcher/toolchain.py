@@ -1,20 +1,3 @@
-"""The build tools, installed on the player's PC: MSYS2's UCRT64 clang and the libraries tools/make_game.py links
-(the packages README-BuildKit.md lists), and the zbic Python package.
-
-No MSYS2 shell and no pacman: the packages and everything they depend on are read from the repository's database,
-downloaded, checked against the sha256 the database (or the release's lock) names, and unpacked into
-toolchain/msys64/ucrt64 as pacman would lay them out. A release pins the exact package files in
-toolchain.lock.json (make_lock, written by tools/make_launcher.py), so every player builds with the compiler the
-release was tested with; the repository keeps old package files. A checkout without a lock resolves the newest
-packages instead.
-
-Beside it goes the clang of MSYS2's CLANG64 environment (toolchain/msys64/clang64), the same LLVM release built with
-profile-guided optimisation: it compiles the lifted code about a fifth faster into the same objects, reading UCRT64's
-headers (tools/make_game.py fast_clang). Only clang.exe, the DLLs it loads and its own headers are unpacked.
-
-zbic (GPL-2.0) unpacks the game's compressed program files. The release does not carry it: the launcher downloads the
-wheel for its own Python from PyPI and unpacks it into pydeps/, as `pip install zbic` would.
-"""
 import hashlib
 import importlib
 import io
@@ -34,12 +17,10 @@ REPO = 'https://repo.msys2.org/mingw/ucrt64/'
 MIRRORS = (REPO, 'https://mirror.msys2.org/mingw/ucrt64/')
 PREFIX = 'mingw-w64-ucrt-x86_64-'
 ROOTS = ('clang', 'gcc', 'lld', 'sdl3', 'opus', 'libvpx', 'dav1d', 'zstd', 'vulkan-headers', 'vulkan-loader',
-         'vulkan-memory-allocator')   # lld: the game links several times faster than with GNU ld
+         'vulkan-memory-allocator')
 REQUIRED = ('bin/clang.exe', 'bin/clang++.exe', 'bin/SDL3.dll', 'lib/libSDL3.dll.a', 'include/vma')
 SKIP_SHARE = ('ucrt64/share/doc/', 'ucrt64/share/man/', 'ucrt64/share/info/', 'ucrt64/share/locale/',
               'ucrt64/share/gtk-doc/', 'ucrt64/share/licenses/')
-# CLANG64's clang: exactly the packages clang.exe loads DLLs from (not the dependency closure, which adds the linker,
-# the LLVM tools and the CLANG64 C runtime the lifted code does not use).
 FAST_REPO = 'https://repo.msys2.org/mingw/clang64/'
 FAST_MIRRORS = (FAST_REPO, 'https://mirror.msys2.org/mingw/clang64/')
 FAST_PREFIX = 'mingw-w64-clang-x86_64-'
@@ -52,13 +33,7 @@ class ToolchainError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- the package database
-
 def zstd_missing(layout):
-    """Why this Python cannot read zstd files, or '' when it can. The MSYS2 packages and the game's files are zstd:
-    Python 3.14 reads them with compression.zstd, an older Python needs the zstandard package. The release's Python
-    has both; a checkout runs under whatever Python started it, and without either the build stopped at its first
-    unpack with nothing but "No module named 'zstandard'"."""
     for name in ('compression.zstd', 'zstandard'):
         try:
             importlib.import_module(name)
@@ -75,7 +50,7 @@ def zstd_missing(layout):
 
 def _zstd_decompress_stream(data):
     try:
-        from compression import zstd   # Python 3.14
+        from compression import zstd
         return zstd.decompress(data)
     except ImportError:
         import zstandard
@@ -83,7 +58,6 @@ def _zstd_decompress_stream(data):
 
 
 def _open_tar(path_or_bytes):
-    """A tarfile over a .tar.zst (or plain/gzip tar) file or bytes."""
     data = path_or_bytes if isinstance(path_or_bytes, (bytes, bytearray)) else Path(path_or_bytes).read_bytes()
     if data[:4] == b'\x28\xb5\x2f\xfd':
         data = _zstd_decompress_stream(data)
@@ -91,7 +65,6 @@ def _open_tar(path_or_bytes):
 
 
 def parse_db(data):
-    """{name: desc} for a pacman sync database (ucrt64.db): each desc is {FIELD: [lines]}."""
     out = {}
     with _open_tar(data) as t:
         for m in t.getmembers():
@@ -114,7 +87,6 @@ def _dep_name(dep):
 
 
 def resolve(db, roots=ROOTS):
-    """Every package the roots need, roots first; names a package provides resolve to the package."""
     provides = {}
     for name, d in db.items():
         for p in d.get('PROVIDES', []):
@@ -135,8 +107,6 @@ def resolve(db, roots=ROOTS):
 
 
 def make_lock(repo=REPO, roots=ROOTS, version='dev', fast_repo=None):
-    """The lock a release ships: the resolved package files of the repository's current database. With fast_repo
-    (FAST_REPO), also CLANG64's clang, when that repository has the same clang version as UCRT64's."""
     db = parse_db(net.get_bytes(repo + 'ucrt64.db', version=version))
     pkgs = resolve(db, roots)
     lock = {'format': LOCK_FORMAT, 'repo': repo, 'roots': list(roots), 'packages': pkgs,
@@ -170,7 +140,6 @@ def lock_digest(lock):
 
 
 def load_lock(layout, version='dev'):
-    """The release's toolchain.lock.json, or a lock resolved from the live database in a checkout."""
     if layout.lock_file.is_file():
         lock = json.loads(layout.lock_file.read_text(encoding='utf-8'))
         if lock.get('format') != LOCK_FORMAT:
@@ -178,8 +147,6 @@ def load_lock(layout, version='dev'):
         return lock
     return make_lock(version=version)
 
-
-# ---------------------------------------------------------------- install
 
 def installed(layout):
     p = layout.msys_root / 'installed.json'
@@ -199,8 +166,6 @@ def is_current(layout, lock):
 
 
 def _wanted(name, env):
-    """Whether a package member is unpacked: UCRT64's files without the documentation; of CLANG64's, clang.exe, the
-    DLLs and clang's own headers."""
     if env == 'clang64':
         return (name == 'clang64/bin/clang.exe' or (name.startswith('clang64/bin/') and name.endswith('.dll'))
                 or name.startswith('clang64/lib/clang/'))
@@ -208,14 +173,12 @@ def _wanted(name, env):
 
 
 def _members(path):
-    """The members of a .pkg.tar.zst (or plain tar), read as a stream, member by member, so a 350 MB package never
-    sits in memory whole. Yields (tarfile, member)."""
     with open(path, 'rb') as raw:
         zst = raw.read(4) == b'\x28\xb5\x2f\xfd'
         raw.seek(0)
         if zst:
             try:
-                from compression import zstd   # Python 3.14
+                from compression import zstd
                 fileobj = zstd.ZstdFile(raw)
             except ImportError:
                 import zstandard
@@ -228,9 +191,6 @@ def _members(path):
 
 
 def _extract_package(path, dest, env=None):
-    """Unpack one package into dest (the msys64 folder): the members _wanted keeps. A wanted hard link needs its
-    target on disk, and a stream cannot go back for it: a selective unpack (env) first reads the headers for the
-    targets of the wanted links (CLANG64's clang.exe is one) and unpacks them too."""
     want = set()
     if env:
         for _, m in _members(path):
@@ -243,18 +203,12 @@ def _extract_package(path, dest, env=None):
 
 
 def install(layout, lock, progress=None, cancel=None, log=print, version='dev'):
-    """Download and unpack the lock's packages into toolchain/msys64 (through msys64.new, swapped in at the end).
-    progress(phase, done, total) with phase 'download' (bytes) or 'unpack' (packages)."""
     pkgs = lock['packages']
     layout.pkgs.mkdir(parents=True, exist_ok=True)
     need = [p for p in pkgs if not ((layout.pkgs / p['filename']).is_file()
                                     and (layout.pkgs / p['filename']).stat().st_size == p['csize'])]
     total = sum(p['csize'] for p in need)
     log(f'toolchain: {len(pkgs)} packages, {len(need)} to download ({total / 1e6:.0f} MB)')
-    # Room for the downloads and for the unpacked tools beside the ones in use (msys64.new), asked before the first
-    # download: a disk that fills while a package unpacks otherwise ends the step with an error that names no cause.
-    # A package's installed size is in the lock; of a CLANG64 package only a few files are unpacked (_wanted), for
-    # which its download size stands in.
     unpacked = sum(p['csize'] if p.get('env') else p.get('isize', 0) for p in pkgs)
     full = net.space_problem(layout.toolchain, total + unpacked, 'the build tools')
     if full:
@@ -272,7 +226,7 @@ def install(layout, lock, progress=None, cancel=None, log=print, version='dev'):
                              version=version, log=lambda line: log(f'toolchain: {line}'))
                 last_error = None
                 break
-            except net.NoSpace as e:   # another server has the same file for the same full disk
+            except net.NoSpace as e:
                 raise ToolchainError(str(e)) from e
             except net.DownloadError as e:
                 last_error = e
@@ -280,7 +234,7 @@ def install(layout, lock, progress=None, cancel=None, log=print, version='dev'):
         if last_error:
             raise ToolchainError(f'{p["filename"]} could not be downloaded: {last_error}')
         done_before += p['csize']
-    for p in pkgs:   # files kept from an earlier download are checked too
+    for p in pkgs:
         if net.sha256_file(layout.pkgs / p['filename']) != p['sha256']:
             (layout.pkgs / p['filename']).unlink()
             raise ToolchainError(f'{p["filename"]} was damaged on disk; run the setup again to download it anew')
@@ -313,10 +267,7 @@ def install(layout, lock, progress=None, cancel=None, log=print, version='dev'):
     log(f'toolchain: installed in {layout.msys}')
 
 
-# ---------------------------------------------------------------- zbic
-
 def wheel_tag():
-    """The wheel platform tags this interpreter loads, best first."""
     v = f'cp{sys.version_info.major}{sys.version_info.minor}'
     if os.name == 'nt':
         return [f'{v}-{v}-win_amd64']
@@ -324,13 +275,11 @@ def wheel_tag():
 
 
 def zbic_ok(layout):
-    """zbic loads from pydeps/ in the interpreter the build runs with (a fresh process: this one may have cached
-    that pydeps/ did not exist)."""
     import subprocess
     if not layout.pydeps.is_dir():
         return False
     code = 'import sys; sys.path.insert(0, sys.argv[1]); import zbic; assert callable(zbic.decompress)'
-    flags = {'creationflags': 0x08000000} if os.name == 'nt' else {}   # CREATE_NO_WINDOW
+    flags = {'creationflags': 0x08000000} if os.name == 'nt' else {}
     r = subprocess.run([layout.python_for_builds(), '-I', '-c', code, str(layout.pydeps)], stdin=subprocess.DEVNULL,
                        capture_output=True, **flags)
     return r.returncode == 0
@@ -361,7 +310,7 @@ def ensure_zbic(layout, progress=None, cancel=None, log=print, version='dev'):
     with zipfile.ZipFile(dest) as z:
         for m in z.infolist():
             target = (layout.pydeps / m.filename).resolve()
-            if not target.is_relative_to(layout.pydeps.resolve()):   # not a sibling such as pydeps2 either
+            if not target.is_relative_to(layout.pydeps.resolve()):
                 raise ToolchainError(f'{pick["filename"]}: unsafe path {m.filename}')
         z.extractall(layout.pydeps)
     dest.unlink(missing_ok=True)
