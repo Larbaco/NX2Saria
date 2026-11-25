@@ -4989,59 +4989,55 @@ The rendering begins and ends through the recorder (`runtime/vk/vk_rec.h`), in o
 their pipeline, descriptors, buffers and dynamic state bound, so the replay's held state is cleared
 (`vk_exec_draw_new_cb()`, every dynamic state dirty): the next game draw sets everything.
 
-### `draw_mesh_fn()`
+### `draw_mesh_fn()`, `draw_mesh_ind_fn()`
 
 NVN2 mesh draws (DrawMeshTasks): count task workgroups, or mesh workgroups for a program without a task stage, through
-`VK_EXT_mesh_shader`. The stages are the translator's TaskEXT / MeshEXT modules (`tools/xlate/MeshSpirv.cs`). The lazy
-lookups below store the pointer before the flag that says it was looked up: the chunks of a parallel group draw meshes
-at once, and one that saw the flag first went on with no pointer and skipped its draws.
+`VK_EXT_mesh_shader`. The stages are the translator's TaskEXT / MeshEXT modules (`tools/xlate/MeshSpirv.cs`). These lazy
+lookups store the pointer before the flag that says it was looked up: the chunks of a parallel group draw meshes at
+once, and one that saw the flag first went on with no pointer and skipped its draws.
 
 ### `mesh_shading_rate()`
 
 `NX2SARIA_FOLIAGE_SHADOW_VRS` (0 to 3, default 2): the foliage's mesh draws in the shadow cascades from this one on
 shade one fragment per 2x2 pixels; 3 turns it off. A leaf's alpha test then runs a quarter as often, and the far
 cascade's texels are metres across the forest floor, where the coarser cut-out does not show. A mesh pipeline has the
-rate as dynamic state, so every mesh draw sets it.
+rate as dynamic state, so every mesh draw sets it. The function pointer is stored before the flag, as in
+`draw_mesh_fn()`.
 
-- `if (!__atomic_load_n(&looked, __ATOMIC_ACQUIRE))`: as `draw_mesh_fn`: the pointer before the flag.
-
-### Mesh fallback
+### Mesh fallback: the stages as compute dispatches
 
 A mesh draw on a device without `VK_EXT_mesh_shader` (`mesh_fallback`, `runtime/vk/vk_device.c`), or on any device with
 `mesh_fallback` = 1. The program's task and mesh stages run as compute dispatches that write the fallback's buffers, and
 an ordinary draw reads them (`runtime/gfx/mesh_fb.c` makes the modules, `runtime/vk/vk_mesh_fb.c` holds the buffers):
 
-- The draw's record: its workgroup count, copied on the GPU when the game's own record holds it.
-- With a task stage only, the task dispatch: the task module, with the task stage's bindings.
-- With a task stage only, the scan: lists the mesh workgroups the tasks started and counts them into the record.
-- The mesh dispatch: the mesh module, with the mesh stage's bindings.
-- The draw: one instance per mesh workgroup, with the generated vertex stage and the program's fragment stage, the
-  instance count from the record.
+1. The draw's record: its workgroup count, copied on the GPU when the game's own record holds it.
+2. With a task stage only, the task dispatch: the task module, with the task stage's bindings.
+3. With a task stage only, the scan: lists the mesh workgroups the tasks started and counts them into the record.
+4. The mesh dispatch: the mesh module, with the mesh stage's bindings.
+5. The draw: one instance per mesh workgroup, with the generated vertex stage and the program's fragment stage, the
+   instance count from the record.
 
 Every step reads what the one before wrote, so a full barrier stands between them, and the dispatches cannot be recorded
 inside a pass: each such draw ends the open pass, and the next draw begins it again. The buffers are reused by every
 draw (`runtime/vk/vk_mesh_fb.c`), which the barrier before a draw's first dispatch makes safe: the previous draw's
 vertex stage has read them by then.
 
-Batched (`NX2SARIA_MESH_FALLBACK_BATCH`, `mfb_batch_on`, `runtime/gfx/mfb_batch.h`), a pass's draws record their steps
-in the part's pre-pass command buffer instead, each draw into a part of the buffers of its own, and in the pass only the
-draw: the pass stays open. The first batched draw of a pass cuts the part there, so what came before runs before the
-steps.
+Batched (`NX2SARIA_MESH_FALLBACK_BATCH`, `mfb_batch_on()`, `runtime/gfx/mfb_batch.h`), a pass's draws record their
+steps in the part's pre-pass command buffer instead, each draw into a part of the buffers of its own, and in the pass
+only the draw: the pass stays open. The first batched draw of a pass cuts the part there, so what came before runs
+before the steps.
 
 The modules of a program are made once, on a thread of their own, with their compute pipelines (a mesh program of the
 game is up to 900,000 SPIR-V words, and its pipeline compiles for as long as the mesh pipeline it replaces): until they
 are ready the program's draws are skipped, like draws whose pipeline is being built. Without background pipeline builds
 (the probes) they are made at the draw.
 
-- `MfbCs`:
-  - `const GfxShader *ms, *ts`: the key: the translated mesh and task shaders (ts NULL: none).
-  - `volatile int32_t state`: 0 queued or being made, 1 ready, -1 failed.
-  - `const GfxShader *cs_mesh, *cs_task`: the compute modules (`gfx_shader_own`).
-  - `MfbHist hist`: what its draws asked for (`runtime/gfx/mfb_batch.h`; `runtime/vk/vk_mesh_fb.c` `record_check()`).
-  - `struct MfbCs *next`: the worker's queue.
-- `MFB`:
-  - `int threads, busy`: workers started, workers making a program now.
-  - `uint64_t first_ms, drained`: the first program's queueing; the queue has emptied once (logged).
+An `MfbCs` is a program's entry (`mfb_cs_tab`, `MFB_TAB` = 4096): its key is the translated mesh and task shaders (`ms`,
+`ts`; `ts` NULL: none); `state` is 0 queued or being made, 1 ready, -1 failed; `cs_mesh` and `cs_task` are the compute
+modules (`gfx_shader_own`); `hist` is what its draws asked for (`runtime/gfx/mfb_batch.h`; `runtime/vk/vk_mesh_fb.c`
+`record_check()`); `next` links the workers' queue. `MFB` holds that queue: `threads` and `busy` are the workers started
+and the workers making a program now, `first_ms` is when the first program was queued and `drained` says the queue has
+emptied once (logged).
 
 ### `mfb_binding_base()`
 
@@ -5061,14 +5057,12 @@ visit filled in one program at a time. The first time the queue empties the log 
 
 ### `mfb_worker()`
 
-- `plat_thread_priority(PLAT_PRIO_BELOW_NORMAL)`: as the pipeline workers' optimised builds: the game's threads go
-  first.
+Runs below normal priority, as the pipeline workers' optimised builds do: the game's threads go first.
 
 ### `mfb_cs_get()`
 
-The entry of (ms, ts), made and queued at its first draw; NULL (logged) when the program's layout is not carried.
-
-- `mfb_cs_tab[i] = e`: a program that is refused is not looked at again.
+The entry of (ms, ts), made and queued at its first draw. A program whose layout is not carried gets an entry with
+`state` -1 (logged once): its draws are skipped, and a program that is refused is not looked at again.
 
 ### `mfb_vs_get()`
 
@@ -5078,149 +5072,168 @@ type.
 ### `mfb_dispatch()`
 
 One of the draw's compute dispatches: module cs with the bindings of NVN stage `stage`, its group counts read from the
-record at `at`. 0 when its pipeline is not there. mark: the dispatch's pass mark (`dispatch_mark`); not in the pre-pass
-command buffer, whose commands run before the part's marks around them.
+record at `at`. 0 when its pipeline is not there. mark: the dispatch's pass mark (`dispatch_mark()`); not in the
+pre-pass command buffer, whose commands run before the part's marks around them.
 
 ### `mfb_step()`
 
 A step of the stages: one by one, `vk_exec_barrier` (the first ended the pass); batched, `ex->cb` is the pre-pass
-command buffer, which has no pass.
+command buffer, which has no pass, and the barrier is `vk_meshfb_full_barrier`.
 
 ### `mfb_stages()`
 
-The draw's stages in `ex->cb`, from its record to its note: the record's copy, the clamp of a count the GPU wrote, the
-task dispatch and the scan, the mesh dispatch. The draw after reads the record at `*at` in `*rec`. 0: a dispatch's
-pipeline failed.
+The draw's stages in `ex->cb`, from its record to its note, a step (`mfb_step()`) between each two:
 
-- `if (ind)`: to what the buffers hold, before a dispatch reads it (`runtime/shaders/meshfb_clamp.comp`).
-- `cx->B.pipe[1] = VK_NULL_HANDLE`: the clamp bound its own.
-- `cx->B.pipe[1] = VK_NULL_HANDLE`: the scan bound its own.
-- The note copies the record's report words, which the steps before wrote (the mesh dispatch only reads the record):
-  batched, no barrier between the mesh dispatch and the note, so a batch's draws are one barrier apart fewer; the next
-  draw's parts and record do not overlap this one's (`mfb_part_take`, `vk_meshfb_record`).
-- `if (!batched) vk_exec_barrier(ex)`: batched, the barrier at the pre-pass command buffer's end (`vk_meshfb_pre_end`).
+1. The record's copy (`vk_meshfb_record`).
+2. For a count the GPU wrote, its clamp to what the buffers hold, before a dispatch reads it
+   (`runtime/shaders/meshfb_clamp.comp`). The clamp binds a compute pipeline of its own, so the held one is forgotten.
+3. With a task stage, the task dispatch and the scan, which binds its own pipeline too.
+4. The mesh dispatch.
+5. The note (`vk_meshfb_note`), which copies the record's report words, which the steps before wrote (the mesh dispatch
+   only reads the record). Batched, there is no barrier between the mesh dispatch and the note, so a batch's draws are
+   one barrier apart fewer; the next draw's parts and record do not overlap this one's (`runtime/gfx/mfb_batch.h`
+   `mfb_part_take()`, and `vk_meshfb_record`).
+6. One by one, a barrier after the note; batched, that is the barrier at the pre-pass command buffer's end
+   (`vk_meshfb_pre_end`).
+
+The draw after reads the record at `*at_out` in `*rec`. 0: a dispatch's pipeline failed.
+
+### Mesh fallback: batching (`NX2SARIA_MESH_FALLBACK_BATCH`)
+
+`NX2SARIA_MESH_FALLBACK_BATCH` (`auto|0|1`, `mfb_batch_on()`): the stages of a pass's fallback draws run in the part's
+pre-pass command buffer (`vk_sync_pre`), as the mesh emulation's do (`NX2SARIA_MESH_EMU_BATCH`), and the pass is not
+broken for them. One by one, each draw ended the pass, ran its stages with a full barrier between every two and began
+the pass again: about 33 us of the submitting thread a draw ([replay-cpu.md](../replay-cpu.md)), 1.7 ms a frame in
+Kokiri Forest and 3.2 ms in Hyrule Field. Which draws are batched and the size of their parts of the buffers:
+`runtime/gfx/mfb_batch.h`. 0: every draw one by one. Each pass with batched draws cuts the part (a new command buffer
+and pre-pass command buffer, the state bound again), and a batched draw keeps its barriers and bindings in the pre-pass
+command buffer: on a CPU-bound PC that costs about what the pass breaks saved (`mfb_batch_on()` has the bench's
+numbers); the gain is the GPU's, without the pass breaks.
+
+`MFBB.n` counts the draws, batched or one by one and why, and the cuts (`runtime/gfx/mfb_batch.h` `mfb_count()`).
 
 ### `vk_exec_mfb_batch_exit_log()`
 
-- `MFBB`: `NX2SARIA_MESH_FALLBACK_BATCH` (`auto|0|1`, `mfb_batch_on`): the stages of a pass's fallback draws run in the
-  part's pre-pass command buffer (`vk_sync_pre`), as the mesh emulation's do (`NX2SARIA_MESH_EMU_BATCH`), and the pass
-  is not broken for them. One by one, each draw ended the pass, ran its stages with a full barrier between every two and
-  began the pass again: about 33 us of the submitting thread a draw ([replay-cpu.md](../replay-cpu.md)), 1.7 ms a frame
-  in Kokiri Forest and 3.2 ms in Hyrule Field. Which draws are batched and the size of their parts of the buffers:
-  `runtime/gfx/mfb_batch.h`. 0: every draw one by one. Each pass with batched draws cuts the part (a new command buffer
-  and pre-pass command buffer, the state bound again), and a batched draw keeps its barriers and bindings in the
-  pre-pass command buffer: on a CPU-bound PC that costs about what the pass breaks saved (`mfb_batch_on` has the bench's
-  numbers); the gain is the GPU's, without the pass breaks.
-  - `MfbCount n`: the draws, batched or one by one and why, and the cuts (`runtime/gfx/mfb_batch.h` `mfb_count()`).
-
-`runtime/gfx/gfx_present.c` `rt_exit_steps()` (`plat_exit` runs no atexit handlers): the session's totals once more,
-with batching on.
+From `runtime/gfx/gfx_present.c` `rt_exit_steps()` (`plat_exit` runs no atexit handlers): the session's totals once
+more, with batching on.
 
 ### `vk_exec_mfb_batch_counts()`
 
-`runtime/gfx/mesh_fb_probe.c`: `why[MFB_REASONS]`, `cuts[3]`.
+For `runtime/gfx/mesh_fb_probe.c`: `why[MFB_REASONS]`, `cuts[3]`.
 
-### `mfb_batch_on()`
+### `mfb_batch_on()`, `vk_exec_mfb_batch_start()`
 
-The switch, read once: at the device's start with the mesh fallback (`runtime/vk/vk_device.c`,
-`vk_exec_mfb_batch_start`), so the log says its value even in a session that draws nothing through the fallback.
+The switch, read once: at the device's start with the mesh fallback (`runtime/vk/vk_device.c` calls
+`vk_exec_mfb_batch_start()`), so the log says its value even in a session that draws nothing through the fallback.
+
 `NX2SARIA_MESH_FALLBACK_BATCH`: 1 (the default), 0 (off, false, no: every draw one by one), or auto (on where the
 fallback is the device's default: `runtime/vk/vk_mesh_path.h` `mesh_path_fallback_default()`, AMD's Windows driver for
 RDNA 1 and 2, Intel, a device without mesh shaders; off where `mesh_fallback` = 1 forces it on a device that draws them
 natively). On by default: on the Linux bench (RX 6700, RADV, the CPU sets the frame rate, the fallback forced), two A/Bs
 of six interleaved pairs each gave Hyrule Field +1.9 and +3.3 fps, Kokiri Forest +0.3 and +1.6 (medians of the pairs'
-differences), the GPU's time per frame 0.4 to 1.4 ms less (2026-11-22), and the pictures as main draws them. The
-device's path and default come from `vk_exec_mfb_batch_start` (`runtime/vk/vk_device.c`, before `vk_ctx()` is ready); a
-first call from a draw without them (the probe, which turns the fallback on itself) asks `vk_ctx()`. The words are read
-as the settings file reads a switch's: off, false, no and 0 are 0.
+differences), the GPU's time per frame 0.4 to 1.4 ms less (2026-11-22), and the pictures as main draws them.
 
-### `mfb_batch_log()`
+The device's path and default come from `vk_exec_mfb_batch_start()` (before `vk_ctx()` is ready); a first call from a
+draw without them (the probe, which turns the fallback on itself) asks `vk_ctx()`. The words are read as the settings
+file reads a switch's: off, false, no and 0 are 0.
+
+### `mfb_batch_log()`, `mfb_batch_line()`
 
 Every 30 s while the fallback draws with batching on, and at exit: the draws batched and those one by one, by reason
 (the way back). Nothing with the switch at 0: every draw is one by one then, as the start line says.
 
-### `mfb_step_cut()`
+### `mfb_step_cut()`, `mfb_step_pre()`, `mfb_step_take()`
 
-`mfb_batch_steps`' calls in `mfb_draw`: the cut, the pre-pass command buffer, the part of tb, lb and mb bytes.
+`mfb_batch_steps`' calls in `mfb_draw()`: the cut, the pre-pass command buffer, the part of tb, lb and mb bytes
+(`MfbDrawSteps`).
 
 ### `mfb_draw()`
 
 A mesh draw of `count` workgroups, or of the count in the game's record at ind (4 bytes, GPU-written), which lies at
 `list` in the game's memory (0: no record).
 
-- The list's hold (`mfb_hold_role`): not for a draw whose stages write memory.
-- Without a colour target the draw is its list's depth-only one, known before its dispatches are recorded; with colour
-  targets bound and their write masks off it is known where its state is (`prepare_draw_ex`).
-- A target the game does not render every frame: the draw may not come again, so it waits for its modules from the
-  frame's wait pool, as such a draw waits for a pipeline (`prepare_draw_ex`).
-- Its modules are being made: with a colour target bound it counts as the list's colour draw. Its write masks are not
-  known here; a depth-only draw taken for one holds itself for `MFB_HOLD_PRESENTS` presents at most.
-- `if (count > most) count = most`: a count the GPU wrote is cut on the GPU, below.
-- `vk_meshfb_poll(vk_sync_fence_done())`: the histories, from the records of finished submissions.
-- The steps (`runtime/gfx/mfb_batch.h` `mfb_batch_steps()`): a task or mesh stage that reads a texture or image goes one
-  by one (its binds in the pre-pass command buffer may record an image's first fill or an alias copy,
-  `vk_exec_inline_begin`, which ends and begins the part's pass around it). The first batched draw of a pass cuts the
-  part there (as the mesh emulation does, `mesh_emu_draw`): what the part held before, the game's culling and the draws
-  done one by one among them, runs before the pre-pass command buffer, which begins with a full barrier; again when that
-  pass ended since (`mfb_need_cut`), after a draw one by one wrote over the parts, and when the part does not fit what
-  is left.
-- A part larger than the whole buffers never fits: one by one without a cut (a cut for it is for nothing).
-- `if (why != MFB_BATCHED) mfb_count(&MFBB.n, why, cut, 0)`: a batched draw counts once its stages are in.
-- `vk_meshfb_one_by_one()`: after a batch's parts were taken, it writes over them: a cut before the next batched.
-- `vk_exec_barrier(ex)`: ends the pass; the culling's record and the last draw's reads come before what follows.
-- The stages in the pre-pass command buffer, each after the last with a full barrier of its own (`vk_exec_barrier` is
-  the part's, with its pass); the replay's compute pipeline there is not the part's, and its commands are not the part's
-  (`ex->recorded`: whether a barrier of the part has anything to order).
-- `cx->B.res_valid = 0`: the vertex stage reads its own part of the mesh buffer: no bind skip into or out of it.
-- `if (cut && ex->in_pass) ex->pre_pass = ex->pass_serial`: the pass the prepare began: its batched draws share pre.
-- `if (ex->mark && ind) ex->mark->mesh_ind++`: the pass's mesh draws (`runtime/vk/vk_crumbs.c` `describe_mark()`).
+1. The shaders; one still translating skips the draw.
+2. The list's hold (`mfb_hold_role()`), not for a draw whose stages write memory. Without a colour target the draw is
+   its list's depth-only one, known before its dispatches are recorded, and is left out here when held; with colour
+   targets bound and their write masks off it is known where its state is (`prepare_draw_ex()`).
+3. The modules (`mfb_cs_get()`). Into a target the game does not render every frame the draw may not come again, so it
+   waits for its modules from the frame's wait pool, as such a draw waits for a pipeline (`prepare_draw_ex()`). While
+   its modules are being made the draw is skipped; with a colour target bound it counts as the list's colour draw. Its
+   write masks are not known here; a depth-only draw taken for one holds itself for `MFB_HOLD_PRESENTS` presents at
+   most.
+4. The count is cut to the device's largest workgroup count; a count the GPU wrote is cut on the GPU (the clamp of
+   `mfb_stages()`). `vk_meshfb_poll` brings the histories up to date from the records of finished submissions.
+5. Batched or one by one (`mfb_batch_need`, then the steps, `runtime/gfx/mfb_batch.h` `mfb_batch_steps()`): a task or
+   mesh stage that reads a texture or image goes one by one (its binds in the pre-pass command buffer may record an
+   image's first fill or an alias copy, `vk_exec_inline_begin`, which ends and begins the part's pass around it). The
+   first batched draw of a pass cuts the part there (as the mesh emulation does, `mesh_emu_draw()`): what the part held
+   before, the game's culling and the draws done one by one among them, runs before the pre-pass command buffer, which
+   begins with a full barrier; again when that pass ended since (`mfb_need_cut`), after a draw one by one wrote over the
+   parts, and when the part does not fit what is left. A part larger than the whole buffers never fits: one by one
+   without a cut (a cut for it is for nothing). While the texture pool loads an area the draws go one by one too. A
+   draw one by one is counted here; a batched draw counts once its stages are in.
+6. One by one: `vk_meshfb_one_by_one` (after a batch's parts were taken, it writes over them: a cut before the next
+   batched draw), then `vk_exec_barrier`, which ends the pass; the culling's record and the last draw's reads come
+   before what follows; then the stages.
+7. Batched: the stages in the pre-pass command buffer, each after the last with a full barrier of its own
+   (`vk_exec_barrier` is the part's, with its pass); the replay's compute pipeline there is not the part's, and its
+   commands are not the part's (`ex->recorded`: whether a barrier of the part has anything to order), so both are put
+   back after. `B.res_valid` is cleared before and after the draw: the vertex stage reads its own part of the mesh
+   buffer, so there is no bind skip into or out of it.
+8. The draw (`prepare_draw_ex()` with `mesh` 2, then an indirect draw from the record). After a cut, `ex->pre_pass`
+   takes the serial of the pass the prepare began: its batched draws share the pre-pass command buffer. The pass mark
+   counts the pass's mesh draws (`runtime/vk/vk_crumbs.c` `describe_mark()`).
 
 ### `mesh_emu_draw_prim()`
 
-The primitive an emulated draw's mesh stage outputs: point meshes draw point lists, the rest triangles.
-
-- `const uint32_t *w = gfx_shader_spirv_pin(ms, &n)`: once per mesh shader the memo meets.
+The primitive an emulated draw's mesh stage outputs: point meshes draw point lists, the rest triangles. Asked of the
+SPIR-V once per mesh shader the memo meets.
 
 ### `mesh_emu_on()`
 
-- `on = vk_ctx()->mesh_emulation`: decided with the mesh fallback at device creation (`runtime/vk/vk_mesh_path.h`).
+`VkCtx.mesh_emulation`: decided with the mesh fallback at device creation (`runtime/vk/vk_mesh_path.h`).
 
 ### `op_draw_mesh()`
 
-- `if (on < 0) on = rt_knob("MESH", "1")`: `NX2SARIA_MESH=0`: mesh draws are skipped (diagnosis).
-- `if (ex->mark) ex->mark->mesh++`: the pass's mesh draws, for a lost device's report
-  (`runtime/vk/vk_crumbs.c` `describe_mark()`).
+DrawMeshTasks with a count: through `VK_EXT_mesh_shader`, the mesh emulation (`mesh_emu_draw()`) or the mesh fallback
+(`mfb_draw()`). `NX2SARIA_MESH=0`: mesh draws are skipped (diagnosis). A first workgroup other than 0 is not applied
+(warned once). The pass mark counts the pass's mesh draws, for a lost device's report (`runtime/vk/vk_crumbs.c`
+`describe_mark()`).
+
+### The indirect mesh ring
+
+The record NVN's DrawMeshTasksIndirect reads is {count, first} (as `NV_mesh_shader`'s), and Vulkan's {x, y, z}: read as
+it is, y = first (0) drew nothing. Each draw gets an entry of this ring (`mesh_ring`), {count, 1, 1}: y and z filled
+with 1 and x copied from the game's record on the GPU, between the pass's end and the draw (the record is written by the
+culling compute earlier in the frame and never comes back to guest memory). `first` is not applied: the game leaves it
+0. `MESH_RING` (4096) entries outlast the frames in flight: an entry is rewritten only after a barrier behind its last
+draw.
+
+`NX2SARIA_MESH_AHEAD` (default 1; 0 = each draw by itself, "ab" switches with the A/B blocks; `mesh_ahead_on()`): the
+copy of a record cannot be recorded inside a pass, so every indirect mesh draw ended its pass, and a pass that draws its
+meshes one after another was cut into as many pieces (a village: 45 of them a frame, each with a gap of its own on the
+GPU). The first such draw of a run now fills the entries of the ones that follow it as well, with nothing but state,
+draws and counter reports between them (`runtime/vk/vk_exec.c` `op_linear()`, `vk_exec_mesh_run()`): those draws then
+find their entry and stay in the pass. The culling compute that writes the records cannot run inside that run, and an
+entry is taken only by the draw it was filled for, at the same record address, while no other op was replayed since
+(`vk_exec_brk_now`). In the village 42 of the 45 draws a frame are served that way: 3 gaps with these copies a frame
+where there were 41 (0.04 ms of GPU time for 0.22), and about 40 passes fewer to begin and end.
+
+The entries filled ahead are the draw context's (`DrawCtx.ma`, `MESH_AHEAD` = 64): a chunk of a parallel group
+(`runtime/vk/vk_exec.c`) fills them for the draws that follow its own (`vk_exec_mesh_run` reads on from the op it
+records), and an entry it filled for a draw another chunk records is left unused. `mesh_ahead_taken` and
+`mesh_ahead_own` count, since the start, the draws served by an entry filled ahead and the others.
+
+`NX2SARIA_GPU_PASSES` (`vk_gpu_passes_capturing`): the workgroup counts of the indirect mesh draws of the timed frames
+are copied to host memory (`mesh_count_note()`, `vk_exec_mesh_counts()`, `MESH_COUNTS` = 4096 at most).
 
 ### `mesh_ring_release()`
 
-- `enum { MESH_RING, ... }`: The record NVN's DrawMeshTasksIndirect reads is {count, first} (as `NV_mesh_shader`'s), and
-  Vulkan's {x, y, z}: read as it is, y = first (0) drew nothing. Each draw gets an entry of this ring, {count, 1, 1}: y
-  and z filled with 1 and x copied from the game's record on the GPU, between the pass's end and the draw (the record is
-  written by the culling compute earlier in the frame and never comes back to guest memory). `first` is not applied: the
-  game leaves it 0. `MESH_RING` entries outlast the frames in flight: an entry is rewritten only after a barrier behind
-  its last draw.
-- `vk_gpu_passes_capturing()`: `NX2SARIA_GPU_PASSES`: the workgroup counts of the indirect mesh draws of the timed
-  frames, copied to host memory.
-
-`vk_exec_draw_shutdown`: a probe ends with the device idle.
+From `vk_exec_draw_shutdown()`: a probe ends with the device idle.
 
 ### `mesh_ring_make()`
 
-- `enum { MESH_AHEAD, ... }`: `NX2SARIA_MESH_AHEAD` (default 1; 0 = each draw by itself, "ab" switches with the A/B
-  blocks): the copy of a record cannot be recorded inside a pass, so every indirect mesh draw ended its pass, and a pass
-  that draws its meshes one after another was cut into as many pieces (a village: 45 of them a frame, each with a gap of
-  its own on the GPU). The first such draw of a run now fills the entries of the ones that follow it as well, with
-  nothing but state, draws and counter reports between them
-  (`runtime/vk/vk_exec.c` `op_linear()`, `vk_exec_mesh_run()`): those draws then find their entry and stay in the pass.
-  The culling compute that writes the records cannot run inside that run, and an entry is taken only by the draw it was
-  filled for, at the same record address, while no other op was replayed since (`vk_exec_brk`). In the village 42 of the
-  45 draws a frame are served that way: 3 gaps with these copies a frame where there were 41 (0.04 ms of GPU time for
-  0.22), and about 40 passes fewer to begin and end. The entries filled ahead are the draw context's (`DrawCtx.ma`): a
-  chunk of a parallel group (`runtime/vk/vk_exec.c`) fills them for the draws that follow its own (`vk_exec_mesh_run`
-  reads on from the op it records), and an entry it filled for a draw another chunk records is left unused.
-- `mesh_ahead_taken`: since the start: draws served by an entry filled ahead; the others.
-
-The ring, made before the chunks of a group record (`vk_exec_draw_group_begin`) or at the first indirect mesh draw.
+The ring, made before the chunks of a group record (`vk_exec_draw_group_begin()`) or at the first indirect mesh draw.
 
 ### `mesh_ring_entry()`
 
@@ -5229,12 +5242,14 @@ opens it again) and orders the culling's writes before the copy. Another cb (the
 begins with one. d: the draw it is for, which may take an entry filled ahead (`MESH_AHEAD`, `ex->cb` only); NULL: none
 (the mesh emulation's).
 
-- `cx->ma_n = cx->ma_i = 0`: the walk went another way: the entries left are never drawn from.
-- `if (!vk_mem_resolve(f->ind, 12, &ip) || ip.offset % 4) break`: that draw reports it when the walk gets there.
+When the next entry filled ahead is not this draw's, the walk went another way: the entries left are never drawn from,
+and are dropped. A draw of the run whose record is not backed or not aligned ends the filling ahead; that draw reports
+it when the walk gets there. With `NX2SARIA_TRACE=perf` a line every 20000 indirect mesh draws says how many were served
+ahead and why the runs ended.
 
 ### `foliage_skip()`
 
-`NX2SARIA_FOLIAGE` (full, reduced, off; default full; foliage in nx2navi.ini): Ocarina draws its foliage with
+`NX2SARIA_FOLIAGE` (full, reduced, off; default full; `foliage` in nx2saria.ini): the game draws its foliage with
 DrawMeshTasksIndirect, the instances its compute passes culled on the GPU. With a task stage: the small grass and moss
 that carpet the ground; without one: ferns, leaves, clover and the other plants. Its other mesh draws (DrawMeshTasks
 with a count: terrain, rocks, buildings, doors) are not foliage. reduced skips the indirect draws with a task stage, off
@@ -5243,25 +5258,23 @@ the grass and moss were one draw with task stage 2ddf7b0bf74e5a05; the plants ni
 
 ### `op_draw_mesh_ind()`
 
-DrawMeshTasksIndirect: one draw from its ring entry (`mesh_ring_entry`); x2-x4 of the call vary like leftovers, so they
-are not read as a count or stride.
-
-- `if (emu)`: emulated: a ring entry {count, 1, 1}, made where the stages run, is the first stage's dispatch.
-- `if (ex->mark) ex->mark->mesh_ind++`: the pass's mesh draws, for a lost device's report
-  (`runtime/vk/vk_crumbs.c` `describe_mark()`).
+DrawMeshTasksIndirect: one draw from its ring entry (`mesh_ring_entry()`); x2-x4 of the call vary like leftovers, so
+they are not read as a count or stride. Emulated (`mesh_emu_draw()`), a ring entry {count, 1, 1}, made where the stages
+run, is the first stage's dispatch; with the mesh fallback the draw goes to `mfb_draw()` with the record's address as
+its list. The pass mark counts the pass's indirect mesh draws, for a lost device's report (`runtime/vk/vk_crumbs.c`
+`describe_mark()`).
 
 ### `NX2SARIA_MESH_EMULATION`: mesh draws on GPUs without `VK_EXT_mesh_shader`
 
-Each mesh draw (prepared like one, `prepare_draw_ex`, for its layout, descriptors and graphics state) runs its task and
-mesh stages as compute pipelines (`vk_pipeline_mesh_emu`) outside the pass: they write vertices and triangles into the
-arena (`runtime/gfx/mesh_emu_spirv.h`) and the draw record's `DrawIndexedIndirect`, which the generated vertex shader
-and the game's fragment shader then draw. The arena's counters are zeroed at the first emulated draw of each submission;
-the draw records go round a ring of `MESH_EMU_DRECS`. `NX2SARIA_MESH_EMU_MB` sizes the arena (default 256 MiB),
-`NX2SARIA_MESH_EMU_TASKS` its task records per submission (default 16384, 3 KiB each). Before the counters start over
-they are copied to a readback ring; the perf log reports the most a submission asked for against the capacities.
-
-- `ME`:
-  - `VkPipelineLayout alayout`: the allocation shader's (push constants only).
+Each mesh draw (prepared like one, `prepare_draw_ex()`, for its layout, descriptors and graphics state) runs its task
+and mesh stages as compute pipelines (`vk_pipeline_mesh_emu`) outside the pass: they write vertices and triangles into
+the arena (`runtime/gfx/mesh_emu_spirv.h`) and the draw record's `DrawIndexedIndirect`, which the generated vertex
+shader and the game's fragment shader then draw. The arena's counters are zeroed at the first emulated draw of each
+submission; the draw records go round a ring of `MESH_EMU_DRECS`. `NX2SARIA_MESH_EMU_MB` sizes the arena (default 256
+MiB, 32 to 2048), `NX2SARIA_MESH_EMU_TASKS` its task records per submission (default 16384, 3 KiB each). Before the
+counters start over they are copied to a readback ring (`ME_RB` = 64 entries); the perf log reports the most a
+submission asked for against the capacities. `ME` holds the arena, the readback ring and the allocation shader's
+pipeline with its layout (`alayout`: push constants only).
 
 ### `me_alloc_pipe()`
 
@@ -5269,7 +5282,8 @@ The allocation shader's pipeline (`runtime/gfx/mesh_emu_spirv.h` `mesh_emu_alloc
 
 ### `me_arena()`
 
-- `if (tbytes + (32ull << 20) > ((uint64_t)mb << 20)) mb = (int)((tbytes >> 20) + 64)`: room for vertices and indices.
+Makes the arena at the first emulated draw. An arena too small for its task records is enlarged to leave room for
+vertices and indices (the task records plus 64 MiB).
 
 ### `me_barrier()`
 
@@ -5280,16 +5294,13 @@ that reads the {groups, task workgroups, 1} the task stage had just written read
 foliage, Link's door) drew nothing. Mesh draws without a task stage drew, because their record is read by the draw after
 a command buffer boundary. The general replay barrier (`runtime/vk/vk_exec.c` `barrier_to()`) uses those bits.
 
-### `me_bind()`
+### The emulation's queue (`MEQ`)
 
-- `MeQ`:
-  - `VkBuffer ib`: the first stage's indirect dispatch (`VK_NULL_HANDLE`: count).
-- `MEQ`:
-  - `uint8_t *d`: the push descriptors' data of the queued draws.
-
-The stages of the emulated draws whose records were filled, waiting to be recorded (`me_flush`): the draws of a pass
-with `NX2SARIA_MESH_EMU_BATCH`, which run in the part's pre-pass command buffer when it ends (`vk_exec_mesh_flush`, from
-`runtime/vk/vk_sync.c`), or the one draw that runs in the part. Recorded by stage, with one barrier between stages for
+The stages of the emulated draws whose records were filled, waiting to be recorded (`me_flush()`; up to `MEQ_MAX` = 256
+`MeQ` entries): the draws of a pass with `NX2SARIA_MESH_EMU_BATCH`, which run in the part's pre-pass command buffer when
+it ends (`vk_exec_mesh_flush()`, from `runtime/vk/vk_sync.c`), or the one draw that runs in the part. In a `MeQ`, `ib`
+is the buffer of the first stage's indirect dispatch (`VK_NULL_HANDLE`: `count` is used); `MEQ.d` holds the push
+descriptors' data of the queued draws. Recorded by stage, with one barrier between stages for
 all the draws: the fills, the allocation (task records; index ranges of draws without a task stage), every task stage,
 the allocation of the other index ranges, every mesh stage. Each draw's indices are a range of its own and its task
 records too (the allocation shader), so the draws' stages need nothing of each other's. One by one, as before
@@ -5300,48 +5311,54 @@ at the barriers with the GPU nearly idle.
 ### `me_flush()`
 
 The queued draws' stages into cb (the pre-pass command buffer, or the part for a draw that runs there); returns the
-commands recorded.
-
-- `if (MEQ.tasks)`: the task stages wrote the mesh dispatch {max mesh groups, task workgroups, 1} into the draw record.
+commands recorded. With task stages queued, the task stages write the mesh dispatch {max mesh groups, task workgroups,
+1} into the draw record, which the mesh stage of such a draw then dispatches from.
 
 ### `vk_exec_mesh_flush()`
 
-`runtime/vk/vk.h`: the pre-pass command buffer ends (`runtime/vk/vk_sync.c` `pre_end()`): the stages of the draws queued
-for it go in first.
+Declared in `runtime/vk/vk.h`: the pre-pass command buffer ends (`runtime/vk/vk_sync.c` `pre_end()`): the stages of the
+draws queued for it go in first.
 
 ### `mesh_emu_draw()`
 
-count: the first stage's workgroups, or ind: a {count, 1, 1} record to dispatch from args: an indirect draw's arguments
-in game memory (count, 1, 1 copied into a ring entry, which ind then is).
+`count`: the first stage's workgroups; or `ind`: a {count, 1, 1} record to dispatch from; `args`: an indirect draw's
+arguments in game memory (count, 1, 1 copied into a ring entry, which `ind` then is).
 
-- `NX2SARIA_MESH_EMU_BATCH` (default on): the stages run in the part's pre-pass command buffer (`vk_sync_pre`), which
-  the queue runs before the part, and the pass is not split for them. At the first emulated draw of a pass the part is
-  cut there (`vk_sync_cut`: ended, but handed to the queue only with the next part, so the texture pool set stays; a
-  split there took a new set, and each took 2.3 ms of the replay to refresh), so that the pass begins the next part and
-  only what came before it runs before the stages. Split, a pass of 20 emulated draws was 20 passes, each emulated draw
-  a pass end and begin with a full barrier, three more barriers and the targets stored and loaded again: on an RX 580 6
-  to 7 ms of a frame's GPU time went to the gaps between passes (`gpu_passes`, Kokiri Forest, 2026-11-10).
-- `if (again.info != info)`: the pass again, in the new part.
-- `if (!pre) vk_exec_barrier(ex)`: ends the pass; what the game wrote before (its culling) is visible to the stages.
-- `if (!pre && MEQ.n) me_flush(vk_sync_pre())`: the draws queued for the pre-pass command buffer go before this one.
-- `if (ep != ME.epoch)`: the first emulated draw of this submission: the counters start over.
-- `if (ME.rb && ME.rb_map)`: the last submission's counters to the readback ring; one 32 resets back is read.
-- `vkCmdFillBuffer(cb, ME.buf, 0, 32, 0)`: the counters, and the diagnosis words 4-7 (`runtime/gfx/mesh_emu_spirv.c`).
-- `me_flush(vk_sync_pre())`: full, or not the next record (the allocation shader takes a run of them).
-- The record: `DrawIndexedIndirect` {0, 1, 0, 0, 0}, mesh dispatch, task base, then the words the allocation shader
-  reads (`runtime/gfx/mesh_emu_spirv.h` `MESH_EMU_R_*`); an indirect first stage's count is copied from its arguments.
-- `vkCmdFillBuffer(cb, ME.buf, ro + MESH_EMU_R_TASK * 4, 8, tp ? 1 : 0)`: and the unused last word.
-- `if (!pre) ex->recorded += 3 + me_flush(cb)`: the one draw's stages, here.
-- The draw: prepared again (the pass reopens, every binding is recorded again).
-- The index buffer and push constants are the emulation's: the next draw binds everything again.
+`NX2SARIA_MESH_EMU_BATCH` (default on): the stages run in the part's pre-pass command buffer (`vk_sync_pre`), which the
+queue runs before the part, and the pass is not split for them. At the first emulated draw of a pass the part is cut
+there (`vk_exec_split_now`, `runtime/vk/vk_sync.c` `vk_sync_cut()`: ended, but handed to the queue only with the next
+part, so the texture pool set stays; a split there took a new set, and each took 2.3 ms of the replay to refresh), so
+that the pass begins the next part and only what came before it runs before the stages. Split, a pass of 20 emulated
+draws was 20 passes, each emulated draw a pass end and begin with a full barrier, three more barriers and the targets
+stored and loaded again: on an RX 580 6 to 7 ms of a frame's GPU time went to the gaps between passes
+(`NX2SARIA_GPU_PASSES`, Kokiri Forest, 2026-11-10).
+
+1. The draw is prepared like a mesh draw (`prepare_draw_ex()`), and skipped (logged, 8 times) when its pipeline is not
+   an emulated one, its stages are not emulated or its descriptors cannot be bound for compute.
+2. Batched, after the cut the draw is prepared again, for the pass again in the new part; a draw that then gets another
+   pipeline info is skipped.
+3. Not batched, `vk_exec_barrier` ends the pass, so what the game wrote before (its culling) is visible to the stages,
+   and the draws queued for the pre-pass command buffer go before this one.
+4. The first emulated draw of a submission starts the counters over: the last submission's counters go to the readback
+   ring (the one 32 resets back is read), then the counters and the diagnosis words 4-7
+   (`runtime/gfx/mesh_emu_spirv.c`) are zeroed.
+5. The queue is flushed first when it is full, or when this draw's record is not the next one (the allocation shader
+   takes a run of them).
+6. The record: `DrawIndexedIndirect` {0, 1, 0, 0, 0}, mesh dispatch, task base, then the words the allocation shader
+   reads (`runtime/gfx/mesh_emu_spirv.h` `MESH_EMU_R_*`, the task flag with the unused last word); an indirect first
+   stage's count is copied from its arguments.
+7. Not batched, the one draw's stages are recorded here (`me_flush()`), and the draw is prepared again: the pass
+   reopens, and every binding is recorded again.
+8. The draw. Its index buffer and push constants are the emulation's, so the held state is cleared: the next draw binds
+   everything again.
 
 ### `bind_index_buffer()`
 
 Binds a draw's index buffer unless the command buffer holds that bind already: the same buffer, offset and index type as
-the indexed draw before, as when a mesh is drawn again with other uniforms or textures. B.ib is cleared with the rest of
-B wherever the replay goes on in another command buffer or something else has bound into this one
-(`vk_exec_draw_new_cb`, `cb_res`: a new submission or part, a chunk's own command buffer, the draws of `mo_emit` and
-`mesh_emu_draw`, which bind index buffers of their own), so a bind from before those is never taken for held.
+the indexed draw before, as when a mesh is drawn again with other uniforms or textures. `B.ib` is cleared with the rest
+of `B` wherever the replay goes on in another command buffer or something else has bound into this one
+(`vk_exec_draw_new_cb()`, `cb_res()`: a new submission or part, a chunk's own command buffer, the draws of `mo_emit()`
+and `mesh_emu_draw()`, which bind index buffers of their own), so a bind from before those is never taken for held.
 
 ### `bind_index()`
 
@@ -5350,36 +5367,36 @@ the submission's transient memory.
 
 ### `op_draw()`
 
-- `if (d->prim == NVN_DRAW_PRIMITIVE_QUADS && n >= 4)`: quads become two triangles each.
-- `} else if (d->prim == NVN_DRAW_PRIMITIVE_LINE_LOOP && n >= 2)`: a strip that returns to its first vertex.
+A non-indexed draw. A quad list is drawn indexed, two triangles for each quad, and a line loop as an indexed strip that
+returns to its first vertex.
 
 ### `restart_for()`
 
 Primitive restart of an indexed draw. NVN restarts strips wherever an index equals the SetPrimitiveRestart value; Vulkan
 restarts only at the all-ones value of the bound index type, and only strips and fans without
 primitiveTopologyListRestart. Byte indices are widened to 16 bits, so their restart value becomes 0xffff
-(`op_draw_idx`). Without restart the 0xffff entries of the game's terrain and cliff strips fetch vertex 65535 + base and
-the triangles around them drop out.
-
-- `default: return 0`: lists: a restart index only drops the unfinished primitive.
+(`op_draw_idx()`). Without restart the 0xffff entries of the game's terrain and cliff strips fetch vertex 65535 + base
+and the triangles around them drop out. Lists get none: there a restart index only drops the unfinished primitive. A
+restart index that is not the all-ones value is warned about once, and the strips are drawn without restart.
 
 ### `quad_index_on()`
 
 `NX2SARIA_QUAD_INDEX` (default 0): an indexed quad list is drawn as two triangles per quad and an indexed line loop as a
 strip that comes back to its first vertex, from the game's indices (`runtime/vk/vk_index_rewrite.h`), as the non-indexed
-ones are (`op_draw`). Off, they go to the GPU with the game's indices under the triangle list and line strip topologies,
-and the first such draw is logged either way. Read once.
+ones are (`op_draw()`). Off, they go to the GPU with the game's indices under the triangle list and line strip
+topologies, and the first such draw is logged either way. Read once.
 
 ### `draw_idx_rewritten()`
 
 An indexed quad list or line loop, drawn with indices made from the game's (`NX2SARIA_QUAD_INDEX`). 0: not one of those,
-or left as it was (setting off, indices the CPU cannot read, a loop with primitive restart); the caller draws it.
-
-- `if (quads && n < 4) return 1`: no whole quad: nothing to draw.
+or left as it was (setting off, indices the CPU cannot read, a loop with primitive restart); the caller draws it. A quad
+list with no whole quad returns 1 with nothing drawn.
 
 ### `op_draw_idx()`
 
-- `if (d->itype == NVN_INDEX_TYPE_UNSIGNED_BYTE)`: no uint8 index type here: widen (host-readable backing only).
+An indexed draw. There is no uint8 index type here, so byte indices are widened to 16 bits in transient memory (from a
+host-readable backing only; a restart value of 0xff becomes 0xffff). A draw with 16- or 32-bit indices from the game's
+buffer is then offered to per-object motion (`mvobj_draw()`).
 
 ### `op_draw_idx_ind()`
 
