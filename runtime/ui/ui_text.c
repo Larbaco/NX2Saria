@@ -2320,6 +2320,12 @@ static const struct { const char *code; UiTextId name; int since; const char *ma
     {"ko", UI_MENU_LANGNAME_KO, 0, "KRko"}, {"pl", UI_MENU_LANGNAME_PL, 999, "EUpl"},
 };
 
+const char *ui_text_game_lang_mals(const char *code) {
+    for (size_t i = 0; code && i < sizeof all_langs / sizeof *all_langs; i++)
+        if (!strcmp(code, all_langs[i].code)) return all_langs[i].mals;
+    return NULL;
+}
+
 int ui_text_game_langs(int game_version, UiGameLang *out, int max) {
     int n = 0;
     for (size_t i = 0; i < sizeof all_langs / sizeof *all_langs && n < max; i++)

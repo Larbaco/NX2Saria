@@ -186,6 +186,17 @@ On game 1.1.1 the mouse works in the game's own menus: the title and its save fi
 
 `NX2SARIA_MENU_CURSOR` (`menu_cursor`, the *Mouse in the game's menus* row on the Controls tab, live; default 1) turns it off with 0. `NX2SARIA_MENU_CURSOR_LOG=1` logs every menu screen the focus goes to. The log has `menu_mouse: on for 1.1.1 ...` at start, a `menu_mouse: screen <name>: ...` line for the first menus opened, and a line per menu the mouse was used in, with the focus moves, clicks, wheel notches and hit-test counts. How it works: [menu-mouse.md](menu-mouse.md).
 
+## Quitting the game
+
+On game 1.1.1 the game's own menus have a way out, for when only the gamepad is in hand. The entry is in the game's language, with the game's own words for it (*Quit Game* in English).
+
+- **Title screen:** the list has a fourth entry under the game's three. A on it closes the game.
+- **Pause menu:** on the System page, *Title Screen* opens the game's question, which has a third button: *Title Screen*, *Cancel*, *Quit Game*. The focus starts on *Cancel*. A on *Quit Game* closes the game; what was not saved is lost, as the question says.
+
+The keyboard and the mouse work there as in the game's other menus. The game also closes from the settings menu (F1 or Esc, *Quit game*), by closing the window, and with Alt+F4. While the game is writing a save, the close waits for it.
+
+`NX2SARIA_QUIT_MENU` (`quit_menu` in `nx2saria.ini`; default 1, read at start) turns both off with 0: the game's menus are then as on the console. The log has `quit_menu: on ...` at start, with each screen on or off, and `quit_menu: title: Quit Game chosen; closing the game` or `quit_menu: pause: ...` when it is used. How it works: [quit-menu.md](quit-menu.md).
+
 ## HD rumble on Switch controllers
 
 The game makes its vibration for linear actuators: per side a low and a high band, each with a frequency and an amplitude. On most gamepads that is reduced to two motor strengths. With `rumble_hd = 1` in `nx2saria.ini` (`NX2SARIA_RUMBLE_HD`, the *HD vibration (Switch)* row on the Controls tab, live, off by default) a Switch controller gets the values as the game makes them, in the controller's own rumble report (`runtime/input/rumble_hd.c`, `runtime/input/input.c` "HD rumble"):

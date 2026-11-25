@@ -955,6 +955,12 @@ A change to the arithmetic of the mouse in the game's menus (`runtime/ui/menu_mo
 the layout's units on 16:9 and ultrawide pictures, which presses are clicks and the presses queued for the game)
 passes `python tests\menu_mouse_check.py`. No game files.
 
+A change to Quit Game in the game's own menus (`runtime/ui/quit_menu.c`, [quit-menu.md](quit-menu.md)) passes
+`python tests\quit_menu_check.py`: the message file edit, the labels and the press, without game files; with
+`--romfs <a folder with romfs.bin and index.json>` it also edits every message archive of the game and checks that
+only the three labels were added. A change to its patch sites (the set `quit_menu` of `recomp/patches-v111.txt`) passes
+`python tests\quit_menu_sites_check.py`.
+
 A change to how a gamepad's axes are read (`runtime/input/input.c` `pad_axis`: an axis counts once it has been seen at rest)
 passes `python tests\pad_rest_check.py`, which builds that function with stand-ins for SDL. No game files.
 
