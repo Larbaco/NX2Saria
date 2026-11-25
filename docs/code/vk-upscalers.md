@@ -541,27 +541,37 @@ The timestamps of the call RING calls ago in this slot, if the GPU wrote them: t
 on a synthetic scene, no game files. The scene is a zone plate (rings whose frequency rises with the radius, up to the
 render size's limit at its edge) with thin bars and a bright HDR patch, panning at a constant speed; each frame renders
 it on the CPU at the render size with the frame's jitter (Halton 2, 3 over FSR's phase count), with a flat depth and the
-motion vectors of the pan, and the passes upscale it, 960x540 to 1920x1080.\n\nAfter 48 frames the output is read back
-and compared with the scene rendered at the output size (4x4 supersampled, no jitter), as PSNR over the rings
-(`rings_mask()`) and over the whole picture, against a bilinear enlargement of the same frame rendered without jitter.
-\n\nRuns: the pan; the pan with the jitter's sign reversed and with the motion vectors' sign reversed (the conventions
+motion vectors of the pan, and the passes upscale it, 960x540 to 1920x1080.
+
+After 48 frames the output is read back and compared with the scene rendered at the output size (4x4 supersampled, no
+jitter), as PSNR over the rings (`rings_mask()`) and over the whole picture, against a bilinear enlargement of the same
+frame rendered without jitter.
+
+Runs: the pan; the pan with the jitter's sign reversed and with the motion vectors' sign reversed (the conventions
 `runtime/vk/vk_dlaa.c` hands over: a pixel samples the scene at its centre minus the jitter, motion goes from the
 current frame to the previous one); the pan sharpened; the scene still, plain and sharpened; then the scene still at
 1280x720 on the same output (`other_size()`), on a context of its own, and with the game's dynamic resolution on
-(`NX2SARIA_DYN_RES`) on the context made for 960x540. \n\nChecks: no NaN or infinity; on the rings FSR 3.1 beats
-bilinear by 0.5 `dB` panning, sharpened FSR 3.1 by 0.5 `dB` still and plain FSR 3.1 is within 0.5 `dB` of it still (at
-both render sizes); the reversed jitter does worse and the reversed motion much worse; the second render size makes a
-context of its own, and none with dynamic resolution, where its picture is within 3 of 255 of the one of its own
-context; no validation error from the passes (run with `NX2SARIA_VK_VALIDATION=1`). \n\nThen the GPU time of one upscale
-at the docked sizes (1707x960 -> 2560x1440, the Quality mode) with and without sharpening, and outside Windows the
-upscaler switched off: `vk_ffx_release_idle()` leaves no context, and the next upscale makes one.\n\nThe pan, (1, 0.5)
-render pixels a frame, moves the picture by whole output pixels; at most other speeds (`NX2SARIA_FSR3_PROBE_PAN=vx,vy`)
-FSR 3.1's picture of these rings comes out softer, below bilinear, and on a pan slower than about 0.2 render pixels a
-frame it runs about a third of a render pixel ahead of the scene. `amd_fidelityfx_vk.dll`, given the same inputs, does
-the same: its output and the passes' are within 3 of 255 (level) for the pan of (1, 0.5) and the still scene at 960x540,
-the still scene at 1280x720 on a context of its own and on one for every size up to the output's, and a pan of (1.33,
-0.67) render pixels at 960x540, where both score about 28 `dB` on the rings, 7 `dB` below the pan of (1, 0.5).
-\n\n`NX2SARIA_FSR3_PROBE_PPM=<dir>` writes the outputs, the bilinear ones and the references as PPM images.
+(`NX2SARIA_DYN_RES`) on the context made for 960x540.
+
+Checks: no NaN or infinity; on the rings FSR 3.1 beats bilinear by 0.5 `dB` panning, sharpened FSR 3.1 by 0.5 `dB` still
+and plain FSR 3.1 is within 0.5 `dB` of it still (at both render sizes); the reversed jitter does worse and the reversed
+motion much worse; the second render size makes a context of its own, and none with dynamic resolution, where its
+picture is within 3 of 255 of the one of its own context; no validation error from the passes (run with
+`NX2SARIA_VK_VALIDATION=1`).
+
+Then the GPU time of one upscale at the docked sizes (1707x960 -> 2560x1440, the Quality mode) with and without
+sharpening, and outside Windows the upscaler switched off: `vk_ffx_release_idle()` leaves no context, and the next
+upscale makes one.
+
+The pan, (1, 0.5) render pixels a frame, moves the picture by whole output pixels; at most other speeds
+(`NX2SARIA_FSR3_PROBE_PAN=vx,vy`) FSR 3.1's picture of these rings comes out softer, below bilinear, and on a pan slower
+than about 0.2 render pixels a frame it runs about a third of a render pixel ahead of the scene.
+`amd_fidelityfx_vk.dll`, given the same inputs, does the same: its output and the passes' are within 3 of 255 (level)
+for the pan of (1, 0.5) and the still scene at 960x540, the still scene at 1280x720 on a context of its own and on one
+for every size up to the output's, and a pan of (1.33, 0.67) render pixels at 960x540, where both score about 28 `dB` on
+the rings, 7 `dB` below the pan of (1, 0.5).
+
+`NX2SARIA_FSR3_PROBE_PPM=<dir>` writes the outputs, the bilinear ones and the references as PPM images.
 
 The scene is in render pixels of the 960x540 render; S is how many output pixels make one of them.
 
@@ -2547,12 +2557,14 @@ sooner than its frame limit after the frame before (`vk_dlssg_pace()`), so the g
 is free for it; then the frame's first markers. Once a frame: the game may acquire again before it presents. No hold
 while no host present went out for `DLSSG_HOLD_IDLE_NS` (the window minimized: `runtime/gfx/gfx_present.c` skips the
 host presents while the game runs on): the driver then has no present to time the frame by, and the sleep would wait out
-Streamline's half-second timeout each frame.\n\nThe guest thread gave its core up for the acquire (`NVN_BLOCKING`). The
-sleep counts as the pacer's wait (`PERF_PACE`) only while Reflex holds a frame limit (`limit_set`), whose place it then
-takes, on whichever guest thread acquires (`perf_end_any()`), as the acquire's own waits do. Without one (`reflex_limit`
-0, an older DLL, a movie, a refused limit, frames that showed Reflex does not hold it) the sleep is only the driver's
-wait for the GPU while the pacer waits as well, so it stays out of `PERF_PACE`, as before Reflex held a frame limit:
-counted there, GPU-bound frames read as paced in the perf windows.
+Streamline's half-second timeout each frame.
+
+The guest thread gave its core up for the acquire (`NVN_BLOCKING`). The sleep counts as the pacer's wait (`PERF_PACE`)
+only while Reflex holds a frame limit (`limit_set`), whose place it then takes, on whichever guest thread acquires
+(`perf_end_any()`), as the acquire's own waits do. Without one (`reflex_limit` 0, an older DLL, a movie, a refused
+limit, frames that showed Reflex does not hold it) the sleep is only the driver's wait for the GPU while the pacer waits
+as well, so it stays out of `PERF_PACE`, as before Reflex held a frame limit: counted there, GPU-bound frames read as
+paced in the perf windows.
 
 - The time of the last host present is read before the clock, in this order, so that the clock's value is never before
   it.
@@ -3032,12 +3044,13 @@ The motion files' functions declared here:
 
 DLAA: NVIDIA DLSS at the scene's own size (`NX2SARIA_DLAA`, `dlaa` in `nx2navi.ini`), the DLSS modes that scale a
 smaller scene, AMD FSR 3.1 in DLSS's place, and the scene's motion vectors and camera for both and for frame generation.
-`runtime/vk/vk_fg_pose.inc` and `runtime/vk/vk_skin_motion.inc` are part of this file.\n\nNGX is loaded at run time from
-the driver's NGX core: on Windows `_nvngx.dll`, found through `HKLM\SOFTWARE\NVIDIA Corporation\Global\NGXCore`; on
-Linux `libnvidia-ngx.so.1`, which the NVIDIA driver installs on the library path. NGX loads the DLSS model from the
-folder of the executable: `nvngx_dlss.dll` on Windows, `libnvidia-ngx-dlss.so.<version>` on Linux. No NVIDIA SDK code or
-header is compiled in: the few NGX types used are declared here from the SDK ABI and the Linux core's shutdown
-interface.
+`runtime/vk/vk_fg_pose.inc` and `runtime/vk/vk_skin_motion.inc` are part of this file.
+
+NGX is loaded at run time from the driver's NGX core: on Windows `_nvngx.dll`, found through `HKLM\SOFTWARE\NVIDIA
+Corporation\Global\NGXCore`; on Linux `libnvidia-ngx.so.1`, which the NVIDIA driver installs on the library path. NGX
+loads the DLSS model from the folder of the executable: `nvngx_dlss.dll` on Windows, `libnvidia-ngx-dlss.so.<version>`
+on Linux. No NVIDIA SDK code or header is compiled in: the few NGX types used are declared here from the SDK ABI and the
+Linux core's shutdown interface.
 
 The core's parameter object is a C++ class whose virtual functions are called through its vtable: the Set overloads in
 slots 0-7 and the Get overloads in 8-15. MSVC (the Windows core) lays out each group of overloads in reverse declaration
@@ -3195,8 +3208,10 @@ The state, `D`. The frame:
 
 - `color`, `depth`: the armed pair, valid in the frame it was armed.
 - `armed`, `done`, `gbuf`: this frame: armed on the light target, DLAA ran, the G-buffer was drawn.
-- `ended`, `up`: this frame: the scene is drawn (jitter over), DLSS wrote the scaled output. \nA `Size`, the work images
-  of a scene size and its DLSS feature (dynamic resolution flips it):\n
+- `ended`, `up`: this frame: the scene is drawn (jitter over), DLSS wrote the scaled output.
+
+A `Size`, the work images of a scene size and its DLSS feature (dynamic resolution flips it):
+
 - `w`, `h`, `ow`, `oh`: render size, output size.
 - `sharp`: FSR 3.1's second sharpening pass writes here (`fsr3_sharpen()`), at the output size.
 - `mask`, `chars`: the bias mask DLSS reads, the character class mask of this and last frame (R8).
@@ -3208,8 +3223,11 @@ The state, `D`. The frame:
 - `ranged`: feat also takes the smaller render sizes from `min_w` x `min_h` up (`range_note()`).
 - `used`: the count of evaluations when it last ran.
 - `feat_used`: that count when `feat` last ran: behind `used` while the size runs on another's.
-- `feat_fence`: the submission that last created or evaluated feat (`vk_exec_recording_fence()`). \nThe sizes and the
-  history:\n\n- `last`: the size the previous DLAA frame ran with.
+- `feat_fence`: the submission that last created or evaluated feat (`vk_exec_recording_fence()`).
+
+The sizes and the history:
+
+- `last`: the size the previous DLAA frame ran with.
 - `host`: the one whose feature that frame ran on: last, or the DLSS mode's (`range_host()`).
 - `stepped`: this evaluation: another render size than the last one's, on the same feature.
 - `ev_w`, `ev_h`, `ev_ow`, `ev_oh`: the sizes of the previous evaluation, 0 before the first.
@@ -3253,8 +3271,11 @@ Frames without a camera and what `mv_pass()` did about them (`dlaa_cam_keep`, `c
 - `cam_kept`, `cam_kept_max`: no camera, history kept with zero motion / runs cut short at `KEEP_MAX`.
 - `cut_pos`, `cut_fwd`: last frame's camera position and direction (`cam_cut()`).
 - `cut_ns`, `cuts`: when it was read; camera cuts that started a new history.
-- `keep_run`: frames in a row kept without a camera. \nThe present, the settings and frame generation:\n\n-
-  `seq_present`: `vk_exec_submit_seq` at the last present (`vk_dlaa_frame()`).
+- `keep_run`: frames in a row kept without a camera.
+
+The present, the settings and frame generation:
+
+- `seq_present`: `vk_exec_submit_seq` at the last present (`vk_dlaa_frame()`).
 - `seconds`: present intervals with a second scene after DLSS ran.
 - `on`: the dlaa setting, read at each present (the menu switches it live).
 - `fgo`: frame generation runs and no upscaler does: inputs alone (`fg_only_frame()`), read at each present.
@@ -3363,9 +3384,11 @@ build, each way with the rule and with 2: the long pause and the mode change wer
 The input size may not be what matters: in every striped case the feature made was of another model (performance's or
 ultra performance's) than the pause screen's, and the one run in which balanced's feature, of the pause screen's model,
 was made again beside it without the rule was clean. The rule covers both readings. The values of
-`NX2SARIA_DLSS_IDLE_FREE`:\n\n- 1 (default): idle features are freed;\n- 0: idle features are never freed (about 0.5 GB
-more video memory after the first pause);\n- 2: idle features are freed and nothing is released when a feature is made
-(as before; shows the fault).
+`NX2SARIA_DLSS_IDLE_FREE`:
+
+- 1 (default): idle features are freed;
+- 0: idle features are never freed (about 0.5 GB more video memory after the first pause);
+- 2: idle features are freed and nothing is released when a feature is made (as before; shows the fault).
 
 ### `vk_upscaler_device_idle()`
 
@@ -3882,8 +3905,10 @@ was too late for whatever reads the scene in between: water reads the scene behi
 the bottom in a fifth of the shots of a run through a stream (none with the jitter off), and the bloom and the
 anti-aliasing pass read the row too. (The white line in a player's clips had a second cause, the upscaler's picture
 never reaching the screen with the HUD hidden: `vk_dlaa_upscaler()`.) A copied edge is one render pixel at the picture's
-border, which the upscaler blends with its history.\n\n`NX2SARIA_DLAA_EDGE_FILL`: 1 (default) at each jittered pass's
-end and before the upscaler; 2 only before the upscaler (as 0.9.1 did, for comparison); 0 not at all.
+border, which the upscaler blends with its history.
+
+`NX2SARIA_DLAA_EDGE_FILL`: 1 (default) at each jittered pass's end and before the upscaler; 2 only before the upscaler
+(as 0.9.1 did, for comparison); 0 not at all.
 
 ### `edge_copy()`
 
@@ -4280,10 +4305,10 @@ the replay thread's.
   target already armed is not one: the game draws a half-size effect into three targets with a half-size D32F depth
   after its scene, and taking that for a G-buffer switched every later frame to the deferred shape, where DLSS's and FSR
   3.1's smaller modes never found their output pass. The same pass in a frame not armed yet (a load, the first frame of
-  an area) took the guard after it past it: in the 0.12.1 Windows logs a 720x405 pass under a 1440x810 scene and a 960x405
-  one under 1920x810 set the deferred shape before the first scene was armed, and with it no frame without that effect
-  was armed again, nor given its picture without the HUD in a picture larger than the scene: frame generation saw "no
-  picture without the HUD" on every frame. A pass smaller than a light target armed in an earlier frame is not a
+  an area) took the guard after it past it: in the 0.12.1 Windows logs a 720x405 pass under a 1440x810 scene and a
+  960x405 one under 1920x810 set the deferred shape before the first scene was armed, and with it no frame without that
+  effect was armed again, nor given its picture without the HUD in a picture larger than the scene: frame generation saw
+  "no picture without the HUD" on every frame. A pass smaller than a light target armed in an earlier frame is not a
   G-buffer either, and a light target larger than the G-buffer that set the shape takes it back.
 - Target 0 is the object-class buffer (RGBA8, the scene size): the characters' bias mask reads its green. A smaller pass
   of the same shape (640x360, seen while loading) does not replace the scene's in the same frame.
