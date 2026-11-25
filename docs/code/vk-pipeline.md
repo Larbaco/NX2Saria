@@ -50,7 +50,7 @@ every pipeline with that list; `VkPipeInfo.bindings` tells the replay which NVN 
 Fragment inputs the vertex stage does not write (stages are translated separately) get outputs added to the vertex
 module, as Vulkan rejects such pairs, initialised to (0, 0, 0, 1) as Maxwell reads an unwritten output
 ([maxwell.md](../maxwell.md) 1.2). The unwritten components of an output the vertex stage does write start at (0, 0, 0,
-1) in the translator (tools/xlate/patches/0006).
+1) in the translator (`tools/xlate/patches/0006-initialise-unlinked-vertex-outputs.patch`).
 
 **Pipeline key.** Everything Vulkan 1.3 can take as dynamic state is dynamic: viewports and scissors with count, depth
 bias, blend constants, stencil masks and references, cull mode, front face, topology (within its class), depth and
@@ -67,7 +67,7 @@ masks, vertex layout and sample count. The binding conventions are those of the 
 
 Set up on first use, under `P.lock`.
 
-- `enum { NP_16 = 1, NP_32 = 2, NP_64 = 4 }`: float widths in `P.nan_preserve` and `spirv_nan_preserve()`.
+`NP_16`, `NP_32`, `NP_64`: the float widths in `P.nan_preserve` and `spirv_nan_preserve()`.
 
 `P`:
 
@@ -75,21 +75,22 @@ Set up on first use, under `P.lock`.
 - `int push_stage`: `GFX_STAGE_*` whose set is pushed with independent layouts.
 - `int gpl`: draws whose pipeline is building get a fast-linked one (`vk_caps.gpl`).
 - `int mesh_lib`: mesh pipelines are linked from stage libraries too (`mesh_lib_init()`, `mesh_libs()`).
-- Mesh pipelines' share of the counts above: `m_links` fast links and their link time; of the `ready_mesh` pipelines a
-  draw missed, `m_ready_fast` became usable through a fast link, `m_ready_ms` after the miss in all; `m_lib_*`: [0]
-  their task and mesh libraries, [1] their fragment shader libraries (`lib_build()`).
+- `P.g`, the mesh pipelines' share of its counts: `m_links` fast links and their link time; of the `ready_mesh`
+  pipelines a draw missed, `m_ready_fast` became usable through a fast link, `m_ready_ms` after the miss in all;
+  `m_lib_*`: [0] their task and mesh libraries, [1] their fragment shader libraries (`lib_build()`).
 - `int vs_outs_all`: `NX2SARIA_VS_OUTS`: 0 union of paired fragment inputs, 1 (all) all 32 output locations.
 - `int wide_lines`: the device draws lines of other widths than 1 (`vk_pipeline_line_width()`).
 - `float line_w[2], line_gran`: its range of widths and their step.
 - `int cache_control`: `pipelineCreationCacheControl`: a create can ask for the pipeline caches only.
 - `int feedback`: `NX2SARIA_PIPE_FEEDBACK`: 1 count pipeline cache hits, 2 also log each compute and graphics build.
 - `uint64_t cache_loaded`: bytes of `pipeline-cache.bin` the driver took at boot.
-- `VkPipelineCache play`: what this run compiles (`pipeline-cache-play.bin`); `VK_NULL_HANDLE`: all goes into cache.
+- `VkPipelineCache play`: what this run compiles (`pipeline-cache-play.bin`); `VK_NULL_HANDLE`: all goes into
+  `P.cache`.
 - `uint64_t play_loaded`: bytes of `pipeline-cache-play.bin` the driver took at boot.
 - `uint64_t saved[2]`: the data size of cache [0] and play [1] that their files hold; 0: not known.
 - `volatile uint64_t held[2]`: the data size of cache [0] and play [1] when last asked (`cache_save_one()`,
   `cache_sizes_ask()`); 0: not asked yet (the memory report takes the loaded size).
-- `int fold`: the play file's content was merged into cache: saving cache removes the play file.
+- `int fold`: the play file's content was merged into `P.cache`: saving `P.cache` removes the play file.
 - `int base_at_exit`: the start found no `pipeline-cache.bin`: the save at exit writes it (`cache_load()`).
 - `volatile uint64_t play_made`: pipelines this run compiled into play.
 - `int pv_last`: `provokingVertexLast` enabled: NVN's default is the last vertex.
@@ -118,11 +119,11 @@ Set up on first use, under `P.lock`.
 
 `Pipe`:
 
-- `int building`: a background job owns info.pipeline (under `P.lock`).
+- `int building`: a background job owns `info.pipeline` (under `P.lock`).
 - `struct Job *job`: that job while building.
 - `const struct Layout *lay`: graphics: the layout it was entered with.
 - `VkPipeline fast`: GPL: the fast-linked pipeline, until the optimised one replaces it (`fast_retire()`).
-- `uint8_t link_queued`: a waiting draw queued its fast link to the workers (LibJob p), not yet run.
+- `uint8_t link_queued`: a waiting draw queued its fast link to the workers (`LibJob.p`), not yet run.
 - `uint8_t used`: compute: a dispatch of this run asked for it (`vk_pipeline_compute()`).
 - `uint8_t pre`: compute: built and kept by the boot prebuild (`lb_compute()`) or `bg_main()`.
 - `uint8_t optimised`: graphics: its pipeline is the whole build that replaced a fast link (`fast_retire()`).
@@ -135,15 +136,13 @@ Set up on first use, under `P.lock`.
 The memory report's clock for pipelines not used lately (`vk_pipeline_mem()`): wall minutes, plus one so that 0 stays
 "never". The autosave thread moves it every half second; a lookup stores it into its Pipe under `P.lock`, which the
 lookup holds anyway, so the per-draw cost is one compare. A pipeline that only the replay's memo of the previous draw
-served (`runtime/vk/vk_exec_draw.c`, PM) keeps an older minute: at most the one pipeline each replay context remembers.
+served (`PM` in `runtime/vk/vk_exec_draw.c`) keeps an older minute: at most the one pipeline each replay context
+remembers.
 
 ### `key_hash()`
 
 Hash of a pipeline table key, 8 bytes per step: a draw hashes its whole GKey, and byte-wise FNV over it cost more than
-the lookup. Only the in-memory table uses it; the key file keeps fnv.
-
-- `static __thread uint64_t mm_hash`: FNV-1a of the module `make_module()` last created on this thread (`PIPE_FEEDBACK`
-  2).
+the lookup. Only the in-memory table uses it; the key file keeps `fnv()`.
 
 ### `cache_path_init()`
 
@@ -175,35 +174,25 @@ payload {u32 count, count x {u32 key size, 32 key bytes}} naming its binaries. O
 memory; a pipeline's records are read from the file when it is created. `NX2SARIA_PIPE_BINARIES_MAX_MB` (default 1024, 0
 no limit): a larger file starts empty.
 
-`pb_seek`: 64-bit file offsets: long is 32 bits on Windows, and a file over 2 GB read as cut short.
+`pb_seek`, `pb_tell`: 64-bit file offsets: `long` is 32 bits on Windows, and a file over 2 GB read as cut short.
 
 - `#define PB_HEAD (4 + 4 + PB_KEY)`: a record's bytes after its size field and before its payload.
-- `typedef struct { uint64_t h, off; uint32_t size; } PbSlot`: off: file offset of the record's size field.
+- `PbSlot.off`: the file offset of the record's size field.
 
 `PB`:
 
-- `PlatMutex lock`: the index, the pending records and rf.
+- `PlatMutex lock`: the index, the pending records and `rf`.
 - `FILE *rf`: reads records.
 - `uint8_t *pend`: records not written yet; they follow the file's end in this order.
 - `uint64_t file_size`: bytes on disk.
-- `int no_capture[3]`: kind (`pipe_create()`) whose create refused the capture flag.
-- `static __thread int pb_last`: 1: the last `pipe_create()` on this thread made its pipeline from binaries.
-- `static __thread int cc_hit`: `compute_create()`'s last pipeline on this thread: 1 the pipeline cache held it
-  (`P.cache`: read from `pipeline-cache.bin`, or built into it earlier in this run) or it was made from pipeline
-  binaries, 0 not, -1 the driver did not say.
+- `int no_capture[3]`: the kinds (`pipe_create()`) whose create refused the capture flag.
 
-`own_cache`: A pipeline cache of this thread's own that its creates build into in place of `P.cache`; `VK_NULL_HANDLE`
-(every thread but the background builder of large compute shaders) for `P.cache` itself. A create into it does not hold
-`cache_rw`, so a build of minutes does not keep `pipeline-cache.bin` from being saved; `bg_merge()` moves its content
-into `P.cache`.
+Two values a thread keeps of its last create:
 
-`no_cache`: 1 on a thread whose creates take no pipeline cache of ours at all (the library warm in play, `lw_worker()`
-and `lw_probe()`): what it builds is wanted in the driver's own disk cache only. Built into `P.cache`, the 37,572 stage
-libraries of a warm grew it by 1.6 GB (2026-11-11: a save of 2026.7 MB in play, +1612 MB since the boot); the file was
-then over `NX2SARIA_PIPELINE_CACHE_MAX_MB`, so the next start dropped it whole and compiled the pipelines it had held.
-
-`cache_merges`: New content in `P.cache` that `P.stats` does not count, for `autosave_once()` to save: `bg_merge()`'s
-merges, and the compiles of pipelines built for the cache only (`lb_compute()` keep 0).
+- `pb_last`: 1 when the last `pipe_create()` on this thread made its pipeline from binaries.
+- `cc_hit`: `compute_create()`'s last pipeline on this thread: 1 the pipeline cache held it (`P.cache`: read from
+  `pipeline-cache.bin`, or built into it earlier in this run) or it was made from pipeline binaries, 0 not, -1 the
+  driver did not say.
 
 ### `pb_find()`
 
@@ -220,71 +209,72 @@ An empty file with this driver's header.
 
 ### `pb_index()`
 
-Indexes the records of f (len bytes) after its header: per record its type, key and offset. Returns the offset after the
-last whole record, which is len unless the file ends inside a record (an append the process did not finish) or holds a
-malformed one.
+Indexes the records of `f` (`len` bytes) after its header: per record its type, key and offset. Returns the offset
+after the last whole record, which is `len` unless the file ends inside a record (an append the process did not finish)
+or holds a malformed one.
 
 ### `pb_keep()`
 
-The length of the file at path (len bytes) to go on with after `pb_index()` found its whole records ending at good: len
-when they fill it. When it ends inside a record (the process ended during an append, or a disk filled) or holds a
-malformed one, the records from there on are dropped and the file is cut back to good, so that appends go on after the
-whole records before it. 0 when it cannot be cut, and the file starts empty.
+The length of the file at `path` (`len` bytes) to go on with after `pb_index()` found its whole records ending at
+`good`: `len` when they fill it. When it ends inside a record (the process ended during an append, or a disk filled) or
+holds a malformed one, the records from there on are dropped and the file is cut back to `good`, so that appends go on
+after the whole records before it. 0 when it cannot be cut, and the file starts empty.
 
 ### `pb_init()`
 
-Opens `pipeline-binaries.bin` and indexes its records (`cache_load()`, before `P.cache`).
+Opens `pipeline-binaries.bin` and indexes its records (`cache_load()`, before `P.cache`). Without one of the
+extension's functions or without the driver's global key the run goes on with `pipeline-cache.bin`.
 
-- A file that ends inside a record (the process ended during an append, or a disk filled) or holds a malformed record:
-  the whole records before it stay, and the file is cut back to them so that appends go on from there. Only when it
-  cannot be cut does it start empty.
-- `if (why || !f)`: start empty: the index is dropped and the file rewritten.
+The file starts empty (the index dropped, the file rewritten with this driver's header) when there is none, when its
+header names another driver, GPU or version, when it is over `NX2SARIA_PIPE_BINARIES_MAX_MB`, and when `pb_keep()`
+cannot cut it back to its whole records. A file that only ends inside a record or holds a malformed one keeps the
+whole records before it.
 
 ### `pb_read()`
 
 The payload of the record of (type, key), malloc'd (`*size` bytes), or NULL. Caller holds `PB.lock`.
 
-- `if (s->off >= PB.file_size)`: still pending, at its place in pend.
-- `} else`: rf is NULL only after `pb_flush()` could not open the file again.
-- `if (ok && t == type && k == ks && !memcmp(head + 8, key, ks))`: the key itself, not only its hash.
+A record whose offset is at or past `PB.file_size` is still pending and is read from its place in `PB.pend`; the others
+are read through `PB.rf`, which is NULL only after `pb_flush()` could not open the file again. The record counts only
+when its type and the key itself match, not only the key's hash.
 
 ### `pb_load()`
 
-The binaries stored for pipeline key k, created in bins (`*n` of them). 0 when none are stored or they fail.
+The binaries stored for pipeline key `k`, created in `bins` (`*n` of them). 0 when none are stored or they fail.
 
 ### `pb_put()`
 
-Appends one record to pend and the index. Caller holds `PB.lock`.
+Appends one record to `PB.pend` and the index. Caller holds `PB.lock`.
 
 ### `pb_capture()`
 
-Stores the binaries of pipeline p (created with its data captured) under pipeline key k, then frees the data. A binary
-whose key is stored already is not stored again.
-
-- `for (uint32_t i = 0; ok && i < nb; i++)`: each binary's key, and its data unless stored already.
-- `plat_mutex_unlock(&PB.lock)`: a 0 from `pb_put()`: another thread stored the same binary meanwhile.
-- `if (full) pb_flush()`: a cold boot captures thousands before the autosave thread runs: keep the buffer small.
+Stores the binaries of pipeline `p` (created with its data captured) under pipeline key `k`, then frees the data. For
+each binary it asks the key first, and the data only when no binary with that key is stored yet (`PB.blob_shared`
+counts the others). The lock is not held between that question and `pb_put()`, so a 0 from `pb_put()` means another
+thread stored the same binary meanwhile. A cold boot captures thousands of pipelines before the autosave thread runs:
+once 64 MiB are pending it calls `pb_flush()` itself, to keep the buffer small.
 
 ### `pb_flush()`
 
 Appends the pending records (the autosave thread every 2 s, and the save at exit).
 
-- Part of the append may be in the file (a full disk): the file is cut back to `file_size`, where the index places the
-  pending records, or the next append would land after those bytes. The read handle is closed meanwhile, since
-  `plat_file_truncate` opens the file alone.
+When the append fails, part of it may be in the file (a full disk): the file is cut back to `PB.file_size`, where the
+index places the pending records, or the next append would land after those bytes. The read handle is closed meanwhile,
+since `plat_file_truncate()` (`runtime/platform/platform.h`) opens the file alone. The pending records stay in memory
+and are tried again at the next flush.
 
 ### `cache_build_enter()`
 
 Takes `cache_rw` shared for a build into `P.cache`; while the save at exit waits for its copy, first waits for that.
 
-`cache_rw`: Builds into `P.cache` against reads of its data. Every create with `P.cache` holds this shared
+`cache_rw` keeps builds into `P.cache` apart from reads of its data. Every create with `P.cache` holds it shared
 (`pipe_create_in()`); a save holds it exclusively for the copy of the data and only takes it when no build is running.
 The Vulkan rules allow reading a cache created without `VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT` while
 pipelines are built into it, but Intel's Windows driver (101.8991 on an Arc 140V) crashed inside
 `vkGetPipelineCacheData` during the copy, reading through a null entry, with compute and library builds running beside
 the autosave. So no copy is made while a build runs, on any driver.
 
-`cache_saving_at_exit`: Set while the save at exit waits for `cache_rw`: the builds already in the driver finish, and
+`cache_saving_at_exit` is set while the save at exit waits for `cache_rw`: the builds already in the driver finish, and
 new ones wait in `cache_build_enter()` until the copy is made. Without it the boot's prewarm workers started builds back
 to back, no moment without one came within the save's 5 s, and the pipelines built in that run were not saved (a window
 closed during the prewarm, 2026-11-11). The autosave never sets it, so it never holds a build back.
@@ -315,17 +305,34 @@ and it is compiled, or at the exit of a run that started without `pipeline-cache
 Without the device feature, with pipeline binaries on, or with the setting 0, `P.play` stays `VK_NULL_HANDLE` and
 everything goes into `P.cache` as before.
 
-- `static int prep_mode`: a preparation mode (set before `ensure_init()`): no play cache.
+`prep_mode`: the run is a preparation mode (set before `ensure_init()`), which has no play cache.
 
 ### `pipe_create_in()`
 
-- `uint64_t t0 = perf_mark_begin()`: `NX2SARIA_TRACE=perf`: the create on any thread, its wait for `cache_rw` included.
-- Not in `P.cache` nor in the driver's own cache: from `P.play`, or compiled into it. A caller that asked for cached
-  pipelines only (its own `FAIL_ON_PIPELINE_COMPILE_REQUIRED`) gets the play cache's answer.
+One create, into the cache the thread and the run call for. With a play cache, a create that would go into `P.cache`
+first asks it with `VK_PIPELINE_CREATE_FAIL_ON_PIPELINE_COMPILE_REQUIRED_BIT`; a pipeline that is neither in `P.cache`
+nor in the driver's own cache then comes from `P.play`, or is compiled into it. A caller that asked for cached
+pipelines only (its own `FAIL_ON_PIPELINE_COMPILE_REQUIRED`) gets the play cache's answer. The `NX2SARIA_TRACE=perf`
+mark covers the create on any thread, its wait for `cache_rw` included.
 
-### Pipelines of a library that draws on our device
+Three values choose the cache:
 
-FSR 3.1: `runtime/vk/vk_ffx.cpp` `vk_ffx_proc_addr()`.
+- `own_cache`: a pipeline cache of this thread's own that its creates build into in place of `P.cache`;
+  `VK_NULL_HANDLE` (every thread but the background builder of large compute shaders) for `P.cache` itself. A create
+  into it does not hold `cache_rw`, so a build of minutes does not keep `pipeline-cache.bin` from being saved;
+  `bg_merge()` moves its content into `P.cache`.
+- `no_cache`: 1 on a thread whose creates take no pipeline cache of ours at all (the library warm in play,
+  `lw_worker()` and `lw_probe()`): what it builds is wanted in the driver's own disk cache only. Built into `P.cache`,
+  the 37,572 stage libraries of a warm grew it by 1.6 GB (2026-11-11: a save of 2026.7 MB in play, +1612 MB since the
+  boot); the file was then over `NX2SARIA_PIPELINE_CACHE_MAX_MB`, so the next start dropped it whole and compiled the
+  pipelines it had held.
+- `cache_merges`: new content in `P.cache` that `P.stats` does not count, for `autosave_once()` to save: `bg_merge()`'s
+  merges, the compiles of pipelines built for the cache only (`lb_compute()` with `keep` 0), and the creates of
+  `vk_pipeline_create_foreign()`.
+
+### `vk_pipeline_create_foreign()`, `vk_pipeline_foreign_counts()`
+
+The pipelines of a library that draws on our device (FSR 3.1: `runtime/vk/vk_ffx.cpp` `vk_ffx_proc_addr()`).
 
 Such a library creates its pipelines itself and passes no pipeline cache, so nothing of ours kept them: every context it
 made (one per render and output size, and one for frame generation) compiled its passes again unless the driver's own
@@ -335,26 +342,25 @@ disk cache still had them, which a renamed or updated exe on NVIDIA and a driver
 `P.cache` first without compiling, and compiled into the play cache when neither it nor the driver has the pipeline, so
 the file a run writes (`pipeline-cache-play.bin`, or `pipeline-cache.bin` without a play cache) holds it for the next
 start. Before the first pipeline of ours (`P.ready` 0) and with pipeline binaries on there is no cache to give: the
-create goes to the driver as the library asked. infos: n `VkComputePipelineCreateInfo` (compute 1) or
+create goes to the driver as the library asked. `infos`: `n` `VkComputePipelineCreateInfo` (`compute` 1) or
 `VkGraphicsPipelineCreateInfo`. Any thread.
 
-### `vk_pipeline_create_foreign()`
-
-- `if (!P.play)`: one cache: whether it held them is not known here; its save looks at the data's size.
-- A copy of the create info: the flags are ours to change, the library's struct is not.
+- Without a play cache there is one cache, and whether it held the pipelines is not known here: its save looks at the
+  data's size. `vk_pipeline_foreign_counts()` then gives them as made, neither from the cache nor compiled.
+- With a play cache each create info is copied: the flags are ours to change, the library's struct is not.
 - Flags given in a `VkPipelineCreateFlags2CreateInfo` replace the struct's own, so the question "without compiling"
   cannot be put through `hd->flags`: such a create goes to the play cache at once.
-- `__atomic_fetch_add(&cache_merges, 1, __ATOMIC_RELAXED)`: `autosave_once()`: the play file is due.
-- `else if (r == VK_SUCCESS) r = ri`: the first that failed, as a create of several reports one result.
+- A pipeline compiled into the play cache adds to `cache_merges`, so `autosave_once()` sees that the play file is due.
+- The result is that of the first create that failed, as a create of several reports one result.
 
 ### `pipe_create()`
 
-Creates one pipeline: kind 0 a graphics pipeline, 1 a graphics pipeline library, 2 a compute pipeline; ci
-its `Vk*PipelineCreateInfo`. With binaries on: from the stored binaries of its pipeline key when there are any, else
+Creates one pipeline: `kind` 0 a graphics pipeline, 1 a graphics pipeline library, 2 a compute pipeline; `ci` its
+`Vk*PipelineCreateInfo`. With binaries on: from the stored binaries of its pipeline key when there are any, else
 compiled with `P.cache` and its binaries captured. The create info is restored before returning.
 
-- `r = PIPE_CREATE(VK_NULL_HANDLE)`: a pipeline made from binaries takes no pipeline cache.
-- `if (capture && r < 0)`: the driver refuses the capture for this kind: create without it from now on.
+A pipeline made from binaries takes no pipeline cache. When the driver refuses a create with the capture flag, that
+kind is created without it from then on (`PB.no_capture`, with a log line) and its pipelines are not stored.
 
 ### `cache_cap()`, `cache_data_read()`
 
@@ -382,16 +388,18 @@ dropped it whole ("starting empty") and the session after compiled its pipelines
 pipelines left to background builds at 250-273 ms each). `pipeline-cache.bin` itself grows 14-28 MB at each fold (323 ->
 448 -> 461 -> 489 MB in four starts) and so crosses 512 MB in a few sessions (0.8.0: a 766 MB file dropped at a start).
 With the limit at 2048 MB the same files were read and folded: boot hits 84 %, nothing left to background builds, the
-boot 17 s instead of 24. `cache_cap()`: `NX2SARIA_PIPELINE_CACHE_MAX_MB` when set (0: no limit); unset, the machine's
-RAM / 32 between 1024 and 4096 MB (16 and 32 GB: 1024; 64 GB: 2048; 128 GB and more: 4096). Never below 1024: a full
-cache of the pipeline list is about 550 MB on an NVIDIA card, and a limit under what the files reach compiles everything
-past it again at every start, for good (RAM / 32 alone gave 509 MB on a 16 GB machine). The RAM and not the commit
-headroom at the boot, so the same file is not read on one start and refused on the next. Read once, at the start; every
-caller computes the same value, so the unlocked cache of it is harmless.
+boot 17 s instead of 24.
 
-- `static int cache_over_cap`: the last file `cache_data_read()` was asked for is over the limit.
-- `static int cache_foreign`: `pipeline-cache.bin` was written by another device or driver (a driver update).
-- (A file over the limit comes from before the limit was kept on the write side, or from a lower limit.)
+`cache_cap()`: `NX2SARIA_PIPELINE_CACHE_MAX_MB` when set (0: no limit); unset, the machine's RAM / 32 between 1024 and
+4096 MB (16 and 32 GB: 1024; 64 GB: 2048; 128 GB and more: 4096). Never below 1024: a full cache of the pipeline list
+is about 550 MB on an NVIDIA card, and a limit under what the files reach compiles everything past it again at every
+start, for good (RAM / 32 alone gave 509 MB on a 16 GB machine). The RAM and not the commit headroom at the boot, so
+the same file is not read on one start and refused on the next. Read once, at the start; every caller computes the same
+value, so the unlocked cache of it is harmless.
+
+- `cache_over_cap`: the last file `cache_data_read()` was asked for is over the limit. Such a file comes from before
+  the limit was kept on the write side, or from a lower limit.
+- `cache_foreign`: `pipeline-cache.bin` was written by another device or driver (a driver update).
 
 ### `cache_make()`
 
@@ -411,36 +419,47 @@ translator is as dead. After a deletion outside a preparation the run writes `pi
 One log line says what a start that reads the files did and how many MB they held. `NX2SARIA_PIPELINE_CACHE_STAMP`
 (default 1); 0 reads the files whichever translator wrote them and leaves the stamp as it is.
 
-- `if (plat_file_exists(P.cache_path) || plat_file_exists(play))`: held open elsewhere: read as before, unstamped.
-- The rule `cache_load()` then applies (`P.base_at_exit`): a start without `pipeline-cache.bin` writes it at its exit.
-- "vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>", then what the numbers need to be checked.
+- A file that is still there after the deletion is held open elsewhere: the files are read as before and the stamp is
+  kept.
+- The line also applies the rule `cache_load()` then sets `P.base_at_exit` by: a start without `pipeline-cache.bin`
+  writes it at its exit.
+- The line: `vk: pipeline cache stamp <id> matches|differs|none: <action>, <MB>`, then what the numbers need to be
+  checked (the files' translator when it differs, whether `pipeline-cache.bin` is written at the exit, the stamp's
+  path).
 
 ### `cache_load()`
 
-- `if (PB.on)`: the binaries carry compiled pipelines across runs; `P.cache` stays `VK_NULL_HANDLE`.
-- No `pipeline-cache.bin` after the stamp's check (deleted by it, or its run ended before writing the file again): the
-  save at exit writes it (`cache_save()`, `runtime/vk/vk_cache_stamp.h` `cache_base_at_exit()`).
-- `int base_over = cache_over_cap`: an oversized file is never read again: the play file takes its place at once.
-- The file holds this data when the driver took all of it: a save is due only once the cache has grown (`cache_save()`).
-  Without data read from the file the empty cache's own size counts as saved, as the play cache's does below: a run that
-  took nothing into it does not write a file of a header alone, which the next start would refuse as too short
-  (`cache_file_read`) while it no longer counts as missing (`P.base_at_exit`).
-- The play cache (see above `pipe_create_in()`).
-- `if (base_over && cache_over_cap)`: what one run builds is over the limit: nothing will ever replace either file.
-- Only a fold whose result fits: `pipeline-cache.bin` past the limit would be dropped whole at the next start
-  (`cache_data_read()`). The merge into `P.cache` is the one the kept play cache gets below anyway, so it is done here
-  once and its size asked; a play file mostly holds what the other already has (461.2 + 524.9 MB folded to 489.0 MB,
-  2026-11-12), so the size of the two files says little. The fold is written at the first autosave, after the boot's
-  prewarm and background builds have added to `P.cache`: it is taken only with room for a play file's worth of growth
-  (`fold_at`) under the limit, so that save is not refused (`cache_save()` keeps the play file meanwhile).
-- `fold = 0, psize = 0`: merged already: the branch for a kept play file below is skipped.
-- `fold = 0`: done.
-- Into `P.cache` now; the file is written by the first save, which then removes the play file. A run that ends before
-  that save finds both files as they were and merges again.
-- Kept as the play cache, so its file goes on holding what earlier runs made, and merged into `P.cache` in memory, where
-  the first create of `pipe_create_in()` finds its pipelines. Without the merge that create took them from the driver's
-  own cache when it had them, at 8 ms a pipeline against 0.4 ms from ours.
-- An empty play cache is not written (its data is a header): its size counts as saved, as a whole file's does.
+Reads the two cache files and decides what the run does with the play file, in this order:
+
+1. With pipeline binaries on (`PB.on`) the binaries carry compiled pipelines across runs: `P.cache` stays
+   `VK_NULL_HANDLE` and neither file is read.
+2. `cache_stamp_check()`. No `pipeline-cache.bin` after it (deleted by it, or the run that started without it ended
+   before writing the file again): the save at exit writes it (`P.base_at_exit`; `cache_save()`,
+   `runtime/vk/vk_cache_stamp.h` `cache_base_at_exit()`).
+3. `pipeline-cache.bin` into `P.cache`. An oversized file is never read again: the play file takes its place at once
+   (`base_over`). `P.saved[0]`: the file holds this data when the driver took all of it, so a save is due only once the
+   cache has grown (`cache_save()`). Without data read from the file the empty cache's own size counts as saved, as the
+   play cache's does in step 7: a run that took nothing into it does not write a file of a header alone, which the next
+   start would refuse as too short (`runtime/vk/vk_cache_file.h` `cache_file_read()`) while it no longer counts as
+   missing (`P.base_at_exit`).
+4. The play file ("The play cache"). When both files are over the limit, what one run builds is over it and nothing
+   will ever replace either file: the log says so and how to raise the limit.
+5. A fold with the play cache on (the play file reached `NX2SARIA_PIPELINE_CACHE_PLAY_MB`) is taken only when its
+   result fits: `pipeline-cache.bin` past the limit would be dropped whole at the next start (`cache_data_read()`). The
+   merge into `P.cache` is the one the kept play cache gets in step 7 anyway, so it is done here once and its size
+   asked; a play file mostly holds what the other already has (461.2 + 524.9 MB folded to 489.0 MB, 2026-11-12), so the
+   size of the two files says little. The fold is written at the first autosave, after the boot's prewarm and
+   background builds have added to `P.cache`: it is taken only with room for a play file's worth of growth (`fold_at`)
+   under the limit, so that save is not refused (`cache_save()` keeps the play file meanwhile). A fold not taken leaves
+   both files as they are and keeps the play cache, already merged, so step 7 is skipped for it.
+6. The other folds (a preparation, the setting 0, no `pipelineCreationCacheControl`, an oversized
+   `pipeline-cache.bin`): the play file is merged into `P.cache` now; the file is written by the first save, which then
+   removes the play file. A run that ends before that save finds both files as they were and merges again.
+7. A play file that is not folded is kept as the play cache, so its file goes on holding what earlier runs made, and
+   merged into `P.cache` in memory, where the first create of `pipe_create_in()` finds its pipelines. Without the merge
+   that create took them from the driver's own cache when it had them, at 8 ms a pipeline against 0.4 ms from ours.
+8. `P.saved[1]`: an empty play cache is not written (its data is a header): its size counts as saved, as a whole
+   file's does.
 
 ### `mesh_stages_init()`
 
@@ -463,10 +482,12 @@ off, 1 on every driver; unset, on every driver except NVIDIA's own, on which the
 widths the driver can preserve (`VkPhysicalDeviceFloatControlsProperties`) are declared, and nothing without 32-bit
 floats.
 
-- `const char *e = cfg_get("NX2SARIA_VK_NAN_PRESERVE")`: no fixed default: it depends on the driver, see above.
-- `NX2SARIA_VK_NAN_BITS`: 1 every driver, 0 none; unset: AMD's driver for RDNA 1 and 2 (`spirv_nan_bits()`).
+`NX2SARIA_VK_NAN_BITS` (`P.nan_bits`, `spirv_nan_bits()`): 1 every driver, 0 none; unset: AMD's driver for RDNA 1 and 2
+(`vk_caps.amd_sc`).
 
-### Stage libraries for mesh pipelines
+### `mesh_lib_init()`
+
+Stage libraries for mesh pipelines.
 
 `NX2SARIA_GPL_MESH`, default 1; 0: each mesh pipeline is built whole, as before.
 
@@ -523,35 +544,29 @@ optimiser (`noopt_flag_for()`): a fragment library shared with vertex pipelines 
   that boot); records written with dynamic vertex input still prebuild, each for the layout of the draw that recorded
   it. The RDNA 1 and 2 branch (`vk_caps.amd_sc`) is not measured and keeps dynamic vertex input.
 
-- `const char *dv = cfg_get("NX2SARIA_VK_DYN_VERTEX")`: no fixed default: it depends on the GPU, see above.
-- `NX2SARIA_VK_DYN_A2C=0`/1 forces dynamic alpha to coverage off or on. Default off on AMD's Windows driver branch for
-  RDNA 2 and older (`vk_caps.amd_sc`), which applies alpha to coverage while the dynamic state says off: on an RX 590
-  (24.9.1) NX2Saria, which never turns it on, drew Link and the NPCs with depth but no colour (black silhouettes) and
-  dithered other surfaces into checkerboards (issue #67, RX 470/570/580). Taken out of the dynamic state, it goes into
-  the pipeline key and the characters draw. With the texture pool marks it stays out of the dynamic state whatever the
-  setting: a marked fragment shader gets early fragment tests only in a pipeline that has alpha to coverage off
-  (`spirv_pool_mark()`), so the pipeline has to know.
-- `const char *da = cfg_get("NX2SARIA_VK_DYN_A2C")`: no fixed default: it depends on the driver, see above.
-- `pg_draws_min()`: the play gate's line at the start.
+`NX2SARIA_VK_DYN_A2C=0`/1 forces dynamic alpha to coverage off or on. Default off on AMD's Windows driver branch for
+RDNA 2 and older (`vk_caps.amd_sc`), which applies alpha to coverage while the dynamic state says off: on an RX 590
+(24.9.1) the game, which never turns it on, drew Link and the NPCs with depth but no colour (black silhouettes) and
+dithered other surfaces into checkerboards (issue #67, RX 470/570/580). Taken out of the dynamic state, it goes into
+the pipeline key and the characters draw. With the texture pool marks it stays out of the dynamic state whatever the
+setting: a marked fragment shader gets early fragment tests only in a pipeline that has alpha to coverage off
+(`spirv_pool_mark()`), so the pipeline has to know.
 
-### NVN -> Vulkan mappings
+After `cache_load()` it calls `pg_draws_min()` for the play gate's line at the start.
 
-### `compare_op()`
+### `compare_op()`, `stencil_op()`, `polygon_mode()`
 
-`NVN_DEPTH_FUNC_*` / `NVN_STENCIL_FUNC_*` are NEVER = 1 .. ALWAYS = 8 in `VkCompareOp` order.
+The NVN values map to Vulkan's by arithmetic:
 
-### `stencil_op()`
-
-`NVN_STENCIL_OP_*` are KEEP = 1 .. `DECR_WRAP` = 8 in `VkStencilOp` order.
-
-### `polygon_mode()`
-
-`NVN_POLYGON_MODE_POINT`/LINE/FILL = 0/1/2, `VkPolygonMode` FILL/LINE/POINT = 0/1/2.
+- `NVN_DEPTH_FUNC_*` / `NVN_STENCIL_FUNC_*` are NEVER = 1 .. ALWAYS = 8 in `VkCompareOp` order.
+- `NVN_STENCIL_OP_*` are KEEP = 1 .. `DECR_WRAP` = 8 in `VkStencilOp` order.
+- `NVN_POLYGON_MODE_POINT`/LINE/FILL = 0/1/2, `VkPolygonMode` FILL/LINE/POINT = 0/1/2. Without `fillModeNonSolid`
+  everything is FILL.
 
 ### `vk_pipeline_topology()`
 
-- `case NVN_DRAW_PRIMITIVE_QUAD_STRIP: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP`: same triangles, same coverage.
-- `default: return VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST`: TRIANGLES; QUADS after the replay's index rewrite.
+A quad strip is drawn as a triangle strip: the same triangles, the same coverage. The default, a triangle list, is
+TRIANGLES, and QUADS after the replay's index rewrite.
 
 ### `topology_class()`
 
@@ -559,7 +574,7 @@ Topology class (a pipeline's static topology only fixes the class): 0 point, 1 l
 
 ### `vk_pipeline_tex_type()`
 
-- `default: return GFX_TEX_2D`: 2D, RECTANGLE.
+The default, `GFX_TEX_2D`, is for the 2D and RECTANGLE targets.
 
 ### `format_type()`
 
@@ -567,26 +582,20 @@ Numeric type of a colour format as a shader sees it: `GFX_TYPE_*`.
 
 ### `format_features()`
 
-Optimal-tiling (o = 1) or buffer (o = 0) features of a core format, cached.
+Optimal-tiling (`optimal` 1) or buffer (`optimal` 0) features of a core format, cached.
 
-### `widen()`
+### `vk_vertex_format()`, `widen()`
 
-3-component 8/16-bit formats are not vertex formats on every GPU: read 4 components.
+`vtx_formats` (`VtxFmt`) gives the vertex attribute format of each `NVNformat`, with the type a shader reads it as.
 
-`VtxFmt`: Vertex attribute formats by NVNformat.
-
-`vtx_formats`:
-
-- `*_UI2F` / `*_I2F`: integer data read as float; the 8- and 16-bit ones are Vulkan's SCALED formats.
-- 32-bit ones have no SCALED format: read as integers (values are not converted; logged when used).
+- `*_UI2F` / `*_I2F` (0x51 to 0x6C): integer data read as float; the 8- and 16-bit ones are Vulkan's SCALED formats.
+- The 32-bit ones have no SCALED format: read as integers (values are not converted; logged when used).
+- `widen()`: 3-component 8/16-bit formats are not vertex formats on every GPU: such a format is read with 4
+  components, and the log says so once.
 
 ### `target_format()`
 
-Attachment format of an NVN format (`tex_vk_format`: the format the images are created with).
-
-### Vertex input
-
-Pipeline state, or `vkCmdSetVertexInputEXT`.
+Attachment format of an NVN format (`tex_vk_format()`: the format the images are created with).
 
 ### `zero_format()`
 
@@ -597,17 +606,17 @@ sway, or they bend away from the parts that have one (the bulb).
 
 ### `vertex_input()`
 
-Attributes for the Locations the vertex shader reads; one without a usable NVN attribute reads `VK_PIPE_ZERO_BINDING`.
-
-### SPIR-V rewrites
+The vertex input, which is pipeline state or goes through `vkCmdSetVertexInputEXT`: attributes for the Locations the
+vertex shader reads; one without a usable NVN attribute reads `VK_PIPE_ZERO_BINDING`. An instance divisor above 1 is
+treated as 1 (logged once).
 
 ### `spirv_rebind()`
 
-Binding decorations b >= 1 become b + off (the fragment stage's share of set 0).
+Binding decorations b >= 1 become b + `off` (the fragment stage's share of set 0).
 
 ### `spirv_set()`
 
-DescriptorSet decorations become set (the fragment stage's resources move to set 1 with independent layouts).
+DescriptorSet decorations become `set` (the fragment stage's resources move to set 1 with independent layouts).
 
 ### `spirv_dual_source()`
 
@@ -619,12 +628,11 @@ Output at Location 1.
 
 ### `spirv_add_outputs()`
 
-Adds an Output variable for each Location of `missing` (type and width from io) to a module, declared in the entry point
-interface and initialised as Maxwell reads an unwritten output: (0, 0, 0, 1), the w as the bits of 1.0f whatever the
-type (attribute memory is untyped); fewer than 4 components are all zero. Existing scalar, vector and pointer types are
-reused. NULL when the module does not have the expected layout.
-
-- `uint32_t bound = w[3], scalar[3] = {0, 0, 0}`: `GFX_TYPE_FLOAT`, SINT, UINT.
+Adds an Output variable for each Location of `missing` (type and width from `io`) to a module, declared in the entry
+point interface and initialised as Maxwell reads an unwritten output: (0, 0, 0, 1), the w as the bits of 1.0f whatever
+the type (attribute memory is untyped); fewer than 4 components are all zero. Existing scalar, vector and pointer types
+are reused (`scalar[]` is indexed by `GFX_TYPE_FLOAT`, SINT, UINT). NULL when the module does not have the expected
+layout.
 
 ### `spirv_mesh_outputs()`
 
@@ -639,18 +647,17 @@ a float vector) becomes a Private one, the access chains through it Private poin
 function stores the value into it before anything else. NULL when nothing is to be done or the module does not have the
 expected layout.
 
-- `uint8_t *fill = calloc(old_bound, 1)`: 1: a filled variable, 2: an access chain through one.
-- The variables to fill, and the Private pointer types they and the chains through them need (pass 1).
-- `uint32_t vars[MAX_FILL], vtype[MAX_FILL], nvars = 0, priv[MAX_PRIV][2], npriv = 0`: priv: Input pointer type ->
-  Private.
-- The globals added before the first function: two constants, `gl_PointCoord`, and the Private pointer types not yet
-  declared (a filled variable's goes right before the variable, below; an access chain's is only used in a function).
-- `if (i == ep_at)`: the interface: filled variables out before SPIR-V 1.4 (Private is not listed), `gl_PointCoord` in.
-- `i += len`: Location, Flat and the like belong to Input variables.
-- `if (op == SPV_OP_VARIABLE && len >= 4 && a[1] < old_bound && fill[a[1]] == 1)`: its pointer type first.
-- `if (i + len == ann_end && pc_var)`: `gl_PointCoord`'s BuiltIn after the last decoration.
-- `if (op == OP_LABEL && in_entry && !stored)`: the entry's first block: its OpVariables, then the stores.
-- `for (uint32_t q = 0; q < c; q++) *p++ = comp[q]`: x y z w in order: (s, t, 0, 1) or (0, 0, 0, 1).
+How it goes through the module:
+
+1. Pass 1 finds the variables to fill and the Private pointer types they and the chains through them need (`priv`:
+   Input pointer type -> Private). `fill[id]` is 1 for a filled variable and 2 for an access chain through one.
+2. The globals added before the first function: two constants, `gl_PointCoord`, and the Private pointer types not yet
+   declared (a filled variable's goes right before the variable; an access chain's is only used in a function).
+3. The entry point's interface: filled variables out before SPIR-V 1.4 (Private is not listed), `gl_PointCoord` in.
+4. The decorations of a filled variable go: Location, Flat and the like belong to Input variables. `gl_PointCoord`'s
+   BuiltIn comes after the last decoration.
+5. In the entry function's first block, after its OpVariables, the stores: x y z w in order, (s, t, 0, 1) or
+   (0, 0, 0, 1), cut to the variable's width.
 
 ### `spirv_fixup()`
 
@@ -663,16 +670,14 @@ Two fixes for what the translator declares but a shader does not use (NULL: noth
   CreatePerVertexStructType): 9 distances exceed `maxCombinedClipAndCullDistances` (8 on the RX 9070). The translator
   never accesses CullDistance; the member goes when it is the struct's last and no access chain selects it.
 
-- `if (t < bound && t && elem[t] == cull_struct) k = 4`: arrayed per-vertex block.
-- `if (cull_ok && op == OP_TYPE_STRUCT && a[0] == cull_struct) o[on] = (l - 1) << 16 | op`: last member gone.
+An access chain into an arrayed per-vertex block has the member one index later. The struct loses its last member by
+its word count going down by one.
 
 ### `uses_subgroup_ops()`
 
-True when the module declares a `GroupNonUniform*` or SubgroupBallot-style capability (lane masks assume 32 lanes).
-
-- `if (op != 17) return 0`: OpCapability; capabilities come first, stop at the first other instruction.
-- `if ((cap >= 61 && cap <= 68) || cap == 4423 || cap == 4431) return 1`: `NonUniform*`, SubgroupBallotKHR,
-  SubgroupVoteKHR.
+True when the module declares a `GroupNonUniform*` capability (61 to 68), SubgroupBallotKHR (4423) or SubgroupVoteKHR
+(4431): lane masks assume 32 lanes. Capabilities come first, so it stops at the first instruction that is not an
+OpCapability.
 
 ### `spirv_reconverge()`
 
@@ -683,22 +688,17 @@ early through the operations on their own, with a ballot or scan that sees only 
 hands out output slots from one could give two primitives the same slot. This adds the extension and the mode for each
 entry point of a module that declares subgroup capabilities. NULL: nothing to change (or no memory).
 
-- `const uint32_t ext_words = (uint32_t)(sizeof ext + 3) / 4`: the string with its terminating zero, padded.
-
 ### `spirv_mesh_invariant()`
 
-Ocarina draws a fog sheet twice: a depth pre-pass, then a colour pass that discards where `gl_FragCoord.z` is behind the
+The game draws a fog sheet twice: a depth pre-pass, then a colour pass that discards where `gl_FragCoord.z` is behind the
 pre-pass's depth. Both are mesh pipelines with different mesh programs, so on Maxwell the sheet's positions match bit
-for bit, and the comparison relies on it. The translator marks a vertex shader's position Invariant (patch 0007), which
+for bit, and the comparison relies on it. The translator marks a vertex shader's position Invariant
+(`tools/xlate/patches/0007-position-always-invariant.patch`), which
 holds the driver to computing the same expression the same way in every pipeline; the mesh modules it makes
 (`tools/xlate/MeshSpirv.cs`) declare the position without it. This adds Invariant to the Position built-in of a MeshEXT
 module, as OpDecorate on a variable or OpMemberDecorate on a block member, right after its BuiltIn decoration. NULL:
 nothing to change (not a mesh module, no position, Invariant already there, or no memory). Once
 `tools/xlate/MeshSpirv.cs` declares it, this finds it there and changes nothing.
-
-- `uint64_t at = 0`: the word after the position's BuiltIn decoration.
-- `uint32_t target = 0, member = ~0u`: the decorated id, and its member for OpMemberDecorate.
-- `for (uint64_t i = 5; i < n;)`: already Invariant.
 
 ### `spirv_nan_preserve()`
 
@@ -713,8 +713,6 @@ and AMD GPUs drew Navi's sparkles but not her orb, whose light sits at her own c
 results without the mode. This adds the capability, the extension (the translator writes SPIR-V 1.3) and the mode for
 each entry point: 32-bit floats always, 16-bit and 64-bit ones where the module declares Float16 or Float64 and `widths`
 (`NP_*`) allows them. NULL: nothing to change (the module has the mode, or no 32-bit width is allowed, or no memory).
-
-- `const uint32_t ext_words = (uint32_t)(sizeof ext + 3) / 4`: the string with its terminating zero, padded.
 
 ### `spirv_nan_bits()`
 
@@ -732,44 +730,43 @@ with a constant operand whose bits are a NaN (an integer mask such as 0xffffffff
 becomes a select of the bits (issue #156: on an RX 9070 XT without the mode such a select between 1 and -1 gave 2^32).
 NULL: nothing to change (or no memory); `*tests` and `*selects` count what changed.
 
-- `uint32_t tu = 0, uvec[5] = {0}`: uint32 and its vectors by component count.
-- Ids that are not results of the instruction's second word, inside functions: first assignment wins anyway, as a
-  definition comes before its uses (OpPhi operands aside, which this never reads).
-- The declarations go right before the first function: uint32 and its vectors where missing, then the constants.
+- Inside functions the result type of an id is taken from the second word of every instruction but those without a
+  result: the first assignment wins anyway, as a definition comes before its uses (OpPhi operands aside, which this
+  never reads).
+- The declarations go right before the first function: uint32 and its vectors (by component count) where missing, then
+  the constants.
 
 ### `vk_pipeline_spirv_selftest()`
 
 `--selftest` (`runtime/main.c`): `spirv_nan_preserve()` on a small fragment module, without a device. Returns the number
 of failures.
 
-- `static const uint32_t head[] = {0x07230203, 0x00010300, 0, 5, 0, CAP, 1, CAP, 10}`: Shader, Float64.
-- `enum { NH = sizeof head / 4, NB = sizeof body / 4, EP_END = 8 }`: `EP_END`: body words up to the entry point's end.
-- widths: what the device allows; f64: the module declares Float64; w64: a 64-bit mode is expected.
-- `if (!f64) in[NH - 1] = 0`: Matrix in place of Float64.
-- `spirv_nan_bits()`: a scalar and a vec2 isnan, a select on a NaN constant; no uint32 type in the module.
+The module declares Shader and Float64. Three cases: every width allowed and Float64 declared (a 64-bit mode is
+expected), only 32 bits allowed with Float64 declared, and Matrix in place of Float64; then a call without the 32-bit
+width, which must change nothing. `spirv_nan_bits()` gets a module with a scalar and a vec2 isnan and a select on a NaN
+constant, and no uint32 type. With `NX2SARIA_SPV_MARK_TEST` it also runs `spirv_mark_list_test()`.
 
 ### `pin_subgroup32()`
 
-Chain {size 32} into a stage create info when the stage uses subgroup ops and the driver allows the pin.
+Chains the pinned subgroup size (`vk_caps.sg_size`, 32 unless `NX2SARIA_VK_SUBGROUP`) into a stage create info when
+the stage uses subgroup ops and the driver allows the pin.
 
 ### `local_size_x()`
 
-The x of a compute module's LocalSize (OpExecutionMode 17), 0 when it has none.
-
-- `if (op == 54) return 0`: OpFunction: the execution modes are all before it.
+The x of a module's LocalSize (OpExecutionMode 17), 0 when it has none. The execution modes are all before the first
+OpFunction, where it stops.
 
 ### `stage_sg()`
 
-`StageSg`: A task or mesh stage's subgroup requirements under `NX2SARIA_VK_MESH_SUBGROUPS` (`mesh_stages_init()`), from
+`StageSg`: a task or mesh stage's subgroup requirements under `NX2SARIA_VK_MESH_SUBGROUPS` (`mesh_stages_init()`), from
 its SPIR-V while the caller still has it: pin, 32 lanes (the task stage; the mesh stage takes `pin_subgroup32()` as
 before), and full, every subgroup of the workgroup full, where its width is a whole number of 32-lane subgroups.
 
 ### `stage_sg_apply()`
 
-Puts g on a stage's create info; rq must live as long as it. The mesh stage's pin is already chained
-(`pin_subgroup32()`).
-
-- `if (g.full && st->pNext)`: full subgroups only with the size pinned: the requirement is then a multiple of it.
+Puts `g` on a stage's create info; `rq` must live as long as it. The mesh stage's pin is already chained
+(`pin_subgroup32()`). Full subgroups are asked only with the size pinned: the requirement is then a multiple of it.
+The log counts the stages so far at the 1st, 10th, 100th and 1000th.
 
 ### `spirv_pool_rebind()`
 
@@ -778,21 +775,21 @@ their types) move to set 2, at the binding of their view kind (`runtime/vk/vk.h`
 for samplers; the kinds used are noted in `vk_pool_kinds_used` so the replay fills them. NULL: nothing to move (or no
 memory).
 
-- `int32_t *kind = malloc(bound * sizeof *kind)`: per id: image kind, 100 sampler, -1 other (types, then variables).
+- `kind[id]`: for a type, its image kind (sampled images only), 100 for a sampler, -1 other; + 1000 for a pool array
+  and a pointer to one, + 2000 for a pool variable.
 - Pool variables and their binding decorations are module declarations, all before the first function.
-- `if (op == OP_TYPE_IMAGE && len >= 9 && w[i + 1] < bound && w[i + 7] == 1)`: sampled image.
-- A translation carried over from a translator whose pool was `VK_POOL_TEX_CARRIED` long (`runtime/gfx/gfx_shader.c`,
-  carry) is a pool array too: left in its own set, its textures were never bound and the scene drew with empty images
-  until the background pass translated it again. It indexes the first `VK_POOL_TEX_CARRIED` entries of the larger
-  binding, which Vulkan allows.
-- `kind[w[i + 1]] = pool ? k + 1000 : -1`: + 1000: a pool array.
-- `kind[w[i + 2]] = kind[w[i + 1]] >= 1000 ? kind[w[i + 1]] + 1000 : -1`: + 2000: a pool variable.
+- A translation carried over from a translator whose pool was `VK_POOL_TEX_CARRIED` long (the carry of
+  `runtime/gfx/gfx_shader.c`) is a pool array too: left in its own set, its textures were never bound and the scene
+  drew with empty images until the background pass translated it again. It indexes the first `VK_POOL_TEX_CARRIED`
+  entries of the larger binding, which Vulkan allows.
 
-### Texture pool marks
+### `vk_pool_marks_enabled()`
+
+The texture pool marks.
 
 `NX2SARIA_TEX_DISUSE`, default on; `runtime/vk/vk_texture.c` "disuse" uses them.
 
-Ocarina samples nearly every texture through the bindless pool: a shader reads a handle from memory and indexes the pool
+The game samples nearly every texture through the bindless pool: a shader reads a handle from memory and indexes the pool
 array with it, so the CPU never learns which of the registered textures a frame samples, and every registered texture
 counts as in use (`runtime/vk/vk_texture.c` `idle()`). The game keeps the textures of the areas it has loaded
 registered, so none of them could go, and their memory, which the driver charges to the system's commit, grew to 6 GiB
@@ -805,11 +802,9 @@ not allow, no memory) is counted in `vk_pool_marks_missed`, which keeps `runtime
 disuse: an unmarked shader could sample a texture the marks call unused. `make_module()` logs the first few by stage,
 version, size, hash and reason.
 
-### `vk_pool_marks_enabled()`
-
-- `marks_on = rt_knob("TEX_DISUSE", "1") >= 1`: 2: marks and stand-ins, nothing freed (`runtime/vk/vk_texture.c`
-  "disuse").
-- `vkGetPhysicalDeviceFeatures(c->phys, &f)`: `runtime/vk/vk_device.c` enables every feature the GPU reports.
+`NX2SARIA_TEX_DISUSE` 2 is marks and stand-ins with nothing freed (`runtime/vk/vk_texture.c` "disuse"). Whether a
+stage may store comes from the GPU's features (`vertexPipelineStoresAndAtomics`, `fragmentStoresAndAtomics`):
+`runtime/vk/vk_device.c` enables every feature the GPU reports.
 
 ### `spirv_pool_mark()`
 
@@ -830,48 +825,54 @@ outside the entry function can run more than once with other slots: it notes the
 so a loop's last RING slots are all marked. `*status`: 1 marked, 0 no pool texture access to mark, -1 one that could not
 be marked (`*why` says what stopped it). NULL unless marked.
 
-- `uint32_t *bind = calloc(bound, sizeof *bind)`: per id: its Binding + 1 when its DescriptorSet is 2, else 0.
-- `uint64_t ann_end = 0, fn_start = 0, em_end = 0`: `em_end`: past the entry points and execution modes.
-- `uint32_t *rtype = calloc(bound, sizeof *rtype)`: per id: its result type, where the defer path needs it.
-- Per site: 0 stored in place; else deferred, bit 1 the index is signed (a bitcast), bit 2 a ring (in a loop or outside
-  the entry function).
-- `if (w[i + 1] <= 3) vertex_stage = 1`: Vertex, TessellationControl, TessellationEvaluation, Geometry.
-- `early = 0`: has them already.
-- `early = 0`: the guest's own storage buffers: its stores would change under early tests.
-- `if (op >= 19 && op <= 39 && l >= 2 && w[i + 1] < bound) is_type[w[i + 1]] = 1`: OpTypeVoid .. OpTypeForwardPointer.
-- Pool texture variables: set 2, a binding below `VK_POOL_KINDS` (`spirv_pool_rebind()`); one already at the marks
-  binding means the module was marked before.
-- `site_def = fn_start && !marked ? calloc((n - fn_start) / 5 + 1, 1) : NULL`: an access chain is 5 words or more.
-- `NX2SARIA_POOL_MARK_SHARED` (default 1): the module's ring sites share one ring and its count, and an access notes its
-  slot only when it differs from the slot noted just before it (consecutive repeats take no entry). With a ring per
-  site, a shader with many pool accesses in a loop (the castle moat's water: 69 shadow taps of one light's map per
-  iteration) carried 69 rings of 8 dynamically indexed words and stored up to 552 marks per fragment where it ended: the
-  water's draw took 7.4 ms per frame on an RTX 5080, 0.3 ms without the marks. The shared ring keeps the last RING runs
-  of slots, which for such a loop is one per light, where a site's ring held its last RING accesses, all the same slot.
-  It is not the union of what per-site rings held: an access order can push out a slot that a site's own ring kept. So a
-  shader that noted more than RING runs sets the overflow word at its exits (`VK_POOL_MARK_OVERFLOW`), and the read that
-  sees it counts every slot as sampled, for every use of the marks (`runtime/vk/vk_texture.c` `vk_pool_marks_read()`).
-- `uint64_t stores = deferred + rings`: what each way out stores: a variable, or a ring's entries in a loop.
-- `if (stores && (!exits || exits * (deferred + 3 * rings) > 8192))`: no way out to store at, or code that would grow.
-- `memset(site_def, 0, sites), deferred = rings = stores = 0`: too much.
+What it reads before the functions:
+
+- `bind[id]` is the id's Binding + 1, and `set2[id]` says its DescriptorSet is 2. Pool texture variables are those at
+  set 2 with a binding below `VK_POOL_KINDS` (`spirv_pool_rebind()`); a variable already at the marks binding means the
+  module was marked before, and nothing is done.
+- `em_end` is past the entry points and execution modes; `rtype[id]` an id's result type, where the deferred path
+  needs it (`is_type[]`: the ids of OpTypeVoid .. OpTypeForwardPointer).
+- The stage: execution models up to 3 (Vertex, TessellationControl, TessellationEvaluation, Geometry) need
+  `vertexPipelineStoresAndAtomics`, a fragment stage `fragmentStoresAndAtomics`.
+- `early` is given up when the module has EarlyFragmentTests already, and when it declares storage buffers of the
+  guest's own: its stores would change under early tests.
+
+The sites. `site_def` has a byte per pool access (an access chain is 5 words or more, which bounds their number): 0
+stored in place; else deferred, bit 1 the index is signed (a bitcast), bit 2 a ring (in a loop or outside the entry
+function). Only a fragment module with one entry point defers.
+
+`NX2SARIA_POOL_MARK_SHARED` (default 1): the module's ring sites share one ring and its count, and an access notes its
+slot only when it differs from the slot noted just before it (consecutive repeats take no entry). With a ring per
+site, a shader with many pool accesses in a loop (the castle moat's water: 69 shadow taps of one light's map per
+iteration) carried 69 rings of 8 dynamically indexed words and stored up to 552 marks per fragment where it ended: the
+water's draw took 7.4 ms per frame on an RTX 5080, 0.3 ms without the marks. The shared ring keeps the last RING runs
+of slots, which for such a loop is one per light, where a site's ring held its last RING accesses, all the same slot.
+It is not the union of what per-site rings held: an access order can push out a slot that a site's own ring kept. So a
+shader that noted more than RING runs sets the overflow word at its exits (`VK_POOL_MARK_OVERFLOW`), and the read that
+sees it counts every slot as sampled, for every use of the marks (`runtime/vk/vk_texture.c` `vk_pool_marks_read()`).
+
+`stores` is what each way out stores: a variable per deferred site, or a ring's entries in a loop. With no way out to
+store at, or when the code would grow too much (`exits * (deferred + 3 * rings)` over 8192), nothing is deferred and
+every site stores in place.
+
+The output:
+
 - From SPIR-V 1.4 on an entry point lists every global variable its functions use, not only the inputs and outputs (the
-  translator's mesh shaders are 1.4): each entry point gets the marks variable, a word more.
-- The mode, a word per entry point, decorations, at most 30 words of new types and the variable, 9 a site; deferred: a
-  word per entry point and variable, 80 words of types and constants, then per site its variables and the store of its
-  slot (ring: 10 + 29), and per way out 29 words a variable and 8 \* 29 a ring (its loop is 83).
-- deferred: the types, constants and variables (pv0: one per site; ra0, rc0: a ring and its count per ring site).
-- `for (uint64_t i = 5; i < ann_end;)`: the header up to the annotations' end: entry points widened, the mode added.
-- `uint32_t nv = 0, *at = o + p + l + 1`: the marks buffer, then pv0.., ra0.. and rc0..
-- `uint32_t k_def = 0, k_ring = 0, cur = 0`: cur: the label of the block being copied.
-- Marks[the slot, or the spare when none was noted] = 1.
-- more slots noted than the ring holds: the overflow word, else the spare (`VK_POOL_MARK_OVERFLOW`).
-- `if (op == OP_DEMOTE_TO_HELPER)`: not the block's end: every entry, without a loop.
-- The block ends here (a return, kill or terminate), so it can end in a loop over the entries noted: for (j = 0; j <
-  min(count, RING); j++) mark `ring[j]`.
-- `if (d)`: the slot noted for the stores at the end.
-- `if ((d & 4) && shared)`: the shared ring: a slot other than the last noted goes in, count + 1.
-- `} else if (d & 4)`: ring[count % RING] = slot, count + 1.
-- `uint32_t at = next++`: `marks[slot]` = 1, slot being the pool index of this access.
+  translator's mesh shaders are 1.4): each entry point gets the marks variable and the Private variables, a word each.
+- Its size: the mode, a word per entry point, decorations, at most 30 words of new types and the variable, 9 a site;
+  deferred: a word per entry point and variable, 80 words of types and constants, then per site its variables and the
+  store of its slot (ring: 10 + 29), and per way out 29 words a variable and 8 \* 29 a ring (its loop is 83).
+- The header up to the annotations' end is copied with the entry points widened and the mode added; then the marks
+  buffer's decorations and types, and for the deferred path the types, constants and variables (`pv0`: one per site;
+  `ra0`, `rc0`: a ring and its count per ring).
+- In the functions (`cur` is the label of the block being copied), before each way out: for each deferred variable,
+  Marks[the slot, or the spare when none was noted] = 1; for each ring, first the overflow word when more slots were
+  noted than the ring holds, else the spare (`VK_POOL_MARK_OVERFLOW`), then its entries. A demote to helper is not the
+  block's end, so every entry is stored, without a loop. At a return, kill or terminate the block ends, so it can end
+  in a loop over the entries noted: for (j = 0; j < min(count, RING); j++) mark `ring[j]`.
+- After each pool access: a deferred site notes its slot for the stores at the end. On the shared ring a slot other
+  than the last noted goes in, and the count goes up by one; on a site's own ring, ring[count % RING] = slot and the
+  count goes up by one. A site stored in place gets `marks[slot]` = 1, slot being the pool index of this access.
 
 ### `spirv_mark_list_test()`
 
@@ -879,21 +880,17 @@ be marked (`*why` says what stopped it). NULL unless marked.
 (`spirv_pool_rebind()`) and marked, and written to `<out>` when marked, for spirv-val. Prints the counts; 0 failures
 unless a file cannot be read or written.
 
-- Texture pool marks, below.
-
 ### `make_module()`
 
-`early_ok`: a fragment shader whose pipeline has no alpha to coverage (`spirv_pool_mark()`).
+The shader module of a translation, after the rewrites, in this order: `spirv_fixup()`, `spirv_pool_rebind()` and, with
+the marks on, `spirv_pool_mark()`, `spirv_reconverge()`, `spirv_nan_preserve()`, `spirv_nan_bits()`,
+`spirv_mesh_invariant()`. `early_ok`: a fragment shader whose pipeline has no alpha to coverage (`spirv_pool_mark()`).
 
-- `const uint32_t *orig_w = w`: for the log of a module the marks cannot take.
-- The hash is FNV-1a of the words `make_module()` got, as `vk_dump` hashes a shader's SPIR-V; it differs from the
-  translation's only where the pipeline patched the module first (added vertex outputs).
-
-### Descriptor layouts
-
-`Bindings`:
-
-- `int pool`: a stage indexes the texture or sampler pool (set 2, not in b / pb).
+- The log of a module the marks cannot take (the first 8) gives a hash: FNV-1a of the words `make_module()` got
+  (`orig_w`), as `vk_dump` hashes a shader's SPIR-V; it differs from the translation's only where the pipeline patched
+  the module first (added vertex outputs).
+- `mm_hash`: FNV-1a of the module `make_module()` last created on this thread, after the rewrites
+  (`NX2SARIA_PIPE_FEEDBACK` 2).
 
 ### `mesh_libs()`
 
@@ -902,7 +899,7 @@ stage-independent layout (`pipe_miss()`), which is how the rest of the file tell
 
 ### `no_libs()`
 
-1 for a mesh pipeline of layout l that has no stage libraries and so no fast link: every build of it is its whole build.
+1 for a mesh pipeline of layout `l` that has no stage libraries and so no fast link: every build of it is its whole build.
 A vertex pipeline is never one (`gpl_link()` itself refuses the shared layout the probe can give it).
 
 ### `origin_name()`
@@ -920,55 +917,57 @@ One past the highest binding a shader uses (1 with no resources: binding 0 is th
 
 ### `add_stage()`
 
-Adds a stage's resources with bindings b >= 1 moved by off; binding 0 (support buffer) is shared.
-
-- `if (r[i].pool)`: set 2 (`spirv_pool_rebind()`), bound by the replay from the pools.
+Adds a stage's resources to the binding list (`Bindings`: the Vulkan bindings in `b`, what feeds each in `pb`), with
+bindings b >= 1 moved by `off`; binding 0 (support buffer) is shared. A resource of the texture or sampler pool is not
+in the list: it is in set 2 (`spirv_pool_rebind()`), bound by the replay from the pools, and `Bindings.pool` says a
+stage indexes one.
 
 ### `module_binding_missing()`
 
 The first binding a module's resource variables use that the binding list b[0..n) lacks (module bindings >= 1 moved by
-off), or -1. A reflection that misses a resource would otherwise hand the driver an invalid layout. The module's Binding
+`off`), or -1. A reflection that misses a resource would otherwise hand the driver an invalid layout. The module's Binding
 decorations come from the list the shader keeps (`gfx_shader_bindings`), not from its SPIR-V: this runs on the drawing
 thread at every pipeline miss (`pipe_miss()`), where a compressed module would be decoded.
 
-- `int pooled = 0`: a pool array: set 2, not in this layout (`spirv_pool_rebind()`).
-- `if (tr[t].pool && tr[t].binding == (bind[i] & 0xffff)) pooled = 1`: `GfxShaderRes.binding` is 16 bits.
+A pool array is skipped: it is in set 2, not in this layout (`spirv_pool_rebind()`). Its binding is compared on the low
+16 bits, as `GfxShaderRes.binding` is 16 bits.
 
 ### `layout_covers()`
 
-Checks both stages of a graphics pipeline against its layout; 0 with why filled when one uses a missing binding.
+Checks both stages of a graphics pipeline against its layout; 0 with `why` filled when one uses a missing binding.
 
-### `make_tpl_bp()`
+### `make_tpl_bp()`, `make_tpl()`
 
 The update template of a set whose bindings are b[0..n): one entry per binding, in order, over the packed array the
-replay fills from the set's first descriptor, a `VkDescSlot` per descriptor. The bind point follows the stages (compute
+replay fills from the set's first descriptor, a `VkDescSlot` per descriptor. The bind point is the one given
+(`make_tpl_bp()`, for an emulated mesh layout) or follows the stages (`make_tpl()`; compute
 layouts hold the compute stage only). `VK_NULL_HANDLE` when templates are off, for an empty set, for a push set without
 `vkCmdPushDescriptorSetWithTemplateKHR` or when creation fails: the replay then writes the set with write structs.
 
 ### `bindings_sort()`
 
-Finds or creates the layout of a binding list (sorted here); NULL on failure. Caller holds `P.lock`. Sorts a binding
-list by binding and hashes it into `*h`; the descriptor total, or -1 when a binding repeats.
-
-- `for (uint32_t i = 1; i < B->n; i++)`: insertion sort by binding; the lists are short.
+Sorts a binding list by binding (an insertion sort; the lists are short) and hashes it into `*h`; the descriptor total,
+or -1 when a binding repeats.
 
 ### `layout_get()`
 
-- `VkDescriptorSetLayout sets3[3] = {l->set, vk_empty_set_layout(), vk_pool_set_layout()}`: set 2: the pools.
+Finds or creates the layout of a binding list (sorted here); NULL on failure. Caller holds `P.lock`. The pipeline
+layout has three sets: the list's, an empty one, and at set 2 the pools.
 
-### `mesh_emu_on()`
+### `mesh_emu_on()`, `layout_get_emu()`
 
-`NX2SARIA_MESH_EMULATION` (GPUs without `VK_EXT_mesh_shader`): the layout of an emulated mesh pipeline. The task and
-mesh stages' bindings are visible to the compute stage (they run as compute pipelines of this layout), the fragment
-stage's stay; push constants (`MESH_EMU_PC_BYTES`) for the compute stages and the generated vertex shader; set 0 gets a
-template per bind point. Caller holds `P.lock`.
+`NX2SARIA_MESH_EMULATION` (GPUs without `VK_EXT_mesh_shader`), decided with the mesh fallback at device creation
+(`runtime/vk/vk_mesh_path.h`).
 
-Decided with the mesh fallback at device creation (`runtime/vk/vk_mesh_path.h`).
+`layout_get_emu()`: the layout of an emulated mesh pipeline. The task and mesh stages' bindings are visible to the
+compute stage (they run as compute pipelines of this layout), the fragment stage's stay; push constants
+(`MESH_EMU_PC_BYTES`) for the compute stages and the generated vertex shader; set 0 gets a template per bind point.
+Caller holds `P.lock`.
 
-### `emu_bucket()`
+### `emu_get()`, `emu_find()`, `vk_pipeline_mesh_emu()`
 
-`MeshEmuEnt`: The compute pipelines of an emulated mesh pipeline, per (mesh, task, layout): made by the pipeline's build
-(`create_graphics()`, any thread) and found by its draws. ok 0: the stages could not be converted or built.
+`MeshEmuEnt`: the compute pipelines of an emulated mesh pipeline, per (mesh, task, layout): made by the pipeline's build
+(`create_graphics()`, any thread) and found by its draws. `ok` 0: the stages could not be converted or built.
 
 Each draw of an emulated mesh pipeline looks its entry up (`vk_pipeline_mesh_emu()`), so the lookup takes no lock: an
 entry is complete before it is published at its bucket's head (release) and is never removed. `emu_lock` only orders the
@@ -976,10 +975,8 @@ publishing. The build (two compute pipelines, up to seconds each in the driver o
 across the build, as before, it stopped every draw of the replay that looked up any entry meanwhile, 2.5 s of the replay
 thread's samples in a first 0.8.0 run in Kokiri Forest on an RX 580 (2026-11-11).
 
-### `emu_get()`
-
-- `uint32_t *r = c && toff ? spirv_rebind(c, cn, toff) : NULL`: the task stage's bindings follow the fragment stage's.
-- `MeshEmuEnt *had = emu_find(*head, ms, ts, layout)`: another build of the same stages published first: keep that.
+In the entry's layout the task stage's bindings follow the fragment stage's (`toff`). When another build of the same
+stages published its entry first, that one is kept and this build's pipelines are destroyed.
 
 ### `layout_pair()`
 
@@ -992,13 +989,13 @@ command buffer's pools. On success `*B` holds both lists, set 0 first, `VkPipeBi
 
 ### `vs_outs()`
 
-Adds fs's inputs (packed ones excepted) to vs's union; returns the union, types in io (the first type met wins).
-
 Vertex outputs with independent layouts: each vertex shader declares the union of the inputs of every fragment shader
 met with it (`pipeline-keys.bin` at the prewarm, then each pipeline built), so its module does not depend on the
 fragment shader of one pipeline. Unwritten ones read (0, 0, 0, 1) as before. `NX2SARIA_VS_OUTS=all` declares all 32.
 
-- `if (!VO.vs[j] && VO.n + 1 >= VS_OUTS_CAP * 3 / 4)`: full: this pair alone.
+`vs_outs()` adds `fs`'s inputs (packed ones excepted) to `vs`'s union and returns the union, types in `io` (the first
+type met wins; of one type, the widest). When the table (`VO`, `VS_OUTS_CAP` shaders) is three quarters full, a vertex
+shader not in it gets the outputs of this pair alone, logged once.
 
 ### `mesh_outs()`
 
@@ -1015,40 +1012,36 @@ The inputs of fragment shader fs that mesh shader ms does not write, which the f
 filled in (`spirv_fs_fill_inputs()`; `create_graphics()` works the same mask out for a whole build), and in `*points`
 whether they are filled as a point sprite's. 0 and no points when nothing is filled.
 
-### Pipeline cache table
-
 ### `pipe_add()`
 
 Stores a result (a failed one too, so it is not retried every draw). Caller holds `P.lock`.
 
-### Graphics pipelines
+### The graphics pipeline key
 
-`GKey`:
-
-- `typedef struct`: normalized: zero where the state is dynamic or unused.
+`GKey` is normalized: zero where the state is dynamic or unused.
 - `const GfxShader *vs, *fs, *ts`: ts: the task stage of a mesh draw.
 - `uint32_t color[8], depth, stencil`: `VkFormat`.
 - `uint8_t clamp, poly_mode, a2c, logic_op`: `logic_op`: `VkLogicOp` + 1 when enabled.
-- `uint8_t blend_en, dsb, fbl, pad`: dsb: an enabled target blends with a SRC1 factor; fbl: `VkPipeState.feedback`.
+- `uint8_t blend_en, dsb, fbl, pad`: `dsb`: an enabled target blends with a SRC1 factor; `fbl`: `VkPipeState.feedback`.
 - `uint8_t blend[8][6]`: src, dst, op, src alpha, dst alpha, alpha op (`VkBlendFactor` / `VkBlendOp`).
 - `uint8_t rate[17]`: per binding: 0 unused, 1 vertex, 2 instance.
 - `uint8_t indep`: `P.indep` when built: the probe draws through both layouts.
 
-### `is_src1()`
+### `is_src1()`, `uses_src1()`
 
 SRC1 blend factors read the fragment shader's second output (dual-source blending); the pipeline then needs a fragment
 module whose output 1 is Location 0, Index 1 (`spirv_dual_source()`).
 
-Runs per draw (`gkey_fill()`, `target_wmask()`): only the blend factors of blend-enabled targets are read until one is
-SRC1, which NX2Saria never sets (0 of 876 pipelines in the field and fight saves).
+`uses_src1()` runs per draw (`gkey_fill()`, `target_wmask()`): only the blend factors of blend-enabled targets are read
+until one is SRC1, which the game never sets (0 of 876 pipelines in the field and fight saves).
 
 ### `noopt_flag_for()`
 
 `NX2SARIA_VK_NOOPT=1`: pipelines built without the driver's optimiser, for a driver whose shader compiler crashes on one
-(the test switch for such a report); slower shaders, the same picture. mesh: only pipelines with task and mesh stages,
+(the test switch for such a report); slower shaders, the same picture. `mesh`: only pipelines with task and mesh stages,
 the terrain's and the foliage's. 0: none.
 
-Unset: mesh on AMD's Windows driver for RDNA 1 and 2 (`vk_caps.amd_sc`), 0 elsewhere. That driver loses the device ("No
+Unset: `mesh` on AMD's Windows driver for RDNA 1 and 2 (`vk_caps.amd_sc`), 0 elsewhere. That driver loses the device ("No
 fault detected", a timeout) minutes into play on RX 6600 to RX 6950 XT cards in every version from 0.6.0 to 0.9.2, with
 the pipeline library on or off and the lazy write-back on or off. Where the reports' pass marks name a pass the GPU was
 in, twelve logs of five reporters, it is a pass whose first draw is a mesh pipeline (mesh shader ba4302f1 with fragment
@@ -1076,7 +1069,7 @@ can be compared for a module or a state that changes between them.
 
 ### `fb_chain()`
 
-Chains fb into a create info's `pNext` (next: its current `pNext`). Returns what the create info's `pNext` becomes.
+Chains `fb` into a create info's `pNext` (`next`: its current `pNext`). Returns what the create info's `pNext` becomes.
 
 ### `fb_log()`
 
@@ -1084,7 +1077,7 @@ One line: per kind, builds that came from `pipeline-cache.bin` of all builds so 
 
 ### `target_wmask()`
 
-Colour write mask of target i: NVN's channel mask, zero for a target outside the fragment shader's output map (SPH
+Colour write mask of target `i`: NVN's channel mask, zero for a target outside the fragment shader's output map (SPH
 omap). Maxwell leaves such a target untouched; Vulkan writes undefined values, and on AMD they lit grass in front of
 Link as flat lime. Zeros are wrong too: the game's half-res transparency pass binds its linear depth (R32F) as target 7,
 samples it in the same draws and writes only targets 0-2, 4 and 5; zeroed, the depth that later passes rebuild from it
@@ -1094,19 +1087,19 @@ The same holds per component: a shader that writes a target's RGB and not its al
 while Vulkan writes undefined values, and AMD's driver writes whatever its export registers held (NaN and saturated
 pixels the bloom then spreads). Components outside the shader's omap are masked out, where it is known.
 
-- `if (i == 1 && s->fs && P.f_dual_src && uses_src1(s)) m = 0`: output 1 is the second blend source
-  (`spirv_dual_source()`).
+Target 1 gets mask 0 when the pipeline blends with a SRC1 factor: output 1 is then the second blend source
+(`spirv_dual_source()`).
 
 ### `gkey_fill()`
 
-- Mesh draws: no vertex input, the mesh stage declares its primitives (emulated point meshes draw point lists).
+A mesh draw has no vertex input in its key, and its topology class is the triangle one, as the mesh stage declares its
+primitives, or the point one for a draw of points (emulated point meshes draw point lists).
 
 ### `vs_union_missing()`
 
 Independent layouts: the outputs the vertex shader lacks from its union with `s->fs`'s inputs added (`vs_outs()`), types
-in fin. The vertex module (and its pre-rasterization library) depends on the vertex shader and this mask only.
-
-- `if (s->fs)`: a location another fragment shader reads as another type: this pair's type (rare).
+in `fin`. The vertex module (and its pre-rasterization library) depends on the vertex shader and this mask only. A
+location another fragment shader reads as another type takes this pair's type (rare, logged once).
 
 ### Water corrections
 
@@ -1133,12 +1126,12 @@ linked with one of the original.
 - `uint64_t mat, mat_set1`: the absorption material, and in its set 1 form.
 - `uint32_t mat_pointer, mat_distance`: the ids of the store its distance goes through.
 
-`water_mods`: The edited modules, by the hash of the module each stands for as it is built: a vertex translation, or a
-fragment module in its set 1 form. state: 0 empty, 1 made, -1 the edit refused the module (it is built as it is).
+`water_mods`: the edited modules, by the hash of the module each stands for as it is built: a vertex translation, or a
+fragment module in its set 1 form. `state`: 0 empty, 1 made, -1 the edit refused the module (it is built as it is).
 
 ### `water_module()`
 
-The edited module that stands for the module of hash `key`, or NULL. src: the translation it is made from at the first
+The edited module that stands for the module of hash `key`, or NULL. `src`: the translation it is made from at the first
 call (NULL: only look), whose SPIR-V is pinned for the edit only; a fragment translation is first put into its set 1
 form, which must be the module `key` names, as it is the form the pipeline builds.
 
@@ -1147,9 +1140,7 @@ form, which must be the module `key` names, as it is the form the pipeline build
 The water mode of a pipeline's shaders: 1 a coordinate pair whose two edited modules exist, 2 the absorption material
 whose edited module exists, else 0. The drawing thread asks it for every pipeline it links (`lib_keys()`): the modules'
 hashes are the ones the shaders keep (`gfx_shader_spirv_fnv`), and the SPIR-V is read only to make an edited module,
-once per profile.
-
-- The absorption correction is independent of the coordinate pair.
+once per profile. The absorption correction is independent of the coordinate pair.
 
 ### `water_pair_module()`
 
@@ -1164,7 +1155,7 @@ edited module as to any other. NULL in every other case. The module stays the ta
 
 ### `water_mode()`
 
-`water_projective_pair()` for a pipeline of key k. A coordinate pair blended with dual-source factors keeps its original
+`water_projective_pair()` for a pipeline of key `k`. A coordinate pair blended with dual-source factors keeps its original
 modules: `spirv_dual_source()` changes the fragment module before its set 1 form, which is then none the table holds.
 
 ### Line width
@@ -1180,43 +1171,50 @@ lines keeps 1 pixel: the mode can be dynamic state, which no pipeline key tells 
 
 ### `vk_pipeline_line_width()`
 
-- `if (w != 1.0f && w != logged)`: one line for each width in a row: the game uses one or two.
+Sets the width of a draw of lines, rounded to the device's step and held to its range. The log has one line for each
+width in a row: the game uses one or two.
 
 ### `task_off()`
 
-What a mesh pipeline's task stage bindings are moved by in layout l: past the mesh stage's in a stage-independent
+What a mesh pipeline's task stage bindings are moved by in layout `l`: past the mesh stage's in a stage-independent
 layout, where the two share set 0 (`mesh_pair_layout()`), and past the fragment stage's in the shared set
 (`pipe_miss()`).
 
 ### `mesh_dyn()`
 
-The dynamic states of a mesh pipeline into out (room for `P.n_dyn` + 1): `P.dyn` without the vertex input, its strides,
+The dynamic states of a mesh pipeline into `out` (room for `P.n_dyn` + 1): `P.dyn` without the vertex input, its strides,
 the topology and primitive restart, which a pipeline with a mesh stage must not list, and with the fragment shading rate
 where the device sets one per draw (`runtime/vk/vk_exec_draw.c` `mesh_shading_rate()`). Returns their number.
 
 ### `create_graphics()`
 
-- `uint64_t vw, fw, vm_hash = 0, fm_hash = 0`: the hashes: of the final modules, for the `PIPE_FEEDBACK` 2 line.
-- The stages' translations, pinned until the pipeline is made (`runtime/gfx/gfx.h` `gfx_shader_spirv_pin()`): vcode and
-  fcode become patched copies on the way, vplain and fplain stay the translations.
-- The water pair's vertex edit is for a translated vertex stage: an emulated mesh draw's generated one has none.
-- `int wmode = mesh || !l->set1 ? 0 : water_mode(s, k)`: the edited fragment modules are in their set 1 form.
-- `if (emu)`: `NX2SARIA_MESH_EMULATION`: the task and mesh stages as compute pipelines, a generated vertex shader here.
-- `mesh = 0`: a vertex pipeline from here on.
-- `if (mesh && s->ts)`: the task stage's bindings follow another stage's in its set (`task_off()`).
-- `if (l->set1 && !mesh)`: independent layouts: outputs from the vertex shader's union, not from this fragment shader.
-- A mesh stage's outputs from its module (`spirv_mesh_outputs()`): the translation reflects none; an emulated one
-  (`mesh_emu`) writes what the fragment stage reads.
-- `if (missing && mesh && fcode)`: inputs no mesh output feeds read as Maxwell gives them (`spirv_fs_fill_inputs()`).
-- A bound colour target outside the shader's output map gets write mask 0 (`target_wmask()`).
-- `if (!emu) pin_subgroup32(&stages[0], &rqv, vplain, vw0)`: vcode may be a patched copy that is freed by now.
-- NVN's default is the last vertex (SetProvokingVertexMode, `runtime/nvn/nvn_ext.c`); Vulkan's is the first.
-- `if (!mesh && key_lines(k))`: lines take the game's width per draw (`vk_pipeline_line_width()`).
-- A compiler that gives up on a pipeline (AMD's Windows driver answers `VK_ERROR_UNKNOWN`) may still build it without
-  its optimiser: one more try that way, slower shaders for that pipeline instead of a draw left out.
-- `perf_end(PERF_PIPE, p0)`: counts on the render thread only, so background builds stay out of it.
-- `if (P.feedback >= 2)`: the state hash: what the create info takes from the key besides the modules.
-- `if (!P.dyn_vi)`: the vertex layout is pipeline state then (zero in a mesh pipeline's key).
+The whole build of a graphics pipeline, in this order:
+
+1. The stages' translations are pinned until the pipeline is made (`runtime/gfx/gfx.h` `gfx_shader_spirv_pin()`):
+   `vcode` and `fcode` become patched copies on the way, `vplain` and `fplain` stay the translations.
+2. The water mode (`water_mode()`), 0 for a mesh pipeline and in a shared layout: the edited fragment modules are in
+   their set 1 form. The water pair's vertex edit is for a translated vertex stage: an emulated mesh draw's generated
+   one has none.
+3. `NX2SARIA_MESH_EMULATION` (`emu`): the task and mesh stages as compute pipelines (`emu_get()`), a generated vertex
+   shader here; it is a vertex pipeline from there on (`mesh` 0).
+4. A mesh pipeline's task module, its bindings following another stage's in its set (`task_off()`).
+5. The vertex outputs. With independent layouts they come from the vertex shader's union, not from this fragment
+   shader (`vs_union_missing()`); in a shared layout, from this fragment shader's inputs. A mesh stage's outputs are
+   read from its module (`spirv_mesh_outputs()`), as the translation reflects none; an emulated one (`mesh_emu_vs()`)
+   writes what the fragment stage reads.
+6. The fragment module: inputs no mesh output feeds read as Maxwell gives them (`spirv_fs_fill_inputs()`), then the
+   dual-source rewrite, then its set or its bindings, then the water edit and the marks (`water_pair_module()`).
+7. The stages. `pin_subgroup32()` reads `vplain` and `fplain`: `vcode` may be a patched copy that is freed by then.
+8. The state from the key. A bound colour target outside the shader's output map has write mask 0
+   (`target_wmask()`). NVN's default provoking vertex is the last (SetProvokingVertexMode, `runtime/nvn/nvn_ext.c`);
+   Vulkan's is the first. Without dynamic vertex input the vertex layout is pipeline state (zero in a mesh pipeline's
+   key). Lines take the game's width per draw (`key_lines()`, `vk_pipeline_line_width()`); a mesh pipeline lists
+   `mesh_dyn()`'s states.
+9. The create. A compiler that gives up on a pipeline (AMD's Windows driver answers `VK_ERROR_UNKNOWN`) may still build
+   it without its optimiser: one more try that way, slower shaders for that pipeline instead of a draw left out.
+   `PERF_PIPE` counts on the render thread only, so background builds stay out of it.
+10. With `NX2SARIA_PIPE_FEEDBACK` 2, one line with the hashes of the final modules (`mm_hash`) and the state hash: what
+    the create info takes from the key besides the modules.
 
 ### Graphics pipeline library
 
@@ -1232,76 +1230,66 @@ monolithic build with the same modules), which replaces the fast one in the Pipe
 live until `vk_pipeline_shutdown()`. No library is made to be optimised at its link: the optimised pipeline is that
 whole build, so the links take what the libraries hold as it is.
 
-A mesh pipeline is linked from three of them, its pre-rasterization library holding the task and mesh stages (see
-`mesh_lib_init()`).
+A mesh pipeline is linked from three of them, its pre-rasterization library holding the task and mesh stages
+(`mesh_lib_init()`).
 
-Background build signalling, both with `P.lock`: `work_cv` wakes the pipeline workers, `done_cv` wakes threads waiting
-for a pipeline or a stage library to be published.
+Background build signalling, all with `P.lock`: `work_cv` wakes the pipeline workers, `done_cv` wakes threads waiting
+for a pipeline or a stage library to be published, and `lib_cv` wakes the library workers (`lib_worker()`), as
+`work_cv`'s signal must reach a pool worker.
 
-- `static PlatCond lib_cv = PLAT_COND_INIT`: wakes the library workers (`lib_worker()`): `work_cv`'s signal must reach a
-  pool worker.
-
-`libs`: pre: built by the boot prebuild ("stage library prebuild" below); used: a draw's link found it; building: a
-thread builds it or job holds it queued (pipe not set yet); entries live until `libs_destroy()`.
+`libs` (`Lib`): `pre`: built by the boot prebuild (`lb_start()`); `used`: a draw's link found it; `building`: a thread
+builds it or `job` holds it queued (`pipe` not set yet); entries live until `libs_destroy()`.
 
 `PrKey`:
 
 - `uint8_t lines`: `key_lines()`: the library lists the line width as dynamic state.
-- `const GfxShader *ts`: a mesh pipeline's library (vs is its mesh stage): its task stage, or NULL.
+- `const GfxShader *ts`: a mesh pipeline's library (`vs` is its mesh stage): its task stage, or NULL.
 
-`FsKey`: fill, points, vrs: zero for a vertex pipeline. A mesh pipeline's: the inputs filled in the module and whether
+`FsKey`: `fill`, `points`, `vrs`: zero for a vertex pipeline. A mesh pipeline's: the inputs filled in the module and whether
 as a point sprite's (`mesh_fill()`), and 1 when the library lists the fragment shading rate as dynamic state
 (`mesh_dyn()`).
 
-`FoKey`:
-
-- `uint8_t blend[8][6]; } FoKey`: fbl: `GKey.fbl`, the feedback loop flags of the library (`gpl_feedback()`).
+`FoKey`: `fbl`: `GKey.fbl`, the feedback loop flags of the library (`gpl_feedback()`).
 
 ### `lib_create()`
 
-Builds one library from the pipeline's state; key is the library's key (PrKey: fin holds the added outputs).
+Builds one library from the pipeline's state; `key` is the library's key (`PrKey`: `fin` holds the added outputs). The
+shaders whose SPIR-V it reads stay pinned until it returns.
 
-- `int mesh = is_mesh(s)`: the libraries of a mesh pipeline (see `mesh_lib_init()`).
-- `if (kind == LIB_PR && mesh)`: what a whole mesh pipeline lists: as `create_graphics()`.
-- `} else if (kind == LIB_PR && ((const PrKey *)key)->lines)`: the rasterization state is this library's: as
-  `create_graphics()`.
-- The shading rate is part of the pre-rasterization and of the fragment shader state: a mesh pipeline's libraries of
-  both kinds list it as dynamic state, as a state dynamic in one library has to be in every other library that holds it.
-  Such a library is a mesh pipeline's alone, so it takes that pipeline's list.
-- `VkPipelineShaderStageCreateInfo mst[2]`: a mesh pipeline's pre-rasterization stages: mesh, then task.
-- `const GfxShader *pinned[2] = {NULL, NULL}`: the shaders whose SPIR-V is pinned until out (`gfx_shader_spirv_pin`).
-- The task and mesh stages as `create_graphics()` builds them: the mesh module as translated, the task module with its
-  bindings moved past the mesh stage's (`task_off()` in a stage-independent layout); the mesh stage alone takes the
-  subgroup pin there, so here too. No vertex outputs are added: what a fragment shader reads and the mesh stage does not
-  write is filled in the fragment module (`FsKey.fill`).
-- `if (fk->fill && fcode)`: a mesh pipeline's: before the other rewrites, as `create_graphics()`.
-- Whether the pipeline may sample an attachment it renders to is part of the fragment output state: the flags go on this
-  library alone, and a pipeline linked from it has them (`gpl_feedback()`).
-- `if (pipe && (kind == LIB_PR || kind == LIB_FS)) fb_note(FB_LIBRARY, &fb)`: the shader libraries: the others compile
-  nothing.
+- **Dynamic state.** A mesh pipeline's pre-rasterization library lists what a whole mesh pipeline lists, and a
+  library of lines the line width: the rasterization state is this library's, as in `create_graphics()`. The shading
+  rate is part of the pre-rasterization and of the fragment shader state: a mesh pipeline's libraries of both kinds
+  list it as dynamic state, as a state dynamic in one library has to be in every other library that holds it. Such a
+  library is a mesh pipeline's alone, so it takes that pipeline's list.
+- **A mesh pipeline's pre-rasterization stages** (mesh, then task) as `create_graphics()` builds them: the mesh module
+  as translated, the task module with its bindings moved past the mesh stage's (`task_off()` in a stage-independent
+  layout); the mesh stage takes `pin_subgroup32()` and both take `stage_sg()`'s requirements there, so here too. No
+  vertex outputs are added: what a fragment shader reads and the mesh stage does not write is filled in the fragment
+  module (`FsKey.fill`), before the other rewrites, as in `create_graphics()`.
+- **Feedback loops.** Whether the pipeline may sample an attachment it renders to is part of the fragment output state:
+  the flags go on this library alone, and a pipeline linked from it has them (`gpl_feedback()`).
+- **Creation feedback** is noted for the shader libraries only: the others compile nothing.
 
 ### `lib_find()`
 
-The cached library for key. Caller holds `P.lock`. build 0: lookup only (`VK_NULL_HANDLE` and `*miss` when absent);
-build 1: a missing one is built with `P.lock` released (a failed build is cached too).
-
-The library entry for key, NULL when absent. Caller holds `P.lock`.
+The library entry for `key`, NULL when absent. Caller holds `P.lock`.
 
 ### `lib_put()`
 
-Enters a library built with `P.lock` released; another thread's entry made meanwhile wins and pipe is destroyed. Returns
-the entered handle. Caller holds `P.lock`.
-
-- `if (b && b->building)`: another thread's build publishes the entry.
+Enters a library built with `P.lock` released; another thread's entry made meanwhile wins and `pipe` is destroyed.
+Returns the entered handle, `VK_NULL_HANDLE` when another thread's build is still to publish the entry. Caller holds
+`P.lock`.
 
 ### `lib_new()`
 
-A building entry for key, NULL when out of memory. Caller holds `P.lock` and found none.
+A building entry for `key`, NULL when out of memory. Caller holds `P.lock` and found none.
 
-`LibJob`: Shader libraries a waiting draw needs (`lib_wait()`, `link_queue()`): queued here ahead of every pipeline job,
-so an idle worker builds each at once and the vertex and fragment libraries of one draw build in parallel. A job no
+### Library jobs
+
+`LibJob`: shader libraries a waiting draw needs (`lib_wait()`, `link_queue()`): queued in `U` ahead of every pipeline
+job, so an idle worker builds each at once and the vertex and fragment libraries of one draw build in parallel. A job no
 worker took is built by the first thread that needs its library (`lib_get()`; `lib_wait()` only without library
-workers). A job with p is a waiting draw's fast link of p (after its library jobs), run on a worker so the drawing
+workers). A job with `p` is a waiting draw's fast link of `p` (after its library jobs), run on a worker so the drawing
 thread only waits. Under `P.lock`.
 
 `U`:
@@ -1314,27 +1302,29 @@ thread only waits. Under `P.lock`.
 
 ### `lib_build()`
 
-Builds b (building, not queued) with `P.lock` released and publishes it; a failed build is entered as `VK_NULL_HANDLE`.
-
-- `int mesh = is_mesh(s) && (kind == LIB_PR || kind == LIB_FS)`: a mesh pipeline's shader library.
-- A shader library that took this long was not in the driver's cache; why not, for the first 32 of a run.
+Builds `b` (building, not queued) with `P.lock` released and publishes it; a failed build is entered as
+`VK_NULL_HANDLE`. A mesh pipeline's shader libraries are also counted apart (`P.g.m_lib_*`). A shader library that took
+25 ms or more was not in the driver's cache: the log says why not, for the first 32 of a run.
 
 ### `lib_steal()`
 
-Takes b's queued job out of the queue and builds it on this thread. Caller holds `P.lock`.
+Takes `b`'s queued job out of the queue and builds it on this thread. Caller holds `P.lock`.
 
 ### `lib_get()`
 
-- `while (have && have->building)`: being built (wait) or queued (build it here).
-- `Lib *b = lib_new(h, key, size)`: entered first, so other threads wait for this build instead of repeating it.
-- `if ((have = lib_find(h, key, size)) && !have->building)`: another thread built it meanwhile.
+The cached library for `key`. Caller holds `P.lock`. `build` 0: lookup only (`VK_NULL_HANDLE` and `*miss` when absent
+or still building); `build` 1: a missing one is built with `P.lock` released (a failed build is cached too).
+
+An entry that is building is waited for, or, when its job is still queued, built here (`lib_steal()`). A new entry is
+entered first (`lib_new()`), so other threads wait for this build instead of repeating it; only when there is no memory
+for the entry is the library built without one, and then another thread may have built it meanwhile.
 
 ### `lib_keys()`
 
-The four library keys of pipeline s (key k). A mesh pipeline (one with stage libraries: `no_libs()` is 0) has no use for
+The four library keys of pipeline `s` (key `k`). A mesh pipeline (one with stage libraries: `no_libs()` is 0) has no use for
 the first, and what tells its two shader libraries from a vertex pipeline's is here: the pre-rasterization key names the
 mesh stage and the task stage and adds no outputs (a mesh shader is in no vertex output union), the fragment key carries
-what is filled in the module and the dynamic shading rate (FsKey). Neither takes a water correction, as
+what is filled in the module and the dynamic shading rate (`FsKey`). Neither takes a water correction, as
 `create_graphics()` gives a mesh pipeline none.
 
 ### `gpl_feedback()`
@@ -1350,9 +1340,9 @@ area's first frame and 410 ms in the middle of a walk; linked, 3 ms.
 
 ### `gpl_link()`
 
-A fast-linked pipeline for s from its stage libraries. Caller holds `P.lock`. build 0 (drawing thread): links only when
+A fast-linked pipeline for `s` from its stage libraries. Caller holds `P.lock`. `build` 0 (drawing thread): links only when
 the shader libraries exist (vertex input and fragment output libraries, which hold no shader, are built here); `*final`
-0 = not yet, a worker builds them. build 1 (worker): builds the missing libraries and links with `P.lock` released.
+0 = not yet, a worker builds them. `build` 1 (worker): builds the missing libraries and links with `P.lock` released.
 `VK_NULL_HANDLE` with `*final` 1 when GPL cannot express the pipeline (shared layout, which is also a mesh pipeline's
 without stage libraries; a feedback loop with `NX2SARIA_GPL_FEEDBACK=0`) or a build failed.
 
@@ -1361,9 +1351,9 @@ shader one and the fragment output one. It has no vertex input state, and a comp
 where its pre-rasterization state holds a vertex shader. The link names no state of its own and no dynamic state: what
 is dynamic is what the libraries were made with.
 
-- `lib[1] = lib_get(LIB_PR, s, k, l, &pk, sizeof pk, build, &miss)`: shader libraries first: no work when absent.
-- `char what[160]`: the parts that differ between links: a link that crashes the driver names its case.
-- `double ms = ms_since(t1)`: the link alone: library builds are counted apart.
+- The shader libraries are asked for first: without them there is no work to do.
+- The crash note names the parts that differ between links, so a link that crashes the driver names its case.
+- `P.g.link_ms` is the link alone: library builds are counted apart.
 
 ### Background graphics pipeline builds
 
@@ -1378,13 +1368,13 @@ pipelines), layouts until `vk_pipeline_shutdown()`, which drains the queue first
 data in `cache_save()` is kept apart from them (`cache_rw`). Compute pipelines stay synchronous: a skipped dispatch can
 change what the game computes.
 
-Two queues: draws' misses (`A.head`) and the boot prebuild (`A.low`, see "pipeline keys" below). Workers take the low
+Two queues: draws' misses (`A.head`) and the boot prebuild (`A.low`, "Pipeline keys"). Workers take the low
 queue only when the other is empty and run its jobs at `PLAT_PRIO_BELOW_NORMAL`, so guest threads win. A draw that finds
 a prebuild job still queued moves it to the draw queue; one that finds it running raises its worker.
 
 `Job`:
 
-- `struct Job *next, *prev`: prev: low queue only.
+- `struct Job *next, *prev`: `prev`: low queue only.
 - `uint8_t low`: in the low queue, or running at below-normal priority.
 - `uint8_t prebuild, demanded`: from the key file; a draw asked for it before it was ready.
 - `uint8_t rested`: counted as held back by the play gate (`low_held()`).
@@ -1435,36 +1425,34 @@ rewritten. Bump `KEYS_VERSION` when `VkPipeState` or the record changes meaning 
 - `size_t file_n`: records in it.
 - `size_t own_n`: of them, the first ones: this install's own (`keys_open()`); the shared list's follow.
 - `PlatMutex io`: one writer.
-- Prebuild progress (under `P.lock`).
+- The fields from `loading` on are the prebuild's progress (under `P.lock`).
 - `int loading`: the prewarm still queues records.
 - `int warm`: `vk_pipeline_prewarm()` owns the file (`prebuild_start()` leaves it).
 - `uint32_t left`: prebuild jobs queued or running.
 - `uint32_t gate_ended`: boot builders the memory gate ended (`warm_builder()`).
 - `double t0`: `now_ms()` when the prebuild started.
-- `int prep`: t0 is the preparation's start (`seed_pipelines()`), not the ready device's.
-- `double until`: `now_ms()` after which the boot builders stop (see `prewarm_run()`); 0 none.
+- `int prep`: `t0` is the preparation's start (`seed_pipelines()`), not the ready device's.
+- `double until`: `now_ms()` after which the boot builders stop (`prewarm_run()`); 0 none.
 
 ### `seen_add()`
 
-1 if h was new. Caller holds `P.lock`.
+1 if `h` was new. Caller holds `P.lock`.
 
 ### `rec_fill()`
 
-- `r->s.prim_restart = 0`: dynamic state: the same pipeline either way.
+The record of a state. Primitive restart is dynamic state, the same pipeline either way, so the record holds 0.
 
 ### `keys_note()`
 
 A pipeline was built for a draw: queue its record for the file. Caller holds `P.lock`.
 
-- `if (s->fs && !memcmp(gfx_shader_input_id(s->fs), none, 32)) return`: the runtime's own shader (`gfx_shader_own`).
-- `if (!memcmp(gfx_shader_input_id(s->vs), none, 32)) return`: the mesh fallback's vertex stage
-  (`runtime/vk/vk_exec_draw.c` `mfb_vs_get()`).
+Not recorded, as a stage without an input id cannot be loaded again: a pipeline with one of the runtime's own shaders
+(`gfx_shader_own()`), and the mesh fallback's vertex stage (`runtime/vk/vk_exec_draw.c` `mfb_vs_get()`).
 
 ### `keys_flush()`
 
-Appends the pending records (present thread or exit; never the render thread).
-
-- `if (ok) ok = plat_file_sync(f)`: appended records on the disk before the next append.
+Appends the pending records (present thread or exit; never the render thread). The file is synced, so appended records
+are on the disk before the next append.
 
 ### `seen_has()`
 
@@ -1481,25 +1469,28 @@ pipelines it builds from them are the ones draws ask for) and builds them as it 
 most `PREWARM_PIPE_MS`, the pool workers the rest. The preparation builds the same list into the caches
 (`seed_pipelines()`, `NX2SARIA_PREPARE_PIPELINES=all`), so that boot finds them there. They are not added to the set or
 the file: `pipeline-keys.bin` keeps what this install drew, and a pipeline a draw builds that the prewarm did not still
-goes into it. A list in another record layout is left out, as the preparation leaves it.
-
-- `for (size_t i = 0; i < n; i++)`: after the install's own: those met first in play keep coming first.
+goes into it. A list in another record layout is left out, as the preparation leaves it. The list's records come after
+the install's own: those met first in play keep coming first.
 
 ### `keys_open_own()`
 
-Reads the key file into `K.file` and its record hashes into the set, then adds the shared list's records
-(`keys_open_seed()`). Caller holds `P.lock` (`ensure_init()`).
+### `keys_open()`
 
-- `gfx_shader_record_at(K.path)`: `shader-answers.bin` next to it (`runtime/gfx/gfx_shader.c`).
-- `if (len != (long)(sizeof h + n * sizeof(KeyRec)))`: a torn append: rewrite the file from what was read.
-- The vertex pipelines of a version 3 file keep their prewarm: each record without a task stage, and the file rewritten
-  in this version below (`header_ok` 0).
-- `if (!K.header_ok && K.file_n)`: keep the whole records of a torn file.
+Reads the key file into `K.file` and its record hashes into the set (`keys_open_own()`), then adds the shared list's
+records (`keys_open_seed()`). Caller holds `P.lock` (`ensure_init()`).
+
+### `keys_open_own()`
+
+- `gfx_shader_record_at()` puts `shader-answers.bin` next to the key file (`runtime/gfx/gfx_shader.c`).
+- A file whose length is not a whole number of records had a torn append: its whole records are kept and the file is
+  rewritten from what was read (`header_ok` 0, the records pending).
+- The vertex pipelines of a version 3 file keep their prewarm: each record is converted without a task stage, and the
+  file rewritten in this version the same way.
 
 ### `ready_note()`
 
-Caller holds `P.lock`. p, which a draw missed, has its first usable pipeline: how long that took is how long its draws
-were skipped or waited. fast 0: it had no fast link and this is the optimised build. Caller holds `P.lock`.
+Caller holds `P.lock`. `p`, which a draw missed, has its first usable pipeline: how long that took is how long its draws
+were skipped or waited. `fast` 0: it had no fast link and this is the optimised build.
 
 The summary (`save_with()`) counts what a slow one can be: a mesh pipeline (its task and mesh library is the largest to
 compile, and without stage libraries, `no_libs()`, this is its whole build), one the key file names whose prebuild had
@@ -1508,21 +1499,19 @@ cold). The first `READY_LOGS` that took `READY_SLOW_MS` or longer get a line eac
 pipelines left their draws out of the picture and for which reason. The mesh pipelines are also counted by themselves:
 how many became usable through a fast link, and after how long.
 
-- A pipeline goes into `pipeline-keys.bin` once a draw can use it, so at its fast link too: recorded only when its
-  optimised build had finished (`job_build()`), the pipelines met in the last seconds of a session were lost. A session
-  of 2026-11-13 met 46 late pipelines in adult Kokiri Forest and ended about 2 s later; 23 of them never reached the
-  file, and with it the shared pipeline list (`tools/pipeline_list.py` `merge()`). `keys_note()` takes each record once.
-  s is the state the caller built p from: a job whose optimised build failed is gone (`job_build()` clears `p->job` and
-  records nothing) before a queued fast link makes p usable, and that link is recorded from s.
+A pipeline goes into `pipeline-keys.bin` once a draw can use it, so at its fast link too: recorded only when its
+optimised build had finished (`job_build()`), the pipelines met in the last seconds of a session were lost. A session
+of 2026-11-13 met 46 late pipelines in adult Kokiri Forest and ended about 2 s later; 23 of them never reached the
+file, and with it the shared pipeline list (`tools/pipeline_list.py` `merge()`). `keys_note()` takes each record once.
+`s` is the state the caller built `p` from: a job whose optimised build failed is gone (`job_build()` clears `p->job`
+and records nothing) before a queued fast link makes `p` usable, and that link is recorded from `s`.
 
 ### `u_run()`
 
-Runs a waiting draw's job taken from U on a worker: a library build or, for a job with p, p's fast link (`gpl_link()`
-build 1 builds a library still missing and waits for one another worker builds). Releases `P.lock` while building.
-
-- `VkPipeline f = gpl_link(&lj->s, &lj->k, lj->l, 1, &final)`: releases `P.lock` while linking.
-- `job_lower(p->job)`: its job now only does the optimised build.
-- `vkDestroyPipeline(P.device, f, NULL)`: the job published one meanwhile.
+Runs a waiting draw's job taken from `U` on a worker: a library build or, for a job with `p`, `p`'s fast link
+(`gpl_link()` with `build` 1 builds a library still missing and waits for one another worker builds). Releases `P.lock`
+while building or linking. After the link the pipeline's job only does the optimised build (`job_lower()`); when the
+job published a pipeline meanwhile, the link is destroyed.
 
 ### `fast_workers()`
 
@@ -1542,14 +1531,15 @@ Caller holds `P.lock`.
 
 ### `lib_worker()`
 
-A worker for stage libraries and fast links only: a waiting draw's jobs (U) first, so a draw that waits finds one free
+A worker for stage libraries and fast links only: a waiting draw's jobs (`U`) first, so a draw that waits finds one free
 even while the pool builds pipelines and the drawing thread never builds a library itself; then the fast link of a
 draw-queue job (`fast_take()`), whose optimised build goes on to the pool.
 
-- `p->fast_tried = 1`: no other thread links it meanwhile; a draw that waits for it waits for this link.
-- `VkPipeline f = gpl_link(&j->s, &j->k, p->lay, 1, &final)`: releases `P.lock` while building.
-- `if (p->info.pipeline)`: the optimised build: ahead of the prebuild, behind other draws' misses.
-- `} else`: no fast link for this one: its whole build, next in the draw queue.
+- `fast_tried` is set before the link, which releases `P.lock`: no other thread links the pipeline meanwhile, and a
+  draw that waits for it waits for this link.
+- Linked, its job goes to the head of the low queue for the optimised build: ahead of the prebuild, behind other
+  draws' misses.
+- Without a fast link its job goes back to the head of the draw queue: its whole build is next.
 
 ### The memory gate of the background builds
 
@@ -1575,17 +1565,14 @@ The commit is read at most every `GATE_SAMPLE_MS`: sixteen builders finishing a 
 would otherwise ask the system thousands of times a second. What the builds took since the last reading is covered by
 their reservations.
 
-- `#define GATE_WAIT_MS 30000.0`: how long a boot or warm builder waits for room before it leaves the rest to their
-  first use.
+`GATE_WAIT_MS` (30 s): how long a boot or warm builder waits for room before it leaves the rest to their first use.
 
-`GATE`:
+`GATE.off`: a preparation run (`seed_pipelines()`): nothing is refused, there is no game to keep room for.
 
-- `int off`: a preparation run (`seed_pipelines()`): nothing is refused, there is no game to keep room for.
+### `gate_enter()`, `gate_leave()`
 
-### `gate_enter()`
-
-1 when a build estimated at est MB may start, and then est is reserved until `gate_leave()`. est 0: an ordinary build
-(`NX2SARIA_BUILD_RESERVE_MB`), whose estimate `*took` returns for `gate_leave()`.
+1 when a build estimated at `est` MB may start, and then `est` is reserved until `gate_leave()`. `est` 0: an ordinary
+build (`NX2SARIA_BUILD_RESERVE_MB`), whose estimate `*took` returns for `gate_leave()`.
 
 ### `gate_text()`
 
@@ -1593,8 +1580,9 @@ The gate's numbers for a log line that says why a builder stopped or waits.
 
 ### `gate_wait()`
 
-A boot or warm builder's wait for room: 1 with est reserved (`*took`), 0 when `*stop` was set or `GATE_WAIT_MS` passed
-without room, which the caller takes as the end of its work. who names the builder for the log's one line a wait.
+A boot or warm builder's wait for room: 1 with the estimate reserved (`*took`), 0 when `*stop` was set or
+`GATE_WAIT_MS` passed without room, which the caller takes as the end of its work. `who` names the builder for the
+log's one line a wait.
 
 ### The play gate
 
@@ -1621,11 +1609,12 @@ for the warm (`bf_waiting()`) or in a preparation. `runtime/vk/vk_backend.c` `fr
 
 ### `pg_draws_min()`
 
-- "the play gate", after `gate_wait()`: its setting, logged once.
+The play gate's setting, read and logged once, at the start (`ensure_init()`).
 
 ### `play_rest()`
 
-1 when background builds rest now (`runtime/vk/vk_play_gate.h` `play_gate_rest()`).
+1 when background builds rest now (`runtime/vk/vk_play_gate.h` `play_gate_rest()`). The moment is a light one in a
+preparation, while the boot screen waits for the warm (`bf_waiting()`) and during an area load.
 
 ### `low_held()`
 
@@ -1648,11 +1637,12 @@ and without a build. It prints what the settings and the system give, asks for s
 one, and checks the answers against the same numbers: the builds admitted are those that fit with the earlier ones'
 reservations, a refused one reserves nothing, and a builder's wait ends at once when its stop flag is set.
 `tests/build_gate_check.py` runs it with `build_free_mb` at 0 (everything admitted) and at a value no machine has free
-(everything refused).
+(everything refused). The answers it expects use the one commit sample the gate took, which stays for
+`GATE_SAMPLE_MS`.
 
-- `want += free_mb <= 0 || limit < 0 || room - i * est >= est`: the commit sample stays for `GATE_SAMPLE_MS`.
+### `fast_retire()`
 
-### Fast-linked pipelines the optimised build replaces
+Fast-linked pipelines the optimised build replaces.
 
 With the graphics pipeline library a draw first gets a pipeline linked from stage libraries (`p->fast`), and the
 optimised build of the same state replaces it in `p->info.pipeline` when it is done. The fast link was kept until the
@@ -1661,22 +1651,19 @@ frames made 1,108 fast links and replaced 907 of them, while the video memory ou
 keeps compiled pipelines, grew by 491 MiB (RTX 5090), and a 68,400-frame session grew it from 1,672 to 2,485 MiB. A
 replaced fast link is destroyed now, once the GPU is past every submission that may have recorded it. The draws read
 `p->info.pipeline` when they record (`runtime/vk/vk_exec_draw.c`, the pipeline memo reads it again each time) and keep
-no handle past the submission they record, so after the store below a draw can only have the old handle in the
+no handle past the submission they record, so after the store in `job_build()` a draw can only have the old handle in the
 submission being recorded, or in an earlier one: `vk_sync_issued()` + 1 at most. The destroy waits for one more
 submission than that, for a recording thread that runs a submission behind (`runtime/vk/vk_rec.c`). It runs on the
-completion thread (`vk_completion_add`), which holds no lock of ours while it calls it; a lost device or the end of the
-process leaves it to the driver, as everything else.
+completion thread (`vk_completion_add()` of `runtime/vk/vk_sync.c`), which holds no lock of ours while it calls it; a
+lost device or the end of the process leaves it to the driver, as everything else.
 
-- `static uint64_t fast_retired`: `P.lock`: fast links destroyed so far.
+Called with `P.lock` held and `p->info.pipeline` just replaced by the optimised pipeline. A full memory fence makes the
+new handle visible before the submission count is read. `fast_retired` (under `P.lock`) counts the fast links
+destroyed so far.
 
-### `fast_retire()`
+### `pressure_release()`, `release_drain()`, `releasable()`
 
-`P.lock` held, `p->info.pipeline` just replaced by the optimised pipeline: the fast link goes once the GPU is done with
-it.
-
-- `__atomic_thread_fence(__ATOMIC_SEQ_CST)`: the new handle is visible before the submission count is read.
-
-### Pipelines no draw has used, given back while video memory is short
+Pipelines no draw has used, given back while video memory is short.
 
 The boot builds the recorded pipelines ahead of play (the prewarm and the shipped pipeline list), and the driver keeps
 each one's compiled code in video memory until it is destroyed. In a 4K session with DLSS and frame generation the
@@ -1690,8 +1677,9 @@ once the GPU is past the submission being recorded and one more (as `fast_retire
 (`runtime/vk/vk_sync.c` `completion_main()`), so a batch of destroys there held every fence wait of the drawing threads.
 A draw that needs one later misses it as it would a pipeline never built (`pipe_miss()`): its stage libraries link it,
 or the look-ahead queued them (`vk_pipeline_hint()`), and its optimised build comes from the pipeline cache, which still
-holds it. Only entries no lookup reached go (`used_min` 0; `pipe_minute` is set before the first lookup,
-`ensure_init()`), so no draw's memo (`runtime/vk/vk_exec_draw.c`, the PM context) nor any caller holds their
+holds it. Only entries no lookup reached go (`releasable()`, under `P.lock`: `used_min` 0; `pipe_minute` is set before
+the first lookup,
+`ensure_init()`), so no draw's memo (`PM` in `runtime/vk/vk_exec_draw.c`) nor any caller holds their
 `VkPipeInfo`. Not taken: mesh pipelines (without stage libraries their build is long), entries building or with a link
 queued, failed ones, and compute pipelines. The next pass logs the device-local use then and now, so a log says what a
 batch gave back.
@@ -1700,63 +1688,50 @@ The use counts the free space inside the allocator's blocks as free, as the text
 (`runtime/vk/vk_texture.c` `sweep_pressure()`): the driver's figure (`vk_mem_vram`) counts it as used, so with free
 blocks it could stay over the line while pipelines went, and every pass would give back another batch until no unused
 pipeline was left. `NX2SARIA_PIPE_RELEASE=0` keeps every pipeline for the run, as before 0.10.0, and so does
-`NX2SARIA_TEX_VRAM_PRESSURE=0`, which keeps the textures from giving way for video memory.
+`NX2SARIA_TEX_VRAM_PRESSURE=0`, which turns the textures' giving way for video memory off
+(`runtime/vk/vk_texture.c` `sweep_pressure()`), and the pipelines' with it.
 
-- `#define RELEASE_DRAIN 64`: destroyed per autosave tick (500 ms) at most: faster than `RELEASE_BATCH` per
+- `RELEASE_DRAIN` (64): destroyed per autosave tick (500 ms) at most: faster than `RELEASE_BATCH` per
   `RELEASE_EVERY_MS`.
-- `static uint64_t rel_used0`: device-local use (MiB) when the last batch went; 0 none to report.
-
-`rel_tail`: Entries out of the table, linked through next in the order they went (so by `rel_fence`), until
-`release_drain()` destroys them. Only the autosave thread touches the list (`pressure_release()`, `release_drain()`): no
-lock.
-
-### `release_drain()`
-
-The autosave thread, each tick: destroys the released entries whose fence the GPU is past. None after a device loss
-(`runtime/vk/vk_device.c` `vk_device_lost_check()`): the device is not called any more.
-
-### `releasable()`
-
-Caller holds `P.lock`.
-
-### `pressure_release()`
-
-- `else if (!pct)`: 0 turns the textures' giving way off (`runtime/vk/vk_texture.c` `sweep_pressure()`): the pipelines'
-  too.
+- `rel_used0`: device-local use (MiB) when the last batch went; 0 none to report.
+- `rel_head`, `rel_tail`: entries out of the table, linked through `next` in the order they went (so by `rel_fence`),
+  until `release_drain()` destroys them. Only the autosave thread touches the list (`pressure_release()`,
+  `release_drain()`): no lock.
+- `release_drain()` runs on the autosave thread, each tick, and destroys the released entries whose fence the GPU is
+  past. None after a device loss (`runtime/vk/vk_device.c` `vk_device_lost_check()`): the device is not called any
+  more.
 
 ### `job_build()`
 
-The whole build of job j, which the caller took off its queue, and the job's end: its pipeline is entered, the threads
-waiting for it are woken and j is freed. lowrun: 1 on a pool worker that took j from the low queue. Caller holds
-`P.lock`, which is released for the build.
-
-- `if (pipe || !j->p->fast) __atomic_store_n(&j->p->info.pipeline, pipe, __ATOMIC_SEQ_CST)`: a failed optimised build
-  keeps the fast-linked one.
-- `if (pipe && (!j->prebuild || j->demanded)) perf_count(PERF_CNT_PIPE_ASYNC)`: a draw waited for it.
-
+The whole build of job `j`, which the caller took off its queue, and the job's end: its pipeline is entered, the
+threads waiting for it are woken and `j` is freed. `lowrun`: 1 on a pool worker that took `j` from the low queue.
+Caller holds `P.lock`, which is released for the build. A failed optimised build keeps the fast-linked pipeline.
+`PERF_CNT_PIPE_ASYNC` counts a build a draw waited for.
 ### `pipe_worker()`
 
-- `int resting = 0`: at rest for the play gate (`play_rest()`), since `rest_t0`.
-- With 3 or more workers one never takes low-queue work, so a waiting draw's library starts at once (not with
-  `NX2SARIA_PIPE_WAIT=draw`).
-- `if (U.head)`: a library a draw waits for.
-- `u_run(lj)`: releases `P.lock` while building.
-- `double held = 0`: the low job's reservation at the memory gate.
-- A heavy frame in play (`play_rest()`): the low job stays queued. A draw that needs its pipeline moves it to the draw
-  queue (promote), which wakes this wait; otherwise the frame is looked at again in 100 ms. A resting worker counts as
-  idle: a draw that waits gives its job to the pool rather than building it on its own thread (`job_wanted()`).
-- No room for a background build now (`gate_enter()`). The job stays queued: a draw that needs its pipeline moves it to
-  the draw queue (promote), which wakes this wait; otherwise the gate is asked again in 2 s.
-- `if (j->low != A.prio_low[me])`: under `P.lock`, so a draw raising this thread (promote) is not undone.
-- Step 1 for a job a draw waits for: its stage libraries and the fast link. Step 2, the optimised build, goes to the
-  head of the low queue, so a burst of new pipelines gets every fast link before any optimised build.
-- `VkPipeline f = gpl_link(&j->s, &j->k, j->p->lay, 1, &final)`: releases `P.lock` while building.
+A pool worker's loop, under `P.lock` except while it builds:
+
+1. It sleeps while there is nothing for it. With 3 or more workers one never takes low-queue work, so a waiting draw's
+   library starts at once (not with `NX2SARIA_PIPE_WAIT=draw`).
+2. A library a draw waits for (`U.head`) comes first (`u_run()`, at normal priority).
+3. Then the draw queue; with that empty, a low job, which passes two gates. A heavy frame in play (`play_rest()`,
+   only with stage libraries): the low job stays queued and the worker is at rest (`resting`, since `rest_t0`). A draw
+   that needs its pipeline moves it to the draw queue (`promote()`), which wakes this wait; otherwise the frame is
+   looked at again in 100 ms. A resting worker counts as idle: a draw that waits gives its job to the pool rather than
+   building it on its own thread (`job_wanted()`). No room for a background build (`gate_enter()`, `held` being the
+   job's reservation): the job stays queued the same way, and the gate is asked again in 2 s; the log says when the
+   builds wait and when they go on.
+4. The thread's priority follows the job's (`A.prio_low`), changed under `P.lock`, so a draw raising this thread
+   (`promote()`) is not undone.
+5. Step 1 for a job a draw waits for: its stage libraries and the fast link (`gpl_link()`, which releases `P.lock`).
+   Step 2, the optimised build, goes to the head of the low queue, so a burst of new pipelines gets every fast link
+   before any optimised build. A job without a fast link is built whole at once (`job_build()`).
 
 ### `workers_start()`
 
 Starts the pool on first use: a quarter of the logical processors, 2 to 4. Caller holds `P.lock`.
 
-- `A.thread[A.threads++] = t`: kept: `promote()` raises a worker running a prebuild job.
+- The pool's threads are kept in `A.thread`: `promote()` raises a worker running a prebuild job.
 - Workers for stage libraries and fast links alone: two (the vertex and fragment libraries of one waiting draw in
   parallel), and as many as the pool has with the look-ahead, which queues the libraries of a whole submission's new
   pipelines at once (`vk_pipeline_hint()`), or with the fast links of skipped draws (`lib_worker()`). They sleep unless
@@ -1764,21 +1739,18 @@ Starts the pool on first use: a quarter of the logical processors, 2 to 4. Calle
 
 ### `workers_drain()`
 
-- `for (Job *j = A.low, *n; j; j = n)`: queued prebuild jobs are dropped, not built.
-- `for (LibJob *j = U.head, *n; j; j = n)`: queued library jobs too: their entries read as failed builds.
-- `if (j->b) j->b->job = NULL, j->b->building = 0`: a draw's fast link (`link_queue()`) names its pipeline, not a
-  library.
+Before the shutdown: queued prebuild jobs are dropped, not built, and queued library jobs too, whose entries then read
+as failed builds (a draw's fast link, `link_queue()`, names its pipeline, not a library). Then it waits for what is
+running.
 
 ### `promote()`
 
 A draw needs a pipeline a prebuild job owns: the job moves to the draw queue, or its worker to normal priority. Caller
-holds `P.lock`.
-
-- `if (U.lib_workers) plat_cond_signal(&lib_cv)`: its fast link (`lib_worker()`).
+holds `P.lock`. A job moved to the draw queue also wakes a library worker for its fast link (`lib_worker()`).
 
 ### `job_wanted()`
 
-A draw waits up to `wait_ms` for the pipeline of job j, which has no fast link (a pipeline without stage libraries, as a
+A draw waits up to `wait_ms` for the pipeline of job `j`, which has no fast link (a pipeline without stage libraries, as a
 mesh pipeline is with `NX2SARIA_GPL_MESH=0`, or one whose link failed) and so needs its whole build. While the job is
 still queued the wait buys nothing: the draw queue is first in, first out, and the jobs before it are the fast links and
 builds of other draws' misses, so on a burst of new pipelines the one a draw stood waiting for started last and the draw
@@ -1791,10 +1763,8 @@ was skipped at the end of its wait all the same.
   A wait inside a budget is never turned into a build on this thread: a whole mesh pipeline takes 0.2 to 1.1 s to
   compile, and the budget exists so that the replay thread is not held that long.
 
-Caller holds `P.lock`; it is released while the job is built here.
-
-- `if (!j || j->worker != -1 || j->low) return`: running already, or gone.
-- `if (q)`: to the head.
+Caller holds `P.lock`; it is released while the job is built here. A job that is running already, in the low queue or
+gone is left alone.
 
 ### `mesh_pair_layout()`
 
@@ -1815,37 +1785,35 @@ too. `*queued`: 1 when a job owns it. Caller holds `P.lock`.
   modules), and the pipeline has no fast link. They go to the workers like the others: built here, each new one stopped
   the frame for its whole compile (0.26-0.51 s in Kokiri Forest), and they are recorded for the boot prewarm
   (`keys_note()`).
-- `span = 1`: the fragment module keeps its bindings, in set 1.
-- `if (U.lib_workers && fast_workers()) plat_cond_signal(&lib_cv)`: its fast link (`lib_worker()`).
+- With a stage-independent layout the fragment module keeps its bindings, in set 1 (`span` 1, so `fs_off` 0).
+- A job queued for a draw also wakes a library worker for its fast link (`lib_worker()`).
 
 ### `job_lower()`
 
 A job still in the draw queue goes to the head of the low queue: its pipeline has (or is about to have) a fast-linked
 one, so the optimised build waits behind other draws' misses. Caller holds `P.lock`.
 
-### `u_push()`
-
-A draw waits for pipeline s: its missing pre-rasterization and fragment shader libraries go to the head of the worker
-queues (U), so they build in parallel on idle workers, and this thread sleeps until both are published or end
-(`now_ms()`) passes. A job no worker took within 1 ms (all busy) is built here. Caller holds `P.lock`.
-
 ### `lib_queue()`
 
-Queues s's missing pre-rasterization and fragment shader libraries (b: both entries). 0 when one cannot be entered (no
-layout half, out of memory). Caller holds `P.lock`.
-
-- `if (!half_layout(l, i)) return 0`: `gpl_link()` reports it.
+Queues `s`'s missing pre-rasterization and fragment shader libraries at the tail of `U` (`u_push()`); `b`: both
+entries. 0 when one cannot be entered (no layout half, which `gpl_link()` reports, or out of memory). Caller holds
+`P.lock`.
 
 ### `link_queue()`
 
-A waiting draw's whole fast link of p on the library workers: its library jobs, then the link job behind them. The
+A waiting draw's whole fast link of `p` on the library workers: its library jobs, then the link job behind them. The
 caller then waits for `p->info.pipeline`. 0 when nothing was queued (the caller links as before). Under `P.lock`.
 
 ### `lib_wait()`
 
-- `lib_steal(q)`: releases `P.lock` while building.
+A draw waits for pipeline `s`: its missing pre-rasterization and fragment shader libraries are queued for the workers
+(`lib_queue()`), so they build in parallel on idle workers, and this thread sleeps until both are published or `end`
+(`now_ms()`) passes. Without library workers, a job no worker took within 1 ms (or with none idle) is built here
+(`lib_steal()`, which releases `P.lock` while building). Caller holds `P.lock`.
 
-### Stage libraries ahead of their draws
+### `vk_pipeline_hint()`
+
+Stage libraries ahead of their draws.
 
 `NX2SARIA_PIPE_AHEAD`, default 1; 0 off; `runtime/vk/vk_exec.c` "looking ahead".
 
@@ -1856,34 +1824,27 @@ its thread in microseconds instead of waiting for them or being skipped while th
 pipeline, no optimised build and no key record: a state the scan guessed wrong costs two libraries at most. The feedback
 loop bits, the topology and the targets do not matter here, as no shader library depends on them. A mesh draw is named
 too where mesh pipelines have stage libraries (`mesh_libs()`): its task and mesh library is the one that takes longest
-to make. Returns the libraries queued.
-
-### `vk_pipeline_hint()`
-
-- `U.waits = w0, U.queued = q0`: those count waiting draws' jobs.
+to make. Returns the libraries queued. `U.waits` and `U.queued` are put back after the queueing: those count waiting
+draws' jobs.
 
 ### `graphics()`
 
+The lookup of a draw's pipeline (`vk_pipeline_graphics()`, `vk_pipeline_graphics_async()`), under `P.lock`: found, or
+entered by `pipe_miss()`. For a pipeline that is building and has no fast link yet:
+
 - A draw that would wait (`wait_ms`) gets its missing shader libraries built at once, the vertex and fragment ones in
-  parallel on idle workers (`lib_wait()`; about 0.12 ms per library from the driver's disk cache, 5-180 ms cold), and
-  links them here: its own job may queue behind optimised builds of earlier pipelines. The job then only does the
-  optimised build, from the low queue. Other draws leave the libraries to the job and are skipped meanwhile.
-  `NX2SARIA_PIPE_WAIT=draw` builds them on this thread one after the other instead, as before;
+  parallel on idle workers (about 0.12 ms per library from the driver's disk cache, 5-180 ms cold): its own job may
+  queue behind optimised builds of earlier pipelines. The job then only does the optimised build, from the low queue
+  (`job_lower()`): its worker would only wait for the same libraries. Other draws leave the libraries to the job and
+  are skipped meanwhile. `NX2SARIA_PIPE_WAIT=draw` builds them on this thread one after the other instead, as before;
   `NX2SARIA_GPL_DRAW_BUILD=0` leaves them to the job.
-- The libraries and the link on the library workers; this thread waits below without building.
-- `job_lower(p->job)`: its worker would only wait for the same libraries; it links them if this draw cannot.
-- `lib_wait(s, &k, (Layout *)p->lay, end)`: releases `P.lock` while waiting.
-- `build = 0`: links here when both libraries exist (`gpl_link()` build 0).
-- `p->fast_tried = 1`: the job, if a worker takes it meanwhile, goes straight to the optimised build.
-- `VkPipeline f = p->info.pipeline ? VK_NULL_HANDLE : gpl_link(s, &k, p->lay, build, &final)`: build 1 releases
-  `P.lock`.
-- `vkDestroyPipeline(P.device, f, NULL)`: a worker published one while the lock was free.
-- `uint64_t p0 = wait_ms ? perf_begin() : 0`: the wait counts as the render thread's pipeline time.
-- `if (wait_ms) job_wanted(p->job, wait_ms)`: releases `P.lock` when it builds the job here.
-
-### Boot prewarm from the key file
-
-See "Pipeline keys" above.
+- With library workers the libraries and the link go to them (`link_queue()`), and this thread waits without building.
+  `fast_tried` is set, so the job, if a worker takes it meanwhile, goes straight to the optimised build.
+- Without them the libraries are waited for (`lib_wait()`, which releases `P.lock`) and linked here when both exist
+  (`gpl_link()` with `build` 0); with `NX2SARIA_PIPE_WAIT=draw`, `gpl_link()` builds them (`build` 1 releases
+  `P.lock`). A link a worker made obsolete by publishing a pipeline while the lock was free is destroyed.
+- The wait that follows counts as the render thread's pipeline time. `job_wanted()` releases `P.lock` when it builds
+  the job here.
 
 ### `warm_builder()`
 
@@ -1891,51 +1852,54 @@ Builds queued prebuild jobs until the low queue is empty or `K.until` passes, be
 bookkeeping). Jobs left queued at `K.until` stay for the pool. So do those the memory gate refuses (`gate_enter()`): a
 builder it refuses ends, which leaves fewer builders compiling side by side while the others' reservations stand, and
 none when the machine has no room; the pool builds what is left during play, when the gate lets it. arg non-NULL: one
-job at most. The builders start with one pipeline built alone on the starting thread: a driver's first graphics pipeline
+job at most (`arg` non-NULL). The builders start with one pipeline built alone on the starting thread: a driver's first
+graphics pipeline
 sets up its compiler, and NVIDIA's 621.14 was reported to fault in a sizable share of starts when every builder began
 its first pipeline at the same moment.
 
-- `j->low = 0`: not on a pool thread: `promote()` has nothing to raise.
-- `if (pipe || !j->p->fast) __atomic_store_n(&j->p->info.pipeline, pipe, __ATOMIC_SEQ_CST)`: a failed optimised build
-  keeps the fast-linked one.
+A job it takes is no longer low: it is not on a pool thread, so `promote()` has nothing to raise. A failed optimised
+build keeps the fast-linked pipeline, as in `job_build()`.
 
-### `vk_pipeline_boot_stats()`
+### `vk_pipeline_prewarm_progress()`, `vk_pipeline_boot_stats()`
 
 `pw_phase`: `vk_pipeline_prewarm_progress()`'s numbers: the phase, and the pipelines finished (built or failed) of those
 queued, copied while `prewarm_run()` waits for its builders; in phases 3 and 4 (`bf_wait()`) the compute pipelines and
 the prepared variants.
 
-`pw_boot_built`: The boot prewarm's pipelines built and its pipeline stage's time, once it ended
+`pw_boot_built`, `pw_boot_ms`: the boot prewarm's pipelines built and its pipeline stage's time, once it ended
 (`vk_pipeline_boot_stats()`); -1 before.
 
-### `bf_waiting()`
+### `bf_waiting()`, `vk_pipeline_prewarm_detach()`
 
 1 while the start waits for the builders of the whole warm: they run at normal priority on every core then, and as in
 play (idle priority, the background's thread counts) from the moment the game starts.
 
-`BF`: The whole warm on the boot screen after a driver change (see `bf_decide()`).
+`BF`: the whole warm on the boot screen after a driver change (`bf_decide()`).
 
 - `int on`: this start waits for all of it.
 - `int lw`: `lb_start()` left the library warm's start to `bf_wait()`.
-- `volatile int32_t game`: the wait is over: the warm ended, or the boot let the game start beside it.
+- `volatile int32_t game`: the wait is over: the warm ended, or the boot let the game start beside it
+  (`vk_pipeline_prewarm_detach()`).
 - `double t_end`: `now_ms()` at which the whole warm's time on the boot screen is up; 0 no limit.
 - `char owed[PLAT_PATH_MAX * 2 + 48]`: `boot-warm-owed.txt`.
 
 ### `vk_pipeline_prewarm()`
 
-The boot's share of the pipeline prebuild with the graphics pipeline library. The boot builds the recorded pipelines in
-record order, so those met first in play (the title screen, the first places) come first, for at most this long after
-the shaders are ready; the rest stay queued for the pool workers, which build them below normal priority while the game
-runs. A draw that meets one of them before it is built gets a pipeline linked from stage libraries at once
-(`gpl_link()`), as for any new pipeline in play. After a driver update, when every pipeline is built from nothing, the
-boot waits for all of them and for the rest of the warm (`bf_decide()`). Without the library a draw would have to wait
-for a whole build, so the boot waits for all; so it does with `NX2SARIA_PREWARM_FULL=1.`.
+`PREWARM_PIPE_MS` (20 s) is the boot's share of the pipeline prebuild with the graphics pipeline library. The boot
+builds the recorded pipelines in record order, so those met first in play (the title screen, the first places) come
+first, for at most this long after the shaders are ready; the rest stay queued for the pool workers, which build them
+below normal priority while the game runs. A draw that meets one of them before it is built gets a pipeline linked from
+stage libraries at once (`gpl_link()`), as for any new pipeline in play. After a driver update, when every pipeline is
+built from nothing, the boot waits for all of them and for the rest of the warm (`bf_decide()`). Without the library a
+draw would have to wait for a whole build, so the boot waits for all; so it does with `NX2SARIA_PREWARM_FULL=1`.
 
-### Mesh pipelines' stage libraries ahead of their draws
+### `mesh_pre_note()`, `mesh_pre_worker()`, `mesh_pre_start()`, `mesh_pre_run()`
+
+Mesh pipelines' stage libraries ahead of their draws.
 
 The shader preparation and the boot build the stage libraries of single shaders (`lb_library()`): one vertex or one
 fragment shader is all such a library holds. A mesh pipeline's pre-rasterization library holds its mesh stage and its
-task stage together, and its fragment shader library depends on what that mesh stage leaves unwritten (FsKey), so these
+task stage together, and its fragment shader library depends on what that mesh stage leaves unwritten (`FsKey`), so these
 are taken from the pipeline records, which name all three shaders: every recorded mesh pipeline the boot queues
 (`prewarm_run()`) and every listed one the preparation builds (`seed_pipelines()`) notes its two shader libraries here,
 each key once. They are built once and destroyed, as the single shaders' libraries are, which leaves them in the
@@ -1959,26 +1923,17 @@ milliseconds, where it was compiled whole before.
 - `uint32_t n, cap, n_pr`: `n_pr`: the pre-rasterization libraries among them.
 - `int boot`: the builder runs beside the game: idle priority, the memory gate.
 - `PlatThread *th`: the boot's builder.
-- `uint64_t built, have, fail`: have: a draw had made the library by the time its turn came.
+- `uint64_t built, have, fail`: `have`: a draw had made the library by the time its turn came.
 
-### `mesh_pre_note()`
+`mesh_pre_note()` notes the two shader libraries of mesh pipeline `s` (key `k`), a pipeline with stage libraries
+(`mesh_libs()`), for `mesh_pre_worker()`. Caller holds `P.lock`; no builder runs yet.
 
-Notes the two shader libraries of mesh pipeline s (key k), a pipeline with stage libraries (`mesh_libs()`), for
-`mesh_pre_worker()`. Caller holds `P.lock`; no builder runs yet.
+`mesh_pre_worker()`:
 
-### `mesh_pre_worker()`
-
-- `int idle = MP.boot && !bf_waiting()`: as the boot's other builders: normal priority while the start waits.
-- `plat_thread_priority(PLAT_PRIO_NORMAL)`: `P.lock` is never held at idle priority: the replay takes it.
-- `__atomic_fetch_add(&cache_merges, 1, __ATOMIC_RELAXED)`: `autosave_once()`: no pipeline count tells of it.
-
-### `mesh_pre_start()`
-
-Boot: the noted libraries on one thread beside the game.
-
-### `mesh_pre_run()`
-
-Preparation: the noted libraries on up to `threads` threads; returns when all are built.
+- It runs as the boot's other builders: at idle priority beside the game, at normal priority while the start waits
+  (`bf_waiting()`). `P.lock` is never held at idle priority, as the replay takes it: the thread goes to normal priority
+  before it locks.
+- Each library built adds to `cache_merges`, for `autosave_once()`: no pipeline count tells of it.
 
 ### `seed_boot()`
 
@@ -2001,45 +1956,53 @@ vertex output unions, so the modules stay the ones the preparation built.
 
 ### `prewarm_run()`
 
-- `uint32_t pr_hist[16] = {0}, fs_hist[4] = {0}`: library state of the recorded pipelines (`lb_start()`).
-- `if (!cfg_bool("NX2SARIA_PIPE_PREBUILD"))`: `prebuild_start()` logs the off case.
-- `const char *pe = cfg_get("NX2SARIA_PREWARM_XLATE")`: no fixed default: half the CPUs, at most 16, when unset.
-- `size_t carried = 0, fresh = 0`: the recorded pipelines' shaders by where their translation came from.
-- `if (P.indep)`: vertex output unions first: workers may take a job before the queue is complete.
-- `if (pm_skipped())`: the boot's pipeline builds killed an earlier start on this GPU and driver.
-- A mesh pipeline of the shared list (`keys_open_seed()`) on a GPU without mesh shaders, which draws them through the
-  mesh fallback: none to build, as the preparation skips it (`seed_pipelines()`). With the mesh emulation
-  (`NX2SARIA_MESH_EMULATION`) it is a vertex pipeline and its compute stages (`pipe_miss()`: `layout_get_emu()`), built
-  here like the others: left to the first draw, each took 113-830 ms on an RX 580 and the draws waiting for it were
-  skipped (22 of the 48 pipelines missed entering Kokiri Forest, 0.9.1), frames held back or shown without them. With
-  the mesh fallback on a device that has mesh shaders (`runtime/vk/vk_mesh_path.h`: AMD's driver for RDNA 1 and 2) none
-  is built either: no mesh draw uses one, and that driver is not to compile them.
-- `if (!is_mesh(&s))`: the state of the single shaders' libraries (`lb_state()`): vertex pipelines decide it.
-- `} else if (mesh_libs())`: a mesh pipeline's libraries are built with its own state (`mesh_pre_start()`).
-- `if (!at_boot && i >= K.own_n && !is_mesh(&s))`: of the shared list alone: made at its first draw (`seed_boot()`).
-- A cache file of another device or driver (a driver update: `cache_data_read()`) leaves every recorded pipeline to be
-  built from nothing, and the ones the boot left after `PREWARM_PIPE_MS` were built beside the game: on an 8-core
-  integrated GPU that start had 2,141 of 8,122 left after 20 s and took 296 s to finish them. The whole warm
-  (`bf_decide()`) waits for all of them, with its count on the boot screen, as a start without the library does.
-- `K.until = P.gpl && !all ? now_ms() + PREWARM_PIPE_MS : 0`: before the builders start.
-- The whole warm's own limit: what it leaves goes to the pool's workers, as after `PREWARM_PIPE_MS`.
-- `if (queued) warm_builder((void *)1)`: the first alone (`warm_builder()`).
-- `while (!plat_thread_join_ns(t[i], 100000000u))`: every 100 ms the numbers, every 2 s a log line.
-- `if (!later)`: all built: wait for those a pool worker took.
-- `else`: the boot's time is up: the pool builds the rest while the game runs.
-- After an update with another translator: a record names its shaders by input id, which no translator changes, so every
-  record still finds its shaders, and the pipeline cache gives the pipeline back wherever the translation in use is the
-  one it was built from. The line below this one says how many it gave back.
-- `vk_pipeline_prewarm_marker_clear()`: the boot's share is done; what the pool builds later runs during play.
+The boot's build of the recorded pipelines. With `NX2SARIA_PIPE_PREBUILD=0` it only starts the stage library prebuild
+(`lb_start()`); `prebuild_start()` logs the off case.
+
+1. The shaders the records name are translated or loaded (`gfx_shader_prewarm()`), with `NX2SARIA_PREWARM_XLATE`
+   translator processes, half the CPUs and at most 16 when unset. `carried` and `fresh` count them by where their
+   translation came from. After an update with another translator a record still finds its shaders, as it names them
+   by input id, which no translator changes, and the pipeline cache gives the pipeline back wherever the translation in
+   use is the one it was built from; the log line after the build says how many shaders changed.
+2. With stage-independent layouts (`P.indep`) the vertex output unions are made first (`vs_outs()`): workers may take a
+   job before the queue is complete.
+3. When an earlier start on this GPU and driver died in these builds (`pm_skipped()`) nothing is built ahead of play.
+   Otherwise the crash marker is written (`pm_set()`) and the whole warm decided (`bf_decide()`).
+4. Each record is entered (`pipe_miss()`, mode 2). `pr_hist` and `fs_hist` count the library state of the vertex
+   pipelines, which decides the single shaders' libraries (`lb_state()`, `lb_start()`); a mesh pipeline's libraries are
+   built with its own state (`mesh_pre_note()`, `mesh_pre_start()`). A pipeline of the shared list alone, not a mesh
+   one, is left to its first draw where `seed_boot()` says so.
+5. Builders start (`warm_builder()`), the first pipeline alone, then one per CPU up to 64. With the library
+   (`P.gpl`) the boot's share ends at `K.until = now_ms() + PREWARM_PIPE_MS`, set before the builders start; without
+   it, with `NX2SARIA_PREWARM_FULL=1` or with the whole warm, the boot waits for all; with the library the whole warm
+   keeps its own limit (`BF.t_end`), after which what is left goes to the pool's workers as after `PREWARM_PIPE_MS`.
+   While it waits it copies the count for the boot screen every 100 ms and logs it every 2 s.
+6. With nothing left in the low queue it waits for the jobs a pool worker took; otherwise the pool builds the rest while
+   the game runs. Then the marker is cleared (`vk_pipeline_prewarm_marker_clear()`): what the pool builds later runs
+   during play. The stage library prebuild starts (`lb_start()`), and the whole warm's wait follows (`bf_wait()`).
+
+Mesh pipelines are dropped on a GPU that draws them through the mesh fallback (no mesh shaders and no mesh emulation):
+none to build, as the preparation skips them too (`seed_pipelines()`). With the mesh emulation
+(`NX2SARIA_MESH_EMULATION`) one is a vertex pipeline and its compute stages (`pipe_miss()`: `layout_get_emu()`), built
+here like the others: left to the first draw, each took 113-830 ms on an RX 580 and the draws waiting for it were
+skipped (22 of the 48 pipelines missed entering Kokiri Forest, 0.9.1), frames held back or shown without them. With the
+mesh fallback on a device that has mesh shaders (`runtime/vk/vk_mesh_path.h`: AMD's driver for RDNA 1 and 2) none is
+built either: no mesh draw uses one, and that driver is not to compile them.
+
+A cache file of another device or driver (a driver update: `cache_data_read()`) leaves every recorded pipeline to be
+built from nothing, and the ones the boot left after `PREWARM_PIPE_MS` were built beside the game: on an 8-core
+integrated GPU that start had 2,141 of 8,122 left after 20 s and took 296 s to finish them. The whole warm
+(`bf_decide()`) waits for all of them, with its count on the boot screen, as a start without the library does.
 
 ### Boot prebuild crash marker
 
 The boot builds the recorded pipelines (`warm_builder()`) before the game starts. A driver whose compiler crashes on one
-of them would kill every start at the same point, and the preparation journal above does not cover these builds. So
+of them would kill every start at the same point, and the preparation's journal (Preparation that outlives a driver
+crash, below) does not cover these builds. So
 `<dir>`/`pipeline-prewarm-running.txt` exists while they run: written before the first one, deleted when the boot's
 share ends (or when the boot stops waiting and lets the game start). A start that finds it left over records this GPU
 and driver in `<dir>`/`pipeline-prewarm-skip.txt`, and starts on them build no recorded pipelines ahead of play: each
-one is built at its first draw instead, as with `NX2SARIA_PIPE_PREBUILD=0.` Another driver version, or deleting the
+one is built at its first draw instead, as with `NX2SARIA_PIPE_PREBUILD=0`. Another driver version, or deleting the
 file, brings the prebuild back. Only the boot's own share is covered: a crash during play, where the pool also builds
 what the boot left, says nothing about these builds. An orderly end of the process during the boot (the window closed,
 the guest's ExitProcess, a `--seconds` run) deletes the marker as well.
@@ -2066,11 +2029,13 @@ library builds run. The file is all the next start needs; nothing here allocates
 
 ### `pm_skipped()`
 
-- `if (what == BOOT_END_OTHER)`: another GPU or driver's builds.
+1 when this start builds no recorded pipeline ahead of play: `pipeline-prewarm-skip.txt` lists this GPU and driver. A
+marker left over is settled first (`boot_end_decide()`): one of another GPU's or driver's builds is deleted; a crash, or
+`BOOT_QUIET_ENDS` quiet ends in a row, adds this GPU and driver to the skip file; a quiet end is counted (`pm_quiet`).
 
 ### `pm_set()`
 
-- Straight to the disk: the file has to be there if the driver takes the process down a moment later.
+Writes the marker, the GPU and driver and the quiet ends so far, straight to the disk: the file has to be there if the driver takes the process down a moment later.
 
 ### The whole warm on the boot screen after a driver change
 
@@ -2103,14 +2068,15 @@ machine's, and a slow one would sit on the screen for half an hour. At the limit
 on as on any other start: the recorded pipelines on the pool's workers, the compute pipelines and the library warm on
 their idle threads (`vk_pipeline_prewarm_detach()`). The file then says "done" as well: the boot screen had its turn,
 and the rest is the background's, as it always was. `NX2SARIA_PREWARM_WAIT_MS` and a minute without progress end the
-wait the same way, as for any prewarm (`boot_wait`).
+wait the same way, as for any prewarm (`boot_wait()`).
 
 `NX2SARIA_PREWARM_FULL=0` turns the whole warm off. Not for a `--shot` image, which no build timing may change and which
 nobody watches.
 
 ### `bf_decide()`
 
-- `if (f) plat_file_delete(BF.owed)`: another GPU's or driver's.
+Decides from `boot-warm-owed.txt` whether this start waits for the whole warm (`boot_warm_decide()`), and sets `BF`. A
+file of another GPU or driver is deleted. Not with `NX2SARIA_PREWARM_FULL=0` or for a `--shot` image.
 
 ### `prebuild_start()`
 
@@ -2121,18 +2087,15 @@ records are not built. Caller holds no lock.
 
 `NX2SARIA_SPV_OVERRIDE`=`<dir>` (test): a compute shader whose SPIR-V hashes (FNV-1a over its bytes, the name
 `runtime/vk/vk_dump.c` gives it) to a file `<dir>`/`<hash>`.spv runs that SPIR-V instead, an edited copy with the same
-interface, to see a shader's intermediate values in a frame dump. NULL: no override (malloc'd words otherwise).
+interface, to see a shader's intermediate values in a frame dump. NULL: no override; otherwise malloc'd words, their
+count in `*out`.
 
 ### `fog_skip_block()`
 
-A skipped froxel's exit in the fog's first compute pass: the block at word at (an OpLabel) makes five image writes, four
-of (0,0,0,1) and last the mask value (1/255,0,0,0), and returns.
-
-- `if (op == 253) return writes == 5`: OpReturn.
-- `if (op == 248 || op == 249 || op == 250) return 0`: OpLabel, OpBranch, OpBranchConditional.
-- `if (op == 99)`: OpImageWrite.
-- `if (!c || (w[c] & 0xffff) != 80 || w[c] >> 16 != 7) return 0`: OpCompositeConstruct of four.
-- `if (!f || (w[f] & 0xffff) != 43 || w[f] >> 16 != 4) return 0`: OpConstant of one word.
+1 when the block at word `at` (an OpLabel) is a skipped froxel's exit in the fog's first compute pass: five image writes
+(OpImageWrite, 99), four of (0,0,0,1) and last the mask value (1/255,0,0,0), each an OpCompositeConstruct (80) of four
+one-word OpConstants (43), then OpReturn (253). An OpLabel, OpBranch or OpBranchConditional (248, 249, 250) before the
+return means another block.
 
 ### `spirv_fog_keep_froxels()`
 
@@ -2145,12 +2108,10 @@ Returns the patched copy of that shader, NULL for any other. Found by its shape 
 translator updates: a branch whose other side is that exit, taken on !(distance > table) || flag. `NX2SARIA_FOG_CULL=1`
 keeps the game's skip.
 
-- `uint64_t *def = calloc(bound, sizeof *def)`: word of each id's definition, for the instructions looked at below.
-- `if (op == 248 && len >= 2 && w[i + 1] < bound) def[w[i + 1]] = i`: OpLabel.
-- `w[i + 3] < bound && def[w[i + 3]] && fog_skip_block(w, n, def[w[i + 3]], def, bound))`: OpSelectionMerge just before.
-- `for (int k = 0; c && (w[c] & 0xffff) == 166 && k < 2; k++)`: OpLogicalOr.
-- `if (!no || (w[no] & 0xffff) != 168 || w[no + 3] >= bound) continue`: OpLogicalNot.
-- `if (gt && (w[gt] & 0xffff) == 186) cmp = gt, found++`: OpFOrdGreaterThan.
+`def` holds the word of each id's definition, for the OpLabels and the instructions the match looks at. The match: an
+OpBranchConditional (250) with an OpSelectionMerge (247) just before, whose false side is that exit
+(`fog_skip_block()`), on an OpLogicalOr (166) one of whose operands is an OpLogicalNot (168) of an OpFOrdGreaterThan
+(186). Exactly one such comparison is patched: its second operand is made its first.
 
 ### `compute_warm_remember()`
 
@@ -2203,14 +2164,16 @@ Two places build what a draw would otherwise build while the game waits:
 
 Library state: the vertex output union known now (`vs_union_peek()`; the prewarm fills it from `pipeline-keys.bin`, the
 preparation has none), the clamp, polygon mode and depth mode most recorded pipelines use (defaults without a key file:
-clamp 0, fill, -w..w), single-sampled, no dual source; the state dynamic on this GPU is 0 in every key. A draw that
+clamp 0, fill, -w..w), the sample count most recorded pipelines use (single-sampled without a key file), no dual
+source (`lb_state()`); the state dynamic on this GPU is 0 in every key. A draw that
 meets such a variant in a new pipeline then gets its libraries from `libs[]` or the driver cache and fast-links
 (`gpl_link()`). `NX2SARIA_LIB_PREBUILD=0` turns the boot part off, =N stops it after N variants;
 `NX2SARIA_LIB_PREBUILD_THREADS` sets its thread count, `NX2SARIA_LIB_PREBUILD_BIG` its compute size limit
 (`LB_BIG_WORDS`).
 
 The boot part builds a compute shader over `LB_BIG_WORDS` SPIR-V words only from the pipeline caches (`compute_create()`
-`cached_only`); one that no cache holds is left to its first dispatch, like any shader outside the warm list. Play
+`cached_only`); one that no cache holds goes to the background builder (Large compute shaders on a background thread,
+below), or with `NX2SARIA_LIB_PREBUILD_BIG_BG=0` is left to its first dispatch, like any shader outside the warm list. Play
 recorded four straight-line compute shaders of 0.87-4.4 million words (one function of up to 888K instructions; the
 median of 3,648 compute shaders is 7,351 words, p99 64,844). NVIDIA 621.01 on an RTX 4090 compiled them on four prebuild
 threads for minutes at 100% CPU each while the process grew from 12 GB to 28-31 GB, until RAM ran out and the game
@@ -2223,9 +2186,10 @@ stuttered and went black a few minutes after boot. None finished, so no cache he
 - `volatile int32_t short_mem`: the memory gate refused a build for `GATE_WAIT_MS`: the workers ended.
 - `uint8_t clamp, poly, minus_w, samples`: library state (GKey fields).
 - `double t0, ms[3]`: ms: build time per kind (vertex, fragment, compute).
-- warmed: built for the caches only and destroyed; nolib: vertex and fragment variants skipped with the graphics
-  pipeline library off skipped: variants of the skip list (SK below).
-- `uint64_t big_words, deferred`: `LB_BIG_WORDS`; compute shaders over it left to their dispatch.
+- `uint64_t built[3], have[3], fail[3], warmed[3], noshader, nolib, skipped, done, cs_draw`: `warmed`: built for the
+  caches only and destroyed (`lb_count()`); `nolib`: vertex and fragment variants skipped with the graphics pipeline
+  library off; `skipped`: variants of the skip list (`SK`, below).
+- `uint64_t big_words, deferred`: the size limit (`lb_big_words_init()`); compute shaders over it left to their dispatch.
 - `uint64_t big_unused`: compute shaders over it that no run dispatched: not built at all.
 - `volatile int32_t kept`: libraries entered in `libs[]` so far.
 - `int idle`: build at `PLAT_PRIO_IDLE` (boot), normal (preparation).
@@ -2239,17 +2203,16 @@ The boot's builders run beside the game, at idle priority; not while the start w
 
 ### `lb_next()`
 
-Claim a boot job without dropping one when the extra workers finish the recent-pipeline prefix. Recent pipelines retain
-parallel creation; a single worker continues the complete tail. Explicit thread counts override this policy, and
-installer preparation uses its own queue at full concurrency. The CAS makes the prefix boundary exact even when two
-workers reach it together. No pipeline creation or dispatch waits on this queue lock. The whole warm (`bf_wait()`)
-starts more workers than go on beside a game: those end here once the game runs.
+Takes the next boot job (a compare-and-swap on `LB.next`); `LB.n` when there is none for this worker. Beside the game
+(`lb_idle()`) the workers from `LB.bg_threads` on take none: the whole warm (`bf_wait()`) starts more workers than go on
+beside a game, and those end here once the game runs. With `LB.tail_one` (no `NX2SARIA_LIB_PREBUILD_THREADS`) only
+worker 0 takes the jobs past `n_keep`: the compute shaders dispatched most recently are built in parallel, and one worker
+goes on with the rest of the list. The compare-and-swap makes that boundary exact when two workers reach it together; no
+pipeline creation or dispatch waits on it. The preparation uses its own queue at full concurrency.
 
 ### Preparation that outlives a driver crash
 
-A bug in the driver's shader compiler can kill the process inside.
-
-`vkCreate*Pipelines`: NVIDIA 615.78.08 on an RTX 5080 crashed on the same vertex library at the same point of every
+A bug in the driver's shader compiler can kill the process inside `vkCreate*Pipelines`: NVIDIA 615.78.08 on an RTX 5080 crashed on the same vertex library at the same point of every
 preparation, natively and under Wine, so preparation never finished (issue #30 and a report on PR #60). While
 `lb_warm_prepared()` builds, slot k of `<dir>`/`shader-prepare-journal.bin` holds the variant its worker k has handed to
 the driver (input id and stage; zeros between variants). The writes go straight to the OS, so they outlast the process,
@@ -2281,14 +2244,13 @@ vendor:device:driver version, as the skip list names a GPU and driver.
 ### `journal_fold()`
 
 The variants a leftover journal j (jn bytes, of file jp) names join the skip list's text `*s` (`*sn` bytes; NULL without
-a list) for this GPU and driver, and the list's file sp is written again. 1 when the journal may go: nothing in it, or
-the list holds it now.
-
-- `out[len] = 0`: parsed by `skip_init()` as the list's text.
+a list) for this GPU and driver, and the list's file sp is written again; the new text, NUL-terminated, replaces `*s`,
+which `skip_init()` parses next. 1 when the journal may go: nothing in it, the list holds it now, or no memory for the
+new text.
 
 ### `skip_init()`
 
-A journal a run that died left into the skip list, then the skip list's variants for this GPU and driver into SK. The
+Folds a journal that a run which died left into the skip list, then reads the skip list's variants for this GPU and driver into SK. The
 preparation's journal (`shader-prepare-journal.bin`) always counts. The boot's (`shader-warm-journal.bin`,
 `journal_open()`) counts only with the crash handler's note (`crash_noted()`): without it the start was closed or
 stopped while it waited, and the variants it happened to be building are no one's fault.
@@ -2312,15 +2274,14 @@ flight write nothing afterwards (`journal_mark()`).
 
 ### `cs_flight_has()`
 
-Compute shaders whose pipeline a thread is compiling now (`P.lock`): a cold driver takes about 2 s for one of Ocarina's
-large compute shaders. The replay used to compile under `P.lock`, which held every other pipeline lookup that long, and
+`cs_flight`: compute shaders whose pipeline a thread is compiling now (`P.lock`): a cold driver takes about 2 s for one of
+the game's large compute shaders. The replay used to compile under `P.lock`, which held every other pipeline lookup that long, and
 compiled a second copy of a pipeline the boot prebuild (`lb_compute()`) was already compiling.
 
 ### `cs_flight_add()`
 
-th: the thread a waiting dispatch raises to normal priority, NULL when it compiles at normal priority already.
-
-0 when the table is full (the caller compiles anyway).
+Enters cs in `cs_flight`. th: the thread a waiting dispatch raises to normal priority, NULL when it compiles at normal
+priority already. 0 when the table is full (the caller compiles anyway).
 
 - `static volatile uint8_t cs_flight_want[CS_FLIGHT]`: a dispatch waits for the slot's pipeline
   (`vk_pipeline_compute()`).
@@ -2414,10 +2375,9 @@ The number of records in a `compute-used.bin` image (f, size) with its header in
 
 ### `cu_read()`
 
-Reads the record at `CU.path` and marks what the boot keeps (`cu_open()`, `cu_open_prep()`).
-
-- `int count = cfg_int("NX2SARIA_COMPUTE_KEEP")`: a value that is neither "all" nor a number reads as the default.
-- `if (*s) continue`: an id twice: the first entry stands.
+Reads the record at `CU.path` and marks what the boot keeps; called by `cu_open()` and `cu_open_prep()`.
+`NX2SARIA_COMPUTE_KEEP` that is neither "all" nor a number reads as the default. An id in the file twice: the first
+entry stands. A file of another format or version is rewritten.
 
 ### `cu_open()`
 
@@ -2433,9 +2393,8 @@ install) keeps none, as a boot without it does.
 
 ### `cu_keep()`
 
-1 when the boot keeps the pipeline of the compute shader with this input id.
-
-- `int keep = CU.keep_n < 0 || !CU.opened`: without the record (no cache folder): as before, every one.
+1 when the boot keeps the pipeline of the compute shader with this input id. With `NX2SARIA_COMPUTE_KEEP=all`, or
+without the record (no cache folder), every one, as before.
 
 ### `cu_note()`
 
@@ -2449,8 +2408,8 @@ Writes the record to path. 1 when written.
 One writer at a time, from the copy of the record to the end of the file write: the autosave thread and a save at exit
 can both be here, and the older copy must not land on the newer file.
 
-- Allocated outside `CU.lock`, which a dispatch takes (`cu_note()`); room for the entries that come meanwhile.
-- `if (!ok)`: still to be written: the next flush tries again.
+The copy is allocated outside `CU.lock`, which a dispatch takes (`cu_note()`), with room for 256 entries that come
+meanwhile. A write that fails leaves the record dirty: the next flush tries again.
 
 ### `cu_flush()`
 
@@ -2462,23 +2421,21 @@ A compute pipeline created at a dispatch took ms. Caller holds `P.lock`.
 
 ### `cf_log()`
 
-- `typeof(CF) c = CF`: the line is written after the unlock: every dispatch needs `P.lock`, and this.
-- `plat_mutex_unlock_shared(&P.lock)`: runs on the autosave thread below normal priority.
+The line of `CF`. `CF` is copied under `P.lock` held shared and the line written after the unlock: every dispatch needs
+`P.lock`, and this runs on the autosave thread below normal priority.
 
 ### `vk_pipeline_compute()`
 
-`BG`: The background builder of large compute shaders (see `bg_main()`).
+A dispatch's compute pipeline, found or built on this thread. Its key is the shader alone (`{cs, 1}`, without padding:
+the key is hashed and compared as bytes).
 
-- `const GfxShader *volatile building`: the shader on the driver now, NULL between builds.
-- `volatile int32_t raised`: a dispatch waited for it and raised the thread.
-- `struct { const GfxShader *cs; uint64_t compute; } k = {cs, 1}`: no padding: the key is hashed and compared as bytes.
-- `while (!p && cs_flight_has(cs))`: another thread is compiling it: its result, not a second compile.
-- A build that only fills the pipeline cache keeps its pipeline for this dispatch, and a boot prebuild thread compiling
-  it below normal priority goes to normal.
-- `if (BG.building == cs && BG.th && !plat_xchg32(&BG.raised, 1))`: the background builder: normal priority now.
-- `plat_mutex_unlock(&P.lock)`: the compile runs without the lock.
-- `if ((p = pipe_find(&k, sizeof k, h)))`: another thread added it meanwhile (no flight slot was free).
-- `if (p && !p->used)`: the first dispatch of this run: the boot of the next runs keeps this shader's pipeline.
+- While another thread compiles it (`cs_flight_has()`), the dispatch waits for that result rather than compiling a
+  second copy, and raises the builder: a boot prebuild thread compiling it below normal priority goes to normal and keeps
+  the pipeline it would only have built for the cache (`cs_flight_wanted()`), and the background builder goes to normal
+  (`BG.raised`). A wait of 2 ms or more is logged, 16 times at most.
+- Otherwise it compiles here without `P.lock`, in a `cs_flight` slot, and counts the time (`cf_note()`). Another thread
+  may have added it meanwhile (no flight slot was free): its pipeline stands, this one is destroyed.
+- The first dispatch of this run notes the shader (`cu_note()`), so the boot of the next runs keeps its pipeline.
 
 ### `lb_count()`
 
@@ -2495,19 +2452,25 @@ A compute shader over `LB.big_words` that no pipeline cache holds: its first dis
 
 ### Large compute shaders on a background thread
 
-(`NX2SARIA_LIB_PREBUILD_BIG_BG`, default 1; 0 leaves them to their.
+`NX2SARIA_LIB_PREBUILD_BIG_BG`, default 1; 0 leaves them to their first dispatch as before.
 
-First dispatch as before) The boot prebuild leaves a compute shader over `LB.big_words` that no pipeline cache holds
-(`lb_compute()`). Its first dispatch then compiled it on the replay thread: frames of 0.65-1.9 s in Kokiri Forest on an
+The boot prebuild leaves a compute shader over `LB.big_words` that no pipeline cache holds (`lb_compute()`), and every
+one of them on a device without `pipelineCreationCacheControl`, where the caches cannot be asked. Its first dispatch then compiled it on the replay thread: frames of 0.65-1.9 s in Kokiri Forest on an
 RTX 5090 after a translator change. One thread builds them instead, once the boot prebuild is done, one at a time and
-the smallest first: four compiled side by side grew the process by 16-19 GB on an RTX 4090 (see `LB_BIG_WORDS`).
+the smallest first: four compiled side by side grew the process by 16-19 GB on an RTX 4090 (Stage library prebuild).
 The shader being built is in `cs_flight`, so a dispatch that needs it waits for this build (`vk_pipeline_compute()`
 raises the thread to normal priority then) instead of compiling a second copy. What is built is entered for the process,
 as `lb_compute()`'s pipelines are, and lands in `pipeline-cache.bin` for the next boot.
 
+`BG`:
+
+- `const GfxShader *volatile building`: the shader on the driver now, NULL between builds.
+- `volatile int32_t raised`: a dispatch waited for it and raised the thread.
+
 ### `bg_queue()`
 
-A large compute shader no cache holds goes to the background builder (`lb_worker()` threads; under `LB.stat`).
+A large compute shader no cache holds goes to the background builder (from the `lb_worker()` threads; under
+`LB.stat`). Out of memory, it is left to its first dispatch (`lb_defer()`).
 
 ### `bg_room()`
 
@@ -2534,28 +2497,26 @@ on an RX 7900 XT (26.10.1) the largest of these shaders (4,874,502 SPIR-V words)
 boot, `pipeline-cache.bin` was not written once in that time, and the game was closed before the build ended, so the
 next boot found neither that shader nor the pipelines built in play and started the same build again. `bg_merge()` moves
 the result into `P.cache` when the build is done, at a moment with no build into `P.cache` running: the lock is tried as
-`cache_save()` tries it, because a waiting exclusive request would hold back every new build.
-
-- What play compiled: into the play cache when there is one, so its file gets it and not `pipeline-cache.bin`.
+`cache_save()` tries it, because a waiting exclusive request would hold back every new build. The merge goes into the
+play cache when there is one, as what play compiled does, so its file gets it and not `pipeline-cache.bin`.
 
 ### `bg_main()`
 
-- The queue can grow while this thread builds (`bg_queue()` runs on the replay thread and reallocs these arrays), so the
-  sort and every read below happen under `LB.stat`; an entry is copied out before its compile so no pointer into the
-  arrays is held across it.
-- `for (size_t i = 1; i < BG.n; i++)`: smallest first: insertion sort of a handful.
-- `struct { const GfxShader *cs; uint64_t compute; } k = {cs, 1}`: no padding: the key is hashed and compared as bytes.
-- `double w0 = now_ms(), held = -1`: held: this build's reservation at the memory gate, -1 none.
-- `while (!LB.stop && !bg_room(&used, &limit, &held))`: not under `P.lock`: a dispatch builds it meanwhile.
-- `if (now_ms() - w0 > 30000.0)`: waiting is only useful when the headroom will come back.
-- `if (held >= 0 && !no_room) gate_leave(held)`: stopped right after the gate let it in.
-- `int there = cs_flight_has(cs) || pipe_find(&k, sizeof k, h)`: a dispatch got to it first.
-- `int flight = l ? cs_flight_add(cs, NULL) : 0`: `vk_pipeline_compute()` raises this thread through `BG.raised`.
-- `own_cache = own`: without one the build goes into `P.cache` as before.
-- The pipeline stays: only a shader a run dispatched is queued here (`lb_compute()`), and it is entered before the merge
-  below, so a dispatch that comes meanwhile finds it.
-- `} else if (pipe)`: a dispatch built its own meanwhile (no flight slot was free), or out of memory.
-- `if (own) bg_merge(own, pipe != VK_NULL_HANDLE)`: after the entry: a dispatch waiting for it does not wait for this.
+The builder's loop, below normal priority. The queue can grow while this thread builds (`bg_queue()` runs on the replay
+thread and reallocs these arrays), so the sort (smallest first: an insertion sort of a handful) and every read happen
+under `LB.stat`; an entry is copied out before its compile so no pointer into the arrays is held across it. For each
+shader:
+
+1. The process's growth since the builder started is checked against `bg_growth_cap()`: past it the builder stops.
+2. It waits for room (`bg_room()`), not under `P.lock`: a dispatch builds the shader meanwhile. `held` is this build's
+   reservation at the memory gate, -1 none. After 30 s without room it stops: waiting is only useful when the headroom
+   will come back. Stopped right after the gate let it in, it gives the reservation back.
+3. A shader a dispatch got to first (in flight or entered) is counted and passed over. Otherwise it takes a `cs_flight`
+   slot, through which `vk_pipeline_compute()` raises this thread (`BG.raised`), and builds into a pipeline cache of its
+   own (`own_cache`; without one the build goes into `P.cache` as before).
+4. The pipeline stays: only a shader a run dispatched is queued here (`lb_compute()`). It is entered before the merge
+   (`bg_merge()`), so a dispatch that comes meanwhile finds it and does not wait for the merge. One a dispatch built
+   meanwhile (no flight slot was free), or that cannot be entered for want of memory, is destroyed.
 
 ### `bg_start()`
 
@@ -2577,15 +2538,16 @@ a two-hour update, with the PC's 16 GB of RAM nearly full, for pipelines the gam
 
 ### `lb_compute()`
 
-Keep 0: the pipeline is built for the pipeline cache only and destroyed at once, unless a dispatch came to wait for it
-meanwhile; a shader over `LB.big_words` is then not built at all (see `compute-used.bin`). cs may be a copy the
-caller releases afterwards when keep is 0: nothing here holds on to it then.
+The boot's build of one compute shader's pipeline. Keep 0: the pipeline is built for the pipeline cache only and
+destroyed at once, unless a dispatch came to wait for it meanwhile; a shader over `LB.big_words` is then not built at
+all (`lb_big_left_out()`: no run dispatched it, and a pipeline of it would hold about 100 MiB of device memory unused;
+Compute pipelines the boot keeps). cs may be a copy the caller releases afterwards when keep is 0: nothing here holds
+on to it then. The key is `vk_pipeline_compute()`'s.
 
-- `struct { const GfxShader *cs; uint64_t compute; } k = {cs, 1}`: no padding: the key is hashed and compared as bytes.
-- `int big = LB.big_words && words > LB.big_words`: only from the caches (`LB_BIG_WORDS`).
-- `if (lb_big_left_out(words, keep))`: no run dispatched it: a pipeline of it would hold about 100 MiB of device memory
-  unused.
-- `int busy = cs_flight_has(cs)`: the replay compiles it now (`vk_pipeline_compute()`).
+- A shader over `LB.big_words` is built only from the caches (`compute_create()` `cached_only`); one they do not hold,
+  or any of them without `P.cache_control`, goes to the background builder (`bg_queue()`) or to its first dispatch
+  (`lb_defer()`).
+- One the replay compiles now (`cs_flight_has()`, `vk_pipeline_compute()`) or that is entered already counts as there.
 - The compile runs below normal priority: after an update or a driver update every one of these pipelines is compiled
   again (about 140 ms each on an RTX 5090's driver, minutes of two threads for a long play history), and at normal
   priority those threads took cores from the game's own on a CPU with few of them. While the shader is in flight a
@@ -2595,8 +2557,9 @@ caller releases afterwards when keep is 0: nothing here holds on to it then.
   thread, so it compiles at normal priority.
 - A private shader cannot have a dispatch waiting on its `cs_flight` slot. Shared/kept shaders always create their
   handle so a dispatch that arrives while the build is in flight still receives the pipeline it is waiting for.
-- `if (flight && cs_flight_remove(cs)) keep = 1`: a dispatch waits for it.
-- `P.stats.compute` does not count it, so the autosave would not see what its compile added to `P.cache`.
+- A dispatch that waited for it makes it kept.
+- A pipeline built for the cache only is not counted in `P.stats.compute`; its compile counts in `cache_merges`
+  instead, or the autosave would not see what it added to `P.cache`.
 
 ### `lb_library()`
 
@@ -2612,24 +2575,28 @@ A vertex or fragment variant with the graphics pipeline library off: no stage li
 Boot: compute pipelines (the first `LB.n_keep` entered for the process, the others only built into the pipeline cache)
 and kept libraries.
 
-- `lb_me = (int)(intptr_t)arg`: its handle is `LB.th[lb_me]`.
+- `lb_me` is its index: its handle is `LB.th[lb_me]`. A variant on the skip list (`skip_listed()`) is counted and
+  passed over.
 - The memory gate (`gate_wait()`): without room for another build the worker waits, and after `GATE_WAIT_MS` it and the
   other workers end. What they leave is built at its first dispatch or draw, as what a run never recorded. (The play
-  gate leaves this prebuild alone: see "the play gate".)
+  gate leaves this prebuild alone: The play gate.)
 - A compute shader whose pipeline does not stay is read as a copy of this thread's own and released after its build:
   kept in the shader cache's memory, the 3,900 of an installed copy's list were 240 MB of the process's commit for
   shaders most runs never dispatch. A dispatch that does come reads its shader then (0.05 to 0.15 ms from the files this
   pass has just read). The shaders of kept pipelines and libraries stay loaded: their pipeline and library entries point
   at them.
-- `plat_thread_priority(PLAT_PRIO_NORMAL)`: `gfx_shader`'s cache lock, disk reads.
-- `if (P.gpl) lb_library(sh, gfx_shader_stage(sh) == GFX_STAGE_VS, 1)`: a kept library points at sh: never a copy.
+- The shader is loaded at normal priority (the shader cache's lock, disk reads).
+- A vertex or fragment shader is never a copy: a kept library points at it. Without the graphics pipeline library it is
+  counted (`lb_skip_lib()`).
+- The last worker out logs the prebuild and starts the background builder (`bg_start()`).
 
 ### `lb_state()`
 
 The library state from the key file's records (prewarm); defaults without one.
 
 - State index: clamp | poly (0 fill, 1 line, 2 point -> `VkPolygonMode`) << 1 | `minus_w` << 3 (pr); samples log2 (fs).
-- `if (!pr_hist[best]) best = 8`: no key file: NX2Saria clips -w..w (all 2706 records of a recorded key file).
+- No key file: -w..w, the depth range the game clips to (all 2706 records of a recorded key file).
+- The sample count is the one most recorded pipelines use.
 
 ### The driver's cache of stage libraries, warmed again during play
 
@@ -2689,28 +2656,24 @@ on the skip list, not in the shader cache or of another stage.
 A warm that ends for a run before it is done keeps how far it came, as the 8,000-variant marks do: the memory gate
 stopped it (`lw_worker()`) or the window closed (`vk_pipeline_save_exit()`). Without it a PC whose runs each end a few
 hundred variants in (an integrated GPU whose memory is the system's, with the commit near its limit) begins the list
-again at every start and never gets past its first variants.
-
-- The workers take the variants in order, each holds at most one unbuilt: all below this are built.
+again at every start and never gets past its first variants. The point kept is `LW.from` plus the variants done less
+one per worker: the workers take the variants in order and each holds at most one unbuilt, so all below it are built.
 
 ### `lw_worker()`
 
-- `int me = (int)(intptr_t)arg, idle = 0`: me: its journal slot while the start waits (`bf_wait()`).
-- `no_cache = 1`: into the driver's own cache only (see `no_cache`).
-- Beside the game: idle priority, and of the workers the whole warm started only the background's count.
-- The play gate (`play_rest_wait()`), then the memory gate (`gate_wait()`): without room the warm waits, and after
-  `GATE_WAIT_MS` it ends for this run. `shader-warm.txt` keeps saying "warming", so the next start goes on with it.
-- `journal_mark(me, &LW.e[i])`: from here to its clearing, a process that dies names this variant.
-- The workers take the variants in order, each holds at most one unbuilt: all below this are built.
-- `if (plat_dec32(&LW.running)) return`: the last worker out says how the warm ended.
-- `lw_keep_progress()`: ended for this run before it was done (no commit headroom).
+A library warm worker; its index is its journal slot while the start waits (`bf_wait()`). It builds into the driver's
+own cache only (`no_cache`). Beside the game it runs at idle priority, and of the workers the whole warm started only
+the background's count (`LW.bg_threads`) go on. Each variant passes the play gate (`play_rest_wait()`), then the memory
+gate (`gate_wait()`): without room the warm waits, and after `GATE_WAIT_MS` it ends for this run; `shader-warm.txt`
+keeps saying "warming", so the next start goes on with it (`lw_keep_progress()`). From the journal mark to its clearing
+(`journal_mark()`), a process that dies names this variant. Every 8,000 variants the point reached is written, as in
+`lw_keep_progress()`. The last worker out says how the warm ended, and writes "done" when it ran to the end.
 
 ### `lw_time_sample()`
 
 The median time of `LW_SAMPLE` prepared fragment libraries spread over the list, in ms, and in `*fast` how many were
-under `LW_COLD_MS`, in `*got` how many were built; negative without enough of them.
-
-- `for (size_t j = i; j < i + step && j < LW.n; j++)`: the next fragment variant from here.
+under `LW_COLD_MS`, in `*got` how many were built; negative without half of them. The list is cut in `LW_SAMPLE`
+steps, from a start the clock picks, and the first fragment variant of each step is built (`lw_build()`).
 
 ### `lw_warm_sample()`
 
@@ -2732,48 +2695,56 @@ driver's default folder is not in the environment, and without the variable ther
 
 ### `lw_check()`
 
-- `no_cache = 1`: the sample's libraries go into the driver's cache only, as the workers' do (see `no_cache`).
-- `if (sscanf(line, "%15s %63s %d %llu", was, id, &strikes, &at) < 2) was[0] = 0`: no count: from the start.
-- A resumed warm is not sampled: the variants the earlier run built are in the driver's cache and the rest are not, so a
-  sample would read the cache as warm or cold by how far it came. It goes on from where it stopped.
-- `if (same && strikes) lw_stamp("done", 0)`: the driver kept them this time.
-- `else`: cold right after a finished warm on this driver says more than a first cold (`runtime/vk/vk_warm_hint.h`).
-- `lw_warm_sample(fast, got) ? LW_WARM_FORCED`: warm, but `lib_warm` = force.
+The check on its own thread (`lw_main()`), below normal priority unless the start waits. Its libraries go into the
+driver's cache only, as the workers' do (`no_cache`).
+
+1. `shader-warm.txt` is read: state, driver, strikes and the variant reached (a line without the count starts from the
+   beginning).
+2. A warm an earlier run left at "warming" on this driver is resumed, not sampled: the variants the earlier run built
+   are in the driver's cache and the rest are not, so a sample would read the cache as warm or cold by how far it came.
+   It goes on from where it stopped.
+3. Otherwise the sample decides (`lw_probe()`). Warm: when the line had strikes on this driver, the driver kept them
+   this time and the count goes back to 0. Cold again after two finished warms on this driver (strikes 2): the driver
+   does not keep them and no warm is tried, unless `NX2SARIA_LIB_WARM=force`, which also warms a warm cache. A cold
+   cache right after a finished warm adds a strike, and its log line says more than a first cold
+   (`runtime/vk/vk_warm_hint.h`: `LW_COLD_AFTER_WARM`, `LW_COLD_FIRST`, `LW_WARM_FORCED`).
+4. The workers start (`lw_worker()`): a quarter of the logical processors, 2 to `LW_MAX_THREADS`, beside the game; every
+   one up to `LW_BOOT_THREADS` while the start waits.
 
 ### `lw_start()`
 
-Boot, once the library state is known (`lb_state()`): the prepared list is read and the check starts on its own thread.
-
-- `uint8_t *f = gfx_shader_prepared_read(path, &n, NULL, NULL)`: the records alone, whichever version the file is.
-- `if (!LW.e) return`: nothing prepared (a build without the preparation step).
+Boot, once the library state is known (`lb_state()`): the prepared list (`shader-prepared.bin`, its records alone,
+whichever version the file is) is read and the check starts on its own thread (`lw_check()`). Nothing without the
+graphics pipeline library, with `NX2SARIA_LIB_WARM=0`, or without a prepared list (a build without the preparation
+step). Once a process.
 
 ### `lb_start()`
 
-Boot: compute shaders of the warm list (recorded and prepared), those whose pipeline stays first, then the first KEEP
-recorded graphics variants.
+Boot: compute shaders of the warm list (recorded and prepared), those whose pipeline stays (`cu_keep()`) first: they are
+the ones the game is about to dispatch; then the first `NX2SARIA_LIB_PREBUILD_KEEP` recorded graphics variants (play
+priority 0). Before them it starts the recorded mesh pipelines' libraries (`mesh_pre_start()`), sets the libraries'
+state (`lb_state()`, also for `lw_start()`), and starts the library warm (`lw_start()`), or with the whole warm leaves
+it to `bf_wait()` after the compute pipelines (`BF.lw`). With `NX2SARIA_LIB_PREBUILD=0` none of it starts;
+`NX2SARIA_LIB_PREBUILD=N` above 1 caps the list at N, 1 is plain on.
 
-- `const char *te = cfg_get("NX2SARIA_LIB_PREBUILD_THREADS")`: no fixed default: 2 when unset (1 under 4 CPUs).
-- `mesh_pre_start()`: the recorded mesh pipelines' libraries.
-- `lb_state(pr_hist, fs_hist)`: the libraries' state, also for `lw_start()`.
-- `if (BF.on) BF.lw = 1`: after the compute pipelines, with the start waiting (`bf_wait()`).
-- The compute shaders whose pipeline stays come first: they are the ones the game is about to dispatch.
-- `if (atoi(e) > 1 && (size_t)atoi(e) < n) n = (size_t)atoi(e)`: a count above 1 caps the list; 1 is plain on.
-- Two threads by default, not half the CPUs. On a 32-thread CPU with NVIDIA's driver, 16 builders kept the driver's lock
-  busy: 77% of the process's running time was a spin loop in `nvoglv64.dll` (about 8 cores), the prebuild had not
-  finished after 34,000 frames, and `lib_prebuild` = 0 took it to 5% and the game to its frame limit (RTX 4080 SUPER,
-  driver 617.14, 2026-11-08). With the driver's disk cache warm (`--prepare-shaders`, `--warm-shaders`) a build takes
-  well under a millisecond, so two threads still finish the list quickly. The two take the shaders dispatched most
-  recently (e[0..`n_keep`)); one goes on with the rest (`lb_next()`), which is only built into the caches. Where the
-  rest still runs during play, two builders there cost frames: one against two for the whole list, one 20 s route each
-  on an RTX 5090, Castle Town 76.1 against 73.7 fps with 1 frame over 25 ms against 6, Hyrule Field 85.7 against 80.7
-  fps. `NX2SARIA_LIB_PREBUILD_THREADS` keeps its count for the whole list.
-- `int t = te && *te ? atoi(te) : (cpus < 4 ? 1 : 2)`: idle priority; a cold driver takes ~2 s per large compute shader.
-- The whole warm (`bf_wait()`): no game runs beside these builds until they are done, so every core takes them, as in
-  the preparation; should the game start first, the count above goes on (`lb_next()`).
+Two threads by default (1 under 4 CPUs), not half the CPUs; `NX2SARIA_LIB_PREBUILD_THREADS` sets the count, at most
+`LB_MAX_THREADS`, at idle priority (a cold driver takes ~2 s per large compute shader). On a 32-thread CPU with NVIDIA's
+driver, 16 builders kept the driver's lock busy: 77% of the process's running time was a spin loop in `nvoglv64.dll`
+(about 8 cores), the prebuild had not finished after 34,000 frames, and `NX2SARIA_LIB_PREBUILD=0` took it to 5% and the
+game to its frame limit (RTX 4080 SUPER, driver 617.14, 2026-11-08). With the driver's disk cache warm
+(`--prepare-shaders`, `--warm-shaders`) a build takes well under a millisecond, so two threads still finish the list
+quickly. The two take the shaders dispatched most recently (e[0..`n_keep`)); one goes on with the rest (`lb_next()`),
+which is only built into the caches. Where the rest still runs during play, two builders there cost frames: one against
+two for the whole list, one 20 s route each on an RTX 5090, Castle Town 76.1 against 73.7 fps with 1 frame over 25 ms
+against 6, Hyrule Field 85.7 against 80.7 fps. `NX2SARIA_LIB_PREBUILD_THREADS` keeps its count for the whole list.
+
+The whole warm (`bf_wait()`): no game runs beside these builds until they are done, so every core takes them (up to
+`LB_MAX_THREADS`), as in the preparation; should the game start first, the count above goes on (`lb_next()`).
 
 ### `lb_stop()`
 
-- `if (BG.th) plat_thread_join(BG.th), BG.th = NULL`: after its current build, if one runs.
+Stops and joins the library warm (`lw_stop()`), the mesh library builder, the prebuild workers and the background
+builder, the last after its current build, if one runs.
 
 ### `bf_time_up()`
 
@@ -2784,14 +2755,14 @@ recorded graphics variants.
 The whole warm's wait (see `bf_decide()`), on the prewarm thread after the recorded pipelines: the compute
 pipelines `lb_start()` has just started, then the library warm. The counts go to the boot screen
 (`vk_pipeline_prewarm_progress()`). It ends with the warm, at the warm's time limit, or when the boot stops waiting
-(`vk_pipeline_prewarm_detach()`); in the last two the builders go on beside the game.
+(`vk_pipeline_prewarm_detach()`); in the last two the builders go on beside the game. The time may be up before it
+starts: the recorded pipelines took all of it.
 
-- `int up = bf_time_up()`: the recorded pipelines took all of it.
-- `lw_start()`: beside the game when the wait is over: the check and the warm as on any other start.
-- `__atomic_store_n(&pw_pipe_total, (int64_t)(LW.n - LW.from), __ATOMIC_RELAXED)`: a resumed warm's rest.
-- `journal_close()`: the warm is over, or the game runs.
-- `if (!stopped)`: the boot screen's turn is over for this GPU and driver (`runtime/vk/boot_warm.h`).
-- `vk_pipeline_prewarm_detach()`: nothing waits from here on: later builders are the background's.
+The library warm's journal is open while the start waits (`journal_open()`) and closed when the warm is over or the
+game runs (`journal_close()`). `lw_start()` runs either way: when the wait is over, the check and the warm run beside
+the game as on any other start. The count on the screen is a resumed warm's rest (`LW.n - LW.from`). Unless the process
+is stopping, `boot-warm-owed.txt` then says "done": the boot screen's turn is over for this GPU and driver
+(`runtime/vk/boot_warm.h`). Nothing waits from here on: later builders are the background's.
 
 ### `pw_mark()`
 
@@ -2806,11 +2777,11 @@ its SPIR-V length. `lb_warm_prepared()` reads it to stop waiting for builds that
 ### `lb_warm_worker()`
 
 Preparation: one prepared variant at a time into the driver's disk cache (private shader copy, nothing kept). arg is the
-worker's journal slot.
-
-- `pw_mark(slot, i + 1, 0)`: from the hand-out on, so `prep_stalled()` never takes a worker loading one for idle.
-- `if (sh) journal_mark(slot, &LB.e[i])`: from here to its clearing below, a crash names this variant.
-- `plat_mutex_lock(&LB.stat)`: as the boot leaves it (`lb_big_left_out()`): its first dispatch builds it.
+worker's journal slot. The variant is marked (`pw_mark()`) from the hand-out on, so `prep_stalled()` never takes a
+worker loading one for idle; once its shader is loaded the journal names it (`journal_mark()`) until the build returns,
+so a crash names this variant. A large compute shader the boot would leave out (`lb_big_left_out()`) is left out here
+too, its first dispatch builds it, and the first `PW_OUT` of them are kept for the last lines. Every 4,000 variants the
+counts are logged (`lb_report()`).
 
 ### `prep_stalled()`
 
@@ -2829,19 +2800,17 @@ variants were done in 28 min, while the launcher's update showed "built 42141 of
   the game. What the driver finished is in its disk cache already; the pipeline cache was saved before the libraries
   (`seed_pipelines()`). k: the workers; jp: the journal's path.
 
-- `if (__atomic_load_n(&LB.next, __ATOMIC_RELAXED) < (int64_t)LB.n) return`: variants still to hand out.
-- built: the variants that ended, less those that build nothing (skip list, no shader, no library, large left out).
-- `char size[48] = ""`: no length while its shader is still being read.
-- `plat_mutex_lock(&SK.jlock)`: a worker that returns now marks nothing more (`journal_mark()`).
+A build still loading its shader is named without a length. The journal is closed under `SK.jlock`, so a worker that
+returns now marks nothing more (`journal_mark()`). The count of built variants leaves out those that build nothing
+(skip list, no shader, no library, large ones left out).
 
 ### `prep_sample_warm()`
 
 `--warm-shaders`, before the whole list: `LW_SAMPLE` prepared fragment libraries spread over it, built into the driver's
 own cache alone (`no_cache`, as the library warm in play builds) and timed, as the game's check at every start does
-(`lw_check()`). 1 when at least `LW_WARM_SHARE` of them came from the driver's cache. `*fast` and `*got`: the counts.
-
-- `for (size_t j = i; j < i + step && j < LB.n; j++)`: the next fragment variant from here.
-- `journal_mark(0, &LB.e[j])`: a driver that dies on it names it, as the full pass would.
+(`lw_check()`): the first fragment variant of each of `LW_SAMPLE` steps of the list, from the middle of the first.
+1 when at least half of them were built and `LW_WARM_SHARE` of those came from the driver's cache. `*fast` and `*got`:
+the counts. Each is journalled in slot 0 (`journal_mark()`): a driver that dies on it names it, as the full pass would.
 
 ### `lb_warm_prepared()`
 
@@ -2851,9 +2820,10 @@ took 10 to 20 s on a player's PC at every update, all of it 42,000 libraries the
 takes the minutes of a full build when the driver no longer has them (a driver update, or a change of what they are
 built with: 380 s on that PC once). `NX2SARIA_LIB_WARM=force` builds the whole list whatever the sample says.
 
-- `uint8_t *f = gfx_shader_prepared_read(path, &n, NULL, NULL)`: the records alone, whichever version the file is.
-- `lb_big_words_init()`: the boot's line for large compute shaders, and its record of the dispatched ones.
-- `SK.journal = plat_fs_create(jp, NULL)`: `skip_init()` removed a leftover one.
+- The list is the records alone, whichever version the file is. The skip list is read first (`skip_init()`, which
+  removes a leftover journal before this run's is created), then the boot's line for large compute shaders
+  (`lb_big_words_init()`) and its record of the dispatched ones (`cu_open_prep()`). The library state is the default
+  one (`lb_state()` without records).
 - `shader-warm.txt` (`lw_check()`) says "warming" with this driver while a warm the game began in play has not come to
   the end of the list. The variants before the point it reached are in the driver's cache and the rest are not, and the
   sample, spread over the list, finds about that share fast: at 31,996 of 42,239 it found 9 of 12, which is
@@ -2863,11 +2833,11 @@ built with: 380 s on that PC once). `NX2SARIA_LIB_WARM=force` builds the whole l
   the whole list marks the warm done, so the game does not start it again.
 - Every 2 s a count on stdout for `tools/make_game.py` (`step_shaders`), as `runtime/gfx/gfx_shader.c` `prepare_files()`
   prints for the translation: a driver building for a long time still shows the step moving.
-- `if (stall_ms > 0) prep_stalled(stall_ms, k, jp)`: does not return when it gives up the wait.
-- `if (SK.journal) plat_file_close(SK.journal), SK.journal = NULL, plat_file_delete(jp)`: every build returned.
-- `if (P.gpl && !LB.nolib) lw_stamp("done", 0)`: the whole list is in the driver's cache (see `shader-warm.txt` above).
-- With gpl off only compute variants are built: say so, rather than count the skipped ones as built.
-- `if (skipped)`: `installer/steps.py` Prepare reads this line.
+- `prep_stalled()` checks every 2 s, and does not return when it gives up the wait.
+- When every build returned the journal goes, and with the graphics pipeline library `shader-warm.txt` says "done": the
+  whole list is in the driver's cache.
+- Without the graphics pipeline library only compute variants are built: the last line says so, rather than count the
+  skipped ones as built. Further lines name the variants of the skip list and the large compute shaders left out.
 
 ### The shared pipeline list
 
@@ -2894,17 +2864,21 @@ list) until the marker is deleted.
 
 ### `seed_pipelines()`
 
-- `if (!f) return 0`: no list: nothing to say.
-- `K.t0 = t0, K.prep = 1`: `prebuild_report()`'s start: this mode never runs `prewarm_run()`, which sets it in play.
-- `if (is_mesh(&s) && (!vk_ctx()->has_mesh_shader || vk_ctx()->mesh_fallback))`: no mesh draw uses one.
-- `if (!is_mesh(&s) && P.indep && fs && gfx_shader_stage(vs) == GFX_STAGE_VS)`: its vertex output union, as the boot.
-- `K.until = 0`: every one of them: no boot waits for this.
-- `GATE.off = 1`: and no game runs beside it: the memory gate (`gate_enter()`) refuses nothing.
-- `if (queued) warm_builder((void *)1)`: the first alone (`warm_builder()`).
-- `while (K.left) plat_cond_wait(&done_cv, &P.lock)`: those a pool worker took.
-- The listed mesh pipelines' stage libraries, before the save and inside the marker: the file then holds them, and a
-  driver that dies on one is met by the next preparation as one that died on a listed pipeline.
-- `int saved = cache_save(5000, 0) > 0`: explicit preparation waits for a moment with no build running.
+The preparation's build of the shared list (The shared pipeline list). Returns 0 (nothing to say without a list).
+
+1. The list's shaders are translated or loaded (`gfx_shader_prewarm()`, as `prewarm_run()`), then the marker is
+   written.
+2. Each record is entered (`pipe_miss()`, mode 2), as at the boot: a vertex pipeline gets its vertex output union
+   first (`vs_outs()`). `K.t0` and `K.prep` set the start of `prebuild_report()`: this mode never runs
+   `prewarm_run()`, which sets them in play. A mesh pipeline on a GPU without mesh shaders or with the mesh fallback is
+   not built: no mesh draw uses one.
+3. Every one is built (`K.until` 0: no boot waits for this), and no game runs beside it, so the memory gate
+   (`gate_enter()`) refuses nothing (`GATE.off`). The first is built alone (`warm_builder()`); it waits for those a pool
+   worker took.
+4. The listed mesh pipelines' stage libraries (`mesh_pre_run()`), before the save and inside the marker: the file then
+   holds them, and a driver that dies on one is met by the next preparation as one that died on a listed pipeline.
+5. The pipeline cache is saved (`cache_save()`, waiting up to 5 s for a moment with no build running), and the marker
+   goes.
 
 ### `prep_card_line()`
 
@@ -2918,7 +2892,7 @@ card, is answered from this one.
 
 `nx2saria.exe` `--prepare-pipelines`: the list's pipelines alone, for a folder whose shaders are prepared already.
 
-- `prep_mode = 1`: builds into `pipeline-cache.bin` alone (`cache_load()`).
+Like the other preparation modes it sets `prep_mode`: builds go into `pipeline-cache.bin` alone (`cache_load()`).
 
 ### `vk_pipeline_prepare_shaders()`
 
@@ -2926,8 +2900,8 @@ card, is answered from this one.
 in every cache key), the seed next to `nx2saria.exe` is translated on every core, then every prepared variant's stage
 library or compute pipeline is built once into the driver's disk cache (`lb_warm_prepared()`). No game runs.
 
-- `prep_mode = 1`: builds into `pipeline-cache.bin` alone (`cache_load()`).
-- `const char *pe = cfg_get("NX2SARIA_PREWARM_XLATE")`: no fixed default: half the CPUs, at most 16, when unset.
+- `prep_mode`: builds go into `pipeline-cache.bin` alone (`cache_load()`).
+- `NX2SARIA_PREWARM_XLATE` translator processes, half the CPUs and at most 16 when unset.
 - The listed pipelines before the stage libraries: the pipeline cache is saved with them in it and without the tens of
   thousands of libraries the next step builds, which would take the file past its size limit.
 
@@ -2938,10 +2912,9 @@ the shader cache, without translating the seed. The AMD cache is keyed to the ex
 variants in 1.8 s) and holds a limited amount: preparing another build dir evicted this one's libraries, and a library a
 draw needed then took 40-220 ms in play instead of 0.2 ms. Seconds when the libraries are still there.
 
-- `prep_mode = 1`: builds into `pipeline-cache.bin` alone (`cache_load()`).
-- `prep_card_line("prepare-shaders")`: the lines the update's step reads all begin so, whichever of the two modes prints
-  them.
-- `seed_pipelines(dir)`: before the libraries, as in `vk_pipeline_prepare_shaders()`.
+It sets `prep_mode`, as `vk_pipeline_prepare_shaders()` does, and its card line begins "prepare-shaders" too: the lines
+the update's step reads all begin so, whichever of the two modes prints them. The listed pipelines are built before the
+libraries (`seed_pipelines()`), as in `vk_pipeline_prepare_shaders()`; then `lb_warm_prepared()` with the sample.
 
 ### `vk_pipeline_probe_prewarm()`
 
@@ -2956,17 +2929,17 @@ prebuild kept a pipeline it should not have, when a large compute shader went to
 dispatched it, or when the record of dispatched shaders, written to a file of the probe's own and read back, does not
 hold the probe's dispatches. `compute-used.bin` itself stays as it is; the pipeline cache is saved as after a boot.
 
-- `vk_pipeline_prewarm()`: brings the device up itself: it has to own the key file before `ensure_init()` runs.
-- `int fails = kept > LB.n_keep`: a dispatch never waits in this mode, so nothing else may have been kept.
-- `if (queued > LB.n_keep)`: only a shader a run dispatched may be built ahead when it is large.
-- `const GfxShader *sh = gfx_shader_load_input(LB.e[i].iid, 0)`: from the disk: the boot released its copy.
-- `if (LB.big_words && words > LB.big_words) continue`: a first dispatch of one compiles it: not what is timed here.
+The prewarm (`vk_pipeline_prewarm()`) brings the device up itself: it has to own the key file before `ensure_init()`
+runs. A dispatch never waits in this mode, so no more than `LB.n_keep` pipelines may have been kept, and only a shader a
+run dispatched (one of those) may be queued for the background builder. The probe's dispatches load their shader from
+the disk (the boot released its copy) and leave out the large ones, whose first dispatch compiles them: not what is
+timed here.
 
 ### Dynamic state
 
 ### `vk_pipeline_set_dynamic()`
 
-- `sh.have = 0`: nothing known: every call is recorded.
+`vk_pipeline_set_dynamic_delta()` with nothing known: every call is recorded.
 
 ### `vk_pipeline_set_dynamic_delta()`
 
@@ -2977,12 +2950,13 @@ pipeline usually changes the shaders and a field or two, not the twenty states t
 
 - The front face maps unchanged: the game sets the upper-left window origin, and the y-flipped viewport (`y_flip`) puts
   NDC +y at row 0 as NVN does, so the framebuffer winding Vulkan tests is the one NVN tests (a lower-left origin would
-  need it mirrored).
-- `VkCullModeFlags cull = (VkCullModeFlags)(pl->cull & 3)`: `NVN_FACE_*` has `VkCullModeFlagBits`' values.
-- `NVN_POLYGON_OFFSET_ENABLE_*` bit of the polygon mode in use: point 1, line 2, fill 4.
-- `sh->vi.n_attr = UINT32_MAX`: not recorded: unknown to the next draw.
-- `if (P.dyn_a2c)`: the same signature as the depth clamp call.
-- The calls write targets [0, nt); targets past nt keep what the command buffer had.
+  need it mirrored). The cull mode too: `NVN_FACE_*` has `VkCullModeFlagBits`' values.
+- The depth bias enable is the `NVN_POLYGON_OFFSET_ENABLE_*` bit of the polygon mode in use: point 1, line 2, fill 4.
+- Vertex input not recorded (no dynamic vertex input) is marked unknown to the next draw.
+- Alpha to coverage is recorded through the depth clamp call's signature: the two have the same.
+- The blend calls write targets [0, nt); targets past nt keep what the command buffer had.
+
+Returns the calls recorded; `*skipped` adds those left out.
 
 ### Statistics, persistence, teardown
 
@@ -3022,7 +2996,7 @@ middle of a save (their .tmp files stayed behind, cut short). The mapped pages b
 - A save that took `SAVE_SLOW_MS` or more, in the copy of the driver's data or in the file's write, says when it ended,
   to line it up with the system's journal: a session of 2026-11-21 had one of 5.2 s among stalls of 1 to 3 s, and the
   line could not say which came first.
-- `if (!which && P.fold)`: the play file's content is in `pipeline-cache.bin` now.
+- A written `pipeline-cache.bin` after a fold removes the play file: its content is in `pipeline-cache.bin` now.
 
 ### `cache_save()`
 
@@ -3030,34 +3004,36 @@ Both caches' saves (`cache_save_one()`): 1 when each is done, 0 when one found n
 
 - Not under `P.lock`: holding `P.lock` through the copy and the file write (about 60 ms on the 1.4.3 fight) stopped
   every pipeline lookup of the replay, a freeze at each 20 s autosave.
-- `if (!P.cache)`: `vk_pipeline_shutdown()` destroyed it.
+- No cache after `save_lock` is taken: `vk_pipeline_shutdown()` destroyed it.
 - `pipeline-cache.bin`: at every save without a play cache, once for a fold, and at the exit of a run that started
   without it (`P.base_at_exit`); the play file beside it as usual.
 - While a fold is not written yet (`P.fold`: refused at the limit, or no build-free moment) the play file still holds
   what was folded in memory only: written over with this run's play cache, that would be in neither file.
-- `ok = r`: the worse of the two.
+- The answer is the worse of the two.
 
 ### `save_with()`
 
-Returns `cache_save()`'s answer.
+A save with its statistics: it flushes the key records, the pipeline binaries, the compute record (`cu_flush()`) and
+the first dispatches' line (`cf_log()`), logs the graphics pipeline library's counts and the play gate's (`pg_log()`),
+then saves (`cache_save()`) and returns its answer. The mesh pipelines' line counts them by themselves: with stage
+libraries the first two numbers follow each other and the times are a link's; without (the start's line says why) none
+is linked and the time is a whole build's. Without `P.cache` the pipeline binaries' line (`pb_log()`) is written here;
+with it, it comes with its own save.
 
-`SAVE_WAIT_MS`: Builds still running after this long at a save that waits (exit, the shader preparation) leave the file
+`SAVE_WAIT_MS`: builds still running after this long at a save that waits (the exit, `vk_pipeline_save()`) leave the file
 as it was.
-
-- The mesh pipelines by themselves: with stage libraries the first two numbers follow each other and the times are a
-  link's; without (the start's line says why) none is linked and the time is a whole build's.
-- `if (P.ready && !P.cache) pb_log("at a save")`: with `P.cache` the line comes with its own save below.
 
 ### `vk_pipeline_save()`
 
-The save after the shader preparation and at shutdown: it waits up to `SAVE_WAIT_MS` for a moment with no build running.
+The save at shutdown (`vk_pipeline_shutdown()`), after `--probe-prewarm` and after the self-test: it waits up to
+`SAVE_WAIT_MS` for a moment with no build running. The preparation modes save their own way (`seed_pipelines()`).
 
 ### `vk_pipeline_save_exit()`
 
 The save as the process ends (window closed, the game's exit, a timed run's end): new builds wait while it waits up to
 `SAVE_WAIT_MS` for the running ones to finish (`cache_saving_at_exit`).
 
-- `journal_close()`: an orderly end during the whole warm is not a driver crash.
+- The boot's journal is closed first (`journal_close()`): an orderly end during the whole warm is not a driver crash.
 - The process ends without joining the library warm's workers: a warm still under way keeps how far it came. They stop
   taking variants first; one that finishes its build before the exit writes the mark again, a little further.
 
@@ -3073,15 +3049,16 @@ grows in memory with the compute pipelines the boot builds for it alone, and onl
 ### `autosave_once()`
 
 The game never shuts the device down (`runtime/boot.c` and the window end the process), so the cache is saved while it
-runs: at most every 20 s, and only after new pipelines were built or while a save that did not happen is still owed
-(`runtime/vk/vk_save_retry.h`). New pipeline keys are appended every 2 s.
+runs: at most every 20 s (`SAVE_EVERY_MS`), and only after new pipelines were built or while a save that did not happen
+is still owed (`runtime/vk/vk_save_retry.h`). New pipeline keys are appended every 2 s, with the pipeline binaries and
+the compute record.
 
-- `release_drain()`: the pipelines given back earlier that the GPU is done with.
-- `pressure_release(now)`: while video memory is short: the pipelines no draw used go.
-- `uint64_t n = s.graphics + s.compute + cache_merges`: a merge comes after its pipeline was counted (`bg_main()`).
-- `if (!save_due(&sr, n, now, P.fold)) return`: `P.fold`: the play file merged at the start is to be written.
-- Only at a moment with no build running (`cache_save()`): while one runs the save waits for the next tick, 500 ms on,
-  before it logs or flushes anything, so a busy stretch does not repeat the statistics lines every tick.
+Each tick it also destroys the pipelines given back earlier that the GPU is done with (`release_drain()`), lets the
+pipelines no draw used go while video memory is short (`pressure_release()`), and asks the caches' sizes once a minute
+(`cache_sizes_ask()`). The count that makes a save due adds `cache_merges` to the pipelines built: a merge comes after
+its pipeline was counted (`bg_main()`). `P.fold` also makes it due: the play file merged at the start is to be written.
+The save is made only at a moment with no build running (`cache_save()`): while one runs it waits for the next tick,
+500 ms on, before it logs or flushes anything, so a busy stretch does not repeat the statistics lines every tick.
 
 ### `autosave_main()`
 
@@ -3090,8 +3067,9 @@ the disk each) ran on the present thread, and the render thread waited for it to
 
 ### `vk_pipeline_shutdown()`
 
-- `workers_drain()`: jobs point at layouts and Pipe entries freed below.
-- `plat_mutex_lock(&save_lock)`: not while the autosave thread copies it.
+Stops the background builders (`lb_stop()`), drains the workers (`workers_drain()`: jobs point at layouts and Pipe
+entries freed here), saves, and destroys the pipelines, stage libraries, layouts and caches. The caches go under
+`save_lock`: not while the autosave thread copies one.
 
 ### Self-test
 
@@ -3117,9 +3095,10 @@ Records the dynamic state of a pipeline into a command buffer that is never subm
 
 ### `vk_pipeline_selftest()`
 
-- `if (!probe_census_dir(root, sizeof root))`: the census folder, build/`<version>`/shaders.
-- Candidate pairs: each fragment shader of a source file with one of the file's vertex shaders (round robin).
-- `if (e[j].stage == GFX_STAGE_VS && v0 < 0) v0 = j`: sorted by stage within a file: vertex shaders first.
+The census folder is `build/v<version>/shaders` (`probe_census_dir()`). Candidate pairs: each fragment shader of a
+source file with one of the file's vertex shaders, round robin; the census is sorted by stage within a file, vertex
+shaders first. Up to 64 pairs and 16 compute shaders are spread over the census. Passes when at least one of each is
+built, every second call hit the cache, the dynamic state was recorded and validation reported no error.
 
 ### `vk_pipeline_sizes()`
 
@@ -3130,15 +3109,14 @@ draw's memo miss wait for it (well under a millisecond).
 
 ### `vk_pipeline_mem()`
 
-The memory report's pipeline figures (`runtime/vk/vk_memory.c` `outside_log()` and `system_log`), once a report: what
+The memory report's pipeline figures (`runtime/vk/vk_memory.c` `outside_log()` and `system_log()`), once a report: what
 holds device memory outside VMA, counted because the driver gives no size for a pipeline, and the host memory of the
 tables. A walk of the hash chains under `P.lock` held shared, as `vk_pipeline_sizes()` walks them (well under a
 millisecond: the draws' lookups wait for it). A graphics entry's pipeline is whole (built in one piece, no fast link
 before it), fast-linked (from its stage libraries, the optimised build not done or failed) or optimised (the whole build
 that replaced a fast link). Not used lately: no lookup since `idle_min` wall minutes (`pipe_used()`), never: none in
-this run (the boot's prebuild made it from the key file or the shared list).
-
-- `memcpy(&kind, b->key, sizeof kind)`: every library key starts with its `LIB_*` kind.
+this run (the boot's prebuild made it from the key file or the shared list). Stage libraries are counted by kind: every
+library key starts with its `LIB_*` kind.
 
 ## `runtime/vk/vk_cache_file.h`
 

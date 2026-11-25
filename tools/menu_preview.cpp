@@ -110,6 +110,7 @@ uint64_t plat_now_ns(void) {
     return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
 }
 void rt_log(const char *, ...) {}
+void session_summary_header(const char *) {}
 }
 
 struct Level {

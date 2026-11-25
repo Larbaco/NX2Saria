@@ -20,6 +20,7 @@ extern "C" {
 #include "platform/platform.h"
 #include "ui_text.h"
 #include "menu_sound.h"
+#include "session_summary.h"
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 }
 
@@ -757,6 +758,7 @@ bool opt_draft_apply(bool timed) {
     opt_save_now();
     rt_log("menu: draft: settings file %s%s", cfg_last_save_ok() ? "saved" : "NOT saved (write failed)",
            g_display.empty() ? "" : "; display settings wait for Keep or Revert");
+    session_summary_header("settings applied");
     return cfg_last_save_ok() != 0;
 }
 

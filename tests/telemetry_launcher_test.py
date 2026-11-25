@@ -353,6 +353,111 @@ class CrashSummaryTest(Base):
         self.log(LOG_HEAD + self.FATAL + '\n[launcher] the game ended with code 71\n')
         self.assertIsNone(telemetry.synthesize_crash(self.game))
 
+    HEADER_LINE = '[host] telemetry: session header written to logs/session-start.json at {} ({} bytes; gpu {}; startup {})\n'
+
+    def header(self, gpu=True, text=None):
+        h = summary('running')
+        h['session'].update(duration_s=42, frames=2500)
+        h['frametime'].update(fps_mean=59.5, fps_low_1pct=50.0, worst_ms=40.0, over_25ms=3, over_100ms=0)
+        if not gpu:
+            h['gpu'] = {k: None for k in h['gpu']}
+            h['startup'] = {k: None for k in h['startup']}
+            h['patches'] = None
+            h['mods'] = {'count': None, 'code': None}
+            h['display']['picture'] = None
+        path = self.game / 'logs' / telemetry.HEADER
+        path.write_text(json.dumps(h) if text is None else text, encoding='utf-8')
+        return h
+
+    def made_line(self):
+        made = [ln for ln in self.telemetry_lines() if 'ended in a crash' in ln]
+        self.assertEqual(len(made), 1, self.lines)
+        return made[0]
+
+    def test_the_header_of_the_run_gives_hardware_and_settings(self):
+        h = self.header()
+        self.log(LOG_HEAD + self.HEADER_LINE.format('start', 1500, 'not yet known', 'not yet known') +
+                 '[host] vk caps: NVIDIA GeForce RTX 3060\n' +
+                 self.HEADER_LINE.format('the boot prewarm', 1700, 'known', 'known') + self.FATAL + '\n')
+        s = telemetry.synthesize_crash(self.game, self.lines.append)
+        for key in ('os', 'cpu', 'ram_mb', 'gpu', 'display', 'settings', 'startup', 'patches', 'mods'):
+            self.assertEqual(s[key], h[key], key)
+        self.assertEqual(s['gpu']['driver'], 'NVIDIA 581.57')
+        self.assertEqual(s['settings']['preset'], 'high')
+        self.assertEqual(s['session'], {'duration_s': None, 'frames': None, 'end': 'crash'})
+        self.assertEqual(set(s['frametime'].values()), {None})
+        self.assertEqual((s['version'], s['game_version']), (VERSION, '1.1.1'))
+        self.assertTrue(s['fatal'].startswith('crash: EXCEPTION_ACCESS_VIOLATION'))
+        self.assertEqual(set(s), set(telemetry.example_summary()))
+        self.assertEqual(telemetry.pending_summary(self.game), s)
+        self.assertEqual(self.made_line(),
+                         'telemetry: the last run ended in a crash; a summary was made from its FATAL line, with the '
+                         'hardware and settings of logs/session-start.json (7 of 42 fields null)')
+
+    def test_a_header_written_before_the_gpu_was_known(self):
+        h = self.header(gpu=False)
+        self.log(LOG_HEAD + self.HEADER_LINE.format('start', 1500, 'not yet known', 'not yet known') +
+                 self.FATAL + '\n')
+        s = telemetry.synthesize_crash(self.game, self.lines.append)
+        self.assertEqual(s['cpu'], h['cpu'])
+        self.assertEqual(s['settings'], h['settings'])
+        self.assertEqual(set(s['gpu'].values()), {None})
+        self.assertIn('with the hardware and settings of logs/session-start.json (20 of 42 fields null)',
+                      self.made_line())
+
+    def assert_today(self, reason):
+        s = telemetry.synthesize_crash(self.game, self.lines.append)
+        self.assertEqual(s['session']['end'], 'crash')
+        self.assertIsNone(s['cpu']['name'])
+        self.assertIsNone(s['gpu']['name'])
+        self.assertIsNone(s['settings']['preset'])
+        self.assertEqual(self.made_line(),
+                         'telemetry: the last run ended in a crash; a summary was made from its FATAL line, without '
+                         f'hardware or settings: {reason} (36 of 42 fields null)')
+
+    def test_without_a_usable_header_the_summary_is_as_before(self):
+        self.log(LOG_HEAD + self.FATAL + '\n')
+        self.assert_today('logs/session-start.json is missing')
+        for text, reason in (('', 'logs/session-start.json is empty'),
+                             ('{"schema": "nx2saria.session/1", "os": ', 'logs/session-start.json is not valid JSON'),
+                             ('[1, 2]', 'logs/session-start.json is not valid JSON')):
+            (self.game / 'logs' / telemetry.SUMMARY).unlink()
+            self.lines.clear()
+            self.header(text=text)
+            self.log(LOG_HEAD + self.HEADER_LINE.format('start', 1500, 'not yet known', 'not yet known') +
+                     self.FATAL + '\n')
+            self.assert_today(reason)
+
+    def test_a_header_the_log_of_the_run_does_not_name_is_not_used(self):
+        self.header()
+        (self.game / 'logs' / 'nx2saria.1.log').write_text(
+            LOG_HEAD + self.HEADER_LINE.format('start', 1500, 'known', 'known'), encoding='utf-8')
+        (self.game / 'logs' / 'nx2saria.log').write_text(LOG_HEAD + '[host] restart: the previous process ended\n' +
+                                                         self.FATAL + '\n', encoding='utf-8')
+        self.assert_today('the log of the run that crashed has no line of its writing, so it is another run\'s')
+
+    def test_wrong_shapes_in_the_header_are_left_null(self):
+        h = summary('running')
+        h['gpu'] = 'NVIDIA'
+        h['cpu']['threads'] = {'n': 12}
+        h['os']['wine'] = 'no'
+        h['ram_mb'] = True
+        h['frametime'] = 'x'
+        h['patches'] = ['fps60', 3]
+        h['extra'] = 'x'
+        self.header(text=json.dumps(h))
+        self.log(LOG_HEAD + self.HEADER_LINE.format('start', 1500, 'known', 'known') + self.FATAL + '\n')
+        s = telemetry.synthesize_crash(self.game, self.lines.append)
+        self.assertEqual(set(s['gpu'].values()), {None})
+        self.assertIsNone(s['cpu']['threads'])
+        self.assertEqual(s['cpu']['name'], h['cpu']['name'])
+        self.assertIsNone(s['patches'])
+        self.assertIsNone(s['ram_mb'])
+        self.assertIsNone(s['os']['wine'])
+        self.assertEqual(s['os']['name'], h['os']['name'])
+        self.assertEqual(set(s['frametime'].values()), {None})
+        self.assertNotIn('extra', s)
+
     def test_a_summary_of_the_run_before_does_not_stop_it(self):
         old = self.write_summary()
         then = time.time() - 900

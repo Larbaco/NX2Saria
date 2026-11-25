@@ -173,6 +173,28 @@ offers in this run of the launcher (<counts>)`, `telemetry: crash log not sent (
 The line of a launcher's start, and of each change of the setting: `telemetry: crash log offer: on (Settings >
 Session Reports > Ask After a Crash)`, or `off`.
 
+## `launcher/telemetry.py`
+
+### `synthesize_crash()` and `session_header()`
+
+A hard crash writes no summary, so the launcher makes one from the FATAL line, the log's `version:` line and the
+header the game wrote during that run (`logs/session-start.json`, `runtime/session_summary.c`
+`session_summary_header()`). The header is that run's only when the current `logs/nx2saria.log` holds the line of its
+writing (`HEADER_LINE`): the game starts a new log at each start and removes the old header before it writes its own,
+so after a restart from the settings menu the header used is the one of the copy that crashed, and a header from the
+copy before it is never taken. The whole log is read in pieces for the line: it may be 64 MiB, and the line of a later
+Apply can be far from the start.
+
+- From the header, only `HEADER_KEYS` (os, cpu, ram_mb, gpu, display, settings, startup, patches, mods), each value
+  only where it has the type the format gives its field (`example_summary()`); anything else stays null, and keys
+  the format does not have are dropped. The session's times and frame rates stay null whatever the header says.
+- No header: a missing file, an empty one, one that is not JSON with the summary's `schema`, or one whose writing the
+  log does not name. The summary is then the one of before, with only the versions, `os.family`, `session.end` and
+  `fatal`.
+- The line: `telemetry: the last run ended in a crash; a summary was made from its FATAL line, with the hardware and
+  settings of logs/session-start.json (<n> of <m> fields null)`, or `..., without hardware or settings: <why> (<n> of
+  <m> fields null)`, where `<why>` says which of the four it was.
+
 ### `game_session.py`
 
 The game session tracks restarted copies, interprets exit codes and reads or annotates the game log.

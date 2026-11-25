@@ -11,7 +11,8 @@ answer_question): Don't Send keeps them off; Send, closing the question and its 
   request, because the server cannot tell whose it is. It deletes every report and comment after 180 days.
 
 A run that ended in a hard crash writes no summary; the launcher makes one from the crash's FATAL line
-(synthesize_crash), with every value it cannot know left null.
+(synthesize_crash), with the hardware and settings of the header the game wrote during that run
+(logs/session-start.json) and every value it cannot know left null.
 
 The server's address is TELEMETRY_URL, which NX2SARIA_TELEMETRY_URL replaces (a local server for tests). With no
 address nothing is sent. No Tk here: the window (launcher/ui/app.py) runs the requests on a thread through Tasks.
@@ -46,6 +47,9 @@ LOG_TAIL_READ = 256 << 10      # bytes read from the end of the game's log for i
 
 SUMMARY = 'session-summary.json'
 SENT = 'session-summary.sent.json'
+HEADER = 'session-start.json'
+HEADER_LINE = b'telemetry: session header written to logs/' + HEADER.encode()
+HEADER_KEYS = ('os', 'cpu', 'ram_mb', 'gpu', 'display', 'settings', 'startup', 'patches', 'mods')
 
 VERSION_LINE = re.compile(r'version: NX2Saria (\S+), game (\d+\.\d+\.\d+)')
 
@@ -185,13 +189,84 @@ def log_version(game_dir):
     return (versions.display(m.group(1)), m.group(2)) if m else None
 
 
+def _log_has(game_dir, needle):
+    """Whether the game's current log holds needle, read in pieces: the log may be 64 MiB."""
+    keep = len(needle) - 1
+    try:
+        with open(game_log_path(game_dir), 'rb') as f:
+            tail = b''
+            while chunk := f.read(1 << 20):
+                if needle in tail + chunk:
+                    return True
+                tail = (tail + chunk)[-keep:]
+    except OSError:
+        pass
+    return False
+
+
+def _fits(value, like):
+    """Whether value has the type of like, the example summary's value of its field: null always does, a whole
+    number does where a decimal is expected."""
+    if value is None:
+        return True
+    if isinstance(like, float):
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    return type(value) is type(like)
+
+
+def session_header(game_dir):
+    """(the header the game wrote during the run of the current log, '') or (None, why there is none). The game
+    removes logs/session-start.json when it starts and logs a line each time it writes it (runtime/session_summary.c
+    session_header()); the log rotates at every start of the game (runtime/main.c log_open), so a file whose writing
+    the current log does not name is another run's."""
+    path = _logs(game_dir) / HEADER
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None, f'logs/{HEADER} is missing'
+    if not raw.strip():
+        return None, f'logs/{HEADER} is empty'
+    try:
+        data = json.loads(raw.decode('utf-8'))
+    except ValueError:
+        data = None
+    if not isinstance(data, dict) or data.get('schema') != SCHEMA:
+        return None, f'logs/{HEADER} is not valid JSON'
+    if not _log_has(game_dir, HEADER_LINE):
+        return None, "the log of the run that crashed has no line of its writing, so it is another run's"
+    return data, ''
+
+
+def _take_header(s, header):
+    """The header's values of HEADER_KEYS into the summary s, each where it has the type the format gives its field
+    (example_summary); the others stay null."""
+    like = example_summary()
+    for key in HEADER_KEYS:
+        want, got = s[key], header.get(key)
+        if isinstance(want, dict):
+            if isinstance(got, dict):
+                for sub in want:
+                    if _fits(got.get(sub), like[key][sub]):
+                        want[sub] = got.get(sub)
+        elif key == 'patches':
+            if isinstance(got, list) and all(isinstance(x, str) for x in got):
+                s[key] = got
+        elif _fits(got, like[key]):
+            s[key] = got
+
+
+def _leaves(v):
+    return [x for y in v.values() for x in _leaves(y)] if isinstance(v, dict) else [v]
+
+
 def synthesize_crash(game_dir, log=None):
     """A summary for a run that ended in a hard crash, which writes none (runtime/main.c crash_handler exits with 71
     after its FATAL lines): when the game's log holds a FATAL line of its last run (build.last_fatal) and no summary
     was written during that run, logs/session-summary.json is made with session.end "crash", the FATAL line with the
     account's folders written short and cut to 300 characters, the versions of the log's "version:" line and this
-    PC's os.family; everything else null, nothing taken from an earlier summary. Without a version line nothing is
-    made. Returns the summary made, or None.
+    PC's os.family. The hardware, display, settings, startup, patches and mods come from the header the game wrote
+    during that run (session_header), when there is one; the session's times and frame rates stay null, and nothing
+    is taken from an earlier summary. Without a version line nothing is made. Returns the summary made, or None.
 
     It must run before the launcher adds its own line to the log (app.py note_exit_in_log), which ends last_fatal's
     search."""
@@ -204,7 +279,10 @@ def synthesize_crash(game_dir, log=None):
     if not ver:
         return None
     s = empty_summary(*ver)
-    s['os']['family'] = os_family()
+    header, why = session_header(game_dir)
+    if header:
+        _take_header(s, header)
+    s['os']['family'] = s['os']['family'] or os_family()
     s['session']['end'] = 'crash'
     s['fatal'] = printable(shorten_always(fatal)).strip()[:FATAL_LIMIT]
     path = _logs(game_dir) / SUMMARY
@@ -217,7 +295,11 @@ def synthesize_crash(game_dir, log=None):
             log(f'telemetry: the crash summary could not be written: {e}')
         return None
     if log:
-        log('telemetry: the last run ended in a crash; a summary was made from its FATAL line')
+        leaves = _leaves(s)
+        nulls = f'{sum(v is None for v in leaves)} of {len(leaves)} fields null'
+        source = (f'with the hardware and settings of logs/{HEADER}' if header
+                  else f'without hardware or settings: {why}')
+        log(f'telemetry: the last run ended in a crash; a summary was made from its FATAL line, {source} ({nulls})')
     return s
 
 

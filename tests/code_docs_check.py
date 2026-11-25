@@ -2,6 +2,7 @@
 # args: --self-test
 import argparse
 import ast
+import functools
 import re
 import subprocess
 import sys
@@ -144,8 +145,7 @@ def close_paren(text, i):
     return -1
 
 
-def defined_in_c(text, name, header):
-    code = blank_comments(text)
+def defined_in_c(code, name, header):
     last = re.split(r'::|\.', name)[-1]
     if re.search(r'^[ \t]*#[ \t]*define[ \t]+%s\b' % re.escape(last), code, re.M):
         return True
@@ -163,10 +163,8 @@ def defined_in_c(text, name, header):
     return False
 
 
-def defined_in_python(text, name):
-    try:
-        tree = ast.parse(text)
-    except SyntaxError:
+def defined_in_python(text, tree, name):
+    if tree is None:
         return re.search(r'\b(?:def|class)\s+%s\b' % re.escape(name.split('.')[-1]), text) is not None
     parts = name.split('.')
     kinds = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
@@ -179,11 +177,24 @@ def defined_in_python(text, name):
     return False
 
 
-def defined(path, name):
+@functools.lru_cache(maxsize=None)
+def source_of(path):
     text = path.read_text(encoding='utf-8-sig', errors='replace')
     suffix = path.suffix.lower()
     if suffix in PYTHON:
-        return defined_in_python(text, name)
+        try:
+            return text, ast.parse(text)
+        except SyntaxError:
+            return text, None
+    return (blank_comments(text) if suffix in C_LIKE else text), None
+
+
+@functools.lru_cache(maxsize=None)
+def defined(path, name):
+    text, tree = source_of(path)
+    suffix = path.suffix.lower()
+    if suffix in PYTHON:
+        return defined_in_python(text, tree, name)
     if suffix in C_LIKE:
         return defined_in_c(text, name, header=suffix in ('.h', '.hpp', '.inc'))
     return re.search(r'\b%s\s*\(' % re.escape(name.split('.')[-1].split('::')[-1]), text) is not None
