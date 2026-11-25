@@ -16,6 +16,7 @@
 #include "nvidia_cache.h"
 #include "vk.h"
 #include "platform/platform.h"
+#include "session_summary.h"
 #include "vk_dlaa.h"
 #include "vk_fsr3.h"
 #include "vk_gpa.h"
@@ -806,6 +807,7 @@ static int create_device(void) {
     vkGetPhysicalDeviceProperties2(g_vk.phys, &p2);
     g_vk.min_imported_host_alignment = (uint32_t)emh.minImportedHostPointerAlignment;
     vk_caps_init(&g_vk);
+    session_summary_header("the Vulkan device");
     vk_mem_dmabuf_probe(g_vk.device, &g_vk.mem_props, vk_gpa_wanted_ctx(&g_vk));
     vk_mem_lazy_decide();
     rt_fatal_note_add(fatal_note);

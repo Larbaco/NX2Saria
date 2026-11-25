@@ -1724,7 +1724,9 @@ itself when there is none). Without them `vk_fg_create_swapchain` gave up withou
 menu did nothing.
 
 After the device: with DLSS Frame Generation the device's entry points come from Streamline's `vk_dpa`, so its plugins
-hook every entry point the replay fetches. `vk_mem_dmabuf_probe()` may turn shadow storage on, and
+hook every entry point the replay fetches. Once `vk_caps_init()` has stored the card, the session header is written again
+with it (`runtime/session_summary.c` `session_summary_header()`): a crash from here on has the card in its summary.
+`vk_mem_dmabuf_probe()` may turn shadow storage on, and
 `vk_mem_lazy_decide()` runs once the driver is known, as the lazy write-back's default depends on it. VMA gets
 `timed_alloc()` for its allocations and the rest from its static table.
 

@@ -52,6 +52,7 @@ int rt_patches_on(const char **names, int cap);
 int mods_in_use(int *count, int *code);
 
 void session_summary_start(void);
+void session_summary_header(const char *at);
 void session_summary_exit(void);
 void session_summary_fatal(int code, const char *line);
 

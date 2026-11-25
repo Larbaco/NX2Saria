@@ -16,6 +16,7 @@
 #include "input.h"
 #include "mods.h"
 #include "nvn_api.h"
+#include "session_summary.h"
 #include "platform/platform.h"
 #include "heap_retry.h"
 #include "ui/menu.h"
@@ -391,6 +392,7 @@ void rt_boot(void) {
     else if (warm) boot_wait(warm, wait_ms);
     else vk_pipeline_prewarm();
     held = plat_now_ms() - held;
+    session_summary_header("the game's start");
     rt_log("boot: guest starts %llu ms after process start (%llu ms of it waiting for the prewarm)",
            (unsigned long long)(plat_process_uptime_ns() / 1000000), (unsigned long long)held);
     __atomic_store_n(&rt_guest_start_ns, kern_now_ns(), __ATOMIC_RELEASE);
