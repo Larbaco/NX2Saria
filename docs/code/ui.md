@@ -3238,6 +3238,14 @@ every version; `USpt` only from 1.4.3; `EUpl` only in this game (its `since` is 
 A language's own strings, for the font that draws them: the merged system font must cover the whole menu of the
 language, not only its name (`runtime/ui/menu.cpp` `fonts_up()`).
 
+For Simplified Chinese it also hands over `file_name_glyphs_zh_hans`, a list of 124 characters that is data, not menu
+text: 121 Han characters and `7`, `|`, `×`. They are the characters that only strings of removed menu rows held. The
+font atlas holds the glyphs of the strings it is given and nothing else, and the menu also draws names it does not
+know in advance, the files of the amiibo folder among them (`runtime/ui/amiibo_page.cpp`); a name with one of these
+characters drew before those rows left and would show `?` without the list. With it, the set of glyphs is the one the
+catalog gave before. `tests/ui_text_ids_check.py` fails when a character leaves the list or the walk stops handing it
+over. A name with a Han character outside the catalog and the list shows `?`, as it always did.
+
 ### `resolve_menu_lang()`
 
 The menu language, re-read when `cfg_version` changes. `NX2SARIA_MENU_LANG` names a catalog language (`en`, `ru`,

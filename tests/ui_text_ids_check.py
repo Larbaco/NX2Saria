@@ -114,8 +114,31 @@ def sources(root):
     return out
 
 
+FILE_NAME_GLYPHS = (
+    '丛严优偶充免共决创初利剪功历受叠史吗四固基太安实容寻尔展崩工库弱录扩批承投抢护拉'
+    '拖拢排描插料断旁旧早材板查核检欠武段池沿派测淡温溃漏烁热牌物状独皱盾省真知石础签'
+    '精绑结群耗联脚致艳草虚褶触议证诊译败贴踪述追透遗避释钮销闪阈阳阶隔零靠顶顿飞馈验'
+    '鲜7|×'
+)
+GLYPHS = 'file_name_glyphs_zh_hans'
+
+
+def glyph_problems(source):
+    m = re.search(r'%s\[\] =((?:\s*"[^"]*")+);' % GLYPHS, source)
+    held = ''.join(re.findall(r'"([^"]*)"', m.group(1))) if m else ''
+    gone = [c for c in FILE_NAME_GLYPHS if c not in held]
+    out = []
+    if gone:
+        out.append(f'{SOURCE}: {GLYPHS} no longer holds {"".join(gone)}: the Simplified Chinese font would lose '
+                   f'{len(gone)} glyph(s) that file names shown in the menu can use')
+    visit = re.search(r'void ui_text_visit\(.*?\n}\n', source, re.S)
+    if not visit or f'visit(ctx, {GLYPHS})' not in visit.group(0):
+        out.append(f'{SOURCE}: ui_text_visit() does not hand {GLYPHS} to the font builder')
+    return out
+
+
 def check(header, source, others):
-    problems = []
+    problems = glyph_problems(source)
     ids, position, markers = declared(header)
     known = set(ids) | set(markers)
     tabs, shared, outside, doubled = tables(source)
@@ -201,6 +224,11 @@ def self_test(root):
         at = text.index(f'[{name}] = ', start)
         return text[:at] + text[text.index('",', at) + 2:]
 
+    def drop_glyph(text, glyph):
+        start = text.index(f'{GLYPHS}[]')
+        at = text.index(glyph, start)
+        return text[:at] + text[at + 1:]
+
     everywhere = source
     for table in MENU_TABLES:
         everywhere = add_string(everywhere, table, 'UI_MENU_PLANTED')
@@ -219,6 +247,10 @@ def self_test(root):
          'arithmetic or an ordered comparison on UI_MENU_ON'),
         ('a declared expression that left the code', header, source,
          {**others, binds: others[binds].replace('UI_BIND_A + a', 'UI_BIND_A + b')}, 'no longer holds "UI_BIND_A + a"'),
+        ('a glyph taken out of the list kept for file names', header, drop_glyph(source, FILE_NAME_GLYPHS[7]), others,
+         f'{GLYPHS} no longer holds {FILE_NAME_GLYPHS[7]}'),
+        ('a catalog walk that skips the list', header, source.replace(f'visit(ctx, {GLYPHS})', 'visit(ctx, "")'),
+         others, f'does not hand {GLYPHS} to the font builder'),
     )
     rc = 0
     _, fewer = check(header, drop_string(source, 'text_pt_br', 'UI_MENU_QUIT'), others)

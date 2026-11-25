@@ -5239,6 +5239,10 @@ no id without a use, no string without an id. It reads the sources as text; no c
   language). A missing Russian, Brazilian Portuguese or Chinese string is allowed, since `ui_text_in()` shows the
   English one; the summary line counts them per language.
 
+- `FILE_NAME_GLYPHS`: the characters `runtime/ui/ui_text.c` `file_name_glyphs_zh_hans` must hold, and
+  `ui_text_visit()` must hand that list to the font builder (`glyph_problems()`), so the Simplified Chinese glyph set
+  does not shrink below it ([ui.md](ui.md), `ui_text_visit()`).
+
 ### `check()`
 
 Takes the header, the catalog source and the other sources as text, so the self-test plants its faults in copies in
@@ -5248,7 +5252,8 @@ memory. Returns the problems and the counts of the summary line.
 
 A planted id with strings in the four tables that nothing names; a string for an undeclared id; an id without its
 English string; a second string for one id; `UI_MENU_ON + k` in a source; a declared expression renamed in its file:
-each must fail with its own message. A dropped Brazilian Portuguese string must pass and raise that language's count
+a character taken out of the
+glyph list; a catalog walk that no longer hands the list over: each must fail with its own message. A dropped Brazilian Portuguese string must pass and raise that language's count
 by one.
 
 ## `tests/up_defer_check.py`

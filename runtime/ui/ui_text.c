@@ -2356,11 +2356,18 @@ const char *ui_text_in(const char *lang, UiTextId id) {
 
 const char *ui_text(UiTextId id) { return ui_text_in(ui_text_lang(ov_language()), id); }
 
+static const char file_name_glyphs_zh_hans[] =
+    "丛严优偶充免共决创初利剪功历受叠史吗四固基太安实容寻尔展崩工库弱录扩批承投抢护拉"
+    "拖拢排描插料断旁旧早材板查核检欠武段池沿派测淡温溃漏烁热牌物状独皱盾省真知石础签"
+    "精绑结群耗联脚致艳草虚褶触议证诊译败贴踪述追透遗避释钮销闪阈阳阶隔零靠顶顿飞馈验"
+    "鲜7|×";
+
 void ui_text_visit(const char *lang, void (*visit)(void *ctx, const char *text), void *ctx) {
     const Row *r = find_row(lang);
     if (!r) return;
     for (int id = 0; id < (int)UI_TEXT_COUNT; id++)
         if (r->text[id] && *r->text[id]) visit(ctx, r->text[id]);
+    if (!strcmp(r->lang, "zh-Hans")) visit(ctx, file_name_glyphs_zh_hans);
 }
 
 static const char *resolve_menu_lang(void) {
