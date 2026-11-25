@@ -3129,8 +3129,8 @@ NVN2's stages.
 
 ### `oneshot_wait_ms()`, `oneshot_budget_on()`
 
-`prepare_draw_ex()`: how long a one-shot draw waits for its shaders and pipeline before it is skipped. Such a draw renders
-into a target that is neither recent nor steady (`runtime/vk/vk_target_frames.h`: a volume, a lookup table, an icon, a
+`prepare_draw_ex()`: how long a one-shot draw waits for its shaders and pipeline before it is skipped. Such a draw
+renders into a target that is neither recent nor steady (`runtime/vk/vk_target_frames.h`: a volume, a lookup table, an icon, a
 target made new at an area change); skipped, a target the game draws once stays as it was. A draw into per-frame targets
 whose shaders write memory takes the same wait (`writers_wait_on`). `NX2SARIA_ONESHOT_BUDGET` (default 1): the one-shot
 draws of a presented frame wait from that frame's wait pool (`frame_wait`, shared with the full-screen draws), a mesh
@@ -3145,8 +3145,8 @@ the driver's cache a fast link takes 2 to 6 ms, so the pool covers the lookup ta
 
 ### `MESH_WAIT_MS`
 
-8 ms. What a mesh draw waits for is a few milliseconds when the caches hold it and 200 ms or more when they do not: the whole
-build of a mesh pipeline without stage libraries, which has no fast link, or with them (`vk_pipeline_mesh_libs`) the
+8 ms. What a mesh draw waits for is a few milliseconds when the caches hold it and 200 ms or more when they do not: the
+whole build of a mesh pipeline without stage libraries, which has no fast link, or with them (`vk_pipeline_mesh_libs`) the
 library of its task and mesh stages, which is most of that build. A longer wait only finds out which, and one that has
 been building for longer than this is a compile: the draws that meet it in the frames after wait for nothing
 (`oneshot_ms`). Before that rule a first visit waited 8 to 13 ms for each of 17 mesh draws over nine frames, up to four
@@ -3333,8 +3333,8 @@ image to the deferred release with it.
 
 Integer formats a texture view may give an image (`nvnTextureViewSetFormat`): the Vulkan format and the translator's
 TextureFormat code (`runtime/gfx/gfx_shader.c` `fmt_names`) the translator declares a storage image with. A shader that
-packs texels itself writes raw words through such a view (the game's last post-process pass stores R11G11B10 bits through
-an R32UI view of an R11G11B10F target); through a view of the texture's own format the store converted them (a black
+packs texels itself writes raw words through such a view (the game's last post-process pass stores R11G11B10 bits
+through an R32UI view of an R11G11B10F target); through a view of the texture's own format the store converted them (a black
 picture with red blobs). 0: not an integer format.
 
 ### `texel_bytes()`
@@ -3345,8 +3345,8 @@ ones they alias); 0 unknown.
 ### `raw_note()`
 
 `RAW` (8 entries): images written this frame through an integer storage view (`storage_view_format()`), in the order of
-their writes (`seq`): the game's last post-process pass stores shared-exponent RGB9E5 texels that way into its R11G11B10F scene target, raw
-words the upscaler that reads them (tensor-core, untranslatable) decodes itself, and the fallback blit must too
+their writes (`seq`): the game's last post-process pass stores shared-exponent RGB9E5 texels that way into its
+R11G11B10F scene target, raw words the upscaler that reads them (tensor-core, untranslatable) decodes itself, and the fallback blit must too
 (`raw_9e5`). Now and then (1 of 529 frames sampled in a field) the same pass writes them into the RGB9E5 image at that
 address instead, as native texels (`raw_native_9e5`); the R11G11B10F image there then holds an older picture.
 
@@ -3490,8 +3490,8 @@ The mesh fallback (the "Mesh fallback" sections) runs a program's task and mesh 
 binds one's resources, a compute module's bindings are those of this NVN stage (6 task, 7 mesh), not of the compute
 stage (`DrawCtx.mfb_stage`, which `nvn_stage_of()` gives for a compute resource).
 
-Per-binding descriptor reuse (`bind_resources()`, `PB`): while a descriptor that may be kept resolves, `pb_cap` is where its
-census count goes, so a later reuse counts the same bytes again; `pb_spoiled` is set when the resolution copied guest
+Per-binding descriptor reuse (`bind_resources()`, `PB`): while a descriptor that may be kept resolves, `pb_cap` is where
+its census count goes, so a later reuse counts the same bytes again; `pb_spoiled` is set when the resolution copied guest
 bytes into transient memory or counted more than once, and such a descriptor is not kept (both in `DrawCtx`).
 
 ### `count_use()`
@@ -3931,8 +3931,8 @@ refreshes in 600 frames with 1,090 slots left between them.
 
 `pool_defer` holds, per slot, 1 + the low bits of the frame a refresh left it in (`pool_create_ns()`).
 
-`pool_left`: the slots a refresh left (`pool_refill()` failed: the creation budget or the frame's time was spent), so that the next
-refresh of the same submission looks up these and the changed slots (`vk_texture_dirty_slots_locked`) instead of walking
+`pool_left`: the slots a refresh left (`pool_refill()` failed: the creation budget or the frame's time was spent), so
+that the next refresh of the same submission looks up these and the changed slots (`vk_texture_dirty_slots_locked`) instead of walking
 the whole table again. While an area loads, slots are left at every refresh, and each refresh walked the table: about
 67,000 slot reads and 1.65 ms of the replay per submission in Kokiri Forest on an RX 580 (2026-11-11), with six
 submissions a frame. `pool_left_all`: the list overflowed (or nothing tracks it yet): walk the table.
@@ -4595,8 +4595,8 @@ The previous draw's shaders, kept while its program, bound pipeline state, the v
 texture and image handles and every slot's resolution (`vk_texture_slots_gen`, read unlocked: a registration racing with
 it is ordered after this draw, as `answers_for()`'s own check would order it) stay the same: `answers_for()` reads
 nothing else, so `shader_for()` would return the same shaders. About 65% of field draws repeat them
-(`NX2SARIA_BIND_STATS`). `NX2SARIA_SHADER_MEMO=0` turns it off; `=check` looks the shaders up on every hit too, and every
-slot's texture type in `answers_for()`, and stops on a difference. `tex_serial` (bumped by every texture and image bind)
+(`NX2SARIA_BIND_STATS`). `NX2SARIA_SHADER_MEMO=0` turns it off; `=check` looks the shaders up on every hit too, and
+every slot's texture type in `answers_for()`, and stops on a difference. `tex_serial` (bumped by every texture and image bind)
 equal to the key's means the handles were not rebound since they were compared, so the 1 KiB compare is skipped; a
 rebind to the same handles still matches by the compare. The memo and its key (`MemoKey`) are `DrawCtx.SM`.
 
@@ -4650,7 +4650,8 @@ mesh: 0 a vertex program's draw, 1 a mesh program's, 2 a compute program's dispa
 
 ### Mesh fallback: a list's depth-only draw is held while its colour draw waits for a pipeline
 
-The game draws a culled list of grass or leaves twice from one indirect record: into the depth target alone, then into the colour targets. Each draw has modules
+The game draws a culled list of grass or leaves twice from one indirect record: into the depth target alone, then into
+the colour targets. Each draw has modules
 and a pipeline of its own, and the depth-only one, the smaller, is built first. Drawn without its colour draw it leaves
 the list's depth in the scene with nothing drawn over it: what lies behind fails the depth test there, and the sky's
 colour shows through the ground in the shape of the grass for as long as the colour draw's pipeline builds, seconds each
@@ -5406,28 +5407,22 @@ dispatch). The base instance stays out of c0 (0x644): c0 cannot be patched by a 
 
 ### Dispatch and uniform buffer updates
 
-### `fmt_srgb()`
+### `fmt_srgb()`, `fmt_rgba8()`
 
-A compute dispatch whose shader cannot be translated: Switch 2 titles run tensor-core networks (HMMA/LDSM, an AI
-upscaler: Ocarina's title movie goes 1920x1080 -> 2560x1440 through ten such passes) that the Maxwell translator has no
-model for. Instead of leaving the outputs untouched (black), the largest bound storage image receives a linear blit of
-the largest bound sampled RGBA8 texture that is a different image and no larger (the networks' 10-bit intermediates are
-only partly meaningful as pictures, so they are not a source): what an upscaler approximates. In-place passes (the
-output also sampled) are left alone. `NX2SARIA_CS_FALLBACK=0` turns it off. sRGB-ness of the RGBA8 formats the fallback
-blits: a blit converts between encodings, the game's network writes the bits through a UNORM view, so a UNORM source and
-an sRGB target go through a scratch image in the source's format (blit, scaling only) and then a raw copy.
+sRGB-ness of the RGBA8 formats the fallback (`untranslated_dispatch_fallback()`) blits: a blit converts between
+encodings, the game's network writes the bits through a UNORM view, so a UNORM source and an sRGB target go through a
+scratch image in the source's format (blit, scaling only) and then a raw copy.
 
 ### `fallback_scratch()`
 
-Scratch images for those blits, one per (size, format), at most `SCRATCH_N`; a new size takes the place of the one used
-longest ago (`runtime/vk/vk_scratch_lru.h`), whose image goes through the deferred destruction.
-
-- `vk_tonemap_forget(cache[i].img)`: the stand-in's views of it, before a new image can take its handle.
+Scratch images for those blits, one per (size, format), at most `SCRATCH_N` (8); a new size takes the place of the one
+used longest ago (`runtime/vk/vk_scratch_lru.h`), whose image goes through the deferred destruction. Before that the
+tonemap stand-in forgets its views of it (`vk_tonemap_forget`), before a new image can take its handle.
 
 ### `uses_tensor_ops()`
 
 1 when the bound compute program uses tensor-core instructions (HMMA 0x23c, IMMA 0x237, LDSM 0x83b): the game's
-upscalers (the movie's and the 3D scene's), which the fallback blit stands in for unless `native_tensor` runs them.
+upscalers (the movie's and the 3D scene's), which the fallback blit stands in for unless `native_tensor()` runs them.
 Other untranslated programs (bindless texturing, indirect branches) bind the output image too, and a blit for them
 pasted G-buffer normals and intermediates over the picture. Kept per program serial.
 
@@ -5437,10 +5432,10 @@ pasted G-buffer normals and intermediates over the picture. Kept per program ser
 `tools/xlate/AmpereLowering.cs` Hmma, Ldsm, Movm). The lowering gives the hardware's results: its SPIR-V, run by the
 driver, matches what the same SM86 kernels compute natively, bit for bit, on single instructions and on a network pass
 over four warps (a check named `tensor_gpu_check.py`, which `tests/` does not hold). The infinities and noise the scene
-upscaler wrote came from its input picture, not from the arithmetic (`net_binding`). Still off by default: no game run
+upscaler wrote came from its input picture, not from the arithmetic (`net_binding()`). Still off by default: no game run
 has confirmed the picture since, and each network pipeline takes the driver tens of seconds and about 100 MiB of device
-memory to build (`runtime/vk/vk_pipeline.c`, compute pipeline prebuild). While off, the programs take the fallback below
-as untranslated ones do.
+memory to build (`runtime/vk/vk_pipeline.c`, compute pipeline prebuild). While off, the programs take
+`untranslated_dispatch_fallback()` as untranslated ones do.
 
 ### `log_cs_bindings_locked()`
 
@@ -5470,160 +5465,175 @@ sampled R11G11B10F image of the output's size) into the same scene target, throu
 own pass writes it with. 1: the dispatch is handled (left out or replaced). `NX2SARIA_AA_LOG=1` logs each compute
 program's guest code hash once, with its dispatch size and output, to find the passes in another game version.
 
-- The scene target, written as raw words: the R11G11B10F image, or at times the RGB9E5 one the same memory also resolves
-  as (`raw_9e5_twin`), which takes the same words.
-- `if (storage_view_format(t, &v, hv) == VK_FORMAT_R32_UINT) dv = get_view(ex, t, &v, hv, 3, 1)`: 3: Texture2D.
-- `for (int i = 0; dst && i < 128 && !src; i++)`: the composite: R11G11B10F of the same size, another image.
-- `if (dv && sv) vk_texture_storage_bound_locked(dst)`: the GPU writes it below, as the game's pass would have.
-- Left to the game, once logged. Expected while an area loads: the target is then the RGB9E5 image at the same memory,
-  made without storage use, which the game's own pass cannot write either.
-- Recorded without the texture lock: SMAA's first frame waits for its lookup textures' upload. The views stay valid
-  meanwhile: images and views go only through the deferred release.
-- `vk_exec_barrier_dispatch(ex)`: ends the pass; the composite's writes are visible.
-- `ex->dc->B.pipe[1] = VK_NULL_HANDLE`: the replay must bind its compute pipeline again.
+1. The scene target, written as raw words: the R11G11B10F image, or at times the RGB9E5 one the same memory also
+   resolves as (`raw_9e5_twin()`), which takes the same words. Its view is the integer storage view (`R32_UINT`) of
+   resource type 3, the translator's Texture2D.
+2. The composite: an R11G11B10F texture of the same size that is another image.
+3. With both, the target is noted as storage-bound (`vk_texture_storage_bound_locked`): the GPU writes it, as the game's
+   pass would have. Without one of them the composition is left to the game, once logged. That is expected while an
+   area loads: the target is then the RGB9E5 image at the same memory, made without storage use, which the game's own
+   pass cannot write either.
+4. The pass is recorded without the texture lock: SMAA's first frame waits for its lookup textures' upload. The views
+   stay valid meanwhile: images and views go only through the deferred release. `vk_exec_barrier_dispatch` ends the
+   render pass first, so the composite's writes are visible; afterwards the replay must bind its compute pipeline
+   again, so the held one is forgotten.
 
 ### `untranslated_dispatch_fallback()`
 
-- `if (!uses_tensor_ops(ex))`: its translation failed, and no stand-in exists for programs without tensor ops.
-- The output is looked for among the image slots the program uses: the count of image entries of its NVN2 control
-  section (byte +0xb6), at least slot 0 (the networks' in-place passes count none and write slot 0). An image slot keeps
-  its binding from earlier dispatches, so past that count lie other programs' images: with a 3840x2160 picture the scene
-  upscaler leaves its 3840x2160 RGB9E5 target in slot 2, the largest image bound to the movie network's last pass, and
-  that pass's real output (2560x1440, slot 1, which the frame's last passes enlarge) kept stale bits for the whole
-  movie: the Triforce movie after Gohma showed as frozen coloured stripes.
-- `for (int i = 0; dst && i < 128; i++)`: an in-place pass (its output also sampled) is left alone.
-- RGBA8 sources (the movie's frames; its 10-bit intermediates gave black bands), or one in the output's own format: the
-  3D scene (r11g11b10f) the game's upscaler enlarges to the output resolution.
-- The picture also resolves as RGB9E5 at the same address; what the post pass wrote there stands in for it below.
-  Refused for its format, the next input of its size (the older picture the upscaler blends with) was shown, and what
-  moves trailed.
-- `if (dst && src && knob_log_cs_binds())`: each distinct (program, source, target) once, 256 at most.
-- `if (src && dst && fallback_9e5_scene(sf, dst->format))`: the image the post pass wrote this frame (`raw_9e5_twin`).
-- `int native = raw_native_9e5(si, sf)`: RGB9E5 texels in an RGB9E5 image: decoded as they are, no copy.
-- `VkImageView dst_view = VK_NULL_HANDLE`: for the tonemap pass, while the lock keeps the image.
-- `dst_view = get_view(ex, dst, &nv, 0, 3, 1)`: 3: the translator's Texture2D.
-- `static int e5_blit = -1`: E5B9G9R9 can be a blit source (with linear filtering).
-- `if (e5 && !native)`: the raw words into a shared-exponent image (same texel size: a copy keeps the bits), then the
-  blit.
-- The square decode of the stored picture (`runtime/vk/vk_tonemap.c`). Builds of round 24 lost the device with it: its
-  descriptor push did not go through the recorder (`runtime/vk/vk_rec.h` `rec_push()`; PORT-HANDOFF 7.12 item 11), which
-  it now does. Its edge-adaptive filter is for the picture the screen shows: while DLSS or FSR 3.1 runs
-  (`vk_dlaa_active`) that upscaler scales the scene itself and `vk_dlaa_upscaler` below puts its picture over this one,
-  so the pass keeps its linear filter there, also in the few frames that upscaler misses.
-- `if (tm)`: the tonemapped picture, already at the target's size, then the same blit as below.
-- `ex->dc->B.pipe[1] = VK_NULL_HANDLE`: the replay must bind its compute pipeline again.
-- The scene upscaler's input is the post pass's picture stored as the square root of each linear value (prog 102 packs
-  `sqrt(composite)` into RGB9E5), and its output is linear: the HUD is drawn over it and the frame's last pass encodes
-  to sRGB. A plain blit carried the stored values into the linear target, so the picture was washed out. The pass above
-  squares them. Without it, this approximation decodes with the sRGB curve instead: scale into an RGBA8 UNORM scratch
-  (the stored values), copy those bits into an RGBA8 sRGB scratch, and blit that into the target, which reads the sRGB
-  image as linear (mid-tones a little dark, the darkest values a little lifted).
-- `if (scratch)`: the bits as they are: a UNORM picture stays the same picture in an sRGB image's memory.
-- `vk_dlaa_upscaler(ex, di, df, dw, dh)`: the scene upscaler's output: DLSS's or FSR's picture goes there
-  (`runtime/vk/vk_dlaa.c`).
+A compute dispatch whose shader cannot be translated: Switch 2 titles run tensor-core networks (HMMA/LDSM, an AI
+upscaler: the game's title movie goes 1920x1080 -> 2560x1440 through ten such passes) that the Maxwell translator has no
+model for. Instead of leaving the outputs untouched (black), the largest bound storage image receives a linear blit of
+the largest bound sampled RGBA8 texture that is a different image and no larger (the networks' 10-bit intermediates are
+only partly meaningful as pictures, so they are not a source): what an upscaler approximates. In-place passes (the
+output also sampled) are left alone. `NX2SARIA_CS_FALLBACK=0` turns it off.
+
+1. A program without tensor ops is left alone: its translation failed, and no stand-in exists for such programs.
+2. The output is looked for among the image slots the program uses: the count of image entries of its NVN2 control
+   section (byte +0xb6), at least slot 0 (the networks' in-place passes count none and write slot 0). An image slot
+   keeps its binding from earlier dispatches, so past that count lie other programs' images: with a 3840x2160 picture
+   the scene upscaler leaves its 3840x2160 RGB9E5 target in slot 2, the largest image bound to the movie network's last
+   pass, and that pass's real output (2560x1440, slot 1, which the frame's last passes enlarge) kept stale bits for the
+   whole movie: the Triforce movie after Gohma showed as frozen coloured stripes.
+3. An in-place pass (its output also sampled) is left alone.
+4. The source: RGBA8 (the movie's frames; its 10-bit intermediates gave black bands), or one in the output's own
+   format: the 3D scene (r11g11b10f) the game's upscaler enlarges to the output resolution. The scene's picture also
+   resolves as RGB9E5 at the same address; what the post pass wrote there stands in for it (`fallback_9e5_scene()`,
+   `raw_9e5_twin()`: the image the post pass wrote this frame). Refused for its format, the next input of its size (the
+   older picture the upscaler blends with) was shown, and what moves trailed.
+5. With `NX2SARIA_LOG_CS_BINDS`, each distinct (program, source, target) is logged once, 256 at most; a program left
+   alone is logged by `log_fallback_skip_locked()`.
+6. RGB9E5 texels in an RGB9E5 image (`raw_native_9e5()`) are decoded as they are, with no copy. The target's storage
+   view for the tonemap pass (type 3, the translator's Texture2D) is taken here, while the lock keeps the image.
+7. Whether E5B9G9R9 can be a blit source (and with linear filtering) is asked of the device once and logged. Raw words
+   go into a shared-exponent scratch image first (same texel size: a copy keeps the bits), then the blit.
+8. With `NX2SARIA_TONEMAP_STANDIN`: the square decode of the stored picture (`runtime/vk/vk_tonemap.c`). Builds of round
+   24 lost the device with it: its descriptor push did not go through the recorder (`runtime/vk/vk_rec.h`
+   `rec_push()`), which it now does. Its edge-adaptive filter is for the picture the screen shows: while DLSS or FSR 3.1
+   runs (`vk_dlaa_active`) that upscaler scales the scene itself and `vk_dlaa_upscaler` puts its picture over this one,
+   so the pass keeps its linear filter there, also in the few frames that upscaler misses. The tonemapped picture is
+   already at the target's size and goes through the same last blit; the replay must bind its compute pipeline again
+   after it.
+9. The scene upscaler's input is the post pass's picture stored as the square root of each linear value (prog 102 packs
+   `sqrt(composite)` into RGB9E5), and its output is linear: the HUD is drawn over it and the frame's last pass encodes
+   to sRGB. A plain blit carried the stored values into the linear target, so the picture was washed out. The tonemap
+   pass squares them. Without it, this approximation decodes with the sRGB curve instead: scale into an RGBA8 UNORM
+   scratch (the stored values), copy those bits into an RGBA8 sRGB scratch, and blit that into the target, which reads
+   the sRGB image as linear (mid-tones a little dark, the darkest values a little lifted).
+10. The blit; through the scratch image of `fmt_srgb()`'s case, its bits are then copied as they are: a UNORM picture
+    stays the same picture in an sRGB image's memory.
+11. `vk_dlaa_upscaler`: this is the scene upscaler's output, and DLSS's or FSR's picture goes there
+    (`runtime/vk/vk_dlaa.c`).
 
 ### `op_dispatch()`
 
-- `if (aa_dispatch(ex, d->x, d->y, d->z)) return`: The game's SMAA left out or replaced (`runtime/vk/vk_aa.c`).
-- A tensor-core program runs the stand-in while `NX2SARIA_NATIVE_TENSOR` is off, so ask that before translating it.
-  Translating it anyway recorded four AI-upscaler compute shaders of 0.87-4.4M SPIR-V words that this game never
-  dispatches natively, and building them cost gigabytes of memory at boot (`NX2SARIA_LIB_PREBUILD_BIG`, `bg_main`).
-- `const GfxShader *cs = shader_for(ex, NVN_STAGE_CS, &present, NULL, 0)`: synchronous: a skipped dispatch changes
-  results.
-- `if (knob_log_cs_binds())`: diagnosis: the compute bindings of the first dispatch of each program.
-- `if ((info->pool && !pool_on()) || shader_skipped(cs)) return`: `NX2SARIA_POOL=0`, `NX2SARIA_SKIP_SHADERS`.
-- `vk_exec_barrier_dispatch(ex)`: ends the pass; earlier writes are visible to the shader.
-- The replay's binding path is the CPU cost the frame profile needs to separate from recording.
-- `if (vk_texture_deferred()) return`: past a parallel group: the op goes again once it is done
-  (`runtime/vk/vk_exec.c` `op_again()`).
+1. `aa_dispatch()`: the game's SMAA left out or replaced (`runtime/vk/vk_aa.c`).
+2. A tensor-core program runs the stand-in while `NX2SARIA_NATIVE_TENSOR` is off, so that is asked before translating
+   it. Translating it anyway recorded four AI-upscaler compute shaders of 0.87-4.4M SPIR-V words that this game never
+   dispatches natively, and building them cost gigabytes of memory at boot (`NX2SARIA_LIB_PREBUILD_BIG`, `bg_main`).
+3. The shader lookup is synchronous: a skipped dispatch changes results. With `NX2SARIA_LOG_CS_BINDS` the compute
+   bindings of the first dispatch of each program are logged (diagnosis). An untranslated shader takes
+   `untranslated_dispatch_fallback()`.
+4. A pipeline that uses the pools with `NX2SARIA_POOL=0`, or a shader `NX2SARIA_SKIP_SHADERS` lists, is skipped.
+5. `vk_exec_barrier_dispatch` ends the pass; earlier writes are visible to the shader.
+6. `bind_resources()` with `twin_dispatch` set, timed apart: the replay's binding path is the CPU cost the frame profile
+   needs to separate from recording. Past a parallel group a deferred texture lookup makes the op go again once the
+   group is done (`runtime/vk/vk_exec.c` `op_again()`).
+7. The dispatch, inside its pass mark (`dispatch_mark()`).
 
 ### `op_dispatch_ind()`
 
 DispatchComputeIndirect: `vkCmdDispatchIndirect` from the pool buffer. The shader reads the group counts from c0 0x200,
 so they are copied there on the GPU, into a c0 range no other dispatch uses, before the dispatch.
 
-- `if (aa_dispatch(ex, 0, 0, 0)) return`: as in `op_dispatch`.
-- `if (!native_tensor(ex)) { untranslated_dispatch_fallback(ex); return; }`: as in `op_dispatch`: never translate it.
-- `if ((info->pool && !pool_on()) || shader_skipped(cs)) return`: `NX2SARIA_POOL=0`, `NX2SARIA_SKIP_SHADERS`.
-- `cx->B.c0_valid[2] = 0`: a fresh c0 range: the copy below must not change one an earlier dispatch reads.
-- The replay's binding path is the CPU cost the frame profile needs to separate from recording.
-- `if (vk_texture_deferred()) return`: as in `op_dispatch`.
-- `if (cx->B.c0_valid[2])`: the shader binds c0.
-- NVN2 programs read the group counts from c0 byte 0 (`c0_info`); at 0x200 their bank holds pushed constants or the
-  driver's tables, which the copy would overwrite.
-- `cx->B.c0_valid[2] = 0`: the range no longer holds `B.c0[2]`.
+It goes as `op_dispatch()` does (the SMAA passes, a tensor-core program never translated, the pools and shader filters,
+the timed binding, the deferred lookup), with these differences: the held c0 bank of the compute stage is forgotten
+before the binding, so the binding makes a fresh c0 range: the copy must not change one an earlier dispatch reads. When
+the shader binds c0, the arguments are copied into it: at 0x200, or at byte 0 for an NVN2 program, which reads the group
+counts there (`c0_info()`); at 0x200 its bank holds pushed constants or the driver's tables, which the copy would
+overwrite. After the copy the range no longer holds `B.c0[2]`, so it is forgotten again.
 
 ### `op_update_ub()`
 
-- `vk_exec_barrier(ex)`: earlier draws finished with the old contents.
-- In a submission's tail (`runtime/vk/vk_exec.c` "the early tail") an update of a mirrored block reaches guest memory
-  with the results the game reads, from the bytes here, and takes no write-back: one after the tail would land when the
-  game is already writing the next frame's data. This goes the same way under the lazy write-back (`runtime/memory.c`
-  "Lazy write-back", NVIDIA's and Intel's Windows default), which is what kept every tail of those drivers from going
-  early: a write-back recorded here would run before the tail, whose copy makes the bytes, and carry the pool's older
-  ones down over the guest's. It needs no write-back either: `ub_write_cb` delivers these very bytes
-  (`runtime/nvn/nvn_api_cmd.c` records the payload) to the guest at the fence, and the tail's own copy keeps the mirror
-  equal to them from then on; where the game passed its data through this very block, as it usually does, the guest
-  pages hold them already. The one case left as before is a range the lazy write-back has armed
-  (`runtime/vk/vk_memory.c` `vk_gpu_written_back()` arms what a shader wrote, and only that: blocks updated this way
-  never get armed): there the fetch path owns the bytes, the update is noted as ever, and the tail goes after the
-  write-backs. A range armed only in part passes and its fetch orders after the tail's copy, so it still brings these
-  bytes down when a touch releases it.
+A barrier first: earlier draws finished with the old contents. Then the payload goes into transient memory and is copied
+into the buffer's backing.
+
+In a submission's tail (`runtime/vk/vk_exec.c` "the early tail") an update of a mirrored block reaches guest memory with
+the results the game reads, from the bytes here, and takes no write-back: one after the tail would land when the game is
+already writing the next frame's data. This goes the same way under the lazy write-back (`runtime/memory.c` "Lazy
+write-back", NVIDIA's and Intel's Windows default), which is what kept every tail of those drivers from going early: a
+write-back recorded here would run before the tail, whose copy makes the bytes, and carry the pool's older ones down
+over the guest's. It needs no write-back either: `ub_write_cb` delivers these very bytes (`runtime/nvn/nvn_api_cmd.c`
+records the payload) to the guest at the fence, and the tail's own copy keeps the mirror equal to them from then on;
+where the game passed its data through this very block, as it usually does, the guest pages hold them already. The one
+case left as before is a range the lazy write-back has armed (`runtime/vk/vk_memory.c` `vk_gpu_written_back()` arms what
+a shader wrote, and only that: blocks updated this way never get armed): there the fetch path owns the bytes, the update
+is noted as ever, and the tail goes after the write-backs. A range armed only in part passes and its fetch orders after
+the tail's copy, so it still brings these bytes down when a touch releases it.
 
 ### Bind ops
 
 ### `op_draw_impl()`
 
-- `memset(ex->pipe.vattr, 0, sizeof ex->pipe.vattr)`: the new list replaces the old one.
-- `else if (b->index >= 18 && b->index < 64)`: NVN2 has more banks than Maxwell's 18: say which, once each.
-- `if (b->stage >= NVN_STAGE_TASK && b->stage <= NVN_STAGE_MESH && b->index >= 0 && b->index < 16)`: once per slot.
-- `ex->tex_serial++`: the shader memo's handle check (`feedback_scan` reads only textures: a rescan at most).
-- `cx->bind_gen++`: storage buffers may come from these words (`push_ptr`).
+The draw ops' switch. The bind ops fill the `VkExec` slots:
+
+- A vertex attribute or stream list replaces the old one: the array is cleared first.
+- A uniform bind to index 18 or more is dropped: NVN2 has more banks than Maxwell's 18, and the log says which, once
+  each.
+- A storage bind of the task or mesh stage is logged once per slot.
+- A texture or image bind bumps `tex_serial`, the shader memo's handle check (`feedback_scan()` reads only textures, so
+  an image bind costs it a rescan at most).
+- Program, uniform, storage, texture and image binds bump `DrawCtx.bind_gen`, and so do pushed compute constants
+  (`OP_PUSH_CC`): storage buffers may come from those words (`push_ptr()`).
 
 ### `vk_mvobj_frame_masks()`
 
-The last executed list's draws as " `<position` `banks>/<changed` `banks>:<draws>`" (bit n: cn), for
-`NX2SARIA_MV_CHECK`'s lines.
+The last executed list's draws as " `<position banks>/<changed banks>:<draws>`" (bit n: cn), for `NX2SARIA_MV_CHECK`'s
+lines.
 
 ### `op_is_draw()`
 
 `NX2SARIA_REPLAY_TIME` (default 0, off): times each op so the frame-time summary can say how the replay splits between
 draws, binds and transfers. The clock reads cost a fraction of a millisecond a frame, which is why it is off by default
-and why the wrapper is the only thing between the walk and the switch.
+and why the wrapper (`vk_exec_op_draw()`) is the only thing between the walk and the switch. `op_is_draw()` says which
+ops count as draws there: draws, dispatches and uniform updates.
+
+### The replay phases (`NX2SARIA_REPLAY_PHASES`)
+
+`NX2SARIA_REPLAY_PHASES=1` (default 0, off; a developer switch): where the replay's time per op goes, apart for the
+submitting thread and the replay workers (whose chunks run beside it), by the op's kind (`PK_*`) and, inside a draw, by
+the phase of `prepare_draw_ex()` (`PH_*`): entry (the pass and the scissor), shader lookup, pipeline lookup, its bind
+and dynamic state, the per-draw hooks (DLAA, motion vectors, jitter, fixed state, repeat stats), the resource binding
+(of it the texture and buffer descriptors, the binding signature and the set packing and pushes, which
+`bind_resources()` times itself), the vertex buffers and what follows, and the rest of the op (the index buffer, the
+`vkCmdDraw` call, a skipped draw). One line per thread kind every `PH_EVERY` (600) frames (`vk_exec_phases_frame()`).
+The clock reads cost about a tenth of a microsecond each, a dozen a draw, which the totals include.
+
+The sums (`ph_ns`, `ph_ops`, `ph_op_ns`, `ph_code_ns`, `ph_code_n`, `ph_rec_ns`, `ph_rec_n`) are indexed by thread kind
+first and updated with atomics. `ph_t` (per thread, declared with `bt_now()`) is the last mark of the draw op being
+timed, 0 outside one; `ph_mark()` adds the time since it to a phase.
 
 ### `vk_exec_phase_worker()`
 
-- `enum { PK_DRAW, ... }`: `NX2SARIA_REPLAY_PHASES=1` (default 0, off; a developer switch): where the replay's time per
-  op goes, apart for the submitting thread and the replay workers (whose chunks run beside it), by the op's kind and,
-  inside a draw, by the phase of `prepare_draw_ex`: entry (the pass and the scissor), shader lookup, pipeline lookup,
-  its bind and dynamic state, the per-draw hooks (DLAA, motion vectors, jitter, fixed state, repeat stats), the resource
-  binding (of it the texture and buffer descriptors, the binding signature and the set packing and pushes, which
-  `bind_resources` times itself), the vertex buffers and what follows, and the rest of the op (the index buffer, the
-  `vkCmdDraw` call, a skipped draw). One line per thread kind every `PH_EVERY` frames (`vk_exec_phases_frame`). The
-  clock reads cost about a tenth of a microsecond each, a dozen a draw, which the totals include.
-- `ph_worker`: `vk_exec_phase_worker`: this thread is a replay worker.
-- `ph_ns`: (`ph_t`, declared above `bt_now`: the last mark of the draw op being timed, 0 outside one).
-
-  `__atomic`.
+Marks this thread as a replay worker (`ph_worker`, per thread).
 
 ### `vk_exec_phases_on()`
 
-- `ph_code_ns`: `__atomic`.
+`NX2SARIA_REPLAY_PHASES`, read once and logged when on.
 
 ### `vk_exec_phase_seg()`
 
-- `ph_seg_ns`: `__atomic`; the submitting thread's alone (`vk_exec_record` runs there).
+`ph_seg_ns`: updated with atomics; the submitting thread's alone (`vk_exec_record` runs there).
 
 ### `vk_exec_op_draw()`
 
-- `if (ph_on && k != PK_OTHER) ph_t = t0`: draws, dispatches and uniform updates mark their phases.
+The replay's entry for the draw ops (`op_draw_impl()`), timed when `NX2SARIA_REPLAY_TIME` or the phases are on. Only
+draws, dispatches and uniform updates mark their phases (`ph_t` is set for them).
 
 ### `vk_exec_phases_frame()`
 
-After each frame's end in replay order (`runtime/vk/vk_exec.c` `vk_exec_frame_end`): every `PH_EVERY` frames, the
-phases' lines.
-
-- By op code: the eight with the most time, and the walk's calls of `vk_exec_record` against the ops' sum.
+After each frame's end in replay order (`runtime/vk/vk_exec.c` `vk_exec_frame_log()`): every `PH_EVERY` frames, the
+phases' lines: one by op kind and phase, and one by op code with the eight that took the most time and the walk's calls
+of `vk_exec_record` against the ops' sum.
 
 ### `vk_exec_sizes()`
 
