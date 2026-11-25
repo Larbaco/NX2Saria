@@ -4,9 +4,8 @@ import { parseInspection, type Inspection } from './inspection';
 import { openWorker, WorkerRequestError, type WorkerClient } from './worker-client';
 import { parsePlayResult, type PlayResult } from './worker-protocol';
 import { defaultRoots, findDefaultRoot } from './discovery';
-import { runtimePaths } from './runtime-paths';
+import { InstallationRuntimeError, runtimePaths } from './runtime-paths';
 
-const { source, python } = runtimePaths(app.isPackaged, process.resourcesPath, __dirname, process.env, process.platform);
 app.whenReady().then(() => {
   const window = new BrowserWindow({ width: 1040, height: 720, minWidth: 720, minHeight: 500, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
   let worker: WorkerClient | null = null;
@@ -30,7 +29,8 @@ app.whenReady().then(() => {
     if (previous) await previous.close();
     let current: WorkerClient | null = null;
     try {
-      current = await openWorker(root, python, source);
+      const { source, python, installed } = runtimePaths(app.isPackaged, process.resourcesPath, __dirname, process.env, process.platform, root);
+      current = await openWorker(root, python, source, installed);
       if (!current.handshake.capabilities.includes('inspect') || !current.handshake.capabilities.includes('play')) throw new Error('Unsupported worker');
       const active = current;
       worker = active;
@@ -89,6 +89,9 @@ app.whenReady().then(() => {
     } catch (error) {
       if (current) await current.close();
       if (worker === current) worker = null;
+      if (error instanceof InstallationRuntimeError || (error instanceof WorkerRequestError && error.code === 'runtime_incompatible')) {
+        return { status: 'inspection_error', reason: error.code };
+      }
       return { status: 'inspection_error', reason: error instanceof WorkerRequestError && error.code === 'busy' ? 'worker_busy' : 'worker_failed' };
     }
   }

@@ -6,7 +6,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import commit, game_session, jobs, locks, mods_job, play, saves, updater, winsys
+from . import commit, game_session, jobs, locks, mods_job, play, saves, updater, versions, winsys
 from .context import Context
 from .inspect_installation import inspect_installation
 from .paths import Layout
@@ -94,6 +94,8 @@ def main(argv=None):
     sys.stdout = sys.stderr
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', required=True)
+    parser.add_argument('--parent-pid', type=int)
+    parser.add_argument('--app-version')
     args = parser.parse_args(argv)
     try:
         request = read_request()
@@ -124,13 +126,33 @@ def main(argv=None):
         error(request['id'], 'invalid_installation')
         return 1
     layout = Layout(root=root)
+    parent = None
+    if args.parent_pid is not None:
+        if os.name == 'nt':
+            parent = winsys.LauncherParent.open(args.parent_pid)
+        if not parent:
+            error(request['id'], 'invalid_parent')
+            return 1
     try:
         held = locks.FileLock(layout.instance_lock, 'the launcher worker', where=layout.root)
     except locks.Busy:
+        if parent:
+            parent.close()
         error(request['id'], 'busy')
         return 1
     ctx = None
     try:
+        if args.app_version:
+            try:
+                versions.parse(args.app_version)
+                active = (layout.apps / args.app_version).resolve()
+                if (args.app_version != updater.current(layout) or active.parent != layout.apps.resolve()
+                        or not (active / 'tools' / 'make_game.py').is_file()):
+                    raise ValueError('active version changed or is incomplete')
+                layout = Layout(root=root, app=active)
+            except (OSError, ValueError, RuntimeError):
+                error(request['id'], 'runtime_incompatible')
+                return 1
         try:
             ctx = Context(layout)
             waiting = bool(updater.staged(layout, channel=ctx.settings.get('channel', 'stable'),
@@ -142,6 +164,7 @@ def main(argv=None):
             return 1
         lock_state = 'held' if held.key is not None else 'unavailable'
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
+        ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
                                               'capabilities': ['inspect', 'play'], 'update_waiting': waiting}})
         counts = {}
@@ -190,6 +213,9 @@ def main(argv=None):
                           'outcome': outcome})
                     if _output_disconnected or input_closed.is_set():
                         return shutdown_status
+                    if parent and parent.exited():
+                        ctx.log('worker: parent exit after job')
+                        return shutdown_status
                     if outcome == 'resume':
                         prepared = play.prepare(ctx, ctx.settings, job_game_dir, run, failed_mods, built=True)
                         action_log(ctx, counts, 'play', f'status={prepared.status}')
@@ -233,9 +259,12 @@ def main(argv=None):
                 if _output_disconnected:
                     continue
             try:
-                kind, request = requests.get(timeout=1 if run or job else None)
+                timeout = 0.2 if parent and not disconnected else (1 if run or job else None)
+                kind, request = requests.get(timeout=timeout)
             except queue.Empty:
-                continue
+                if disconnected or not parent or not parent.exited():
+                    continue
+                kind, request = 'parent exit', None
             if disconnected:
                 continue
             if kind == 'invalid':
@@ -249,15 +278,16 @@ def main(argv=None):
                     continue
                 return 1
             if request is None:
+                reason = 'parent exit' if kind == 'parent exit' else 'eof'
                 if run or job:
-                    ctx.log('worker: eof active')
+                    ctx.log(f'worker: {reason} active')
                     if job and not job.cancelled():
                         job.cancel()
                     if run:
-                        ctx.log('worker: eof game running')
+                        ctx.log(f'worker: {reason} game running')
                     disconnected = True
                     continue
-                ctx.log('worker: eof idle')
+                ctx.log(f'worker: {reason} idle')
                 return 0
             if request.get('method') == 'cancel_job':
                 if not job:
@@ -352,6 +382,8 @@ def main(argv=None):
         if ctx and ctx._file:
             ctx._file.close()
         held.release()
+        if parent:
+            parent.close()
 
 
 if __name__ == '__main__':

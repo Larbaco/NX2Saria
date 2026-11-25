@@ -9,8 +9,9 @@ import the launcher dependencies if the default `python3` is not suitable. Selec
 `data/launcher.json`, not the game folder. Only the owner should test with the real game.
 
 For a manual test, check discovery and selection, Play twice, hide and restore when enabled, closing the window during a
-game, and mod rebuild or cancellation if applicable. Afterward copy `data/logs/launcher.log` and the game's log to the
-usual private log folder. The real game, platform behavior and updates still require separate owner verification.
+game. The Windows ZIP uses Python 3.14 and the build tools from the selected installation. Use the current NX2Saria
+installer for a first installation and the installed launcher to update or repair an older one. After testing, copy
+`data/logs/launcher.log` and the game's log to the usual private log folder.
 
 `npm test` runs the TypeScript tests. On Linux, `xvfb-run -a npm run test:ui` opens Electron windows against temporary
 installations and synthetic executables; it never runs the real game.

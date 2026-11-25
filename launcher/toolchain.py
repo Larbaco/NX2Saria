@@ -331,8 +331,8 @@ def zbic_ok(layout):
         return False
     code = 'import sys; sys.path.insert(0, sys.argv[1]); import zbic; assert callable(zbic.decompress)'
     flags = {'creationflags': 0x08000000} if os.name == 'nt' else {}   # CREATE_NO_WINDOW
-    r = subprocess.run([layout.python_for_builds(), '-I', '-c', code, str(layout.pydeps)], capture_output=True,
-                       **flags)
+    r = subprocess.run([layout.python_for_builds(), '-I', '-c', code, str(layout.pydeps)], stdin=subprocess.DEVNULL,
+                       capture_output=True, **flags)
     return r.returncode == 0
 
 

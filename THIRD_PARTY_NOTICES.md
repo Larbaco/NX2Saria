@@ -151,4 +151,3 @@ third-party dependencies; this list does not replace those complete notices.
 | Electron 45.4.1 | https://github.com/electron/electron | MIT | `LICENSE` |
 | Chromium 156.0.8078.100 and bundled components | https://chromium.googlesource.com/chromium/src | BSD-3-Clause and component licenses | `LICENSES.chromium.html` |
 | Node.js 24.22.3 and bundled components | https://github.com/nodejs/node | MIT and component licenses | `LICENSES.chromium.html` (Node.js section) |
-| CPython 3.11.9 embedded distribution | https://www.python.org/downloads/release/python-3119/ | PSF-2.0 and bundled library licenses | `resources/python/LICENSE.txt` |

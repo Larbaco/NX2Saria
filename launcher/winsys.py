@@ -353,12 +353,46 @@ def _kernel32():
     k.CloseHandle.argtypes = [ctypes.c_void_p]
     k.WaitForSingleObject.restype = ctypes.c_ulong
     k.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    k.GetCurrentProcess.restype = ctypes.c_void_p
+    filetime = ctypes.POINTER(ctypes.c_ulonglong)
+    k.GetProcessTimes.argtypes = [ctypes.c_void_p, filetime, filetime, filetime, filetime]
     k.GetExitCodeProcess.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong)]
     k.QueryFullProcessImageNameW.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_wchar_p,
                                              ctypes.POINTER(ctypes.c_ulong)]
     k.K32EnumProcesses.argtypes = [ctypes.POINTER(ctypes.c_ulong), ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)]
     _k32 = k
     return k
+
+
+class LauncherParent:
+    def __init__(self, handle):
+        self.handle = handle
+
+    @classmethod
+    def open(cls, pid):
+        if pid <= 0 or pid != os.getppid():
+            return None
+        k = _kernel32()
+        handle = k.OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            return None
+        parent_started, self_started = ctypes.c_ulonglong(), ctypes.c_ulonglong()
+        ignored = ctypes.c_ulonglong()
+        if (k.GetProcessTimes(handle, ctypes.byref(parent_started), ctypes.byref(ignored), ctypes.byref(ignored),
+                              ctypes.byref(ignored))
+                and k.GetProcessTimes(k.GetCurrentProcess(), ctypes.byref(self_started), ctypes.byref(ignored),
+                                      ctypes.byref(ignored), ctypes.byref(ignored))
+                and parent_started.value < self_started.value
+                and k.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT):
+            return cls(handle)
+        k.CloseHandle(handle)
+        return None
+
+    def exited(self):
+        return _kernel32().WaitForSingleObject(self.handle, 0) != WAIT_TIMEOUT
+
+    def close(self):
+        _kernel32().CloseHandle(self.handle)
 
 
 class GameCopy:

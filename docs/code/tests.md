@@ -5773,6 +5773,22 @@ where creating a symlink can require privileges. Fake mod jobs cover cancellatio
 
 `tests/fixtures/worker_fake_game.c` can be cross-compiled to a Windows executable and passed as `NX2_TEST_FAKE_GAME` to the worker tests. It waits briefly and writes a marker in its temporary working directory; it does not contain or start the game. The Windows-only test uses the real native spawn and verifies that the stand-in finishes after the worker is killed.
 
+### Packaged launcher and parent-exit checks
+
+`launcher-electron/ui-tests/parent-synthetic.cjs` kills only the Electron main process against a temporary
+installation on Linux and Windows. It checks that the idle worker PID disappears and another window obtains the lock.
+With a synthetic game held open by a test file, it checks that the same worker and game survive and a second window
+reports busy until the fixture ends the game. The Linux case requires real pipe EOF. The Windows case validates the executable path of the worker's parent before killing it because Playwright can
+report the PID of a command wrapper. It uses the `tests/fixtures/worker_held_game.c` executable, release Python,
+and a packaged Electron app. A separate Python test keeps the protocol writer open while the worker's parent dies
+and requires the native parent-exit path to close output and release the lock.
+
+`launcher-electron/ui-tests/installed-runtime-synthetic.cjs` uses an empty folder, a Python 3.11 installation and a
+supported release Python to test first install guidance, incompatible runtime guidance, mod rebuild success and
+cancellation. Its temporary build tool asserts its file is the copy from the active version and the interpreter is
+the one in the selected installation. Its toolchain stamp and files model the toolchain already being present. The
+build and game fixtures have no game data and perform no downloads.
+
 ## `tests/launcher_mods_job_characterization_test.py`
 
 Characterizes the Tk adapter's existing handling of a mod rebuild result: success with cache kept or dropped, the

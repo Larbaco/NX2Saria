@@ -51,6 +51,43 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['error']['code'], 'protocol_mismatch')
         self.assertEqual(self.tree(), before)
 
+    def test_invalid_parent_does_not_open_installation(self):
+        before = self.tree()
+        result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root),
+                                 '--parent-pid', '0'], input='{"id":1,"method":"hello","protocol":1}\n',
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(json.loads(result.stdout)['error']['code'], 'invalid_parent')
+        self.assertEqual(self.tree(), before)
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Windows parent handle')
+    def test_parent_exit_releases_idle_worker_with_pipe_still_open(self):
+        script = ("import os,subprocess,sys;"
+                  "p=subprocess.Popen([sys.executable,'-m','launcher.worker','--root',sys.argv[1],"
+                  "'--parent-pid',str(os.getpid())]);p.wait()")
+        parent = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, parent)
+        parent.stdin.write('{"id":1,"method":"hello","protocol":1}\n')
+        parent.stdin.flush()
+        frames = []
+        reader = threading.Thread(target=lambda: frames.append(parent.stdout.readline()), daemon=True)
+        reader.start()
+        reader.join(10)
+        self.assertTrue(frames, 'worker did not report ready')
+        self.assertEqual(json.loads(frames[0])['result']['lock'], 'held')
+        parent.kill()
+        parent.wait(timeout=10)
+        reader = threading.Thread(target=parent.stdout.read, daemon=True)
+        reader.start()
+        reader.join(10)
+        self.assertFalse(reader.is_alive(), 'worker retained its output pipe after the parent died')
+        self.assertFalse(parent.stdin.closed)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: parent exit idle', log)
+        successor = self.run_worker({'id': 2, 'method': 'hello', 'protocol': 1})
+        self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
+
     def test_valid_handshake_inspection_and_idle_eof(self):
         frames = [{'id': 1, 'method': 'hello', 'protocol': 1}, {'id': 2, 'method': 'inspect'}]
         result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)],

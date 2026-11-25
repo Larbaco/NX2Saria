@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { parseHandshake, PROTOCOL_VERSION, type WorkerHandshake } from './worker-protocol';
 
 export class WorkerRequestError extends Error {
-  constructor(readonly code: 'busy' | 'request_failed') { super('Worker request failed'); }
+  constructor(readonly code: 'busy' | 'request_failed' | 'runtime_incompatible') { super('Worker request failed'); }
 }
 
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
@@ -21,19 +21,22 @@ export class WorkerClient extends EventEmitter {
 
   constructor(private child: ChildProcessWithoutNullStreams, private timeoutMs = 15000) {
     super();
-    this.done = new Promise(resolve => child.once('close', () => { this.fail(); resolve(); }));
+    this.done = new Promise(resolve => child.once('close', code => {
+      this.fail(code === 78 ? new WorkerRequestError('runtime_incompatible') : undefined);
+      resolve();
+    }));
     child.once('error', () => this.fail());
     child.stderr.resume();
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (data: string) => this.receive(data));
   }
 
-  private fail() {
+  private fail(error = new Error('Worker disconnected')) {
     if (this.ended) return;
     this.ended = true;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
-      pending.reject(new Error('Worker disconnected'));
+      pending.reject(error);
     }
     this.pending.clear();
     this.emit('disconnect');
@@ -54,7 +57,8 @@ export class WorkerClient extends EventEmitter {
           const pending = this.pending.get(frame.id)!;
           this.pending.delete(frame.id);
           clearTimeout(pending.timer);
-          if (frame.error) pending.reject(new WorkerRequestError(frame.error.code === 'busy' ? 'busy' : 'request_failed'));
+          if (frame.error) pending.reject(new WorkerRequestError(
+            frame.error.code === 'busy' || frame.error.code === 'runtime_incompatible' ? frame.error.code : 'request_failed'));
           else if ('result' in frame) pending.resolve(frame.result);
           else throw new Error();
         } else if (typeof frame.event === 'string') {
@@ -110,8 +114,18 @@ export class WorkerClient extends EventEmitter {
   }
 }
 
-export async function openWorker(root: string, python: string, source: string): Promise<WorkerClient> {
-  const worker = new WorkerClient(spawn(python, ['-m', 'launcher.worker', '--root', root], { cwd: source, detached: process.platform === 'win32' }));
+const installedBootstrap = 'import os, runpy, sys; sys.version_info[:2] == (3, 14) or sys.exit(78); ' +
+  'source, app = sys.argv[1:3]; del sys.argv[1:3]; sys.path[:0] = [source, app, os.path.join(app, "tools")]; ' +
+  'runpy.run_module("launcher.worker", run_name="__main__")';
+
+export async function openWorker(root: string, python: string, source: string, installed?: { version: string; app: string }): Promise<WorkerClient> {
+  const windows = process.platform === 'win32';
+  const args = installed
+    ? ['-I', '-c', installedBootstrap, source, installed.app, '--app-version', installed.version]
+    : ['-m', 'launcher.worker'];
+  args.push('--root', root);
+  if (windows) args.push('--parent-pid', String(process.pid));
+  const worker = new WorkerClient(spawn(python, args, { cwd: source, detached: windows }));
   try {
     worker.handshake = parseHandshake(await worker.request('hello', { protocol: PROTOCOL_VERSION }));
     return worker;
