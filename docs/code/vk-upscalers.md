@@ -3092,8 +3092,12 @@ The steps:
   Instructions of fewer than three words (OpBranch, OpReturn, OpKill) have no second operand to take.
 - The support buffer's block and a Uniform vec4 pointer are looked for among the globals.
 - The clamp sites and their x: the clamp's operand is FMul(num, rcp), and num is FMul(x, Fma(x, 2.51, 0.03)), with the
-  operands in that order (the Fma's first operand is not compared with x); the clamp's result is stored to a variable
-  (OpStore var, result). A clamp whose result is stored nowhere is not a site.
+  operands in that order; the clamp's result is stored to a variable (OpStore var, result). A clamp whose result is
+  stored nowhere is not a site. x must be an id of the module (below the bound: the later steps index the tables with
+  it), and the Fma's first operand must be the same x: the same id, a load of the same variable or access chain
+  (`spv_same_source()`, the translator loads a register again at each use) or a load of the same stored value
+  (`spv_stored()`). A clamp refused for its x is counted, and one line (the first 4 shaders) says how many were refused
+  for which reason and whether enough sites were left; up to 0.26.0 neither was checked.
 - The output stores of channels 0..2: OpStore (AccessChain out, c), value, the chain with one index, a constant 0, 1 or
   2, and with a load of a site's variable between the chain and the store. A channel stored twice gives up, and so do a
   channel without a site and two channels of one site.
