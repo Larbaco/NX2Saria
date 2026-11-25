@@ -1,5 +1,3 @@
-"""--selftest [--shots DIR]: draw every screen with made-up states, optionally save a PNG of each, and close.
-Nothing runs: the jobs are built and their steps set by hand."""
 import os
 import subprocess
 import sys
@@ -10,13 +8,10 @@ from .. import feed, jobs, versions
 
 
 def grab_gdi(x, y, w, h, path):
-    """Windows: copy the screen rectangle with GDI and write it as PNG (art.png_bytes); no extra packages."""
     import ctypes
     from ctypes import wintypes
     import numpy as np
     from . import art
-    # private handles with every argument typed: a handle is a pointer, and one above 2^31 passed as a plain int
-    # failed with "int too long to convert", so some screens went without their picture
     user32, gdi32 = ctypes.WinDLL('user32'), ctypes.WinDLL('gdi32')
     vp = ctypes.c_void_p
     user32.GetDC.restype = gdi32.CreateCompatibleDC.restype = gdi32.CreateCompatibleBitmap.restype = vp
@@ -32,7 +27,7 @@ def grab_gdi(x, y, w, h, path):
     mem = gdi32.CreateCompatibleDC(screen)
     bmp = gdi32.CreateCompatibleBitmap(screen, w, h)
     old = gdi32.SelectObject(mem, bmp)
-    gdi32.BitBlt(mem, 0, 0, w, h, screen, x, y, 0x00CC0020)   # SRCCOPY
+    gdi32.BitBlt(mem, 0, 0, w, h, screen, x, y, 0x00CC0020)
 
     class BITMAPINFOHEADER(ctypes.Structure):
         _fields_ = [('biSize', wintypes.DWORD), ('biWidth', wintypes.LONG), ('biHeight', wintypes.LONG),
@@ -54,7 +49,6 @@ def grab_gdi(x, y, w, h, path):
 
 
 def grab(app, path):
-    """A PNG of the window: GDI on Windows, else PIL's ImageGrab, else ImageMagick's import on X11."""
     app.root.update()
     x, y = app.root.winfo_rootx(), app.root.winfo_rooty()
     w, h = app.root.winfo_width(), app.root.winfo_height()
@@ -78,8 +72,6 @@ def grab(app, path):
 
 
 def ahead_of(version):
-    """A version a minor step past version: the made-up release must be newer than the launcher drawing it, or the
-    update screens show "Up to Date" instead (a fixed 0.3.11 did from 0.4.0 on)."""
     try:
         nums, _ = versions.parse(version)
     except ValueError:
@@ -124,7 +116,6 @@ def states(app):
 
     def rc2_release():
         source = Path(__file__).resolve().parents[2] / 'docs' / 'releases' / 'v0.19.0-rc.2.md'
-        # Keep the fixture newer than the installed launcher without editing its VERSION file.
         notes = source.read_text(encoding='utf-8') if source.is_file() else (
             '- The Controls tab says what each button does in the game, under its name.\n'
             '- The labels follow the game’s button in all four menu languages.\n'
@@ -195,7 +186,7 @@ def states(app):
     def uninstall():
         app.show('uninstall', 0)
 
-    def shaders():   # the counts and the wording tools/make_game.py shader_progress sends
+    def shaders():
         j = jobs.InstallJob(ctx, s['dump'], s['game_dir'])
         for sid, val in (('tools', 'Done · 0:48'), ('check', 'Version 1.1.1'), ('exefs', 'Done · 0:04'),
                          ('romfs', 'Done · 0:31'), ('lift', 'Done · 0:48'), ('compile', 'Done · 4:12')):
@@ -221,7 +212,7 @@ def states(app):
                               + '.')
         app.show('saves', 0)
 
-    def update_staged():   # a release downloaded in the background, waiting for the game to be closed
+    def update_staged():
         rel = rc2_release()
         staged = {'version': rel.version, 'runtime': '', 'prerelease': False, 'notes': rel.notes}
         app.bg.ready = lambda release=None: staged
@@ -233,7 +224,7 @@ def states(app):
         app.release, app.message, app.look_message = None, '', ''
         app.show('customize', 0)
 
-    def color_scheme():   # another colour scheme on the home screen, then the first one again
+    def color_scheme():
         from . import art
         was = s.get('theme')
         s['theme'] = list(art.THEMES)[2]
@@ -241,14 +232,14 @@ def states(app):
         app.show('home', 0)
         s['theme'] = was
 
-    def custom_picker():   # the Custom scheme with two picked colours, and its picker on the button colour
+    def custom_picker():
         from . import art
         was = {k: s.get(k) for k in ('theme', 'custom_background', 'custom_panel', 'custom_buttons')}
         s.update(theme='custom', custom_background='#3a1d5c', custom_panel='#24324a', custom_buttons='#2f6fb0')
         app.apply_look()
         app.open_picker('buttons')
         s.update(was)
-        art.set_theme(was['theme'], app.custom_colors())   # the next screen's colours; this one is drawn already
+        art.set_theme(was['theme'], app.custom_colors())
 
     def restore_scheme():
         app.apply_look()
@@ -256,7 +247,7 @@ def states(app):
 
     was_game = s.get('game_dir')
 
-    def mods_screen():   # a game folder of made-up mods, removed when the selftest closes
+    def mods_screen():
         import atexit
         import shutil
         import tempfile
@@ -281,7 +272,7 @@ def states(app):
         s['game_dir'] = was_game
         app.show('home', 0)
 
-    def consent():   # the question as a preview: no countdown runs and nothing changes or is sent
+    def consent():
         app.open_question(preview=True)
 
     def sent_view():
