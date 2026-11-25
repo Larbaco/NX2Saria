@@ -3229,16 +3229,28 @@ first non-ASCII byte). Returns 0 on malformed input or when out has no room.
 
 ### `vk_dlaa_init()`
 
-- The executable's folder, where NGX looks for `libnvidia-ngx-dlss.so` and writes its logs, as a `wchar_t` string:
-  32-bit code points here, as the Linux core expects.
-- 231313132: the application id NVIDIA's DLSS samples use for builds without an NVIDIA-issued id.
-- NGX holds the device from its initialisation on, also if the layout check after it turns DLAA off: `N.device` is set
-  there.
-- The capability parameters are allocated for the caller (the SDK's header: free it with DestroyParameters):
-  `vk_dlaa_release()` does.
-- MultiFrameCountMax said 3 (4x) with the 310.9.16 library on an RTX 5090, yet that library evaluated 5 generated frames
-  without an error on NVIDIA's 615 driver, and NVIDIA ships up to 6x on RTX 50 cards: a GPU with multi-frame generation
-  gets up to 5 (6x).
+In the order of the function:
+
+1. With FSR 3.1 as the upscaler (`fsr3()`), AMD's library or the runtime's passes are loaded (`vk_ffx_load()`) and
+   nothing of NGX is touched.
+2. The executable's folder, where NGX looks for the DLSS model and writes its logs, as a `wchar_t` string: UTF-16 from
+   `GetModuleFileNameW` on Windows, 32-bit code points on Linux, as the Linux core expects (`utf8_to_wide()`). A folder
+   that cannot be named leaves DLAA off.
+3. `NVSDK_NGX_VULKAN_Init_Ext2` with the application id 231313132 (the one NVIDIA's DLSS samples use for builds without
+   an NVIDIA-issued id), that folder, the instance, the physical device, the device, the two `vkGet...ProcAddr`
+   functions, the SDK version `NGX_VERSION_API` (0x15) and no feature info. A failure is logged with NGX's code and
+   leaves DLAA off; it is not tried again in the run.
+4. NGX holds the device from its initialisation on, also if the layout check after it (`vtable_ok()`) turns DLAA off:
+   `N.device` is set before that check, so `vk_dlaa_release()` still shuts NGX down.
+5. The capability parameters (`NVSDK_NGX_VULKAN_GetCapabilityParameters`) are allocated for the caller (the SDK's
+   header: free it with DestroyParameters): `vk_dlaa_release()` does. "SuperSampling.Available" decides `N.available`;
+   "SuperSampling.NeedsUpdatedDriver" only adds to the log line. `N.ngx_up` is set whether DLSS is available or not: NGX
+   is up, and FSR 3.1 no longer follows the setting in this run (`fsr3()`).
+6. Frame generation through NGX (`vk_ngxfg_wanted()`): "FrameGeneration.Available" and "DLSSG.MultiFrameCountMax" (1
+   when the core does not answer). MultiFrameCountMax said 3 (4x) with the 310.9.16 library on an RTX 5090, yet that
+   library evaluated 5 generated frames without an error on NVIDIA's 615 driver, and NVIDIA ships up to 6x on RTX 50
+   cards: a GPU that reports 3 or more gets up to 5 (6x); one that reports 1 or 2 gets that. The log line gives the
+   multiplier, `FG.max` + 1.
 
 ### Where DLAA runs in the game's frame
 
@@ -3419,7 +3431,8 @@ generated frames between two unrelated pictures.
 
 ### `vk_dlaa_active()`
 
-The same for `runtime/vk/vk_exec_draw.c` `untranslated_dispatch_fallback()`: while it holds, DLSS or FSR 3.1 scales the
+An upscaler is available, has not failed in this run and is set on (`dl_active()`), for `runtime/vk/vk_exec_draw.c`
+`untranslated_dispatch_fallback()`: while it holds, DLSS or FSR 3.1 scales the
 scene and the stand-in of the game's own upscaler does not make the picture the screen shows (`vk_dlaa_upscaler()`).
 
 ### `inputs_on()`
@@ -3476,7 +3489,8 @@ A DLSS feature's release, timed as "upscaler releases" (`NX2SARIA_TRACE=perf`).
 
 The lists of `runtime/vk/vk_up_defer.h` (`upd_put()`, `upd_take()`), here and in the FSR files.
 
-A size's images and feature (a third scene size, a DLSS model change, a size unused for `SIZE_STALE` evaluations), the
+A size's images and feature (a scene size beyond the `DLSS_SIZES` kept, a DLSS model change, a size unused for
+`SIZE_STALE` evaluations), the
 features `release_kept()` and `stale_sizes()` release, a snapshot of the reactive mask, the HUD-less picture of another
 size, prebloom's images, what `retire_idle()` gives back, and FSR 3.1's and FSR 4's contexts (`runtime/vk/vk_ffx.cpp`,
 `runtime/vk/vk_ffx4.cpp` `context_for()`) were freed after a wait for the whole device to be idle, on the replaying
@@ -3544,11 +3558,16 @@ The count of submissions issued is read before the wait: every submission up to 
 
 ### `vk_upscaler_gpu_wait()`
 
+Waits for the GPU to pass submission `v` and returns the submission it is then known to be past. With
+`NX2SARIA_UPSCALER_IDLE_WAIT=1` it waits for the whole device instead and returns the count of submissions issued.
+
 - The value waited for is at most the submissions issued: a submission still being recorded cannot finish while this
-  thread records it.
+  thread records it. A value the GPU is already past returns at once.
 - The queue lock is taken and released first: the replay's held submissions go to the queue (`runtime/gfx/gfx_present.c`
   `vk_queue_lock()`).
 - A wait on the timeline from the host touches no queue, so no queue's lock is needed (unlike the device's idle).
+- The wait is for 2 seconds at most. If it fails or times out, the device loss check runs, a line is logged, and the
+  whole device is waited for.
 
 ### `dead_put()`
 
@@ -3576,13 +3595,16 @@ skipped, so a half-made size goes the same way.
 
 ### `free_size()`
 
-A third scene size takes the least recently used one's entry (`size_for()`): its images may still be in flight.
+A scene size beyond the `DLSS_SIZES` (5) kept takes the least recently used one's entry (`size_for()`): its images may
+still be in flight.
 
 ### `size_for()`
 
 The entry for a scene and output size: its output (RGBA16F at the output size, written by DLSS, then blitted into the
-target) and motion vectors (RG16F at the scene size, render pixels), both kept in GENERAL like every image of the back
-end. The game's dynamic resolution switches between a few sizes; each keeps its images, and its own feature unless it
+target) and motion vectors (RG16F at the scene size, render pixels), and with them the bias mask and the two character
+class masks (R8) and the two distance images (R32F), all at the scene size and all kept in GENERAL like every image of
+the back end. `sharp` is made later, by `fsr3_sharpen()`. A failed image leaves the entry half made and returns NULL
+(`evaluate()` then turns DLAA off for the run). The game's dynamic resolution switches between a few sizes; each keeps its images, and its own feature unless it
 runs on the DLSS mode's (`range_host()`); the least recently used goes for a new one.
 
 ### Timing
