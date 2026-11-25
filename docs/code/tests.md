@@ -5950,6 +5950,12 @@ With the local log shortening switch disabled, it checks both the outbound log t
 shortened paths without sending a request. The worker unit suite also checks boot and privacy when that single
 export is absent.
 
+The first-run search test lets the real finder see only a synthetic Downloads folder. It releases
+the finder after proving inspection is responsive. It checks the newest proposal, and repeats the
+search with an earlier manual selection to prove the manual choice survives. The Linux wrapper
+in the Electron window test controls when the same finder can see its synthetic result.
+
+
 The worker install test drives the request through the same protocol. A stand-in replaces the
 expensive build step. Missing choices, insufficient space and an already playable target are
 refused. After confirmation on a clear target the test observes successful completion, a removed

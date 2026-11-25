@@ -11,7 +11,8 @@ import sys
 import time
 from pathlib import Path
 from unittest import mock
-from launcher import jobs, net, paths
+from launcher import gamefiles, jobs, net, paths
+from launcher.platform import linux
 from launcher.platform import game_executable
 
 def install(job):
@@ -28,7 +29,17 @@ def install(job):
     game_executable(job.game_dir).write_text('stand-in that cannot be run')
 
 sys.argv = sys.argv[2:]
-with mock.patch.object(jobs.InstallJob, 'run', install), mock.patch.object(paths, 'free_gb', return_value=100):
+base = Path(sys.argv[-1]).parent
+def search_dirs(extra):
+    until = time.monotonic() + 10
+    while not (base / 'allow-search').exists() and time.monotonic() < until:
+        time.sleep(0.05)
+    return [base / 'Downloads']
+
+with (mock.patch.object(jobs.InstallJob, 'run', install),
+      mock.patch.object(paths, 'free_gb', return_value=100),
+      mock.patch.object(linux, 'mounted_drives', return_value=[]),
+      mock.patch.object(gamefiles, 'candidate_dirs', search_dirs)):
     runpy.run_module('launcher.worker', run_name='__main__')
 `;
 
@@ -45,6 +56,12 @@ async function main() {
     await fs.writeFile(settings, '{"desktop_shortcut":false}');
     await fs.mkdir(folder);
     await fs.writeFile(path.join(folder, 'unrelated.txt'), 'keep');
+    const repository = path.resolve(__dirname, '../..');
+    const fixture = path.join(repository, 'tests', 'fixtures', 'worker_install_dump.py');
+    const downloads = path.join(base, 'Downloads');
+    await fs.mkdir(downloads);
+    const found = path.join(downloads, 'found.nup');
+    execFileSync('python3', [fixture, found], { cwd: repository, env: { ...process.env, PYTHONPATH: repository } });
     const python = path.join(base, 'test-python');
     await fs.writeFile(python, '#!/bin/sh\nexec "$NX2SARIA_TEST_PYTHON" -c "$NX2SARIA_TEST_INSTALL" "$@"\n', { mode: 0o755 });
     app = await _electron.launch({
@@ -60,6 +77,7 @@ async function main() {
     await pick.waitFor({ timeout: 10000 });
     await location.getByText(path.join(root, 'game'), { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await install.isDisabled({ timeout: 5000 }), true);
+    await page.getByText('Procurando o dump do jogo…').waitFor({ timeout: 5000 });
 
     await app.evaluate(({ dialog }, selected) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
@@ -75,11 +93,13 @@ async function main() {
     assert.equal(await location.textContent(), path.join(folder, 'NX2Saria'));
     const valid = path.join(base, 'synthetic-game.nup');
     const invalid = path.join(base, 'invalid.nup');
-    const repository = path.resolve(__dirname, '../..');
-    execFileSync('python3', [path.join(repository, 'tests', 'fixtures', 'worker_install_dump.py'), valid],
+    execFileSync('python3', [fixture, valid],
       { cwd: repository, env: { ...process.env, PYTHONPATH: repository } });
     await fs.writeFile(invalid, 'synthetic invalid metadata');
     const dump = page.locator('#game-dump-proposal');
+    await fs.writeFile(path.join(base, 'allow-search'), '');
+    await dump.getByText(found, { exact: true }).waitFor({ timeout: 5000 });
+    assert.equal(await fs.readFile(settings, 'utf8'), '{"desktop_shortcut":false}');
     const pickDump = page.getByRole('button', { name: 'Escolher dump do jogo' });
     await app.evaluate(({ dialog }, file) => {
       dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });

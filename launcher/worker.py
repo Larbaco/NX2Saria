@@ -5,6 +5,7 @@ import queue
 import runpy
 import sys
 import threading
+import time
 from pathlib import Path
 
 from . import build, commit, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
@@ -151,6 +152,22 @@ def install_dump(ctx, request):
     return None
 
 
+def search_install_dump(layout, messages):
+    started = time.monotonic()
+    report = {}
+    try:
+        drives = []
+        if sys.platform.startswith('linux'):
+            from .platform.linux import mounted_drives
+            drives = mounted_drives()
+        found = gamefiles.find_dumps(layout, [str(layout.root.parent)], drives=drives, report=report)
+    except Exception:
+        found, failed = [], True
+    else:
+        failed = False
+    messages.put(('dump_search', (found, report, failed, time.monotonic() - started)))
+
+
 def prepare_install(ctx, choices):
     dump, folder = choices.get('dump'), choices.get('destination')
     if not dump or not folder:
@@ -285,6 +302,7 @@ def main(argv=None):
         job_revision = -1
         failed_mods = []
         install_choices = {}
+        dump_search = 'idle'
         session = 0
         attempt = 0
         pending = None
@@ -393,6 +411,22 @@ def main(argv=None):
                     continue
                 kind, request = 'parent exit', None
             if disconnected:
+                continue
+            if kind == 'dump_search':
+                found, report, failed, seconds = request
+                dump_search = 'complete'
+                if failed:
+                    result = 'failed'
+                elif install_choices.get('dump'):
+                    result = 'kept'
+                elif found:
+                    install_choices['dump'] = str(found[0])
+                    result = 'found'
+                else:
+                    result = 'none'
+                action_log(ctx, counts, 'install',
+                           f'dump_search result={result} count={len(found)} folders={report.get("folders", 0)} '
+                           f'seconds={seconds:.2f} stopped={bool(report.get("stopped"))}')
                 continue
             if kind == 'invalid':
                 error(None, 'invalid_request')
@@ -511,6 +545,20 @@ def main(argv=None):
                 else:
                     action_log(ctx, counts, 'install', f'{subject} rejected')
                     error(request['id'], f'invalid_{subject}')
+            elif request.get('method') == 'search_install_dump':
+                saved = ctx.settings.get('game_dir')
+                try:
+                    unavailable = run or job or pending or (saved and build.installed(saved))
+                except (OSError, ValueError, TypeError, AttributeError):
+                    unavailable = True
+                if unavailable:
+                    error(request['id'], 'invalid_dump')
+                    continue
+                if dump_search == 'idle':
+                    dump_search = 'searching'
+                    threading.Thread(target=search_install_dump, args=(ctx.layout, requests), daemon=True).start()
+                emit({'id': request['id'], 'result': {'status': dump_search, 'file': install_choices.get('dump')
+                                                      if dump_search == 'complete' else None}})
             elif request.get('method') == 'install':
                 status = 'unavailable'
                 try:

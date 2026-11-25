@@ -229,6 +229,78 @@ class WorkerTest(unittest.TestCase):
         self.assertNotIn(valid.name, log)
         self.assertNotIn(wrong.name, log)
 
+    def test_first_run_finds_newest_dump_and_keeps_a_manual_selection(self):
+        from fixtures.worker_install_dump import write_dump
+
+        base = Path(self.tmp.name)
+        downloads = base / 'Downloads'
+        downloads.mkdir()
+        old = downloads / 'older.nup'
+        newest = downloads / 'newest.nup'
+        write_dump(old)
+        write_dump(newest)
+        os.utime(old, (100, 100))
+        os.utime(newest, (200, 200))
+        release = base / 'allow-scan'
+        script = ("import runpy,sys,time\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import gamefiles\n"
+                  "from launcher.platform import linux\n"
+                  "downloads,release=map(Path,sys.argv[2:])\n"
+                  "def directories(extra):\n"
+                  " until=time.monotonic()+10\n"
+                  " while not release.exists() and time.monotonic()<until: time.sleep(0.025)\n"
+                  " return [downloads]\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(gamefiles,'candidate_dirs',directories), "
+                  "mock.patch.object(linux,'mounted_drives',return_value=[]):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+
+        def search(pick):
+            release.unlink(missing_ok=True)
+            worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), str(downloads), str(release)],
+                                      stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                      text=True, cwd=ROOT)
+            self.addCleanup(self.stop_worker, worker)
+            frames = queue.Queue()
+            def collect():
+                for line in worker.stdout:
+                    frames.put(json.loads(line))
+
+            threading.Thread(target=collect, daemon=True).start()
+
+            def request(request_id, method, **fields):
+                worker.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+                worker.stdin.flush()
+                response = frames.get(timeout=10)
+                self.assertEqual(response['id'], request_id)
+                return response['result']
+
+            self.assertEqual(request(1, 'hello', protocol=1)['lock'], 'held')
+            self.assertEqual(request(2, 'search_install_dump')['status'], 'searching')
+            self.assertEqual(request(3, 'inspect')['status'], 'not_configured')
+            if pick:
+                self.assertEqual(request(4, 'install_dump', file=str(pick))['file'], str(pick))
+            release.touch()
+            for i in range(5, 205):
+                result = request(i, 'search_install_dump')
+                if result['status'] != 'searching':
+                    break
+                time.sleep(0.025)
+            self.assertEqual(result, {'status': 'complete', 'file': str(pick or newest)})
+            worker.stdin.close()
+            self.assertEqual(worker.wait(timeout=15), 0)
+
+        search(None)
+        search(old)
+        self.assertEqual((self.root / 'data' / 'launcher.json').read_text(), '{}')
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: install dump_search result=found count=2', log)
+        self.assertIn('worker: install dump_search result=kept count=2', log)
+        self.assertNotIn(newest.name, log)
+        self.assertNotIn(old.name, log)
+
     def test_first_run_starts_install_job_only_after_confirmed_proposals(self):
         from fixtures.worker_install_dump import write_dump
 

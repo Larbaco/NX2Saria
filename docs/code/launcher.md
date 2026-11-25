@@ -3605,6 +3605,13 @@ The check recognizes the game's title in the container metadata. The build still
 version and contents. No settings are changed, and the worker logs a selected, saved, unset or
 rejected outcome without the dump's filename.
 
+`search_install_dump()` runs the Tk launcher's finder in a background thread, using the parent of
+the launcher root and the normal search folders and mounted drive limits. Only the worker loop
+may accept a result into the draft. It keeps a prior manual choice and logs completion with
+counts and time. The status request is nonblocking, so the renderer can poll for the result
+without delaying inspection or manual selection.
+
+
 The worker retains the last successful proposals until confirmation. `prepare_install()` rechecks
 the source, destination, path limit and running game and protects playable targets. On a valid
 target it accounts for a partial ROMFS image and checks free space again after that image is

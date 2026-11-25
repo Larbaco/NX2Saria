@@ -1,7 +1,7 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
 type InstallFeedback = { outcome: string; state: Result | null };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<string | null>; installDump(pick: boolean): Promise<string | null>; install(): Promise<string>; onInstallEnded(callback: (result: InstallFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: 'install' | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<string | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; onInstallEnded(callback: (result: InstallFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: 'install' | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -82,6 +82,26 @@ async function showInstallDump(pick: boolean) {
 }
 pickGameDump.onclick = () => { void showInstallDump(true); };
 
+async function searchForDump(selected: Result) {
+  gameDumpProposal.textContent = 'Procurando o dump do jogo…';
+  while (installation === selected && !proposedDump && !firstRun.hidden) {
+    try {
+      const result = await window.launcher.searchInstallDump();
+      if (installation !== selected || proposedDump || firstRun.hidden) return;
+      if (result.status === 'complete') {
+        proposedDump = result.file;
+        gameDumpProposal.textContent = proposedDump ?? 'Nenhum dump encontrado';
+        updateControls();
+        return;
+      }
+    } catch {
+      if (installation === selected && !proposedDump && !firstRun.hidden) gameDumpProposal.textContent = 'Escolha o dump do jogo';
+      return;
+    }
+    await new Promise(resolve => setTimeout(resolve, 300));
+  }
+}
+
 async function loadSelection(action: () => Promise<Result | null>) {
   selecting = true;
   installation = null;
@@ -99,6 +119,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
       firstRun.hidden = false;
       await showInstallDestination(false);
       await showInstallDump(false);
+      if (!proposedDump) void searchForDump(installation);
     }
   }
   catch { statusElement.textContent = 'Não foi possível verificar'; detail.textContent = 'Tente novamente.'; }

@@ -246,6 +246,16 @@ app.whenReady().then(() => {
         !path.isAbsolute(result.file)))) throw new Error('Unavailable');
     return result.file;
   });
+  ipcMain.handle('search-install-dump', async event => {
+    if (event.sender !== window.webContents || !worker || playing || !firstRunAvailable(state)) throw new Error('Unavailable');
+    const active = worker;
+    const result = await active.request('search_install_dump');
+    if (worker !== active || !['searching', 'complete'].includes(result?.status) ||
+        (result.file !== null && (typeof result.file !== 'string' || !path.isAbsolute(result.file)))) {
+      throw new Error('Unavailable');
+    }
+    return { status: result.status, file: result.file };
+  });
   ipcMain.handle('install', async event => {
     if (event.sender !== window.webContents) return 'unavailable';
     log?.write('install', 'requested');
