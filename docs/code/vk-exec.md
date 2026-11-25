@@ -3909,7 +3909,7 @@ load screen showed the ground, the walls and the buildings as their black stand-
 `NX2SARIA_POOL_LOAD_BACKLOG` slots or more (default 512; 0: never) the pool is loading (`pool_loading`, set by the
 replay: a sync left an area load's worth of slots, and they are not made yet): the count budget is off, a frame's
 refreshes may take `NX2SARIA_POOL_LOAD_MS` (default 50), and the presents of those frames are left out so the picture
-before the load stays up (`runtime/vk/vk_backend.c` `frame_hold()`, `vk_exec_pool_loading()`) until fewer than
+before the load stays up (`runtime/vk/vk_backend.c` `frame_hold()` asks `vk_exec_pool_loading()` here) until fewer than
 `POOL_LOAD_END` (64) slots are left. The load screen lasts those few frames longer and the area appears whole.
 
 ### `pool_create_ns()`
