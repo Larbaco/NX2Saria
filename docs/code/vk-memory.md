@@ -9,7 +9,7 @@ without a device (`vk_mem_heap.h`, `vk_scratch_lru.h`, `vk_up_defer.h`).
 
 What the Switch's GPU and NVN do with memory pools that a port must reproduce: [maxwell.md](../maxwell.md). Where the
 area sits in the host: "4. Graphics" in [architecture.md](../architecture.md). The lines the memory report writes:
-[logging.md](../logging.md). The images and the textures that live in this memory: `vk-texture.md`.
+[logging.md](../logging.md). The images and the textures that live in this memory: [vk-texture.md](vk-texture.md).
 
 ## `runtime/vk/vk_memory.c`
 
@@ -1818,13 +1818,13 @@ Completion thread.
 - `if (nsnl || nwbl) vk_exec_note_results(VK_RES_WRITEBACK)`: write-backs: guest memory gets the GPU's bytes at the
   fence.
 
-### `pool_score()`
+### `mirror_pool_log()`
 
 `NX2SARIA_TRACE=perf`, every 600 frames: the mirrored pools that moved the most bytes since the last list, per frame:
 what their CPU writes and flushes copied up, how often a submission synced them, and what the GPU's writes sent back
 (merged or copied). A pool whose upload is close to its size every frame is rewritten whole each frame.
 
-### `mirror_pool_log()`
+
 
 - `int k = nt < POOL_LOG_TOP ? nt++ : nt - 1`: insertion into `top[]`, largest first.
 
