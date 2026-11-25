@@ -75,6 +75,111 @@ Choosing a valid dump, creating the installation job and provisioning Python plu
 without a launcher are subsequent slices. The proposed destination will be rechecked when installation is
 explicitly started.
 
+## Provisioning and handover design
+
+The approved direction reuses the Windows setup and stub and the Linux AppImage's external installer. The
+following entry points are proposed for review. Keep the existing launcher and its entry points during the
+transition. Test provisioning, handover and recovery with a scratch installation and a local feed.
+
+### 1. Components and versions
+
+Make the Electron shell a third, platform-specific artifact. The app ZIP contains the compiled interface
+and its matching Python worker. The Python runtime ZIP retains its independent ID. The shell archive
+contains the Electron distribution and identifies its Electron version, target platform and architecture,
+launcher interface version, archive SHA-256 and size. The app declares which shell interface it accepts.
+A compatible app-only update reuses the installed runtime and shell by digest. A security update can
+stage a new shell digest against the same app version. Each installation has one active copy per
+component, with the previous verified copy retained only for rollback. The shell runs the active app;
+the app and its worker continue to ship together.
+
+### 2. Shell update and rollback
+
+The installed Python updater owns downloads and staging. It verifies the complete archive, safely
+unpacks it into a sibling staging directory and only then records the digest as ready. Keep each
+verified shell under its own digest. The Windows stub enters the active app's Python start script, and
+the installed Linux wrapper enters the same script with the installed Python. After Electron and its
+worker exit, that startup path is the activation seam. It checks the installation lock, selects the
+candidate, and releases the activation lock before the new worker acquires the existing one. A busy
+worker is reported as busy, without trying to open a second launcher.
+
+Record a pending activation and previous known-good selection before attempting startup. The new app
+must complete the worker handshake and prepare its window before committing the shell choice with an
+atomic state-file replacement. A power cut before commit leaves the prior choice intact. On timeout,
+failed handshake or early exit, wait for the failed attempt to release the lock, restore the previous
+choice, and start Tk. A missing shell does not count as an app rollback. The current app and Python
+update and rollback remain in the existing staged-updater path. For a combined change, test a journal
+that lets the native stub or wrapper recover the old app and Python before invoking Python if their
+swap was interrupted. Keep the Tk entry and previous runnable set until the new set commits. Prove
+interruption before and after each pointer change, an executable held open on Windows, and shell-only
+and combined rollback.
+
+### 3. Existing installations and the first visible launch
+
+An existing Tk install first receives an ordinary compatible app update containing the bridge logic.
+The earlier updater can apply that app ZIP without understanding the new shell field. The bridge
+then stages the shell on a normal update check, including when the app version is already current,
+using the existing channel and automatic update preferences. Activate at the next normal start when
+the installation is idle. Preserve the menu and desktop entries, the selected game folder, profiles,
+saves, mods and settings. A fresh Windows setup or Linux external installation provisions the same
+app, runtime and shell; it then launches through the same entry point as an updated install.
+
+The player keeps using Tk while the shell is missing or pending. A missing or incompatible shell,
+early exit or failed worker handshake opens Tk and logs a bounded reason. Successful activation opens
+Electron with the existing installation selected. Keep a way to start Tk explicitly during the
+transition. Headless Steam and CLI keep their Python entry points. Keep Tk in the app until the
+replacement gate is approved.
+
+### 4. Provenance
+
+Build app, runtime, shell and installer or AppImage artifacts on the existing GitHub Actions release
+path. Include the exact official Electron archive SHA-256 for each platform and check it before unpacking.
+Pin actions and Node. Resolve npm dependencies from the lockfile and suppress Electron's automatic binary
+download in the release build so the verified input is the only source. Include the shell artifact and
+its identity, byte count and digest in the checked manifests and `SHA256SUMS.txt`. Attest the artifact
+and verify release provenance through the same workflow as the current files. This design does not use
+locally edited or uploaded installer, feed or release assets. See [release pins and provenance](releases/README.md).
+
+### 5. Size and retention
+
+The private x64 packages from commit `fcfbfc6f` are the measured baseline. Windows was 158,994,219 bytes
+to download (151.6 MiB) and 375,463,862 bytes of files unpacked (358.1 MiB). Linux was 124,576,200 bytes
+to download (118.8 MiB) and 288,132,563 bytes unpacked (274.8 MiB). Both included 1,135,513 bytes of app
+and worker files and no additional Python runtime. These totals measure the actual test bundles. The
+standalone shell archive still needs to be measured.
+
+Ship an x64 shell per platform and reuse the installed digest across app versions. Keep the Chromium
+locales needed by the four menu languages (`en-US`, `pt-BR`, `ru`, `zh-CN`), including the English
+fallback, after checking the actual dialog and rendering paths. The remaining locale files account for
+48,085,006 unpacked bytes on Windows (11,975,506 compressed ZIP entry bytes) and 7,523,052 unpacked
+bytes on Linux. Retain a previous shell until rollback protection permits pruning and account for the
+second copy and staging space in disk preflight. Verify both the filtered artifact size and its four
+language paths in CI.
+
+### 6. Notices
+
+The shell ships Electron's MIT `LICENSE`, the complete `LICENSES.chromium.html` covering Chromium and
+bundled components, and the applicable Node.js notices from that distribution. The app and runtime ship
+their own project and Python notices. Update the inventories for the exact delivered versions and extend
+`shipped_notices_check` to verify the actual artifacts. See [Electron license inventory](electron-launcher-notices.md)
+and [third-party notices](../THIRD_PARTY_NOTICES.md).
+
+### 7. Linux sandbox and Steam
+
+Install the shell outside the mounted AppImage, beside the external app and runtime under the managed
+root. The AppImage remains the provisioner and may carry the same verified shell archive as an offline
+seed if offline Electron first start is required. The installed wrapper always opens the external
+copy. Keep renderer sandboxing and context isolation enabled. Test normal user namespaces and a distro
+that restricts them. Never add the production `--no-sandbox` flag or make a helper inside a user-writable
+tree setuid. Any distro-supported policy or root-owned `chrome-sandbox` path requires separate review
+and explicit approval. If sandbox startup fails, log the reason and start Tk. [Electron sandboxing](https://www.electronjs.org/docs/latest/tutorial/sandbox) · [Chromium and restricted namespaces](https://chromium.googlesource.com/chromium/src/+/main/docs/security/apparmor-userns-restrictions.md)
+
+Test the external entry in Steam Deck Desktop and Game Mode, including focus after the first game
+window and after exit. Flatpak Steam is a distinct boundary. Keep the existing launcher and game's
+headless shortcuts working with only their already authorized paths. Test the external GUI from
+Flatpak Steam separately and surface an unavailable sandbox or entry point without asking for broad
+host permissions. A working desktop launch does not complete either Steam scenario.
+[Flathub Steam wrapper](https://github.com/flathub/com.valvesoftware.Steam)
+
 ## Open design questions
 
 - Which Python process and interface lifecycle preserve locks, job ownership, update restarts and CLI use on both platforms?
