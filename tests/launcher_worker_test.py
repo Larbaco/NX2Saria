@@ -188,7 +188,7 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         _, default, proposed, invalid = map(json.loads, result.stdout.splitlines())
         self.assertEqual(default, {'id': 2, 'result': {
-            'folder': str(Layout(root=self.root).default_game_dir()), 'source': 'default'}})
+            'folder': str(Layout(root=self.root.resolve()).default_game_dir()), 'source': 'default'}})
         self.assertEqual(proposed, {'id': 3, 'result': {'folder': str(selected / 'NX2Saria'), 'source': 'selected'}})
         self.assertEqual(invalid, {'id': 4, 'error': {'code': 'invalid_destination'}})
         self.assertEqual({entry.name for entry in selected.iterdir()}, {'unrelated.txt'})
