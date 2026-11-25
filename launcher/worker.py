@@ -175,7 +175,7 @@ def main(argv=None):
                 error(request['id'], 'runtime_incompatible')
                 return 1
         try:
-            ctx = Context(layout)
+            ctx = Context(layout, electron_worker=True)
             waiting = bool(updater.staged(layout, channel=ctx.settings.get('channel', 'stable'),
                                           skip=ctx.settings.get('rolled_back', '')))
         except Exception:

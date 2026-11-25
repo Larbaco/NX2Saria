@@ -51,6 +51,21 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['error']['code'], 'protocol_mismatch')
         self.assertEqual(self.tree(), before)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux AppImage install')
+    def test_start_line_identifies_electron_on_an_appimage_install(self):
+        app = self.root / 'app' / '0.0.1'
+        (app / 'tools').mkdir(parents=True)
+        (app / 'tools' / 'make_game.py').touch()
+        (app / 'VERSION').write_text('0.0.1')
+        (self.root / 'nx2saria-launcher').touch()
+        result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root),
+                                 '--app-version', '0.0.1'],
+                                input='{"id":1,"method":"hello","protocol":1}\n',
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text().splitlines()
+        self.assertIn('--- NX2Saria launcher 0.0.1 (AppImage install, started by Electron)', log[0])
+
     def test_invalid_parent_does_not_open_installation(self):
         before = self.tree()
         result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root),

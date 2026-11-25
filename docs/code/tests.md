@@ -5771,6 +5771,9 @@ process creation with a fake. A synthetic staged update is reported without chan
 unknown methods are rejected, and repeated action logs are bounded. The cyclic-symlink case is skipped on Windows,
 where creating a symlink can require privileges. Fake mod jobs cover cancellation, EOF, progress, successful resumption, memory prompts, failure, a disconnected output and forced worker termination without starting a real game; the interrupted-job marker remains visible to the successor.
 
+On Linux, a fixture with an active release and an AppImage wrapper checks that the worker's opening line in
+`launcher.log` names both the AppImage installation and Electron as the process that started the worker.
+
 `tests/fixtures/worker_fake_game.c` can be cross-compiled to a Windows executable and passed as `NX2_TEST_FAKE_GAME` to the worker tests. It waits briefly and writes a marker in its temporary working directory; it does not contain or start the game. The Windows-only test uses the real native spawn and verifies that the stand-in finishes after the worker is killed.
 
 ### Packaged launcher and parent-exit checks

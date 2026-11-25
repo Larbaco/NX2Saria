@@ -279,6 +279,12 @@ A packaged worker imports `tools/private_paths.py` from the installed release. `
 `Shortener` directly, independent of the local log switch. This preserves shortening for report text and
 crash summaries on older installations even when their local logs include full paths.
 
+`context.py` `install_kind()` describes the installation in the `launcher.log` header. It recognizes a checkout,
+an unpacked release, the Windows setup by its executable beside `app/`, and the Linux AppImage installation by its
+`nx2saria-launcher` script. The installed Linux launcher's header distinguishes the AppImage itself, which passes
+`APPIMAGE` on, from its menu entry or script. The worker tells `Context` that Electron started it, so the header can
+say `AppImage install, started by Electron` for the same installation.
+
 After `finish_game()` has finalized the log, `worker.defer_crash_offer()` calls `game_ended()` from the installed
 version's `launcher/crash_offer.py` for an abnormal session. It uses the worker's launcher package for relative
 dependencies and runs before a disconnected worker exits. If the installed module is absent, it does nothing.

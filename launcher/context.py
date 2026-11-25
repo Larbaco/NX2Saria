@@ -23,20 +23,19 @@ except ImportError:
 LOG_LIMIT = 4 << 20
 
 
-def install_kind(layout, env=None):
-    """How this launcher was installed, for the start line: a checkout of the repository; on Windows the setup's
-    install (NX2Saria.exe beside app/) or an unpacked release; on Linux the AppImage's install (the nx2saria-launcher
-    script beside app/, which the AppImage writes and the menu entry starts), and whether the AppImage started this
-    run (it passes APPIMAGE on) or the menu entry did."""
+def install_kind(layout, env=None, *, electron_worker=False):
     env = os.environ if env is None else env
     if layout.dev:
-        return 'checkout'
-    if os.name == 'nt':
-        return 'installed by the setup' if layout.stub.is_file() else 'release folder'
-    if (layout.root / 'nx2saria-launcher').is_file():
-        return 'AppImage install, ' + ('started by the AppImage' if env.get('APPIMAGE') else
-                                       'started from its menu entry or script')
-    return 'release folder'
+        kind = 'checkout'
+    elif os.name == 'nt':
+        kind = 'installed by the setup' if layout.stub.is_file() else 'release folder'
+    elif (layout.root / 'nx2saria-launcher').is_file():
+        kind = 'AppImage install'
+        if not electron_worker:
+            kind += ', started by the AppImage' if env.get('APPIMAGE') else ', started from its menu entry or script'
+    else:
+        kind = 'release folder'
+    return f'{kind}, started by Electron' if electron_worker else kind
 
 
 def system_text(env=None, os_release='/etc/os-release'):
@@ -54,7 +53,7 @@ def system_text(env=None, os_release='/etc/os-release'):
 
 
 class Context:
-    def __init__(self, layout=None, echo=False):
+    def __init__(self, layout=None, echo=False, *, electron_worker=False):
         self.layout = (layout or Layout()).ensure()
         self.settings = Settings(self.layout.settings)
         self.version = self.layout.version
@@ -71,7 +70,8 @@ class Context:
         except OSError:
             self._file = None
         self.settings.log = self.log   # each changed setting gets a line when it is saved (Settings.save)
-        self.log(f'--- NX2Saria launcher {self.version} ({install_kind(self.layout)}) in {self.layout.root}; '
+        kind = install_kind(self.layout, electron_worker=electron_worker)
+        self.log(f'--- NX2Saria launcher {self.version} ({kind}) in {self.layout.root}; '
                  f'platform {sys.platform}; {system_text()}; {describe()}')
         if sys.platform.startswith('linux'):
             from .platform.linux import udmabuf_log_line, udmabuf_status
