@@ -1,8 +1,3 @@
-/* The mixer's volume ramps (runtime/audio/audio_mixer.c accumulate_ramp, audio_mixer_render), what it owes the device
-   after a stall (ring_pull, audio_mixer_owed) and the device change events (change_event_of, audio_channels_live),
-   with the rest of the runtime stubbed. No game data and no audio device:
-   NX2SARIA_AUDIO=none mixes without opening one, and the device's requests are made by hand. Each voice plays a wave
-   buffer of one constant sample, so a mix buffer holds the gain the voice went in with, sample by sample. */
 #include "../runtime/audio/audio_mixer.c"
 
 #include <stdarg.h>
@@ -10,7 +5,6 @@
 static int fails;
 #define CHECK(ok, ...) do { if (!(ok)) { fails++; printf("FAIL %s:%d: ", __func__, __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-/* ---- the runtime around the mixer ---- */
 static int ramp_setting = 1;
 unsigned rt_trace;
 void rt_log(const char *fmt, ...) { (void)fmt; }
@@ -23,9 +17,8 @@ void rt_fatal(const char *fmt, ...) {
     exit(2);
 }
 uint64_t kern_now_ns(void) { return 1; }
-/* kernel events: numbered from 1; which were closed, signalled, and how many readable ends were handed out */
 static int events_made, readables, closed[64], signalled[64], signal_closed;
-static volatile uint32_t *race_kind;   /* set: the next kern_event_new lets "another thread" win that kind first */
+static volatile uint32_t *race_kind;
 uint32_t kern_event_new(void) {
     if (race_kind) {
         volatile uint32_t *k = race_kind;
@@ -52,8 +45,6 @@ void ipc_out(IpcResponse *rs, const void *p, uint32_t n) { (void)rs, (void)p, (v
 const void *ipc_arg(const IpcRequest *rq, uint32_t off, uint32_t n) { (void)rq, (void)off, (void)n; exit(2); }
 void menu_sound_mix(float *out, uint32_t frames, int channels, int rate) { (void)out, (void)frames, (void)channels, (void)rate; }
 static const char *audio_mode = "none", *channels_setting = "stereo";
-/* a setting's key without its prefix: the runtime asks for NX2SARIA_<KEY>, and NX2NAVI_<KEY> is the older name
-   runtime/cfg/cfg.c still answers to */
 static const char *setting(const char *name) {
     if (!strncmp(name, "NX2SARIA_", 9)) return name + 9;
     if (!strncmp(name, "NX2NAVI_", 8)) return name + 8;
@@ -71,7 +62,6 @@ int cfg_bool(const char *name) {
 double cfg_double(const char *name) { (void)name; return 100; }
 unsigned cfg_version(void) { return 1; }
 int audio_buffer_empty(const AudrenWaveBuffer *b) { return !b->address || !b->size || b->end <= b->start; }
-/* no effects in these renderers, and no value the mixer leaves out (audren.c audio_bad: counted, none expected) */
 static int bad_calls;
 void audio_bad(AudioRenderer *r, int kind, const char *fmt, ...) { (void)r, (void)kind, (void)fmt; bad_calls++; }
 const char *audio_effect_invalid(unsigned type, const void *param) { (void)type, (void)param; return NULL; }
@@ -86,11 +76,9 @@ void audio_reverb_free(Reverb3d *s) { (void)s; }
 void audio_reverb_update(Reverb3d *s, const Reverb3dParam *p) { (void)s, (void)p; }
 void audio_reverb_process(Reverb3d *s, float *const input[6], float *const output[6], int frames) { (void)s, (void)input, (void)output, (void)frames; }
 
-/* ---- a renderer: the final mix (4 buffers, the mixer's buffers 0-3), one submix (2 buffers, 4-5) that goes
-   nowhere, three voices, one splitter with one destination ---- */
 #define FRAME 240
-#define SUBMIX 4   /* the submix's first buffer */
-static int16_t pcm[4 * FRAME];   /* every sample 16384: 0.5 */
+#define SUBMIX 4
+static int16_t pcm[4 * FRAME];
 
 static AudioRenderer *renderer_open(void) {
     AudioRenderer *r = calloc(1, sizeof *r);
@@ -119,16 +107,12 @@ static void renderer_close(AudioRenderer *r) {
     free(r->voices), free(r->mixes), free(r->sinks), free(r->effects), free(r->channels), free(r);
 }
 
-/* One render pass, counted as audren.c render_thread counts it; `drop`: a catch-up frame. The voices are not
-   advanced: every sample is the same. */
 static void render(AudioRenderer *r, int drop) {
     audio_mixer_render(r, (double)FRAME / 48000, drop);
     r->elapsed_frames++;
 }
 static void pass(AudioRenderer *r) { render(r, 0); }
 
-/* A voice as the game's update leaves a new one (audren.c update_voice with is_new: voice_reset, then started). Of
-   what the slot's last voice was mixed with, voice_reset clears only ramp_pass, so the rest is kept here too. */
 static ServerVoice *voice_new(AudioRenderer *r, int i, float volume, int32_t mix, uint32_t splitter) {
     ServerVoice *v = &r->voices[i], was = *v;
     memset(v, 0, sizeof *v);
@@ -145,8 +129,6 @@ static ServerVoice *voice_new(AudioRenderer *r, int i, float volume, int32_t mix
     return v;
 }
 
-/* The splitter section of an update (REV11 layout): splitter 0 with destination 0, which goes to `mix` with `volume`
-   on that mix's buffer `buffer`. */
 static void splitter_set(AudioRenderer *r, int used, int32_t mix, int buffer, float volume) {
     uint8_t wire[0x20 + 16 + 4 + 12 + 0x70 + 12] = {0};
     uint32_t header[3] = {0x48444e53u, 1, 1}, info[4] = {0x49444e53u, 0, 0, 1}, dest[2] = {0x44444e53u, 0};
@@ -167,15 +149,12 @@ static void splitter_set(AudioRenderer *r, int used, int32_t mix, int buffer, fl
 
 static const float *buf(AudioRenderer *r, int b) { return mixbuf(r->mixer, b); }
 
-/* Every sample of the pass went in with the same gain. */
 static int flat(const float *d, float level) {
     for (int k = 0; k < FRAME; k++)
         if (fabsf(d[k] - level) > 1e-6f) return 0;
     return 1;
 }
 
-/* The pass went from `from` to `to` in equal steps: sample k on the line from + k (to - from) / FRAME, so the first
-   sample is the level before and the pass after continues at `to`. */
 static int ramped(const float *d, float from, float to) {
     for (int k = 0; k < FRAME; k++) {
         if (fabsf(d[k] - (from + (to - from) * (float)k / FRAME)) > 2e-5f) return 0;
@@ -203,7 +182,7 @@ static void voice_into_mix(void) {
     CHECK(flat(buf(r, 0), 0.5f) && flat(buf(r, 1), 0.25f), "the pass after the step holds the new volume");
     audio_mixer_ramp_stats(r, &passes, &ramps);
     CHECK(passes == 1 && ramps == 2, "an unchanged volume is not counted as a ramp");
-    r->channels[0].mix[0] = 0.5f;   /* the channel's mix volume moves, the voice's does not */
+    r->channels[0].mix[0] = 0.5f;
     pass(r);
     CHECK(ramped(buf(r, 0), 0.5f, 0.25f) && flat(buf(r, 1), 0.25f), "a changed mix volume ramps, the other buffer does not");
     v->in.volume = 0;
@@ -212,7 +191,6 @@ static void voice_into_mix(void) {
     pass(r);
     CHECK(flat(buf(r, 0), 0), "and is silent after it");
 
-    /* a voice that starts is not ramped, whatever the slot held before */
     r->channels[6].mix[2] = 1;
     voice_new(r, 1, 1, 0, SPLITTER_UNUSED);
     pass(r);
@@ -224,7 +202,6 @@ static void voice_into_mix(void) {
     pass(r);
     CHECK(flat(buf(r, 2), 0.5f), "a voice started again in the same slot starts at its volume");
 
-    /* not mixed in the pass before: paused, then played at another volume */
     r->voices[1].state = SV_PAUSED;
     pass(r);
     CHECK(flat(buf(r, 2), 0), "a paused voice is silent");
@@ -232,7 +209,6 @@ static void voice_into_mix(void) {
     pass(r);
     CHECK(flat(buf(r, 2), 0.125f), "a voice that was silent in the pass before starts at its volume");
 
-    /* another destination: the submix */
     r->voices[1].in.mix_id = 1, r->voices[1].in.volume = 1;
     r->channels[6].mix[0] = 1;
     pass(r);
@@ -241,7 +217,6 @@ static void voice_into_mix(void) {
     pass(r);
     CHECK(ramped(buf(r, SUBMIX), 0.5f, 0.25f), "and ramps there afterwards");
 
-    /* the renderer stopped and started: the pass before is not the sound before */
     audio_mixer_set_running(r, 0);
     audio_mixer_set_running(r, 1);
     r->voices[1].in.volume = 1;
@@ -266,11 +241,11 @@ static void voice_into_splitter(void) {
     pass(r);
     CHECK(ramped(buf(r, 3), 0.5f, 0.25f), "the voice's own volume ramps through the destination");
     v->in.volume = 1;
-    splitter_set(r, 1, 0, 3, 0.5f);   /* both move: from the product before to the product now, here the same gain */
+    splitter_set(r, 1, 0, 3, 0.5f);
     pass(r);
     CHECK(flat(buf(r, 3), 0.25f), "voice volume doubled and destination volume halved: the gain does not move");
 
-    splitter_set(r, 1, 1, 0, 1);   /* the destination goes to the submix */
+    splitter_set(r, 1, 1, 0, 1);
     pass(r);
     CHECK(flat(buf(r, SUBMIX), 0.5f) && flat(buf(r, 3), 0), "a destination moved to another mix starts at its volume there");
     splitter_set(r, 0, 1, 0, 1);
@@ -286,7 +261,6 @@ static void voice_into_splitter(void) {
     renderer_close(r);
 }
 
-/* A submix into a splitter ramps the destination's volumes like a voice does. */
 static void mix_into_splitter(void) {
     AudioRenderer *r = renderer_open();
     r->channels[0].mix[0] = 1;
@@ -317,14 +291,12 @@ static void ramps_off(void) {
     ramp_setting = 1;
 }
 
-/* What the device paces: the device's requests (ring_pull, the SDL callback's part) and the render thread's question
-   (audio_mixer_owed) by hand, on a mixer that takes itself to have a device. */
 static void catch_up(void) {
     AudioRenderer *r = renderer_open();
     Mixer *m = r->mixer;
     enum { PERIOD = 2 * FRAME };
     static float out[2 * (PERIOD + FRAME)];
-    const int prefill = m->prefill;   /* render frames the output waits for; even on every platform */
+    const int prefill = m->prefill;
     m->device_ok = 1, m->period = PERIOD, m->target = prefill * FRAME;
     r->channels[0].mix[0] = 1, r->channels[0].mix[1] = 1;
     ServerVoice *v = voice_new(r, 0, 1, 0, SPLITTER_UNUSED);
@@ -341,10 +313,9 @@ static void catch_up(void) {
     }
     CHECK(audio_mixer_owed(r) == 0, "nothing is owed while the ring keeps up");
 
-    /* the render thread is held up for three device periods: an underrun, then silence until the prefill is back */
     for (int i = 0; i < 3; i++) ring_pull(m, out, PERIOD);
     CHECK(out[0] == 0 && atomic_load(&m->underruns) == 1, "the device plays silence");
-    v->in.volume = 0.5f;   /* the game's update that came meanwhile */
+    v->in.volume = 0.5f;
     for (int i = 0; i < 6; i++) {
         uint64_t wr = atomic_load(&m->wr), frames = r->elapsed_frames;
         CHECK(audio_mixer_owed(r) == 1, "three periods of silence: render frame %d of 6 is owed", i + 1);
@@ -360,16 +331,14 @@ static void catch_up(void) {
     CHECK(out[0] == 0.25f && out[2 * PERIOD - 1] == 0.25f, "the device goes on with the frames after the dropped ones");
     CHECK(audio_mixer_owed(r) == 0, "the device's requests while the ring keeps up add nothing");
 
-    /* less than a render frame of silence waits for the next gap */
-    for (int i = 2; i < prefill; i += 2) ring_pull(m, out, PERIOD);   /* the ring is empty again, */
-    for (int i = 0; i < prefill; i++) pass(r);                        /* and filled */
-    for (int i = 2; i < prefill; i += 2) ring_pull(m, out, PERIOD);   /* down to one period */
-    ring_pull(m, out, PERIOD + 100);                                  /* a request for 100 samples more than that */
+    for (int i = 2; i < prefill; i += 2) ring_pull(m, out, PERIOD);
+    for (int i = 0; i < prefill; i++) pass(r);
+    for (int i = 2; i < prefill; i += 2) ring_pull(m, out, PERIOD);
+    ring_pull(m, out, PERIOD + 100);
     CHECK(atomic_load(&m->underruns) == 2 && audio_mixer_owed(r) == 0, "100 samples of silence are not a frame yet");
-    ring_pull(m, out, 200);                                           /* still waiting for the prefill: 300 in all */
+    ring_pull(m, out, 200);
     CHECK(audio_mixer_owed(r) == 1 && audio_mixer_owed(r) == 0, "300 samples of silence: one frame is owed, 60 samples stay");
 
-    /* a stop forgets what was owed, and the wait for the prefill after the start is not owed */
     for (int i = 0; i < 3; i++) ring_pull(m, out, PERIOD);
     audio_mixer_set_running(r, 0);
     ring_pull(m, out, PERIOD);
@@ -378,7 +347,6 @@ static void catch_up(void) {
     ring_pull(m, out, PERIOD);
     CHECK(audio_mixer_owed(r) == 0, "nothing is owed across a stop");
 
-    /* more than AUDIO_CATCHUP_MAX_MS of silence is not caught up */
     for (int i = 0; i < prefill; i++) pass(r);
     for (int i = 0; i < prefill / 2 + 1 + 48000 / PERIOD * (AUDIO_CATCHUP_MAX_MS + 100) / 1000; i++) ring_pull(m, out, PERIOD);
     CHECK(audio_mixer_owed(r) == -1, "over %d ms of silence is given up", AUDIO_CATCHUP_MAX_MS);
@@ -387,9 +355,6 @@ static void catch_up(void) {
     renderer_close(r);
 }
 
-/* The device's, the two notifications' and the virtual device manager's change events: one event per kind however
-   often the game asks, a readable end per request, and a channel change signals each once. Two first requests at once:
-   the loser's event is closed and never signalled. */
 static void change_events_once(void) {
     int made0 = events_made, read0 = readables;
     static const unsigned device_cmds[] = {4, 11, 12, 15, 17};
@@ -408,7 +373,6 @@ static void change_events_once(void) {
     CHECK(events_made - made0 == 4, "one event per kind: %d made for 60 requests", events_made - made0);
     CHECK(readables - read0 == 60, "a readable end per request (%d)", readables - read0);
     CHECK(atomic_load(&n_change_events) == 4, "four events listed (%d)", atomic_load(&n_change_events));
-    /* a lost race: the loser closes its own event, which is not listed */
     int listed = atomic_load(&n_change_events);
     static volatile uint32_t raced;
     race_kind = &raced;
@@ -416,7 +380,6 @@ static void change_events_once(void) {
     CHECK(got == raced && !closed[got], "the loser takes the winner's event");
     CHECK(closed[events_made], "the loser closes its own event");
     CHECK(atomic_load(&n_change_events) == listed + 1, "only the winner's event is listed");
-    /* a channel change signals every listed event once, never a closed one */
     channels_setting = "stereo";
     audio_channels_live();
     CHECK(output_channels() == 2, "stereo decided");
@@ -426,8 +389,6 @@ static void change_events_once(void) {
     for (int i = 0; i < n && i < 16; i++) once += signalled[change_events[i]] == 1;
     CHECK(once == n, "a channel change signals each listed event once (%d of %d)", once, n);
     CHECK(!signal_closed, "no closed event is signalled");
-    /* a slot counted whose handle is not stored yet (a kind's first request on another thread): skipped, never
-       signalled as handle 0, which the kernel answers with a fatal error */
     atomic_fetch_add(&n_change_events, 1);
     channels_setting = "stereo";
     audio_channels_live();

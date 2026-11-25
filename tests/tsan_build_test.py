@@ -1,4 +1,3 @@
-"""Check the bench sanitizer compile and cache boundaries without game data."""
 import os
 import sys
 import tempfile

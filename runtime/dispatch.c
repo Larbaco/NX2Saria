@@ -1,15 +1,3 @@
-// Indirect-branch dispatch: guest address -> lifted function, O(1).
-//
-// Layout of the table: one uint32_t slot per 4-byte guest instruction over [lo, hi), where lo is the lowest function
-// start of any module and hi is past the highest. A slot is 0 when no function starts there, else the host function's
-// address minus `anchor` (an address just below the lowest host function), so 4 bytes are enough as long as all lifted
-// code lies within 4 GiB, which a single PE image guarantees. Memory: 4 bytes per 4 guest bytes, i.e. the size of the
-// guest range covered. The gaps between code ranges (rodata, data, bss, alignment) are reserved but never written, so
-// the OS never backs them with RAM; resident memory is about the total .text size of the modules.
-//
-// The table is filled once by rt_dispatch_init and then made read-only, so any number of threads read it without
-// locks or per-thread caches. Host (HLE) functions at addresses outside the modules live in a small hash table that
-// is also fixed at init; they are looked up only after the flat table misses.
 #include "dispatch.h"
 #include "host.h"
 #include "log_stall.h"
@@ -22,11 +10,10 @@
 #include <string.h>
 
 
-#define TABLE_SPAN_LIMIT (1ull << 30)   // guest bytes covered by the table, and its size in bytes
-#define HOST_CAP 8192                   // host function registry, power of two
+#define TABLE_SPAN_LIMIT (1ull << 30)
+#define HOST_CAP 8192
 #define MAX_MODULES 16
 
-// Hot data read by every rt_dispatch: one cache line.
 static struct __attribute__((aligned(64))) {
     const uint32_t *slot;
     uintptr_t anchor;
@@ -34,7 +21,7 @@ static struct __attribute__((aligned(64))) {
     uint64_t slots;
 } D;
 
-static const RtModule *g_mods[MAX_MODULES];   // sorted by base
+static const RtModule *g_mods[MAX_MODULES];
 static int g_nmods;
 static bool g_ready;
 static uint64_t g_table_bytes, g_functions;
@@ -51,29 +38,20 @@ void rt_fatal_note_add(void (*fn)(void)) {
     if (n_fatal_notes < (int)(sizeof fatal_notes / sizeof *fatal_notes)) fatal_notes[n_fatal_notes++] = fn;
 }
 
-// Once per process: a second fatal error, on another thread or inside a note, adds none.
 void rt_fatal_notes(void) {
     static volatile int32_t done;
     if (plat_xchg32(&done, 1)) return;
     for (int i = 0; i < n_fatal_notes; i++) fatal_notes[i]();
 }
 
-__attribute__((weak)) void fs_save_crash_wait(void) {}   // fs_host.c; builds without it (the unit checks) have no saves
+__attribute__((weak)) void fs_save_crash_wait(void) {}
 
-// The frame-time summary and the stutter map at a fatal error (perf.c); builds without perf.c (the unit checks) have
-// none.
 __attribute__((weak)) void perf_summary_flush_try(void) {}
 
-// The session summary at a fatal error (session_summary.c); builds without it (the unit checks) write none.
 __attribute__((weak)) void session_summary_fatal(int code, const char *line) { (void)code, (void)line; }
 
-// HD rumble's neutral value before a failed run ends (input.c input_rumble_hd_stop); builds without input.c (the unit
-// checks) have no controller.
 __attribute__((weak)) void input_rumble_hd_stop(void) {}
 
-// The stop goes through SDL, which takes its own joystick lock: a crash on SDL's thread while it held that lock would
-// hold the ending thread there for good, and the process would never end. So it runs on a thread of its own, and the
-// ending thread waits for it at most 300 ms and never joins it. A controller left buzzing is the lesser harm.
 static volatile int32_t rumble_stopped;
 static void rumble_stop_main(void *arg) {
     (void)arg;
@@ -86,16 +64,8 @@ void rt_rumble_stop_bounded(void) {
     for (int i = 0; i < 30 && !__atomic_load_n(&rumble_stopped, __ATOMIC_ACQUIRE); i++) plat_sleep_ms(10);
 }
 
-// One end for a failed run. The platform layer calls the crash handler on every thread that faults, without
-// waiting for the others (platform/win32.c crash_veh, crash_filter), and a fatal error can come beside a crash from
-// the same bad state (an allocation that failed here, a null pointer read there). The later end cut the first report
-// where it was, together with its wait for a save Commit and RivaTuner's restore, and its own FATAL line and exit
-// code replaced the first (the launcher shows the last FATAL). Another thread now waits until the first end is done;
-// it logs nothing, since it may hold the log queue's lock, which the first report only tries. A first report that
-// hangs still ends: after 30 s the waiting thread ends the process with the first report's own code (a fatal error's
-// 70 or 72, the crash report's 71), so the launcher reads the end as the report says it.
-static volatile uint32_t ending_tid;   // the thread that reports, 0 before one does
-static volatile int32_t ending_code = 71;   // the code that report ends with, stored right after it took ending_tid
+static volatile uint32_t ending_tid;
+static volatile int32_t ending_code = 71;
 
 int rt_ending_enter(int code) {
     uint32_t me = plat_thread_id(), was = 0;
@@ -108,14 +78,11 @@ int rt_ending_enter(int code) {
     plat_terminate(__atomic_load_n(&ending_code, __ATOMIC_ACQUIRE));
 }
 
-// The fatal line, the report's notes and what has to be flushed, then the exit with `code`.
 static void fatal_end(int code, const char *fmt, va_list ap) __attribute__((noreturn));
 static void fatal_end(int code, const char *fmt, va_list ap) {
-    if (!rt_ending_enter(code)) plat_terminate(code);   // a fatal error inside this thread's own report: no second one
-    rt_log_ending();   // the report reaches the log file past its cap (main.c log_sink)
-    rt_log_sync();   // main.c: the lines queued for the log thread, then these, written here
-    // The line's text once more for the session summary below: rt_vlogf uses up ap, so a copy of it. Static: only the
-    // thread rt_ending_enter let through gets here.
+    if (!rt_ending_enter(code)) plat_terminate(code);
+    rt_log_ending();
+    rt_log_sync();
     static char line[1024];
     va_list aq;
     va_copy(aq, ap);
@@ -124,32 +91,22 @@ static void fatal_end(int code, const char *fmt, va_list ap) {
     rt_log_raw("FATAL: ", 7);
     rt_vlogf(fmt, ap);
     rt_log_raw("\n", 1);
-    char at[16];   // the FATAL line itself stays as the launcher reads it; the time goes on a line of its own
+    char at[16];
     log_stamp(at, sizeof at, 0);
     rt_log("fatal: at %s local time", at);
-    // When an allocation fails, these numbers help distinguish high commit in this process from system-wide pressure.
     double proc, used, limit;
     plat_commit_info(&proc, &used, &limit);
     rt_log("fatal: memory commit: this process %.0f MB, the system %.0f of %.0f MB", proc, used, limit);
     rt_fatal_notes();
     kern_free_cores_note();
-    fs_save_crash_wait();   // a save the game already reported as done finishes first (bounded)
-    prof_sampler_write();   // NX2SARIA_PROFILE: what was sampled until now, else a crash loses the whole profile
-    // RivaTuner Statistics Server's profile goes back at the next start, from the line the run keeps for it in
-    // rtss-profile.txt (rtss_limit.c rtss_limit_crash, as in main.c crash_handler), with no call into RTSS's library
-    // here; only where that line could not be written is it put back now, and never from RTSS's own thread
+    fs_save_crash_wait();
+    prof_sampler_write();
     rtss_limit_crash();
-    rt_rumble_stop_bounded();   // a controller on HD rumble: nothing renews or stops its vibration after the end
-    // "frametime: at a fatal error" and the stutter map, the session's last period: after what a kill of the process
-    // must not lose, as in the orderly end (gfx_present.c rt_exit_steps); ft_stop waits up to 50 ms
+    rt_rumble_stop_bounded();
     perf_summary_flush_try();
-    // logs/session-summary.json for the launcher, from the session's numbers the line above closed; static buffers only
     session_summary_fatal(code, line);
     fflush(stdout);
     fflush(stderr);
-    // Not _Exit: in the C runtime it is ExitProcess, which stops the other threads wherever they are and then runs every
-    // library's detach on this thread. A driver's detach that faults there turned a fatal error's end into a crash
-    // report with another code (platform/win32.c plat_exit names one such detach), and one that hangs held the process.
     plat_terminate(code);
 }
 
@@ -178,7 +135,7 @@ const char *rt_guest_name(uint64_t pc, char *buf, int size) {
     return buf;
 }
 
-static uint64_t host_hash(uint64_t addr) { return (addr >> 2) * 0x9E3779B97F4A7C15ull >> 51; }   // 13 bits
+static uint64_t host_hash(uint64_t addr) { return (addr >> 2) * 0x9E3779B97F4A7C15ull >> 51; }
 
 static GuestFn host_lookup(uint64_t addr) {
     for (uint64_t h = host_hash(addr), n = 0; n < HOST_CAP; h = (h + 1) & (HOST_CAP - 1), n++) {
@@ -201,7 +158,7 @@ void rt_register_host(uint64_t addr, GuestFn fn) {
 }
 
 static void *table_alloc(uint64_t bytes) {
-    return plat_mem_alloc(bytes);   // zero pages, backed on first write
+    return plat_mem_alloc(bytes);
 }
 
 static void table_seal(void *p, uint64_t bytes) {
@@ -212,7 +169,6 @@ void rt_dispatch_init(const RtModule *mods, int count) {
     if (g_ready) rt_fatal("rt_dispatch_init called twice");
     if (count <= 0 || count > MAX_MODULES) rt_fatal("rt_dispatch_init: %d modules", count);
 
-    // Modules by base, checked for overlap.
     for (int i = 0; i < count; i++) {
         int j = g_nmods++;
         while (j > 0 && g_mods[j - 1]->base > mods[i].base) { g_mods[j] = g_mods[j - 1]; j--; }
@@ -222,7 +178,6 @@ void rt_dispatch_init(const RtModule *mods, int count) {
         if (g_mods[i - 1]->base + g_mods[i - 1]->size > g_mods[i]->base)
             rt_fatal("dispatch: modules %s and %s overlap", g_mods[i - 1]->name, g_mods[i]->name);
 
-    // Function tables: sorted, aligned, inside their module. Range of guest starts and of host functions.
     uint64_t lo = UINT64_MAX, hi = 0;
     uintptr_t host_lo = UINTPTR_MAX, host_hi = 0;
     for (int i = 0; i < g_nmods; i++) {
@@ -279,7 +234,7 @@ void rt_dispatch_init(const RtModule *mods, int count) {
 }
 
 GuestFn rt_dispatch_lookup(uint64_t pc) {
-    uint64_t i = __builtin_rotateright64(pc - D.lo, 2);   // a misaligned pc lands far above D.slots
+    uint64_t i = __builtin_rotateright64(pc - D.lo, 2);
     if (i < D.slots && D.slot[i]) return (GuestFn)(D.anchor + D.slot[i]);
     return g_ready ? host_lookup(pc) : NULL;
 }
@@ -295,22 +250,17 @@ __attribute__((noinline, noreturn, cold)) static void dispatch_fail(Cpu *c) {
              rt_guest_name(c->x[30], lr, sizeof lr));
 }
 
-// Host functions, and the fatal error. A separate tail call keeps the fast path below free of a stack frame.
 __attribute__((noinline)) static void dispatch_slow(Cpu *c) {
     GuestFn f = g_ready ? host_lookup(c->pc) : NULL;
     if (!f) dispatch_fail(c);
     __attribute__((musttail)) return f(c);
 }
 
-// A pending preempt request at an indirect call (a safe point: the guest state is all in Cpu). Out of line, so
-// rt_dispatch keeps no stack frame.
 static __attribute__((noinline)) void dispatch_preempt(Cpu *c) {
     kern_checkpoint();
     __attribute__((musttail)) return rt_dispatch(c);
 }
 
-// Jump to the guest address in c->pc. Always a tail call, so chains of indirect jumps keep the host stack flat. A
-// pending preempt request costs two loads and a branch to check.
 void rt_dispatch(Cpu *c) {
     if (__builtin_expect(c->thread && kern_preempt_pending(c->thread), 0))
         __attribute__((musttail)) return dispatch_preempt(c);

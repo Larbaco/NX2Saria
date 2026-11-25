@@ -1,4 +1,8 @@
-"""Condense the NX2SARIA_TRACE=perf and NX2SARIA_TRACE=sched lines of a game log over a frame window.
+import re
+import statistics
+import sys
+
+USAGE = """Condense the NX2SARIA_TRACE=perf and NX2SARIA_TRACE=sched lines of a game log over a frame window.
 
     python tools/perf_summary.py build/v121/logs/fight.log 1560 2600
 
@@ -11,10 +15,6 @@ thread's hand-off wait (the last two only in logs that have them), and the `perf
 NX2SARIA_TRACE=perf the present thread's averages per window. The render thread's hand-off share is read from the perf
 lines that have it.
 """
-import re
-import statistics
-import sys
-
 PERF = re.compile(r'perf: frame (\d+): interval avg ([\d.]+) ms max ([\d.]+) ms \(([\d.]+) fps\); render thread blocked: '
                   r'pacing (\d+)%.*?pipeline build (\d+)%.*?texture (\d+)%')
 GPU = re.compile(r'perf: frame (\d+): gpu avg (?:([\d.]+) ms|n/a).*?fence wait per frame: render thread ([\d.]+) ms, '
@@ -37,7 +37,6 @@ CLASSES = ('cached', 'uncached', 'other')
 
 
 def dirty_fields(text):
-    """`key a/b/c` and `key x` pairs of a `mem: dirty frame` line -> {key: [floats]}."""
     return {k: [float(x) for x in v.split('/')] for k, v in re.findall(r'(\w+) ([\d.]+(?:/[\d.]+)*)(?=[ ;]|$)', text)}
 
 
@@ -46,13 +45,11 @@ def p95(v):
 
 
 def pct(v, q):
-    """The q quantile of v (nearest rank below), 0 for none."""
     v = sorted(v)
     return v[min(len(v) - 1, int(q * len(v)))] if v else 0.0
 
 
 def present_summary(pres, wins):
-    """pres: {field: [ms]} of the window's `present:` lines; wins: the `perf: present thread` lines' fields."""
     if pres.get('interval'):
         parts = []
         for key, name in (('interval', 'interval'), ('waited', 'paced wait'), ('past', 'past target'),
@@ -65,7 +62,7 @@ def present_summary(pres, wins):
     if wins:
         n = sum(w[0] for w in wins)
 
-        def avg(i):   # present-weighted mean of a window average
+        def avg(i):
             return sum(w[i] * w[0] for w in wins) / n
         print(f'SUMMARY present thread: {n} presents in {len(wins)} windows; blit and submit avg {avg(1):.2f} ms, paced '
               f'wait avg {avg(2):.2f} ms, present call avg {avg(3):.2f} ms max {max(w[4] for w in wins):.2f} ms, past '
@@ -73,12 +70,11 @@ def present_summary(pres, wins):
 
 
 def dirty_summary(lines, frames):
-    """lines: [(frame, fields)] of the window; frames: per-frame eager KiB triples."""
     if not lines:
         return
     n = sum(f['frames'][0] for _, f in lines)
 
-    def avg(key, i):   # frame-weighted mean of a per-frame value
+    def avg(key, i):
         return sum(f[key][i] * f['frames'][0] for _, f in lines if key in f) / n
 
     for i, c in enumerate(CLASSES):
@@ -103,7 +99,7 @@ def dirty_summary(lines, frames):
 
 def main():
     if len(sys.argv) < 2:
-        sys.exit(__doc__)
+        sys.exit(USAGE)
     lo = int(sys.argv[2]) if len(sys.argv) > 2 else 1560
     hi = int(sys.argv[3]) if len(sys.argv) > 3 else 10**9
     fr, fps, mx, gpu, vram, ram, bound = None, [], [], [], [], [], {}

@@ -1,6 +1,3 @@
-// runtime/vk/nvidia_cache.h: what the game puts into the environment for NVIDIA's shader disk cache (runtime/vk/vk_device.c
-// nvidia_cache_beside_exe), how it counts the folder (vk_pipeline.c lw_say_cache_folder) and the lines the logs say about
-// both. Built and run by tests/nvidia_cache_check.py; prints each failed check and exits 1 on any.
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -16,14 +13,12 @@ static NvcIn in_of(int windows, int enabled, int driver, int path_set, int size_
     return in;
 }
 
-// ---- a tree the lister answers from
-
 typedef struct { const char *dir, *name; int kind; uint64_t size; } Ent;
 static const Ent *tree;
 static int n_tree;
-static const char *const *empties;   // folders that are there and hold nothing
-static const char *const *denied;    // folders the system refuses
-static int listed;                    // lister calls
+static const char *const *empties;
+static const char *const *denied;
+static int listed;
 
 static int in_list(const char *const *l, const char *s) {
     for (; l && *l; l++)
@@ -33,14 +28,14 @@ static int in_list(const char *const *l, const char *s) {
 
 static int fake_list(const char *dir, NvcCallback cb, void *ctx) {
     listed++;
-    if (in_list(denied, dir)) return 5;   // platform.h PLAT_FS_ERROR
+    if (in_list(denied, dir)) return 5;
     int there = in_list(empties, dir);
     for (int i = 0; i < n_tree; i++) {
         if (!strcmp(tree[i].dir, dir)) there = 1;
         if (strcmp(tree[i].dir, dir)) continue;
         if (!cb(tree[i].name, tree[i].kind, tree[i].size, ctx)) break;
     }
-    for (int i = 0; i < n_tree && !there; i++)   // a folder some entry sits in below it exists too
+    for (int i = 0; i < n_tree && !there; i++)
         there = !strncmp(tree[i].dir, dir, strlen(dir)) && (tree[i].dir[strlen(dir)] == '/' || tree[i].dir[strlen(dir)] == '\\');
     return there ? NVC_LISTED : NVC_MISSING;
 }
@@ -55,7 +50,7 @@ static int many_list(const char *dir, NvcCallback cb, void *ctx) {
     return NVC_LISTED;
 }
 
-static int deaf_list(const char *dir, NvcCallback cb, void *ctx) {   // goes on after the callback says stop
+static int deaf_list(const char *dir, NvcCallback cb, void *ctx) {
     (void)dir;
     for (uint64_t i = 0; i < NVC_MAX_ENTRIES + 50; i++) {
         callbacks++;
@@ -64,7 +59,7 @@ static int deaf_list(const char *dir, NvcCallback cb, void *ctx) {   // goes on 
     return NVC_LISTED;
 }
 
-static int deep_deaf_list(const char *dir, NvcCallback cb, void *ctx) {   // a folder and a file in each, whatever cb says
+static int deep_deaf_list(const char *dir, NvcCallback cb, void *ctx) {
     (void)dir;
     listed++;
     cb("d", NVC_KIND_DIR, 0, ctx);
@@ -72,7 +67,7 @@ static int deep_deaf_list(const char *dir, NvcCallback cb, void *ctx) {   // a f
     return NVC_LISTED;
 }
 
-static int deep_list(const char *dir, NvcCallback cb, void *ctx) {   // one folder inside each one, for ever
+static int deep_list(const char *dir, NvcCallback cb, void *ctx) {
     (void)dir;
     listed++;
     cb("d", NVC_KIND_DIR, 0, ctx);
@@ -83,7 +78,7 @@ static NvcSize measure(NvcLister l, const char *root, size_t cap) {
     char work[512];
     NvcSize s;
     char sentinel = 0x5a;
-    work[cap] = sentinel;   // the walk never writes past cap
+    work[cap] = sentinel;
     nvc_measure(l, root, work, cap, &s);
     CHECK(work[cap] == sentinel, "the walk wrote past its buffer");
     CHECK(cap < strlen(root) + 1 || !strcmp(work, root), "the buffer holds the root again: %s", work);
@@ -91,7 +86,6 @@ static NvcSize measure(NvcLister l, const char *root, size_t cap) {
 }
 
 int main(void) {
-    // ---- the plan: scenarios written out by hand. in_of(windows, enabled, driver, path_set, size_set, skip_set, folder_ok)
     {
         static const struct { const char *what; NvcIn in; int verdict, set; } rows[] = {
             {"Linux, nothing set: the folder and the limit", {0, 1, 1, 0, 0, 0, 1}, NVC_USE, NVC_SET_PATH | NVC_SET_SIZE},
@@ -120,7 +114,6 @@ int main(void) {
         }
     }
 
-    // ---- the plan: what holds for every combination of the seven inputs
     for (int bits = 0; bits < 128; bits++) {
         NvcIn in = in_of(bits & 1, bits >> 1 & 1, bits >> 2 & 1, bits >> 3 & 1, bits >> 4 & 1, bits >> 5 & 1, bits >> 6 & 1);
         NvcPlan p = nvc_plan(&in);
@@ -133,19 +126,18 @@ int main(void) {
         CHECK(p.verdict == NVC_USE || p.set == 0, "nothing set without a use: %d", bits);
         CHECK(p.verdict != NVC_USE || (in.driver && in.enabled), "a use needs the driver and the setting: %d", bits);
         CHECK((p.verdict == NVC_USE) == (in.driver && in.enabled && (in.path_set || in.folder_ok)), "the verdict: %d", bits);
-        if (!nvc_need_folder(&in)) {   // the folder's state is not asked, so it changes nothing
+        if (!nvc_need_folder(&in)) {
             NvcIn other = in;
             other.folder_ok = !in.folder_ok;
             NvcPlan q = nvc_plan(&other);
             CHECK(q.verdict == p.verdict && q.set == p.set, "folder_ok is read only when the folder is needed: %d", bits);
         }
-        if (in.windows == 0) {   // Linux never differs from what it did before: the folder, then the limit
+        if (in.windows == 0) {
             int want = (in.path_set ? 0 : NVC_SET_PATH) | (in.size_set ? 0 : NVC_SET_SIZE);
             CHECK(p.verdict != NVC_USE || p.set == want, "Linux sets the folder and the limit as before: %d", bits);
         }
     }
 
-    // ---- the variables a restart inherits: the game names what it set, and a start takes those for the game's
     {
         static const struct { const char *text; int bits; } marks[] = {
             {"1", 1}, {"2", 2}, {"3", 3}, {"4", 4}, {"5", 5}, {"6", 6}, {"7", 7}, {"0", 0}, {"8", 0}, {"9", 0}, {"", 0},
@@ -164,7 +156,6 @@ int main(void) {
         nvc_mark_text(9, t, sizeof t);
         CHECK(!strcmp(t, "1"), "bits past the three are cut: %s", t);
 
-        // nvc_stale: what the game set before and does not set now is taken out of the environment
         NvcPlan use_all = {NVC_USE, NVC_SET_PATH | NVC_SET_SIZE | NVC_SET_SKIP}, use_two = {NVC_USE, NVC_SET_PATH | NVC_SET_SIZE};
         NvcPlan off = {NVC_OFF, 0}, nofolder = {NVC_NO_FOLDER, 0}, nodriver = {NVC_NO_DRIVER, 0};
         CHECK(nvc_stale(&use_all, 7) == 0, "all set again: nothing stale");
@@ -176,11 +167,9 @@ int main(void) {
         CHECK(nvc_stale(&off, 15) == 7, "only the three variables");
     }
 
-    // ---- the lines
     {
         char got[512], want[512];
         const char *dir = "/home/ana/nx2saria/nvidia-cache";
-        // Linux: the words the log has always had, built here with the old format
         nvc_use_line(got, sizeof got, 0, NVC_SET_PATH | NVC_SET_SIZE, dir, NVC_SIZE_VALUE, "");
         snprintf(want, sizeof want, "vk: NVIDIA's shader disk cache in %s (%s), up to %s bytes (%s)", dir, "beside the exe",
                  "8589934592", "the game's limit");
@@ -201,7 +190,6 @@ int main(void) {
         nvc_use_line(want, sizeof want, 0, NVC_SET_PATH | NVC_SET_SIZE, dir, NVC_SIZE_VALUE, "9");
         CHECK(!strcmp(got, want), "Linux says nothing of the cleanup: %s", got);
 
-        // Windows: the three variables, with their values and whose they are
         const char *wdir = "C:\\Users\\ana\\AppData\\Local\\Programs\\NX2Saria\\game\\nvidia-cache";
         nvc_use_line(got, sizeof got, 1, NVC_SET_PATH | NVC_SET_SIZE | NVC_SET_SKIP, wdir, NVC_SIZE_VALUE, NVC_SKIP_VALUE);
         snprintf(want, sizeof want,
@@ -218,7 +206,6 @@ int main(void) {
         nvc_use_line(got, sizeof got, 1, 0, "D:\\gl", "1073741824", "0");
         CHECK(!strstr(got, "the game's"), "Windows, all the player's: %s", got);
 
-        // the lines when nothing is set
         nvc_stays_line(got, sizeof got, dir, "is not writable", "Permission denied");
         snprintf(want, sizeof want,
                  "vk: NVIDIA's shader disk cache stays in the driver's own folder with its own limit: %s %s (%s)", dir,
@@ -229,7 +216,6 @@ int main(void) {
                            "nvidia_cache_dir = 0"),
               "the off line: %s", got);
 
-        // the line when the environment refuses a variable
         static const struct { int bits; const char *names; } refused[] = {
             {NVC_SET_PATH, "__GL_SHADER_DISK_CACHE_PATH"}, {NVC_SET_SIZE, "__GL_SHADER_DISK_CACHE_SIZE"},
             {NVC_SET_SKIP, "__GL_SHADER_DISK_CACHE_SKIP_CLEANUP"},
@@ -245,7 +231,6 @@ int main(void) {
             CHECK(!strcmp(got, want), "refused %d: %s", refused[k].bits, got);
         }
 
-        // a buffer too short takes what fits, ends with a NUL and is not passed
         for (size_t cap = 1; cap < 60; cap += 7) {
             char b[80];
             memset(b, 0x5a, sizeof b);
@@ -266,7 +251,6 @@ int main(void) {
         }
     }
 
-    // ---- nvc_commas
     {
         char b[32];
         static const struct { uint64_t n; const char *s; } rows[] = {
@@ -278,7 +262,7 @@ int main(void) {
             CHECK(!strcmp(b, rows[k].s), "%llu as %s, got %s", (unsigned long long)rows[k].n, rows[k].s, b);
         }
         char t[5];
-        nvc_commas(1234567, t, sizeof t);   // cut, never overrun
+        nvc_commas(1234567, t, sizeof t);
         CHECK(strlen(t) < sizeof t, "a short buffer: %s", t);
         for (size_t cap = 1; cap < 30; cap++) {
             char z[40];
@@ -288,10 +272,9 @@ int main(void) {
         }
     }
 
-    // ---- nvc_size_text
     {
         char got[400];
-        NvcSize s = {1739461181ull, 2, 0, 0};   // 1.62 GiB
+        NvcSize s = {1739461181ull, 2, 0, 0};
         nvc_size_text(got, sizeof got, "/x/nvidia-cache", &s);
         CHECK(!strcmp(got, "NVIDIA's shader disk cache folder /x/nvidia-cache holds 1.62 GB in 2 files"), "%s", got);
         NvcSize e = {0, 0, 0, 0};
@@ -308,7 +291,6 @@ int main(void) {
         CHECK(strstr(got, "(some of it could not be read)"), "%s", got);
     }
 
-    // ---- nvc_measure
     {
         static const Ent files[] = {
             {"/c", "a.toc", NVC_KIND_FILE, 100},   {"/c", "a.bin", NVC_KIND_FILE, 5000}, {"/c", "sub", NVC_KIND_DIR, 4096},
@@ -344,43 +326,37 @@ int main(void) {
         CHECK(s.unreadable && s.bytes == 0 && s.files == 0, "a root the system refuses");
         denied = NULL;
 
-        // Windows paths join with a backslash, the root's own kind
         static const Ent win[] = {{"C:\\gl", "GLCache", NVC_KIND_DIR, 0}, {"C:\\gl\\GLCache", "x.bin", NVC_KIND_FILE, 77}};
         tree = win, n_tree = N(win);
         s = measure(fake_list, "C:\\gl", 200);
         CHECK(s.bytes == 77 && s.files == 1 && !s.unreadable, "a backslash path: %llu in %llu", (unsigned long long)s.bytes,
               (unsigned long long)s.files);
 
-        // the path buffer: a folder whose path does not fit is said, the rest counted
         static const Ent tight[] = {{"/a", "bb", NVC_KIND_DIR, 0}, {"/a", "f", NVC_KIND_FILE, 3}, {"/a/bb", "g", NVC_KIND_FILE, 4}};
         tree = tight, n_tree = N(tight);
-        s = measure(fake_list, "/a", 5);   // "/a/bb" needs 6 bytes with its NUL
+        s = measure(fake_list, "/a", 5);
         CHECK(s.unreadable && s.files == 1 && s.bytes == 3, "a path past the buffer: %llu in %llu, unreadable %d",
               (unsigned long long)s.bytes, (unsigned long long)s.files, s.unreadable);
         s = measure(fake_list, "/a", 6);
         CHECK(!s.unreadable && s.files == 2 && s.bytes == 7, "a path that just fits");
-        s = measure(fake_list, "/a", 2);   // the root alone does not fit
+        s = measure(fake_list, "/a", 2);
         CHECK(s.unreadable && s.files == 0, "a root past the buffer");
-        s = measure(fake_list, "/a", 3);   // the root fits to the last byte, "/a/bb" does not
+        s = measure(fake_list, "/a", 3);
         CHECK(s.unreadable && s.files == 1 && s.bytes == 3, "a root that just fits: %llu in %llu, unreadable %d",
               (unsigned long long)s.bytes, (unsigned long long)s.files, s.unreadable);
 
-        // the entry limit
         callbacks = 0;
         s = measure(many_list, "/m", 200);
         CHECK(s.stopped && s.files == NVC_MAX_ENTRIES && callbacks == NVC_MAX_ENTRIES + 1,
               "the entry limit: %llu files after %llu entries", (unsigned long long)s.files, (unsigned long long)callbacks);
 
-        // a lister that goes on after the callback said stop is not counted past the limit
         callbacks = 0;
         s = measure(deaf_list, "/m", 200);
         CHECK(s.stopped && s.files == NVC_MAX_ENTRIES, "a lister that does not stop: %llu files", (unsigned long long)s.files);
 
-        // the depth limit: a folder inside every folder, for ever
         listed = 0;
         s = measure(deep_list, "/d", 500);
         CHECK(s.stopped && listed == NVC_MAX_DEPTH + 1, "the depth limit: %d folders listed", listed);
-        // and nothing is counted after it, whatever the lister does with the callback's answer
         listed = 0;
         s = measure(deep_deaf_list, "/d", 500);
         CHECK(s.stopped && s.files == 0, "nothing counted once the count stopped: %llu files", (unsigned long long)s.files);

@@ -1,6 +1,3 @@
-// AES-128 encryption on bytes: the state is 16 bytes in column order (byte r + 4c is row r of column c), as the
-// standard lays it out. The S-box is a table indexed by secret bytes, so the timing depends on the key and the data;
-// that is acceptable here because the only data is the player's own amiibo dumps, read locally.
 #include "aes128.h"
 
 #include <string.h>
@@ -29,14 +26,11 @@ static void wipe(void *p, size_t n) {
     while (n--) *v++ = 0;
 }
 
-// Multiplication by x (that is 2) in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1.
 static inline uint8_t xtime(uint8_t x) { return (uint8_t)(x << 1 ^ (x >> 7) * 0x1b); }
 
 void aes128_init(Aes128 *a, const uint8_t key[16]) {
     static const uint8_t rcon[10] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36};
     memcpy(a->rk, key, 16);
-    // Each 4-byte word is the word 16 bytes back XOR the previous word; at the start of each round key the previous
-    // word is first rotated by one byte, run through the S-box and its first byte XORed with the round constant.
     for (int i = 16; i < 176; i += 4) {
         uint8_t t0 = a->rk[i - 4], t1 = a->rk[i - 3], t2 = a->rk[i - 2], t3 = a->rk[i - 1];
         if (i % 16 == 0) {
@@ -57,11 +51,8 @@ void aes128_encrypt_block(const Aes128 *a, const uint8_t in[16], uint8_t out[16]
     uint8_t s[16], t[16];
     for (int i = 0; i < 16; i++) s[i] = in[i] ^ a->rk[i];
     for (int r = 1; r <= 10; r++) {
-        // SubBytes and ShiftRows together: row r moves r columns to the left.
         for (int c = 0; c < 4; c++)
             for (int row = 0; row < 4; row++) t[row + 4 * c] = SBOX[s[row + 4 * ((c + row) & 3)]];
-        // MixColumns (not in the last round): b0 = 2a0 ^ 3a1 ^ a2 ^ a3 and its rotations, written as
-        // a0 ^ (a0 ^ a1 ^ a2 ^ a3) ^ 2(a0 ^ a1).
         if (r < 10)
             for (int c = 0; c < 4; c++) {
                 uint8_t *col = t + 4 * c;
@@ -87,7 +78,7 @@ void aes128_ctr(const Aes128 *a, const uint8_t iv[16], const uint8_t *in, uint8_
         size_t k = n < 16 ? n : 16;
         for (size_t i = 0; i < k; i++) out[i] = in[i] ^ ks[i];
         in += k, out += k, n -= k;
-        for (int i = 15; i >= 0; i--)   // counter + 1, carrying from the last byte towards the first
+        for (int i = 15; i >= 0; i--)
             if (++ctr[i]) break;
     }
     wipe(ctr, sizeof ctr);

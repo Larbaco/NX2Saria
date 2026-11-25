@@ -1,16 +1,4 @@
 # needs: windows
-"""Build and run tests/lazy_fetch_check.c: runtime/memory.c's lazy write-back (memory.c "Lazy write-back", "Ranges in
-flight") with the Windows platform layer and its real fault handler, the rest of the runtime stubbed and the back end's
-fetch a stand-in that only waits. It checks that a fetch holds up nothing but the touches of its range, that those
-wait for it, and that arms, thaws, mapping changes, freezes and releases see it; also with NX2SARIA_WB_LAZY_CHUNK=1 and
-with NX2SARIA_WB_LAZY_UNLOCKED=0. Each scenario runs as its own process, so an access violation passed to the crash
-handler shows as its exit code; any exit code other than 0, or a scenario that does not end within 120 s, fails.
-
-Windows only (the fault handler is): no game files, no GPU. The module layout the runtime includes is a stand-in
-written to the test's build folder.
-
-Usage: lazy_fetch_check.py [scenario ...]
-"""
 import os
 import shutil
 import subprocess
@@ -20,9 +8,8 @@ import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
-# name: (scenario argument, extra environment)
-CHUNK = {'CHECK_CHUNK': '1'}     # NX2SARIA_WB_LAZY_CHUNK=1
-LOCKED = {'CHECK_LOCKED': '1'}   # NX2SARIA_WB_LAZY_UNLOCKED=0
+CHUNK = {'CHECK_CHUNK': '1'}
+LOCKED = {'CHECK_LOCKED': '1'}
 SCENARIOS = {
     'arm_race': ('arm_race', {}),
     'arm_race_slow': ('arm_race_slow', {}),

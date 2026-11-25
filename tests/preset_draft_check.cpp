@@ -1,17 +1,3 @@
-// The quality preset in the settings menu's draft: runtime/ui/option_rows.cpp (opt_value, opt_get, opt_default,
-// opt_is_set, opt_preset_tier, opt_preset_handback, opt_draft_apply) over runtime/cfg/cfg.c with made-up hardware, no
-// window and no GPU. Built and run by tests/preset_check.py, with option_rows.cpp, ui_text.c, cfg.c and Dear ImGui
-// (option_rows.cpp's rows draw with it; nothing here draws). The stand-ins for what cfg.c links against are in
-// preset_check_stubs.h; the menu's skin, sounds and the renderer's restart questions are stand-ins below.
-//
-//   preset_draft_check <dir> <action>...
-// cfg_init and cfg_start with the settings file in <dir> and the hardware in NX2SARIA_TEST_HW; then each action:
-//   stage=<tier|recommended>   what ui/menu.cpp preset_stage does when the player picks that entry of the Quality
-//                              preset row: the preset key, then "" for each key opt_preset_handback hands back
-//   set=<KEY>=<value>          a row writing a key (opt_apply; "" unsets it)
-//   apply / discard            opt_draft_apply / opt_draft_discard
-// After the start and after each action ("--- after <action>"), "got: ..." lines: the staged tier, the handback for
-// every tier, and for each key of cfg_preset_keys what opt_value, opt_get and opt_default give.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,11 +12,10 @@ extern "C" {
 #include "platform/platform.h"
 }
 
-struct PerfSizes;   // host.h's (C only, as it pulls in cpu.h); the stand-in for perf_size only passes a pointer on
+struct PerfSizes;
 #include "preset_check_stubs.h"
 
 extern "C" {
-// what option_rows.cpp and ui_text.c ask of the rest of the game
 void menu_sound_play(MenuSound id) { (void)id; }
 int vk_dlaa_needs_restart(void) { return 0; }
 int vk_hdr_restart_for(const char *value) { (void)value; return 0; }
@@ -52,7 +37,7 @@ void skin_panel(ImDrawList *, ImVec2, ImVec2, float, float) {}
 static int tier_of(const char *name) {
     for (int t = 0; t < 4; t++)
         if (!strcmp(name, cfg_preset_name(t))) return t;
-    return -1;   // recommended
+    return -1;
 }
 
 static void report(void) {
@@ -88,7 +73,7 @@ int main(int argc, char **argv) {
     report();
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
-        if (!strncmp(a, "stage=", 6)) {   // ui/menu.cpp preset_stage
+        if (!strncmp(a, "stage=", 6)) {
             const int t = tier_of(a + 6);
             opt_apply("NX2SARIA_PRESET", t >= 0 ? cfg_preset_name(t) : "");
             char names[32][64];

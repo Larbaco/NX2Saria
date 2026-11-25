@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/mesh_fb_hold_check.c: runtime/gfx/mesh_fb_hold.h, the table behind the mesh fallback's depth hold
-(vk_exec_draw.c): a list whose colour draw waits for its pipeline holds its depth-only draw, and for how long.
-
-No GPU, no game files, any Python.
-
-Usage: mesh_fb_hold_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

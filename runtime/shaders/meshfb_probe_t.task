@@ -1,14 +1,6 @@
 #version 460
 #extension GL_EXT_mesh_shader : require
 // build_shaders: keep functions
-//
-// --probe-meshfb (mesh_fb_probe.c): a task program in the shape the translator gives one (tools/xlate/MeshSpirv.cs):
-// the program writes its payload into shared memory, and the entry function copies that out and starts the mesh
-// workgroups the program counted into word 1. The payload is 288 bytes: the header, then the program's data from
-// word 4.
-//
-// Task workgroup t starts 0 to 4 mesh workgroups (the uniform block shifts which tasks start how many) and tells each
-// the grid cell it draws; the last payload word carries a mark the mesh program checks.
 layout(local_size_x = 32) in;
 layout(set = 0, binding = 1) uniform Params { uvec4 shift; } u;
 shared uint mem[72];

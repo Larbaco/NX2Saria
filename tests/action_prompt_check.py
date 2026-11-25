@@ -1,15 +1,4 @@
 # needs: clang
-"""Build and run tests/action_prompt_check.c: runtime/patches/action_prompt.c, the action prompt's diamond of face buttons laid
-out by label, on a layout file and archives the test makes itself. No game files.
-
-With --romfs, also on the game's own archive: the folder holds romfs.bin and its index.json, and the program reads the
-archive and Pack/ZsDic.pack.zs from romfs.bin at the offsets the index gives. Nothing is written.
-
-The program is built with the undefined-behaviour sanitizer (traps), with locals that start as a pattern rather than
-whatever the stack held, and with AddressSanitizer where the toolchain has it (not MSYS2's).
-
-Usage: action_prompt_check.py [--romfs DIR]
-"""
 import argparse
 import json
 import os
@@ -19,6 +8,8 @@ import sys
 from pathlib import Path
 import runtime_include
 
+DESCRIPTION = ("Build and run tests/action_prompt_check.c: runtime/patches/action_prompt.c, the action prompt's "
+               'diamond of face buttons laid')
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 ARCHIVE = 'UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs'
@@ -34,7 +25,6 @@ def compiler():
 
 
 def game_args(folder):
-    """romfs.bin and the offset and size of the archive and the dictionaries in it."""
     files = {f['path']: f for f in json.loads((folder / 'index.json').read_text(encoding='utf-8'))['files']}
     for rel in (ARCHIVE, DICTIONARIES):
         if rel not in files:
@@ -44,7 +34,7 @@ def game_args(folder):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--romfs', type=Path, help='a folder with romfs.bin and index.json: also check the game\'s archive')
     args = ap.parse_args()
     work = ROOT / 'build' / 'test' / 'action_prompt'
@@ -57,7 +47,6 @@ def main():
     if os.name != 'nt':
         sanitize.append('-fsanitize=address')
     rt = ROOT / 'runtime'
-    # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror',
                            '-Wno-bitwise-instead-of-logical', *sanitize, *runtime_include.flags(rt),
                            str(ROOT / 'tests' / 'action_prompt_check.c'), str(rt / 'patches' / 'action_prompt.c'),

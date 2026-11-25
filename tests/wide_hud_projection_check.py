@@ -1,5 +1,4 @@
 # needs: py:lz4
-"""Check the full-height exceptions in the 1.1.1 wide_hud projection patch."""
 import sys
 from pathlib import Path
 
@@ -16,8 +15,6 @@ def main():
     words, expected = next((words, expected) for set_index, words, expected in site if set_index == index)
     assert expected == 0xad401041
 
-    # Projection match builds v17. The screen lookup then removes the four full-picture vtables from that mask,
-    # duplicates it across lanes, and only then may the Y row use the vertical squeeze factor.
     projection_mask = words.index(0x4e040631)
     full_screen_exclusion = words.index(0x0e721e31)
     vertical_scale = words.index(0x3dc02233)
@@ -27,15 +24,11 @@ def main():
     assert projection_mask < full_screen_exclusion < vertical_scale < vertical_multiply < vertical_select < horizontal_scale
     assert words[vertical_scale:vertical_select + 1] == [0x3dc02233, 0x6e33dc93, 0x6eb11e64]
 
-    # After `ldr d16, [x16]` (0xfd400210) x16 holds the canvas or its screen, no longer the patch page: every 128-bit
-    # load of a page value from there on reads through x17, which the site sets to the page again. Reading the vertical
-    # squeeze through x16 (0.20.0-rc.1) took a word of the screen object and hid the whole HUD.
     repurposed = words.index(0xfd400210)
     for w in words[repurposed + 1:]:
-        if isinstance(w, int) and w & 0xffc00000 == 0x3dc00000:   # LDR (immediate, unsigned offset), 128-bit
+        if isinstance(w, int) and w & 0xffc00000 == 0x3dc00000:
             assert (w >> 5) & 31 == 17, f'{w:08x} reads the page through x{(w >> 5) & 31}, not x17'
 
-    # 16:9 and wider ratios supply 1.0 in page +128, so the extra Y path leaves those screens unchanged.
     source = (ROOT / 'runtime/patches/widescreen.c').read_text()
     assert 'memcpy(page + 128, vertical4, 16);' in source
     assert 'float y_squeeze = (float)wide_ui_vertical_scale(ratio);' in source

@@ -1,4 +1,3 @@
-"""RomFS read-ahead and packing with synthetic files. Run: python tests/romfs_packer_test.py"""
 import hashlib
 import json
 from pathlib import Path
@@ -40,7 +39,6 @@ class RomfsPackerTest(unittest.TestCase):
                     self.assertEqual((dst / 'index.json').read_bytes(), b'previous index')
 
     def test_streamed_and_buffered_files_keep_the_same_layout(self):
-        # Lower the read-ahead limit so these tiny files span several worker groups.
         large_file_readers = []
 
         class Source:

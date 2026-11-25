@@ -1,50 +1,3 @@
-"""A 32-lane Maxwell warp emulator for checking the SM86 tensor lowering on the CPU.
-
-tools/xlate/AmpereLowering.cs rewrites SM86 instructions as Maxwell (64-bit) instructions, and the patched shader
-translator (build/xlate/ryujinx/src/Ryujinx.Graphics.Shader) turns those into SPIR-V. This file executes the Maxwell
-words the way that translator does: fields are decoded exactly as its Decoders/InstDecoders.cs, opcodes are
-matched with the bit patterns of Decoders/InstTable.cs, and each instruction does what its Instructions/*.cs
-emit for it (not what a real Maxwell GPU does where the two differ; see "Translator semantics" below). With it, the result
-of one lowered SM86 instruction (HMMA, LDSM, MOVM, HFMA2.RELU, ...) can be compared with vectors captured on real
-hardware without running the game.
-
-State per lane: R0-R254 (RZ = R255 reads 0, writes are dropped), P0-P6 (PT = P7 is true, writes dropped), the lane id,
-local memory; per warp: shared memory. Every lane is active at the start; a guard (bits 16-19: predicate 16-18, inverted
-19) masks the writes of one instruction, EXIT retires lanes. Branches must be uniform across the active lanes.
-
-Translator semantics this follows (and real hardware may not):
-  * Half-precision arithmetic (HADD2, HMUL2, HFMA2) works in F32 on the unpacked halves and rounds to F16 once at the
-    end (InstEmitFloatArithmetic EmitHadd2Hmul2 / EmitHfma2, InstEmitHelper GetHalfPacked: PackHalf2x16).
-    HFMA2 is therefore an F32 fused multiply-add rounded to F32, then to F16.
-  * That rounding is skipped when the packed value goes straight into another unpack: Optimizer.PropagatePack
-    turns UnpackHalf2x16(PackHalf2x16(a, b)) into a (or b). So F2F.F16.F32 then F2F.F32.F16 of the same register, or
-    HFMA2 feeding HFMA2, passes the F32 value on unrounded; an integer instruction (SHFL, LOP, ISCADD, ...) in between
-    keeps the rounding, a MOV does not. Modelled per register (Warp.halves); a guarded write and a branch end it.
-  * FTZ, FMZ and rounding-mode fields of FFMA / FMUL / FADD / HFMA2 / HMUL2 are ignored, as the translator ignores them.
-    Denormals are kept (IEEE), saturation is clamp(x, 0, 1) with NaN giving 0 (GLSL FClamp as min(max(x, 0), 1) on
-    a GPU whose min/max return the non-NaN operand).
-  * PRMT is not implemented in the translator (1.3.2): InstEmit.PrmtR/PrmtI/PrmtC/PrmtRc only log "not implemented", so the
-    destination keeps its old value. That is the default here (prmt="ryujinx"); prmt="maxwell" gives the hardware
-    byte permute instead, to see what the lowering intended.
-  * SHFL follows the translator's HelperFunctionManager GenerateShuffle* helpers (clamp and segment mask from operand C, the
-    lane's own value where the source lane is out of range).
-  * LDS / LDL read the 32-bit word at (address >> 2) and extract a sub-word at (address & 3) * 8 (InstEmitMemory
-    EmitLoad); STS of 8 and 16 bits stores those bytes at the address.
-  * Condition codes (.CC, .X) are not modelled: an instruction that writes or reads them raises.
-  * NaN results carry numpy's payload and sign. Neither is defined in SPIR-V, so result comparisons (same_value) let
-    a NaN match any NaN for float results; see "comparing results".
-
-Library use:
-  regs = run(words, regs_in, smem=None)        # words: Maxwell 64-bit words; returns a (32, 256) uint32 array
-  warp = run_warp(words, regs_in, smem=None)   # the whole Warp (regs, preds, smem, warnings)
-
-CLI (vectors written by the tensor ground-truth capture, see main()):
-  python tests/maxwell_warp_emu.py <vectors.json> [--xlate EXE] [--prmt ryujinx|maxwell] [--case NAME] [--trace]
-                                   [--fill HEX] [--exact]
-tests/tensor_lowering_check.py runs the full check of the tensor lowering on top of this (guards, untouched registers,
-several initial fills).
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -70,24 +23,20 @@ F16 = np.float16
 
 
 class UnknownOpcode(Exception):
-    """A Maxwell word this emulator has no decoder entry for."""
+    pass
 
 
 class Unsupported(Exception):
-    """A known instruction in a mode or form the emulator does not implement."""
+    pass
 
-
-# ---- bit-level helpers --------------------------------------------------------------------------------------------
 
 def u32(x) -> np.ndarray:
-    """A lane vector (or broadcast scalar) as uint32, wrapping Python ints to 32 bits."""
     if isinstance(x, (int, np.integer)):
         return np.full(LANES, int(x) & 0xFFFFFFFF, dtype=U32)
     return np.asarray(x).astype(U32, copy=True)
 
 
 def sext(value: int, bits: int) -> int:
-    """Sign-extends a bits-wide field to a Python int."""
     value &= (1 << bits) - 1
     return value - (1 << bits) if value >> (bits - 1) else value
 
@@ -101,29 +50,20 @@ def from_f32(f: np.ndarray) -> np.ndarray:
 
 
 def half_lo(u: np.ndarray) -> np.ndarray:
-    """UnpackHalf2x16Low: the low 16 bits as F16, widened to F32 (exact)."""
     return (u32(u) & U32(0xFFFF)).astype(np.uint16).view(F16).astype(F32)
 
 
 def half_hi(u: np.ndarray) -> np.ndarray:
-    """UnpackHalf2x16High."""
     return (u32(u) >> U32(16)).astype(np.uint16).view(F16).astype(F32)
 
 
 def pack_half(lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
-    """PackHalf2x16: each F32 rounded to F16 (round to nearest even, numpy's conversion), lo in bits 0-15."""
     l = np.asarray(lo, dtype=F32).astype(F16).view(np.uint16).astype(U32)
     h = np.asarray(hi, dtype=F32).astype(F16).view(np.uint16).astype(U32)
     return l | (h << U32(16))
 
 
 def fma_f32(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
-    """F32 fused multiply-add, rounded once (FPFusedMultiplyAdd -> GLSL.std.450 Fma, fused on the target GPUs).
-
-    a * b is exact in F64 (2 x 24 significant bits). The F64 sum s may be inexact; TwoSum gives its error e exactly
-    (s + e == a * b + c). Rounding s to F32 is then correct except when s lies exactly halfway between two F32
-    values, where the sign of e decides the direction. F32 halfway points are F64 values, so no other case can
-    double-round."""
     a64 = np.asarray(a, dtype=F32).astype(np.float64)
     b64 = np.asarray(b, dtype=F32).astype(np.float64)
     c64 = np.asarray(c, dtype=F32).astype(np.float64)
@@ -132,12 +72,10 @@ def fma_f32(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
     bb = s - p
     e = (p - (s - bb)) + (c64 - bb)
     r = s.astype(F32)
-    # The F32 neighbour of r on the side of s.
     toward = np.nextafter(r, np.where(s > r.astype(np.float64), F32(np.inf), F32(-np.inf)).astype(F32))
     mid = (r.astype(np.float64) + toward.astype(np.float64)) * 0.5
     fix = np.isfinite(s) & np.isfinite(r) & np.isfinite(toward) & (e != 0) & (s == mid)
     if fix.any():
-        # At a tie, the exact value lies on the side of e: take the neighbour when e points towards it.
         up = (toward.astype(np.float64) > r.astype(np.float64))
         take = fix & (up == (e > 0))
         r = np.where(take, toward, r).astype(F32)
@@ -145,12 +83,10 @@ def fma_f32(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> np.ndarray:
 
 
 def saturate(x: np.ndarray) -> np.ndarray:
-    """FPSaturate: clamp to [0, 1], NaN to 0 (fmax/fmin return the non-NaN operand)."""
     return np.fmin(np.fmax(np.asarray(x, dtype=F32), F32(0)), F32(1)).astype(F32)
 
 
 def abs_neg(x: np.ndarray, absolute: bool, negate: bool) -> np.ndarray:
-    """FPAbsNeg: abs first, then negate (sign-bit operations in SPIR-V; numpy's abs/negative act on the sign too)."""
     x = np.asarray(x, dtype=F32)
     if absolute:
         x = np.abs(x)
@@ -160,8 +96,6 @@ def abs_neg(x: np.ndarray, absolute: bool, negate: bool) -> np.ndarray:
 
 
 class Ins:
-    """One Maxwell word with the field accessors InstDecoders.cs uses."""
-
     def __init__(self, word: int, index: int):
         self.w = word
         self.index = index
@@ -172,7 +106,6 @@ class Ins:
     def bit(self, offset: int) -> bool:
         return (self.w >> offset) & 1 == 1
 
-    # Fields shared by most decoders.
     @property
     def rd(self): return self.bits(0, 8)
     @property
@@ -182,12 +115,12 @@ class Ins:
     @property
     def rc(self): return self.bits(39, 8)
     @property
-    def imm20(self):   # InstDecoders Imm20: bits 20-38, bit 19 from bit 56
+    def imm20(self):
         return ((self.w >> 37) & 0x80000) | ((self.w >> 20) & 0x7FFFF)
     @property
-    def imm20_sint(self): return sext(self.imm20, 20)   # InstEmitHelper Imm20ToSInt
+    def imm20_sint(self): return sext(self.imm20, 20)
     @property
-    def imm20_float(self): return (self.imm20 << 12) & 0xFFFFFFFF   # Imm20ToFloat
+    def imm20_float(self): return (self.imm20 << 12) & 0xFFFFFFFF
     @property
     def imm32(self): return (self.w >> 20) & 0xFFFFFFFF
     @property
@@ -197,13 +130,9 @@ class Ins:
         return f"[{self.index}] {self.w:016x}"
 
 
-# ---- warp state ---------------------------------------------------------------------------------------------------
-
 class Warp:
     def __init__(self, smem: bytes | None = None, smem_size: int = 0x10000, local_size: int = 0x2000,
                  cbufs: dict | None = None, prmt: str = "ryujinx", fill: int = 0, trace: bool = False):
-        # Registers not given by the caller start as `fill` (SPIR-V locals are undefined unless the job zeroes them;
-        # a poison value such as 0x7fc0dead shows reads of registers the lowering never wrote).
         self.r = np.full((LANES, 256), fill & 0xFFFFFFFF, dtype=U32)
         self.r[:, RZ] = 0
         self.p = np.zeros((LANES, 8), dtype=bool)
@@ -218,17 +147,11 @@ class Warp:
         self.prmt = prmt
         self.trace = trace
         self.warnings: list[str] = []
-        # The translator's Optimizer.PropagatePack turns an UnpackHalf2x16 of a PackHalf2x16 result into the pack's F32
-        # operand, so that half is never rounded to F16. Per lane and register: the F32 halves of the pack that wrote
-        # the register (sh_ok), kept until the register is written otherwise. A write under a guard ends it in every
-        # lane: the translator puts the instruction in an if-block and merges old and new value in a phi, which is no pack.
         self.sh_lo = np.zeros((LANES, 256), dtype=F32)
         self.sh_hi = np.zeros((LANES, 256), dtype=F32)
         self.sh_ok = np.zeros((LANES, 256), dtype=bool)
-        self.unconditional = True   # the current instruction's guard is PT (run_warp sets it)
+        self.unconditional = True
 
-    # Register file access: R(n) reads a lane vector, W(n, v, mask) writes the lanes in mask. halves: the F32 values
-    # a PackHalf2x16 rounded into v (see sh_ok); copy_from: v is a copy of that register (MOV), pack and all.
     def R(self, n: int) -> np.ndarray:
         if n == RZ:
             return np.zeros(LANES, dtype=U32)
@@ -252,7 +175,6 @@ class Warp:
             self.sh_ok[mask, n] = False
 
     def halves(self, n: int):
-        """UnpackHalf2x16Low / High of register n as F32, after PropagatePack (the pack's operand where one wrote n)."""
         u = self.R(n)
         lo, hi = half_lo(u), half_hi(u)
         if n != RZ:
@@ -272,16 +194,12 @@ class Warp:
         self.p[mask, n] = v[mask]
 
     def cbuf_word(self, slot: int, word_offset: int) -> np.ndarray:
-        """c[slot][word_offset * 4] (InstDecoders CbufOffset counts words)."""
         data = self.cbufs.get(slot)
         at = word_offset * 4
         if data is None or at + 4 > len(data):
             raise Unsupported(f"constant buffer c[{slot}][0x{at:x}] not provided")
         return u32(int.from_bytes(data[at:at + 4], "little"))
 
-
-# ---- instruction semantics ----------------------------------------------------------------------------------------
-# Each handler takes (warp, ins, mask): mask = the active lanes whose guard holds. Lanes outside mask must not change.
 
 def _no_cc(i: Ins, cc_bit: int | None, x_bit: int | None, name: str):
     if cc_bit is not None and i.bit(cc_bit):
@@ -294,11 +212,11 @@ def op_nop(w, i, m):
     pass
 
 
-def op_mov_r(w, i, m):            # InstEmitMove MovR: SrcA in bits 20-27; a Copy, which PropagateCopy sees through
+def op_mov_r(w, i, m):
     w.W(i.rd, w.R(i.rb), m, copy_from=i.rb)
 
 
-def op_mov_i(w, i, m):            # MovI: GetSrcImm(op.Imm20), the raw 20-bit field (not shifted or sign-extended)
+def op_mov_i(w, i, m):
     w.W(i.rd, u32(i.imm20), m)
 
 
@@ -310,7 +228,7 @@ def op_mov32i(w, i, m):
     w.W(i.rd, u32(i.imm32), m)
 
 
-def _iadd(w, i, m, a, b, avg):    # InstEmitIntegerArithmetic EmitIadd: AvgMode 1 negates B, 2 negates A
+def _iadd(w, i, m, a, b, avg):
     if avg == 2:
         a = U32(0) - a
     if avg == 1:
@@ -334,7 +252,7 @@ def op_iadd32i(w, i, m):
 
 
 def _iadd3(w, i, m, a, b, c, lrs, parts):
-    def extend(v, part):          # EmitIadd3 Extend: HalfSelect 1 = low 16 bits, 2 = high 16 bits
+    def extend(v, part):
         if part == 1:
             return v & U32(0xFFFF)
         if part == 2:
@@ -365,7 +283,7 @@ def op_iadd3_i(w, i, m):
     _iadd3(w, i, m, w.R(i.ra), u32(i.imm20_sint), w.R(i.rc), 0, (0, 0, 0))
 
 
-def _iscadd(w, i, m, a, b, shift, avg):   # EmitIscadd: (A << shift), then the AvgMode negations, then A + B
+def _iscadd(w, i, m, a, b, shift, avg):
     a = a << U32(shift)
     if avg == 2:
         a = U32(0) - a
@@ -389,7 +307,7 @@ def op_iscadd32i(w, i, m):
     _iscadd(w, i, m, w.R(i.ra), u32(i.imm32), i.bits(53, 5), 0)
 
 
-def _shl(w, i, m, a, b):          # InstEmitShift EmitShl: .M masks the count to 5 bits, else counts >= 32 give 0
+def _shl(w, i, m, a, b):
     _no_cc(i, 47, 43, "SHL")
     if i.bit(39):
         b = b & U32(31)
@@ -398,7 +316,7 @@ def _shl(w, i, m, a, b):          # InstEmitShift EmitShl: .M masks the count to
         w.W(i.rd, np.where(b < 32, a << (b & U32(31)), U32(0)), m)
 
 
-def _shr(w, i, m, a, b):          # EmitShr: .BREV (40) reverses A first, .S32 (48), .M (39)
+def _shr(w, i, m, a, b):
     _no_cc(i, 47, None, "SHR")
     if i.bits(43, 2):
         raise Unsupported(f"SHR.X {i}")
@@ -421,14 +339,14 @@ def op_shr_r(w, i, m): _shr(w, i, m, w.R(i.ra), w.R(i.rb))
 def op_shr_i(w, i, m): _shr(w, i, m, w.R(i.ra), u32(i.imm20_sint))
 
 
-def _lop_pred(w, i, m, res, pred_op, dest_pred):   # EmitLopPredWrite
+def _lop_pred(w, i, m, res, pred_op, dest_pred):
     if dest_pred == PT:
         return
     v = {0: np.zeros(LANES, bool), 1: np.ones(LANES, bool), 2: res == 0, 3: res != 0}[pred_op]
     w.WP(dest_pred, v, m)
 
 
-def _lop(w, i, m, a, b, logic, inv_a, inv_b, pred_op, dest_pred):   # InstEmitIntegerLogical EmitLop
+def _lop(w, i, m, a, b, logic, inv_a, inv_b, pred_op, dest_pred):
     if inv_a:
         a = ~a
     if inv_b:
@@ -448,13 +366,12 @@ def op_lop_i(w, i, m):
     _lop(w, i, m, w.R(i.ra), u32(i.imm20_sint), i.bits(41, 2), i.bit(39), i.bit(40), i.bits(44, 2), i.bits(48, 3))
 
 
-def op_lop32i(w, i, m):           # Lop32i: no predicate output (DestPred PT)
+def op_lop32i(w, i, m):
     _no_cc(i, 52, 57, "LOP32I")
     _lop(w, i, m, w.R(i.ra), u32(i.imm32), i.bits(53, 2), i.bit(55), i.bit(56), 0, PT)
 
 
 def _lop3(a, b, c, lut):
-    """The LOP3 truth table (Lop3Expression.GetFromTruthTable): bit (a << 2 | b << 1 | c) of lut, per bit."""
     res = np.zeros(LANES, dtype=U32)
     for k in range(8):
         if lut >> k & 1:
@@ -479,7 +396,6 @@ def op_lop3_i(w, i, m):
 
 def _prmt(w, i, m, a, sel, c):
     if w.prmt == "ryujinx":
-        # The translator's InstEmit.PrmtR / PrmtI: "not implemented", nothing is emitted, the destination keeps its value.
         w.warnings.append(f"PRMT at {i} is a no-op in Ryujinx 1.3.2 (destination R{i.rd} unchanged)")
         return
     if i.bits(48, 4):
@@ -500,7 +416,7 @@ def op_prmt_r(w, i, m): _prmt(w, i, m, w.R(i.ra), w.R(i.rb), w.R(i.rc))
 def op_prmt_i(w, i, m): _prmt(w, i, m, w.R(i.ra), u32(i.imm20_sint), w.R(i.rc))
 
 
-def op_sel_r(w, i, m):            # InstEmitMove EmitSel: P ? A : B
+def op_sel_r(w, i, m):
     p = w.P(i.bits(39, 3), i.bit(42))
     w.W(i.rd, np.where(p, w.R(i.ra), w.R(i.rb)), m)
 
@@ -510,7 +426,7 @@ def op_sel_i(w, i, m):
     w.W(i.rd, np.where(p, w.R(i.ra), u32(i.imm20_sint)), m)
 
 
-def _isetp(w, i, m, a, b):        # InstEmitIntegerComparison EmitIsetp (not extended)
+def _isetp(w, i, m, a, b):
     if i.bit(43):
         raise Unsupported(f"ISETP.X {i}")
     cmp, signed = i.bits(49, 3), i.bit(48)
@@ -535,7 +451,7 @@ def op_isetp_r(w, i, m): _isetp(w, i, m, w.R(i.ra), w.R(i.rb))
 def op_isetp_i(w, i, m): _isetp(w, i, m, w.R(i.ra), u32(i.imm20_sint))
 
 
-def _p2r(w, i, m, a, mask):       # InstEmitPredicate EmitP2r
+def _p2r(w, i, m, a, mask):
     if i.bit(40):
         raise Unsupported(f"P2R.CC {i}")
     shift = i.bits(41, 2) * 8
@@ -547,10 +463,10 @@ def _p2r(w, i, m, a, mask):       # InstEmitPredicate EmitP2r
 
 
 def op_p2r_r(w, i, m): _p2r(w, i, m, w.R(i.ra), w.R(i.rb))
-def op_p2r_i(w, i, m): _p2r(w, i, m, w.R(i.ra), u32(i.imm20))   # P2rI: the raw Imm20 as mask
+def op_p2r_i(w, i, m): _p2r(w, i, m, w.R(i.ra), u32(i.imm20))
 
 
-def _r2p(w, i, m, value, mask):   # InstEmitMove EmitR2p
+def _r2p(w, i, m, value, mask):
     if i.bit(40):
         raise Unsupported(f"R2P.CC {i}")
     shift = i.bits(41, 2) * 8
@@ -561,10 +477,10 @@ def _r2p(w, i, m, value, mask):   # InstEmitMove EmitR2p
 
 
 def op_r2p_r(w, i, m): _r2p(w, i, m, w.R(i.ra), w.R(i.rb))
-def op_r2p_i(w, i, m): _r2p(w, i, m, w.R(i.ra), u32(i.imm20_sint))   # R2pI: Imm20ToSInt
+def op_r2p_i(w, i, m): _r2p(w, i, m, w.R(i.ra), u32(i.imm20_sint))
 
 
-def op_s2r(w, i, m):              # InstEmitMove S2r: SR_LANEID; one warp, so TID.X is the lane and TID.Y/Z are 0
+def op_s2r(w, i, m):
     sreg = i.bits(20, 8)
     if sreg in (0, 33):
         v = w.lane
@@ -577,7 +493,7 @@ def op_s2r(w, i, m):              # InstEmitMove S2r: SR_LANEID; one warp, so TI
     w.W(i.rd, v, m)
 
 
-def op_shfl(w, i, m):             # InstEmitWarp Shfl + HelperFunctionManager GenerateShuffle* (subgroup size 32)
+def op_shfl(w, i, m):
     a = w.R(i.ra)
     b = u32(i.bits(20, 5)) if i.bit(28) else w.R(i.rb)
     c = u32(i.bits(34, 13)) if i.bit(29) else w.R(i.rc)
@@ -587,20 +503,19 @@ def op_shfl(w, i, m):             # InstEmitWarp Shfl + HelperFunctionManager Ge
     min_t = lane & seg
     max_t = (clamp & ~seg) | min_t
     mode = i.bits(30, 2)
-    if mode == 0:     # IDX
+    if mode == 0:
         src = (b & ~seg) | min_t
         valid = src <= max_t
-    elif mode == 1:   # UP: signed compare (ICompareGreaterOrEqual)
+    elif mode == 1:
         src = lane - b
         valid = src.view(np.int32) >= min_t.view(np.int32)
-    elif mode == 2:   # DOWN
+    elif mode == 2:
         src = lane + b
         valid = src <= max_t
-    else:             # BFLY
+    else:
         src = lane ^ b
         valid = src <= max_t
     idx = np.where(valid, src, lane).astype(np.int64)
-    # A predicated SHFL becomes an if-block in SPIR-V: reading a lane outside it is undefined.
     bad = m & valid & ~m[np.clip(idx, 0, LANES - 1)]
     if bad.any():
         w.warnings.append(f"SHFL at {i} reads inactive lanes {sorted(set(idx[bad].tolist()))}")
@@ -610,7 +525,6 @@ def op_shfl(w, i, m):             # InstEmitWarp Shfl + HelperFunctionManager Ge
 
 
 def _mem_load(w, i, m, mem_of, size, base, offset, what):
-    """InstEmitMemory EmitLoad: per word, the word at (address >> 2), sub-words extracted at (address & 3) * 8."""
     if size > 6:
         raise Unsupported(f"{what} size {size} {i}")
     count = {5: 2, 6: 4}.get(size, 1)
@@ -638,8 +552,6 @@ def _mem_load(w, i, m, mem_of, size, base, offset, what):
 
 
 def _mem_store(w, i, m, mem_of, size, base, offset, what, local):
-    """EmitStore: 32-bit words at (address >> 2); shared 8/16-bit stores write those bytes at the address, local
-    ones insert into the word at (address & 3) * 8. Lanes store in lane order (the last lane wins a conflict)."""
     if size > 6:
         raise Unsupported(f"{what} size {size} {i}")
     count = {5: 2, 6: 4}.get(size, 1)
@@ -684,26 +596,26 @@ def op_stl(w, i, m):
     _mem_store(w, i, m, lambda lane: w.local[lane], i.bits(48, 3), w.R(i.ra), i.imm24_sint, "STL", True)
 
 
-def op_f2f_r(w, i, m):            # InstEmitConversion F2fR / EmitF2F
+def op_f2f_r(w, i, m):
     _no_cc(i, 47, None, "F2F")
     dst, src = i.bits(8, 2), i.bits(10, 2)
     if dst not in (1, 2) or src not in (1, 2):
         raise Unsupported(f"F2F with F64 {i}")
     x = w.halves(i.rb)[1 if i.bit(41) else 0] if src == 1 else as_f32(w.R(i.rb))
     x = abs_neg(x, i.bit(49), i.bit(45))
-    rnd = (i.bits(42, 1) << 2) | i.bits(39, 2)   # IntegerRound: 4 round, 5 floor, 6 ceil, 7 trunc
+    rnd = (i.bits(42, 1) << 2) | i.bits(39, 2)
     if src == dst:
         x = {4: np.rint, 5: np.floor, 6: np.ceil, 7: np.trunc}.get(rnd, lambda v: v)(x).astype(F32)
     if i.bit(50):
         x = saturate(x)
     if dst == 2:
         w.W(i.rd, from_f32(x), m)
-    else:                         # WriteFP: PackHalf2x16(x, 0)
+    else:
         zero = np.zeros(LANES, F32)
         w.W(i.rd, pack_half(x, zero), m, halves=(x, zero))
 
 
-def op_mufu(w, i, m):             # InstEmitMultifunction Mufu: FPAbsNeg of Ra, the function in F32, FPSaturate
+def op_mufu(w, i, m):
     fn = {2: np.exp2, 3: np.log2, 4: lambda v: F32(1) / v, 5: lambda v: F32(1) / np.sqrt(v), 8: np.sqrt}.get(i.bits(20, 4))
     if fn is None:
         raise Unsupported(f"MUFU operation {i.bits(20, 4)} {i}")
@@ -713,7 +625,7 @@ def op_mufu(w, i, m):             # InstEmitMultifunction Mufu: FPAbsNeg of Ra, 
     w.W(i.rd, from_f32(saturate(r) if i.bit(50) else r), m)
 
 
-def _ffma(w, i, m, a, b, c, neg_b, neg_c, sat):   # EmitFfma (rounding mode and FMZ ignored)
+def _ffma(w, i, m, a, b, c, neg_b, neg_c, sat):
     r = fma_f32(as_f32(a), abs_neg(as_f32(b), False, neg_b), abs_neg(as_f32(c), False, neg_c))
     w.W(i.rd, from_f32(saturate(r) if sat else r), m)
 
@@ -728,12 +640,12 @@ def op_ffma_i(w, i, m):
     _ffma(w, i, m, w.R(i.ra), u32(i.imm20_float), w.R(i.rc), i.bit(48), i.bit(49), i.bit(50))
 
 
-def op_ffma32i(w, i, m):          # Ffma32i: C is the destination register
+def op_ffma32i(w, i, m):
     _no_cc(i, 52, None, "FFMA32I")
     _ffma(w, i, m, w.R(i.ra), u32(i.imm32), w.R(i.rd), i.bit(56), i.bit(57), i.bit(55))
 
 
-def _fmul(w, i, m, a, b, scale, neg_b, sat):      # EmitFmul: A times the scale first, then A * B
+def _fmul(w, i, m, a, b, scale, neg_b, sat):
     a = as_f32(a)
     if scale:
         a = (a * F32({1: 0.5, 2: 0.25, 3: 0.125, 4: 8.0, 5: 4.0, 6: 2.0}.get(scale, 1.0))).astype(F32)
@@ -756,7 +668,7 @@ def op_fmul32i(w, i, m):
     _fmul(w, i, m, w.R(i.ra), u32(i.imm32), 0, False, i.bit(55))
 
 
-def _fadd(w, i, m, a, b, neg_a, neg_b, abs_a, abs_b, sat):   # EmitFadd
+def _fadd(w, i, m, a, b, neg_a, neg_b, abs_a, abs_b, sat):
     r = (abs_neg(as_f32(a), abs_a, neg_a) + abs_neg(as_f32(b), abs_b, neg_b)).astype(F32)
     w.W(i.rd, from_f32(saturate(r) if sat else r), m)
 
@@ -776,10 +688,7 @@ def op_fadd32i(w, i, m):
     _fadd(w, i, m, w.R(i.ra), u32(i.imm32), i.bit(56), i.bit(53), i.bit(54), i.bit(57), False)
 
 
-# Half precision: InstEmitHelper GetHalfSrc / GetHalfUnpacked / GetHalfPacked.
 def half_src(w: Warp, reg: int, swizzle: int, neg: bool = False, absolute: bool = False):
-    """The two F32 values of a packed-half register operand: swizzle 0 (H1_H0), 1 (F32: the register as one F32
-    twice), 2 (H0_H0), 3 (H1_H1); then abs, neg. The halves come through Warp.halves (PropagatePack)."""
     if swizzle == 1:
         x = as_f32(w.R(reg))
         pair = (x, x)
@@ -790,7 +699,6 @@ def half_src(w: Warp, reg: int, swizzle: int, neg: bool = False, absolute: bool 
 
 
 def half_imm_pair(h0: int, h1: int):
-    """GetHalfSrc(immH0, immH1): each 10-bit field shifted left 6 as an F16."""
     return [np.full(LANES, np.array([(v << 6) & 0xFFFF], dtype=np.uint16).view(F16)[0], dtype=F32) for v in (h0, h1)]
 
 
@@ -799,19 +707,17 @@ def half_imm32(imm: int):
 
 
 def half_pack(w: Warp, ofmt: int, res, rd: int):
-    """GetHalfPacked: 0 F16 pair, 1 F32 (lane 0's result), 2 MRG_H0 (high half kept), 3 MRG_H1 (low half kept).
-    Returns the register value and the F32 halves PackHalf2x16 rounded (None for the F32 format)."""
     if ofmt == 1:
         return from_f32(res[0]), None
     if ofmt == 0:
         lo, hi = res[0], res[1]
     else:
-        old_lo, old_hi = w.halves(rd)   # GetHalfDest: an UnpackHalf2x16 of Rd
+        old_lo, old_hi = w.halves(rd)
         lo, hi = (res[0], old_hi) if ofmt == 2 else (old_lo, res[1])
     return pack_half(lo, hi), (lo, hi)
 
 
-def _hadd_hmul(w, i, m, a, b, add, ofmt, sat):    # EmitHadd2Hmul2: F32 add/multiply per half, saturate, pack
+def _hadd_hmul(w, i, m, a, b, add, ofmt, sat):
     res = []
     for k in range(2):
         r = (a[k] + b[k]).astype(F32) if add else (a[k] * b[k]).astype(F32)
@@ -820,7 +726,7 @@ def _hadd_hmul(w, i, m, a, b, add, ofmt, sat):    # EmitHadd2Hmul2: F32 add/mult
     w.W(i.rd, v, m, halves=halves)
 
 
-def _hfma(w, i, m, a, b, c, ofmt, sat):           # EmitHfma2: F32 fused multiply-add per half, saturate, pack
+def _hfma(w, i, m, a, b, c, ofmt, sat):
     res = []
     for k in range(2):
         r = fma_f32(a[k], b[k], c[k])
@@ -846,7 +752,7 @@ def op_hadd232i(w, i, m):
     _hadd_hmul(w, i, m, a, half_imm32(i.imm32), True, 0, i.bit(52))
 
 
-def op_hmul2_r(w, i, m):          # Hmul2R: the NegA bit (31) negates B
+def op_hmul2_r(w, i, m):
     a = half_src(w, i.ra, i.bits(47, 2), False, i.bit(44))
     b = half_src(w, i.rb, i.bits(28, 2), i.bit(31), i.bit(30))
     _hadd_hmul(w, i, m, a, b, False, i.bits(49, 2), i.bit(32))
@@ -863,7 +769,7 @@ def op_hmul232i(w, i, m):
     _hadd_hmul(w, i, m, a, half_imm32(i.imm32), False, 0, i.bit(52))
 
 
-def op_hfma2_r(w, i, m):          # Hfma2R: NegA (31) negates B, NegC (30)
+def op_hfma2_r(w, i, m):
     a = half_src(w, i.ra, i.bits(47, 2))
     b = half_src(w, i.rb, i.bits(28, 2), i.bit(31))
     c = half_src(w, i.rc, i.bits(35, 2), i.bit(30))
@@ -877,13 +783,12 @@ def op_hfma2_i(w, i, m):
     _hfma(w, i, m, a, b, c, i.bits(49, 2), i.bit(52))
 
 
-def op_hfma232i(w, i, m):         # Hfma232i: C is the destination register, H1_H0
+def op_hfma232i(w, i, m):
     a = half_src(w, i.ra, i.bits(47, 2))
     c = half_src(w, i.rd, 0, i.bit(51))
     _hfma(w, i, m, a, half_imm32(i.imm32), c, 0, False)
 
 
-# Control flow: handled by the executor (EXIT retires lanes, BRA moves the warp).
 def op_exit(w, i, m):
     if i.bits(0, 5) != 15:
         raise Unsupported(f"EXIT with condition code test {i.bits(0, 5)} {i}")
@@ -892,8 +797,6 @@ def op_exit(w, i, m):
 
 OP_BRA = "bra"
 
-# The decoder: patterns as the translator's Decoders/InstTable.cs writes them (bit 63 first, x = any). The most specific
-# matching pattern wins, as InstTable's XBits ordering does.
 TABLE = [
     ("0101000010110xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "NOP", op_nop),
     ("111000110000xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "EXIT", op_exit),
@@ -976,7 +879,6 @@ _DECODE = _compile_table()
 
 
 def decode(word: int):
-    """(name, handler) of a Maxwell word, by the most specific matching InstTable pattern."""
     best = None
     for mask, value, fixed, name, fn in _DECODE:
         if word & mask == value and (best is None or fixed > best[0]):
@@ -987,13 +889,10 @@ def decode(word: int):
 
 
 def slot_address(k: int) -> int:
-    """Byte address of instruction k in a compute program as AmpereLowering.Lower lays it out (a scheduling word
-    first in every 32 bytes; --lower prints the instruction words only)."""
     return 8 * (1 + k + k // 3)
 
 
 def run_warp(words, regs_in=None, smem=None, max_steps: int = 200000, **opts) -> Warp:
-    """Executes the Maxwell words on one warp and returns its final state. regs_in in any form load_regs takes."""
     words = [w if isinstance(w, int) else int(str(w), 16) for w in words]
     w = Warp(smem=parse_bytes(smem) if smem is not None else None, **opts)
     for lane, regs in _normalised(regs_in or {}).items():
@@ -1004,9 +903,6 @@ def run_warp(words, regs_in=None, smem=None, max_steps: int = 200000, **opts) ->
             elif kind == "P" and n != PT:
                 w.p[lane, n] = bool(val)
     addr_to_index = {slot_address(k): k for k in range(len(words) + 1)}
-    # Where control flow joins (branch targets) the translator merges registers in phis, and an UnpackHalf2x16 of a phi is
-    # not folded: the PropagatePack state (Warp.sh_ok) is dropped there and at every BRA (conservative: a register no
-    # path writes needs no phi).
     joins = set()
     for k, word in enumerate(words):
         if decode(word)[1] is OP_BRA:
@@ -1044,14 +940,10 @@ def run_warp(words, regs_in=None, smem=None, max_steps: int = 200000, **opts) ->
 
 
 def run(words, regs_in=None, smem=None, **opts) -> np.ndarray:
-    """Executes the Maxwell words; returns the per-lane register file, a (32, 256) uint32 array (row = lane)."""
     return run_warp(words, regs_in, smem, **opts).r
 
 
-# ---- vector files and the --lower bridge --------------------------------------------------------------------------
-
 def parse_int(v) -> int:
-    """An int, or a hex string (with or without 0x)."""
     if isinstance(v, bool):
         return int(v)
     if isinstance(v, (int, np.integer)):
@@ -1070,7 +962,6 @@ def parse_bytes(v) -> bytes:
 
 
 def parse_reg(name, urbase: int | None = None):
-    """("R", n) or ("P", n) for a register name: an int, "R12", "12", "RZ", "UR3" (needs urbase), "P0", "PT"."""
     if isinstance(name, (int, np.integer)):
         return ("R", int(name))
     s = str(name).strip().upper()
@@ -1092,15 +983,11 @@ def parse_reg(name, urbase: int | None = None):
 
 
 def load_regs(spec, urbase: int | None = None) -> dict[int, dict]:
-    """Normalises register specs to {lane: {(kind, n): int}}. Accepts {lane: {reg: value}} with lane keys as ints or
-    strings (and "*" / "all" for every lane), or a list with one entry per lane; each lane entry a dict {reg: value}
-    or a list of values indexed by register number; values ints or hex strings."""
     out: dict[int, dict] = {lane: {} for lane in range(LANES)}
     if isinstance(spec, list):
         items = list(enumerate(spec))
     else:
         items = list(spec.items())
-    # "*" first so per-lane entries override it.
     items.sort(key=lambda kv: 0 if str(kv[0]).strip().lower() in ("*", "all") else 1)
     for lane_key, regs in items:
         key = str(lane_key).strip().lower()
@@ -1114,7 +1001,6 @@ def load_regs(spec, urbase: int | None = None) -> dict[int, dict]:
 
 
 def _normalised(spec) -> dict[int, dict]:
-    """load_regs output passes through unchanged (keys (kind, n)); anything else is loaded."""
     if isinstance(spec, dict) and all(isinstance(k, int) for k in spec) and \
             all(isinstance(r, tuple) for regs in spec.values() if isinstance(regs, dict) for r in regs):
         return spec
@@ -1122,8 +1008,6 @@ def _normalised(spec) -> dict[int, dict]:
 
 
 def lower(sm86, exe: Path = DEFAULT_XLATE):
-    """Runs nx2navi_xlate --lower on SM86 instructions (a list of [w0, w1, w2, w3] or one such list); returns
-    (Maxwell words, urbase, local bytes)."""
     if sm86 and not isinstance(sm86[0], (list, tuple)):
         sm86 = [sm86]
     text = "".join(" ".join(f"{parse_int(x) & 0xFFFFFFFF:08x}" for x in ins) + "\n" for ins in sm86)
@@ -1151,27 +1035,18 @@ def lower(sm86, exe: Path = DEFAULT_XLATE):
 
 
 def _fmt(v: int) -> str:
-    """A register value as hex plus its F32 and half-pair readings."""
     f = np.array([v], dtype=U32).view(F32)[0]
     h = np.array([v & 0xFFFF, v >> 16], dtype=np.uint16).view(F16)
     return f"{v:08x} (f32 {f:.6g}, h {float(h[0]):.5g}/{float(h[1]):.5g})"
 
 
-# ---- comparing results ----------------------------------------------------------------------------------------------
-# A float result is right when its bits are, except that any NaN matches any NaN: SPIR-V leaves the payload and sign
-# of a NaN to the host (Vulkan spec, "Precision and Operation of SPIR-V Instructions"), and this emulator's numpy
-# arithmetic picks its own, while SM86 hardware writes 0x7fff for every F16 NaN result. Whether a value is NaN is the
-# lowering's doing; which NaN is not. Moves (LDSM, MOVM) and integer results compare bit for bit.
-
 def result_kind(sm86) -> str:
-    """How the destination registers of an SM86 instruction compare: "f16x2" (two F16 values), "f32" or "bits".
-    sm86 is [w0, w1, w2, w3] or a list of them (the last one decides)."""
     ins = sm86[-1] if isinstance(sm86[0], (list, tuple)) else sm86
     w0, w2 = parse_int(ins[0]), parse_int(ins[2])
     op = w0 & 0xFFF
-    if op == 0x23C:                              # HMMA: .F32 (bit 76) or .F16 results
+    if op == 0x23C:
         return "f32" if (w2 >> 12) & 1 else "f16x2"
-    if (op & 0x1FF) in (0x030, 0x031, 0x032):    # HADD2 / HFMA2 / HMUL2, F32 results with bit 78
+    if (op & 0x1FF) in (0x030, 0x031, 0x032):
         return "f32" if (w2 >> 14) & 1 else "f16x2"
     return "bits"
 
@@ -1185,7 +1060,6 @@ def _nan32(v: int) -> bool:
 
 
 def same_value(got: int, want: int, kind: str) -> bool:
-    """got matches want: equal bits, or for float kinds NaN where want is NaN (see above)."""
     got, want = got & 0xFFFFFFFF, want & 0xFFFFFFFF
     if got == want:
         return True
@@ -1198,8 +1072,6 @@ def same_value(got: int, want: int, kind: str) -> bool:
 
 
 def ulps(got: int, want: int, kind: str) -> int:
-    """Distance in units in the last place (the larger of the two halves for "f16x2"); 0 for matching NaNs, a huge
-    number for NaN against a number. +0 and -0 are 0 apart (same_value still tells them apart)."""
     def order(v, sign_bit, nan):
         if nan(v):
             return None
@@ -1219,14 +1091,10 @@ def ulps(got: int, want: int, kind: str) -> int:
 
 
 def run_case(case: dict, exe: Path, prmt: str, trace: bool = False, fill: int = 0, exact: bool = False):
-    """Lowers, runs and compares one vector case; returns (ok, lines of report). Float results compare with
-    same_value (a NaN matches a NaN) unless exact."""
     kind = "bits" if exact else result_kind(case["sm86"])
     words, urbase, _ = lower(case["sm86"], exe)
     regs_in = load_regs(case.get("regs_in", {}), urbase)
     expected = load_regs(case.get("regs_out", {}), urbase)
-    # LDSM cases (work/tensor-gt/README.md): "lane_addresses" hold Ra per lane when regs_in does not, relative to
-    # "smem", which sits at shared address "smem_base". Shared memory is padded to 64 KiB so stray reads stay in range.
     smem = None
     if case.get("smem") is not None:
         base = case.get("smem_base", 0)
@@ -1302,7 +1170,7 @@ def main(argv=None) -> int:
             continue
         try:
             ok, report = run_case(case, args.xlate, args.prmt, args.trace, parse_int(args.fill), args.exact)
-        except Exception as e:   # one broken case does not stop the run
+        except Exception as e:
             ok, report = False, [f"  error: {type(e).__name__}: {e}"]
         print(f"{'PASS' if ok else 'FAIL'} {name}")
         if not ok or any("warning" in r for r in report):

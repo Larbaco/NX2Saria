@@ -1,20 +1,4 @@
 # needs: clang
-"""Build tests/tracker_api_check.c (runtime/diag/tracker_api.c over the real platform layer, with a guest memory of its own
-at the game's addresses) and talk to it as a map tracker does: newline-delimited JSON requests, one at a time, each
-answer matched by its id. No game files and no game build: the module layout and SDL's clipboard header are
-stand-ins written to the test's build folder.
-
-Checks the answers a tracker relies on (status, read_memory, search_memory, the port's own nx2saria.state and
-nx2saria.game_data, over a stand-in game-data manager: every kind, keys, digests, and each way of the stand-in's to
-spoil a read, refused instead of answered with made-up values), what is
-refused (bad parameters, memory the game cannot read, the host's own memory beside the game's, unknown and writing
-methods), what closes a connection (a first byte that is not '{', such as a web page's HTTP request or TLS handshake,
-JSON that is not one object, numbers JSON does not spell that way, an overlong id, a line of 4096 bytes, a request
-left unfinished), that searches never make a page of the heap resident, the searches' minute of bytes, the client
-limit, and the log lines the bench reads (the start line, client lines, first answers and first refusals).
-
-Usage: tracker_api_check.py          (TRACKER_API_CHECK_LOG=1 prints the server's log on success too)
-"""
 import json
 import os
 import shutil
@@ -41,9 +25,9 @@ void SDL_free(void *p);
 MAIN = 0x7000000000
 MOD0 = MAIN + 0x3c4705c
 HEAP = 0x1030000000
-HOST = 0x2000000000   # the host's own memory in tests/tracker_api_check.c
+HOST = 0x2000000000
 PIECE = 1 << 20
-SEARCH_MIB_PER_MIN = 512   # the searches' minute in this build (runtime/diag/tracker_api.c SEARCH_BYTES_PER_MIN)
+SEARCH_MIB_PER_MIN = 512
 
 fails = 0
 
@@ -64,8 +48,6 @@ def compiler():
 
 
 class Client:
-    """A tracker's connection: one request in flight, answers read line by line."""
-
     def __init__(self, port):
         self.s = socket.create_connection(('127.0.0.1', port), timeout=10)
         self.buf = b''
@@ -92,7 +74,6 @@ class Client:
         return ans
 
     def closed(self, within=5):
-        """1 when the server closed the connection (EOF within the timeout)."""
         try:
             self.s.settimeout(within)
             return self.s.recv(1) == b''
@@ -118,7 +99,6 @@ def run_checks(port, srv, lines):
           f'status methods: {st}')
     check(st['save_dir'] == 'C:\\Users\\Jo\u00e3o "x"\\profile\\save\\0123', f'status save_dir, escaped as JSON: {st}')
 
-    # main by its MOD0 header, as a tracker finds it: a range below the module window first (no hit), then all regions
     pattern = '4d4f44305467030124fb0f016c342501'
     low = c.call('search_memory', {'pattern': pattern, 'start': '0x08000000', 'end': '0x200000000', 'regions': 'all',
                                    'max_hits': 4, 'budget_ms': 1000})['result']
@@ -190,7 +170,6 @@ def run_checks(port, srv, lines):
         ans = c.call(method)
         check(ans.get('error', {}).get('code') == -32601, f'"{method[:20]}" is refused as unknown: {ans}')
 
-    # ids: a string comes back as sent, no id gets an answer without one, two requests in one write get two answers
     c.raw(b'{"id":"abc","method":"status"}\n')
     check(c.line().get('id') == 'abc', 'a string id comes back')
     c.raw(b'{"method":"status","params":{}}\r\n')
@@ -203,10 +182,8 @@ def run_checks(port, srv, lines):
     a, b = c.line(), c.line()
     check(a.get('id') == 7 and b.get('id') == 8 and b['result'] == {'hex': '01'}, f'two requests in one write: {a} {b}')
     c.close()
-    # the server has let it go before four others come: on a busy machine its thread could still count it
     check(none_open(srv, lines), 'the server logs the first client gone')
 
-    # four clients at once; a fifth is refused
     many = [Client(port) for _ in range(4)]
     for m in many:
         check(m.call('status')['result']['powered_on'] is True, 'each of four clients is answered')
@@ -216,12 +193,10 @@ def run_checks(port, srv, lines):
     for m in many:
         m.close()
     check(none_open(srv, lines), 'the server logs the four clients gone')
-    # a tracker checking whether the port is taken: connect, close, no request; three of them log one line
     for _ in range(3):
         Client(port).close()
     time.sleep(0.3)
 
-    # what closes a connection: at once when the first byte tells
     for data, why in [(b'POST / HTTP/1.1\r\nHost: 127.0.0.1:6545\r\n\r\n', "a web page's HTTP request"),
                       (b'\x16\x03\x01\x02\x00\x01\x00\x01\xfc\x03\x03', 'a TLS handshake (no line end)'),
                       (b'GET / HTTP/1.1', 'an HTTP request line before its end'),
@@ -246,7 +221,7 @@ def run_checks(port, srv, lines):
     t0 = time.perf_counter()
     check(x.closed(within=8) and 4 < time.perf_counter() - t0 < 8, 'a request left unfinished closes after 5 s')
     x.close()
-    x = Client(port)   # a request that keeps getting a blank now and then is still unfinished
+    x = Client(port)
     x.raw(b'{')
     t0, gone = time.perf_counter(), False
     while time.perf_counter() - t0 < 9 and not gone:
@@ -261,7 +236,6 @@ def run_checks(port, srv, lines):
     again = Client(port)
     check(again.call('status')['result']['powered_on'] is True, 'a client is answered again once the others left')
 
-    # the searches' minute of bytes: main's 64 MiB a search, until a search stops short
     stopped = None
     for _ in range(SEARCH_MIB_PER_MIN // 64 + 4):
         r = again.call('search_memory', {'pattern': b'ABSENT-PATTERN'.hex(), 'budget_ms': 3000})['result']
@@ -273,14 +247,12 @@ def run_checks(port, srv, lines):
 
 
 def records(res, size):
-    """A game_data answer's records as (hash, the record's bytes after the hash)."""
     raw = bytes.fromhex(res['records'])
     check(len(raw) == res['count'] * size, f'{res["kind"]}: {res["count"]} records of {size} bytes: {len(raw)}')
     return [(int.from_bytes(raw[i:i + 4], 'little'), raw[i + 4:i + size]) for i in range(0, len(raw), size)]
 
 
 def none_open(srv, lines):
-    """Read the server's log until a client's closing line says no client is left open; False at its end."""
     for line in srv.stdout:
         lines.append(line)
         if line.startswith('tracker api: client ') and ' left after ' in line and line.rstrip().endswith('(0 open)'):
@@ -317,8 +289,6 @@ def refused(c, params, code, words, why):
 
 
 def run_game_data_checks(port, srv, lines):
-    """nx2saria.game_data: refused before the game data is there, then each kind as a tracker reads it, then each way
-    the game data can fail to read, refused instead of answered."""
     c = Client(port)
     refused(c, {'kind': 'Bool'}, -32002, 'not loaded its game data yet', 'game_data before the game makes it waits')
     spoil(srv, lines, 'EMPTY', 'EMPTIED')
@@ -395,7 +365,6 @@ def run_game_data_checks(port, srv, lines):
         ans = c.call('nx2saria.game_data', params)
         check(ans.get('error', {}).get('code') == -32602, f'game_data with {why} is refused: {ans}')
 
-    # The ways the game data can fail to read: refused, never answered with made-up values, nothing of the host read
     spoil(srv, lines, 'POINT', 'POINTED')
     for kind in ('String64', 'String64Array'):
         ans = refused(c, {'kind': kind}, -32002, 'cannot be read now', f'{kind} pointing outside the game is refused')
@@ -509,7 +478,7 @@ def main():
             run_checks(port, srv, lines)
             run_game_data_checks(port, srv, lines)
         finally:
-            time.sleep(0.5)   # the client threads log their closing lines
+            time.sleep(0.5)
             srv.stdin.close()
     else:
         srv.stdin.close()

@@ -1,11 +1,3 @@
-"""tools/check_isa.py on the runtime files that hold instructions above x86-64-v2 behind a runtime CPU check
-(runtime/hle/kernel.c kern_ap_stub_ymm, runtime/sha256.c blocks_ni): built as tools/build_game.py --cpu v2 builds the
-runtime (-march=x86-64-v2) and as players' builds do (no -march), they pass, and a function with such an instruction
-and no entry in DISPATCHED still fails. Needs the MSYS2 UCRT64 clang and an objdump (skipped without them); no game
-files.
-
-Run: python tests/check_isa_test.py
-"""
 import shutil
 import subprocess
 import sys
@@ -22,7 +14,7 @@ import runtime_include  # noqa: E402
 UCRT = Path(r'C:\msys64\ucrt64\bin')
 CC = next((str(c) for c in (UCRT / 'clang.exe', shutil.which('clang')) if c and Path(c).is_file()), None)
 OBJDUMP = check_isa.find_objdump(str(UCRT / 'objdump.exe') if (UCRT / 'objdump.exe').is_file() else None)
-FLAGS = ['-O2', '-g', '-fno-strict-aliasing', '-w']   # tools/build_game.py RT_FLAGS, without its warnings
+FLAGS = ['-O2', '-g', '-fno-strict-aliasing', '-w']
 
 
 @unittest.skipUnless(CC and OBJDUMP, 'needs clang and objdump')

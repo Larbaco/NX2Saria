@@ -1,10 +1,3 @@
-"""tools/lift_compare.py on made-up lift trees: the same functions grouped into other chunks compare equal; one changed
-byte, a whitespace or line-ending change, a lost function, a function defined twice, a call with no prototype, a line
-gen.py does not write, a table that does not list the definitions and a module without a table are differences. No
-game files; stdlib only.
-
-Run: python tests/lift_compare_test.py
-"""
 import io
 import sys
 import tempfile
@@ -16,8 +9,6 @@ sys.path.insert(0, str(ROOT / 'tools'))
 
 import lift_compare  # noqa: E402
 
-# Function bodies as recomp/gen.py's Emitter writes them: f_200 has an all-label fallback, so its text starts with the
-# fallback's declaration and holds a second C function.
 FNS = {
     0x100: 'void f_100(Cpu *c) {\n    FN_ENTER(0x100);\n    c->x[30] = 0x108; f_200(c);\n    return;\n}',
     0x200: ('static void fb_200(Cpu *c);\nvoid f_200(Cpu *c) {\n    FN_ENTER(0x200);\n    c->pc = 0x200;\n'
@@ -30,7 +21,6 @@ FNS = {
 
 
 def chunk(addrs, fns=FNS, protos=None):
-    """A chunk's text as gen.py's chunk_text joins it: header, includes, prototypes, then the bodies."""
     refs = protos if protos is not None else sorted({int(t[2:], 16) for a in addrs
                                                      for t in lift_compare.CALL.findall(fns[a])})
     return ('// chunk\n#include "cpu.h"\n#include "simd.h"\n\n' + ''.join(f'void f_{r:x}(Cpu *c);\n' for r in refs)
@@ -38,14 +28,11 @@ def chunk(addrs, fns=FNS, protos=None):
 
 
 def table(addrs):
-    """A function table as gen.py's table_text writes it (the parts lift_compare reads)."""
     return ('#include "cpu.h"\n\n' + ''.join(f'void f_{a:x}(Cpu *c);\n' for a in addrs)
             + '\nconst uint64_t mod_fn_addrs[] = {\n' + ',\n'.join(f'0x{a:x}ull' for a in addrs) + '\n};\n')
 
 
 def tree(root, groups, fns=FNS, protos=None, listed=None):
-    """A lift folder with one module, mod, whose chunks hold the function groups; its table lists listed (default:
-    every function of the groups)."""
     (root / 'mod').mkdir(parents=True)
     for name in ('layout.json', 'layout.h', 'patches.h'):
         (root / name).write_text(f'{name}\n')
@@ -59,7 +46,6 @@ def tree(root, groups, fns=FNS, protos=None, listed=None):
 
 class LiftCompareTest(unittest.TestCase):
     def run_compare(self, old_groups, new_groups, new_fns=FNS, new_protos=None, edit=None):
-        """(differences, output) of old against new; edit(new lift folder) may change the new lift first."""
         with tempfile.TemporaryDirectory() as d:
             old = tree(Path(d) / 'old', old_groups)
             new = tree(Path(d) / 'new', new_groups, new_fns, new_protos)
@@ -105,7 +91,7 @@ class LiftCompareTest(unittest.TestCase):
         def edit(lift):
             (lift / 'mod' / 'mod_table.c').write_text(table([0x100, 0x200, 0x300, 0x500]), newline='')
         n, out = self.run_compare([[0x100, 0x200, 0x300, 0x400]], [[0x100, 0x200], [0x300, 0x400]], edit=edit)
-        self.assertGreaterEqual(n, 3, out)   # the tables differ, f_500 not defined, f_400 not listed
+        self.assertGreaterEqual(n, 3, out)
         self.assertIn('1 functions in the table but not defined: f_500', out)
         self.assertIn('1 functions defined but not in the table: f_400', out)
 

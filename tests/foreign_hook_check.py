@@ -1,11 +1,4 @@
 # needs: clang
-"""The crash report's test for a module another program put into the game (runtime/main.c foreign_hook): the Vulkan
-layers, hooks and overlays of recorders, overlays and capture tools are named as theirs; the game's own libraries and
-the drivers are not, nor the validation layer the game loads itself (NX2SARIA_VK_VALIDATION). A fault on the thread that
-sets RivaTuner Statistics Server's limit gets the RTSS note whatever the module (main.c crash_module_note). Builds those
-functions, cut out of main.c, into a test program. No game files.
-
-Usage: python tests/foreign_hook_check.py [path to clang]"""
 import os
 import shutil
 import subprocess

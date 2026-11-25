@@ -1,21 +1,4 @@
 # needs: clang
-"""Build and run tests/log_privacy_check.c and tests/log_privacy_env_check.c: the personal folders the game writes short
-in its log, the bug capture and the crash report (runtime/log_privacy.c, runtime/log_privacy_core.h).
-
-- log_privacy_check.c, any system, Windows and Linux tables: %LOCALAPPDATA% before %USERPROFILE% (the longest folder
-  wins), Windows paths without case and with either separator, the 8.3 form, the \\\\?\\ prefix, a profile on a
-  network share, an account whose folder starts the same (C:\\Users\\Ana Souza2) left alone, a home with an accent and
-  a space, the resolved home (/var/home), the account name alone inside a path but not inside another word (ana in
-  banana, anabel, ana_x, anaé) nor in text without a path, the computer's name as a word anywhere (a UNC path, a
-  network line) without case, common account and computer names (user, deck, localhost) not looked for alone, roots
-  and short names refused, and the same text when the rewrite runs in small pieces.
-- log_privacy_env_check.c, Linux only: runtime/log_privacy.c with the environment of this run: HOME through a symbolic
-  link to a folder with an accent and a space (both forms written ~), USER, the start line with the switch on and off
-  (log_short_paths = 0 writes everything in full), the computer's name from HOSTNAME with and without its domain,
-  log_privacy_str and log_privacy_dup, and the count the exit line gives.
-
-No game files. Usage: log_privacy_check.py
-"""
 import os
 import shutil
 import subprocess

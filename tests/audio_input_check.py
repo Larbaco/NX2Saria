@@ -1,9 +1,4 @@
 # needs: clang, linux:pkg:sdl3
-"""Build and run the input-audio regression checks without game files or recording hardware.
-
-Windows: python tests/audio_input_check.py --toolchain C:/msys64/ucrt64
-Linux: python tests/audio_input_check.py (clang and SDL3 development files via pkg-config)
-"""
 import argparse
 import os
 from pathlib import Path
@@ -12,8 +7,13 @@ import shutil
 import subprocess
 import runtime_include
 
+DESCRIPTION = """Build and run the input-audio regression checks without game files or recording hardware.
+
+Windows: python tests/audio_input_check.py --toolchain C:/msys64/ucrt64
+Linux: python tests/audio_input_check.py (clang and SDL3 development files via pkg-config)
+"""
 root = Path(__file__).resolve().parents[1]
-ap = argparse.ArgumentParser(description=__doc__)
+ap = argparse.ArgumentParser(description=DESCRIPTION)
 ap.add_argument('--toolchain', type=Path)
 a = ap.parse_args()
 out = root / 'build' / 'audio-input-check'
@@ -27,7 +27,6 @@ else:
     cc = shutil.which('clang') or 'cc'
     flags = shlex.split(subprocess.check_output(['pkg-config', '--cflags', '--libs', 'sdl3'], text=True))
 exe = out / ('audio-input-check.exe' if os.name == 'nt' else 'audio-input-check')
-# runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
 subprocess.run([cc, '-std=gnu11', '-O2', '-fno-strict-aliasing', '-Wall', '-Wextra', '-Werror',
                 '-Wno-bitwise-instead-of-logical',
                 *runtime_include.flags(root / 'runtime'), str(root / 'tests' / 'audio_input_check.c'),

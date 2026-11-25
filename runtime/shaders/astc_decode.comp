@@ -1,39 +1,26 @@
-// ASTC LDR 2D decode to RGBA8 on the GPU, one invocation per texel. Contains code Copyright (c) 2026 Peiikai (MIT; see
-// THIRD_PARTY_NOTICES.md). Ported from runtime/tex_astc.c, so the output is the same bytes as
-// astc_decode_ldr and astcenc's 8-bit decode: endpoints expand to 16 bits (linear v * 257, sRGB v << 8 | 0x80),
-// texel = (e0 * (64 - w) + e1 * w + 32) >> 6, top 8 bits. Error blocks are magenta; HDR endpoint modes give magenta
-// endpoints for their partition.
-//
-// A workgroup of 64 lanes takes up to four blocks of one block row (main below): every lane decodes its block's header,
-// the block's lanes share the integer-sequence decode of its weights and colour values through shared memory, and
-// each lane then interpolates its own texels.
-// Compiled to runtime/astc_decode_spv.h by tools/build_shaders.py; vk_astc.c records the dispatch.
+// Contains code Copyright (c) 2026 Peiikai (MIT; see
+// THIRD_PARTY_NOTICES.md).
 #version 450
 
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, set = 0, binding = 0) readonly buffer Blocks { uvec4 blk[]; };
 layout(std430, set = 0, binding = 1) writeonly buffer Texels { uint px[]; };
-// uint 0..11: byte offsets of the weight unquantization rows (QUANT_2..QUANT_32), 12..27: of the colour rows
-// (QUANT_6..QUANT_256 minus one); the bytes follow (vk_astc.c astc_tables).
 layout(std430, set = 0, binding = 2) readonly buffer Tables { uint tab[]; };
 
 layout(push_constant) uniform Params {
-    uint in_base;    // first block of slice 0 (uvec4 index into blk)
-    uint out_base;   // first texel of slice 0 (index into px)
+    uint in_base;
+    uint out_base;
     uint width, height;
-    uint bw, bh;     // block footprint
-    uint bx;         // blocks per row
-    uint bslice;     // blocks per slice
+    uint bw, bh;
+    uint bx;
+    uint bslice;
     uint srgb;
-    uint bl;         // 1: blk holds the level's block-linear storage from in_base (bl_block), 0: tight rows
-    uint th, td;     // its block height and depth in GOBs, log2
-    uint nvn2;       // Switch 2 order of the 16-byte pieces in a GOB
+    uint bl;
+    uint th, td;
+    uint nvn2;
 } pc;
 
-// The uvec4 index, from in_base, of block (bxi, byi) of slice z in block-linear storage: GOBs of 64 bytes x 8 block rows,
-// in blocks of 2^th GOBs high and 2^td deep, blocks in x, then y, then z order (tex_deswizzle.c nvn_bl_offset, with x
-// the block's byte offset in its row and y its block row).
 uint gob_off(uint x, uint y) {
     if (pc.nvn2 != 0u) return (x % 64u / 32u) * 256u + (y % 8u / 4u) * 128u + (x % 32u / 16u) * 64u + (y % 4u) * 16u + x % 16u;
     return (x % 64u / 32u) * 256u + (y % 8u / 2u) * 64u + (x % 32u / 16u) * 32u + (y % 2u) * 16u + x % 16u;
@@ -48,7 +35,6 @@ uint bl_block(uint bxi, uint byi, uint z) {
 
 uint tab_byte(uint i) { return (tab[i >> 2] >> ((i & 3u) * 8u)) & 0xFFu; }
 
-// n (<= 32) bits at pos; bits past 127 read as zero.
 uint rbits(uvec4 b, int pos, int n) {
     if (n == 0 || pos >= 128) return 0u;
     int wi = pos >> 5, sh = pos & 31;
@@ -57,7 +43,6 @@ uint rbits(uvec4 b, int pos, int n) {
     return n >= 32 ? v : v & ((1u << uint(n)) - 1u);
 }
 
-// Quantization levels QUANT_2 .. QUANT_256 (0..20): bits, trits, quints of tex_astc.c q_bits / q_trits / q_quints.
 int q_bits(int q) {
     if (q < 2) return q == 0 ? 1 : 0;
     int g = (q - 2) / 3, r = (q - 2) - 3 * g;
@@ -112,12 +97,9 @@ int quint_at(uint Q, int k) {
     return k == 0 ? q0 : k == 1 ? q1 : q2;
 }
 
-// Raw ISE value idx (trit/quint << bits | bits) of a sequence of count values at bit start; tex_astc.c ise_decode
-// reads the sequence front to back, this reads one value's group only. Bits of values past count are not read.
 uint ise_at(uvec4 b, int start, int count, int q, int idx) {
     int nb = q_bits(q);
     if (q_trit(q)) {
-        // value k of a group: nb bits at k * nb + ts[k], then tb[k] trit bits; ts = {0, 2, 4, 5, 7}, tb = {2, 2, 1, 2, 1}
         int g = idx / 5, k = idx - 5 * g, gs = start + g * (5 * nb + 8);
         uint m = rbits(b, gs + k * nb + (k * 7 + 2) / 4, nb);
         uint T = 0u;
@@ -128,7 +110,6 @@ uint ise_at(uvec4 b, int start, int count, int q, int idx) {
         return uint(trit_at(T, k)) << uint(nb) | m;
     }
     if (q_quint(q)) {
-        // qs = {0, 3, 5}, qb = {3, 2, 2}
         int g = idx / 3, k = idx - 3 * g, gs = start + g * (3 * nb + 7);
         uint m = rbits(b, gs + k * nb + (k == 0 ? 0 : k == 1 ? 3 : 5), nb);
         uint Q = 0u;
@@ -171,7 +152,6 @@ int part_of(int seed, int count, int x, int y) {
 
 int clamp255(int v) { return clamp(v, 0, 255); }
 
-// v: the partition's unquantized colour values. False for an HDR mode.
 bool unpack_endpoints(int cem, int v[8], out ivec4 e0, out ivec4 e1) {
     e0 = ivec4(0); e1 = ivec4(0);
     switch (cem) {
@@ -251,10 +231,9 @@ bool unpack_endpoints(int cem, int v[8], out ivec4 e0, out ivec4 e1) {
 
 const uint MAGENTA = 0xFFFF00FFu;
 
-// What every texel of a block needs from its header (tex_astc.c astc_decode_block up to the weight infill).
 struct Hdr {
-    uint konst;      // the colour of a void-extent or error block
-    bool solid;      // konst is the whole block
+    uint konst;
+    bool solid;
     int wx, wy, dual, quant, wtotal, pcount, cem0, cem1, cem2, cem3, n0, n1, n2, ccount, cq, ccs;
 };
 
@@ -264,7 +243,7 @@ Hdr header(uvec4 b, int bw, int bh) {
     H.wx = 0; H.wy = 0; H.dual = 0; H.quant = 0; H.wtotal = 0; H.pcount = 1;
     H.cem0 = 0; H.cem1 = 0; H.cem2 = 0; H.cem3 = 0; H.n0 = 0; H.n1 = 0; H.n2 = 0; H.ccount = 0; H.cq = 20; H.ccs = -1;
     uint mode = b.x & 0x7FFu;
-    if ((mode & 0x1FFu) == 0x1FCu) {   // void extent
+    if ((mode & 0x1FFu) == 0x1FCu) {
         if ((mode & 0x200u) != 0u || ((b.x >> 10) & 3u) != 3u) return H;
         uint s0 = rbits(b, 12, 13), s1 = rbits(b, 25, 13), t0 = rbits(b, 38, 13), t1 = rbits(b, 51, 13);
         bool all_ones = s0 == 0x1FFFu && s1 == 0x1FFFu && t0 == 0x1FFFu && t1 == 0x1FFFu;
@@ -273,7 +252,6 @@ Hdr header(uvec4 b, int bw, int bh) {
         return H;
     }
 
-    // block mode (tex_astc.c block_mode_2d)
     uint m = mode;
     uint r = (m >> 4) & 1u, h = (m >> 9) & 1u, d = (m >> 10) & 1u, a = (m >> 5) & 3u;
     int wx, wy;
@@ -311,7 +289,6 @@ Hdr header(uvec4 b, int bw, int bh) {
     int pcount = int((b.x >> 11) & 3u) + 1;
     if (dual != 0 && pcount == 4) return H;
 
-    // colour endpoint modes
     int cem0, cem1 = 0, cem2 = 0, cem3 = 0;
     int below = 128 - wbits, high = 0;
     if (pcount == 1) {
@@ -342,7 +319,7 @@ Hdr header(uvec4 b, int bw, int bh) {
     for (int q = 20; q >= 0; q--) {
         if (ise_bitcount(ccount, q) <= cbits) { cq = q; break; }
     }
-    if (cq < 4) return H;   // QUANT_6
+    if (cq < 4) return H;
 
     H.solid = false;
     H.wx = wx; H.wy = wy; H.dual = dual; H.quant = quant; H.wtotal = wtotal; H.pcount = pcount;
@@ -352,13 +329,10 @@ Hdr header(uvec4 b, int bw, int bh) {
     return H;
 }
 
-// A workgroup decodes BPW blocks of one block row when a block has 64 texels or fewer (64 / texels of them), else one
-// block: S lanes per block (its texels, at most 64). The lanes of a block decode its weights and colour values into
-// shared memory, the first pcount lanes then unpack the endpoints, and each lane writes its texels.
-const int MAXB = 4;   // 4x4: 4 blocks of 16 lanes
-shared uint s_w[MAXB][64];       // unquantized weights 0..64 (dual plane: interleaved as in the bit stream)
-shared int s_cv[MAXB][18];       // unquantized colour values
-shared uvec2 s_e0[MAXB][4], s_e1[MAXB][4];   // 16-bit endpoints, two channels per uint
+const int MAXB = 4;
+shared uint s_w[MAXB][64];
+shared int s_cv[MAXB][18];
+shared uvec2 s_e0[MAXB][4], s_e1[MAXB][4];
 
 uvec2 pack16(ivec4 e) { return uvec2(uint(e.x) | uint(e.y) << 16, uint(e.z) | uint(e.w) << 16); }
 int ch16(uvec2 p, int c) { return int(((c < 2 ? p.x : p.y) >> (16 * (c & 1))) & 0xFFFFu); }

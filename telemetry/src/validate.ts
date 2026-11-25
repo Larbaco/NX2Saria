@@ -1,5 +1,5 @@
 // Strict validation of the two POST bodies. Every object must have exactly the listed keys (a missing or an unknown
-// key is a 400), and every leaf must have the listed type, range, length and characters. Whether a version names a
+// key is a 400; a comment's body alone has optional keys), and every leaf must have the listed type, range, length and characters. Whether a version names a
 // published release is checked afterwards against D1 (index.ts), since it needs the database.
 
 import { HttpError } from "./http";
@@ -8,10 +8,15 @@ import { PATCH_SETS } from "./patch_sets";
 export const SUMMARY_SCHEMA = "nx2saria.session/1";
 
 export const SESSION_BODY_CAP = 8 * 1024;
-export const FEEDBACK_BODY_CAP = 40 * 1024;
+export const FEEDBACK_BODY_CAP = 96 * 1024;
 export const TEXT_MAX_CHARS = 4000;
 export const LOG_TAIL_MAX_BYTES = 24 * 1024;
 export const LOG_TAIL_MAX_LINES = 200;
+export const CRASH_LOG_TAIL_MAX_BYTES = 56 * 1024;
+export const LOG_HEAD_MAX_BYTES = 16 * 1024;
+export const LOG_HEAD_MAX_LINES = 100;
+export const FEEDBACK_KINDS = ["comment", "crash"] as const;
+export type FeedbackKind = (typeof FEEDBACK_KINDS)[number];
 
 const MAX_INT = 2 ** 31 - 1;
 const THIRTY_DAYS_S = 30 * 24 * 3600;
@@ -156,10 +161,12 @@ export interface SessionBody {
 }
 
 export interface FeedbackBody {
+  kind: FeedbackKind;
   launcher_version: string;
   text: string;
   summary: Summary | null;
   log_tail: string | null;
+  log_head: string | null;
 }
 
 function fail(message: string): never {
@@ -182,9 +189,14 @@ function hasLoneSurrogate(value: string): boolean {
   return /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/.test(value);
 }
 
-function checkKeys(value: Record<string, unknown>, expected: readonly string[], path: string): void {
+function checkKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  path: string,
+  optional: readonly string[] = [],
+): void {
   for (const key of Object.keys(value)) {
-    if (!expected.includes(key)) fail(`unknown key ${path}${key.slice(0, 64)}`);
+    if (!expected.includes(key) && !optional.includes(key)) fail(`unknown key ${path}${key.slice(0, 64)}`);
   }
   for (const key of expected) {
     if (!Object.prototype.hasOwnProperty.call(value, key)) fail(`missing key ${path}${key}`);
@@ -293,26 +305,42 @@ export function lineCount(value: string): number {
   return value.endsWith("\n") ? lines - 1 : lines;
 }
 
+function feedbackKind(body: Record<string, unknown>): FeedbackKind {
+  if (!Object.prototype.hasOwnProperty.call(body, "kind")) return "comment";
+  const kind = body.kind;
+  if (typeof kind !== "string" || !(FEEDBACK_KINDS as readonly string[]).includes(kind)) fail("kind is not an accepted value");
+  return kind as FeedbackKind;
+}
+
+function checkLogLines(value: unknown, path: string, maxBytes: number, maxLines: number): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string") fail(`${path} must be a string or null`);
+  checkMultiline(value, path);
+  if (new TextEncoder().encode(value).byteLength > maxBytes) fail(`${path} is too long`);
+  if (lineCount(value) > maxLines) fail(`${path} has too many lines`);
+  return value;
+}
+
 export function validateFeedbackBody(text: string, gameVersions: readonly string[]): FeedbackBody {
   const body = parseJsonObject(text);
-  checkKeys(body, ["launcher_version", "text", "summary", "log_tail"], "");
+  checkKeys(body, ["launcher_version", "text", "summary", "log_tail"], "", ["kind", "log_head"]);
+  const kind = feedbackKind(body);
   const launcherVersion = checkVersionString(body.launcher_version, "launcher_version");
 
   const comment = body.text;
   if (typeof comment !== "string") fail("text must be a string");
-  if (comment.trim().length === 0) fail("text is empty");
+  if (kind === "comment" && comment.trim().length === 0) fail("text is empty");
   if (charLength(comment) > TEXT_MAX_CHARS) fail("text is too long");
   checkMultiline(comment, "text");
 
   const summary = body.summary === null ? null : validateSummary(body.summary, "summary", gameVersions);
 
-  const logTail = body.log_tail;
-  if (logTail !== null) {
-    if (typeof logTail !== "string") fail("log_tail must be a string or null");
-    checkMultiline(logTail, "log_tail");
-    if (new TextEncoder().encode(logTail).byteLength > LOG_TAIL_MAX_BYTES) fail("log_tail is too long");
-    if (lineCount(logTail) > LOG_TAIL_MAX_LINES) fail("log_tail has too many lines");
-  }
+  const tailBytes = kind === "crash" ? CRASH_LOG_TAIL_MAX_BYTES : LOG_TAIL_MAX_BYTES;
+  const logTail = checkLogLines(body.log_tail, "log_tail", tailBytes, LOG_TAIL_MAX_LINES);
+  if (kind === "crash" && (logTail === null || logTail.trim().length === 0)) fail("log_tail is required for a crash log");
 
-  return { launcher_version: launcherVersion, text: comment, summary, log_tail: logTail };
+  const logHead = checkLogLines(body.log_head ?? null, "log_head", LOG_HEAD_MAX_BYTES, LOG_HEAD_MAX_LINES);
+  if (logHead !== null && kind !== "crash") fail("log_head is only accepted with kind crash");
+
+  return { kind, launcher_version: launcherVersion, text: comment, summary, log_tail: logTail, log_head: logHead };
 }

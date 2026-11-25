@@ -125,6 +125,11 @@ of them.
    retrying with M`), and with one worker the step fails with that message instead of waiting for ever.
 
    Lifting takes about 15 s, a clean compile about 200 s on 24 threads; later builds recompile only what changed.
+   On a player's PC `tools/make_game.py` keeps an object while its command, its source and every file its dependency
+   list names are the same, each compared by its SHA-256 (`ObjectCache`). `runtime/cpu.h`, `runtime/simd.h` and
+   `runtime/simd_fp.h` are inputs of the lifted code's object cache: every lifted object depends on them. Any changed
+   byte in them, a comment or a space included, makes every player's PC recompile all the lifted objects at the next
+   update, so a change there should be deliberate and batched.
    A compiler cache in front of clang shortens it further: with `SCCACHE` set to an sccache executable, `build_game.py`
    writes it into the ninja file ahead of `cc`, and every lift rewrites the generated chunks with the same contents, so
    a second build of the same version hits all of their objects:
@@ -490,7 +495,7 @@ On Windows the interpreters are `.venv\Scripts\python` and `.venv-py314\Scripts\
 A test says what it needs in a comment line of its own file, `# needs: windows`, `# needs: clang, py:unicorn`, and the
 runner skips it, with that reason, where it is missing: the operating system, the game's extracted files (`game`) or
 executable (`exe`), the shader translator (`xlate`), a GPU, a display, clang, SDL3's development files, VMA, Vulkan
-headers of 1.4 or later, a Python module, a file. The top of `tests/run.py` lists them. `--with` and `--without`
+headers of 1.4 or later, a Python module, a file. [code/tests.md](code/tests.md) lists them, under `tests/run.py`. `--with` and `--without`
 take a requirement as present or missing. A test that needs command-line arguments gives them in an `# args:` line.
 A new test needs nothing more than its name: the runner finds it.
 
@@ -1217,7 +1222,7 @@ to `build\<ver>\shaders\` and runs it through the translator and `spirv-val`; fa
 
 A change to the SM86 tensor lowering (`tools/xlate/AmpereLowering.cs` Hmma, Ldsm, Movm, Half) passes
 `python tests\tensor_lowering_check.py`: it lowers GPU-captured vectors with `nx2navi_xlate --lower` and runs them on
-`tests\maxwell_warp_emu.py`, a model of what the shader translator makes of Maxwell code (the docstring names the
+`tests\maxwell_warp_emu.py`, a model of what the shader translator makes of Maxwell code ([code/tests.md](code/tests.md) names the
 vector file and what is checked). `tests\maxwell_warp_emu_selftest.py` checks the emulator itself. No game files.
 
 A change to how the packaging scripts check the translator they ship (`tools/build_xlate.py` `source_identity`,

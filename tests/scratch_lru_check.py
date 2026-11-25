@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/scratch_lru_check.c: runtime/vk/vk_scratch_lru.h, which entry of the upscaler stand-in's scratch
-image cache serves a new size (vk_exec_draw.c fallback_scratch): a free one, else the one used longest ago.
-
-No GPU, no game files, any Python.
-
-Usage: scratch_lru_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

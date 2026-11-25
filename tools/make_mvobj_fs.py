@@ -1,26 +1,3 @@
-"""The SPIR-V of the per-object motion fragment shader (vk_mvobj.c) as runtime/mvobj_fs_spv.h, assembled here because
-it must be patched at run time (the Location of its input follows the vertex shader variant) and is small.
-tools/build_shaders.py writes the header from HEADER when the game is built; run on its own, this script writes it too.
-
-The shader, as GLSL:
-
-    #version 450
-    layout(location = 0) in vec4 prev;            // last frame's clip position (patch 0015); Location patched
-    layout(set = 0, binding = 1, std140) uniform P { vec4 p; };   // render size xy, this frame's jitter zw (pixels)
-    layout(location = 0) out vec4 o;
-    void main() {
-        vec2 win = gl_FragCoord.xy - p.zw;                         // this frame's window position, without the jitter
-        vec2 pn = prev.xy / prev.w;
-        vec2 pwin = vec2((pn.x * 0.5 + 0.5) * p.x, (0.5 - pn.y * 0.5) * p.y);
-        o = prev.w > 1e-6 ? vec4(pwin - win, 0.0, 0.0) : vec4(0.0);
-    }
-
-The vector is last frame's window position minus this frame's, in render pixels, as runtime/shaders/dlaa_mv.comp
-writes it. Its descriptor set and binding are renumbered by vk_pipeline.c like a translated shader's (the .res.json
-text in vk_mvobj.c names binding 1 as slot 3).
-
-    python tools/make_mvobj_fs.py
-"""
 import struct
 from pathlib import Path
 
@@ -32,7 +9,7 @@ class Asm:
     def __init__(self):
         self.next = 1
         self.sections = {k: [] for k in ('cap', 'mem', 'entry', 'exec', 'dec', 'types', 'func')}
-        self.loc_word = None   # index of the patched Location literal in the final words
+        self.loc_word = None
 
     def id(self):
         self.next += 1
@@ -72,8 +49,8 @@ Input, Output, Uniform = 1, 3, 2
 Location, Binding, DescriptorSet, Block, Offset, BuiltIn = 30, 33, 34, 2, 35, 11
 FragCoord = 15
 
-a.op('cap', OpCapability, 1)   # Shader
-a.op('mem', OpMemoryModel, 0, 1)   # Logical GLSL450
+a.op('cap', OpCapability, 1)
+a.op('mem', OpMemoryModel, 0, 1)
 main = a.id()
 t_void, t_fn, t_f, t_v2, t_v4, t_u = a.id(), a.id(), a.id(), a.id(), a.id(), a.id()
 t_bool = a.id()
@@ -81,8 +58,8 @@ t_pin, t_pout, t_struct, t_pu, t_pf_u = a.id(), a.id(), a.id(), a.id(), a.id()
 v_prev, v_frag, v_out, v_p = a.id(), a.id(), a.id(), a.id()
 c_half, c_zero, c_eps, c_u0, c_vzero = a.id(), a.id(), a.id(), a.id(), a.id()
 t_pv4u = a.id()
-a.op('entry', OpEntryPoint, 4, main, *string('main'), v_prev, v_frag, v_out)   # Fragment
-a.op('exec', OpExecutionMode, main, 7)   # OriginUpperLeft
+a.op('entry', OpEntryPoint, 4, main, *string('main'), v_prev, v_frag, v_out)
+a.op('exec', OpExecutionMode, main, 7)
 a.loc_ins = a.op('dec', OpDecorate, v_prev, Location, 0)
 a.op('dec', OpDecorate, v_frag, BuiltIn, FragCoord)
 a.op('dec', OpDecorate, v_out, Location, 0)
@@ -132,12 +109,10 @@ a.op(F, OpFDiv, t_f, ny, py, pw)
 sx, sy = a.id(), a.id()
 a.op(F, OpCompositeExtract, t_f, sx, p, 0)
 a.op(F, OpCompositeExtract, t_f, sy, p, 1)
-# x: (nx * 0.5 + 0.5) * sx
 x1, x2, x3 = a.id(), a.id(), a.id()
 a.op(F, OpFMul, t_f, x1, nx, c_half)
 a.op(F, OpFAdd, t_f, x2, x1, c_half)
 a.op(F, OpFMul, t_f, x3, x2, sx)
-# y: (0.5 - ny * 0.5) * sy
 y1, y2, y3 = a.id(), a.id(), a.id()
 a.op(F, OpFMul, t_f, y1, ny, c_half)
 a.op(F, OpFSub, t_f, y2, c_half, y1)

@@ -1,14 +1,10 @@
-// runtime/platform: the census of the process's handles by kind (platform.h plat_handle_census) sees the handles it is
-// asked about. A census, then 20 events and 5 sections made, a census again (Event +20, Section +5, its total within 2
-// of the process's handle count), the handles closed and a third census back at the first figures. Windows only: the
-// Linux census groups file descriptors, which this check does not make. Built and run by tests/handle_census_check.py.
 #include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "platform/platform.h"
 
-void rt_log(const char *fmt, ...) {   // the platform layer's lines
+void rt_log(const char *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);

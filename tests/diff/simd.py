@@ -1,17 +1,5 @@
 # needs: clang, py:capstone, py:unicorn
-"""Differential test of the portable FP/SIMD lowering (lifter simd='c') against Unicorn as a Cortex-A57.
-
-Needs no game files. Enumerates every opcode bit pattern of the FP/SIMD data-processing space (bits 27..25 = 111),
-the FP/SIMD load/store space and CRC32 with random register fields, and compares which encodings the lifter and
-Unicorn accept. Then a stratified sample of encodings both accept is compiled and run with random interesting
-operands (NaNs, infinities, denormals, +-0, saturation edges, random FPCR.DN/FZ/RMode/AHP): X0-X30, SP, NZCV, V0-V31
-and, for stores, memory must match. FPSR is not compared; the lowering does not model the cumulative exception bits
-or QC.
-
-Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-
-Usage: simd.py [--encodings N] [--cases K] [--seed S] [--jobs J] [--no-validity] [--filter HEX/MASK]
-"""
+# Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
 import argparse
 import functools
 import os
@@ -30,6 +18,7 @@ from common import BUF, BUF_SIZE, ROOT, UC_INVALID, Emu, build_harness, diff_sta
     rand_v, rand_x, run_harness
 from lifter import Lifter, Unsupported
 
+DESCRIPTION = "Differential test of the portable FP/SIMD lowering (lifter simd='c') against Unicorn as a Cortex-A57."
 print = functools.partial(print, flush=True)
 BASE_AREA = BUF + 0x8000
 CODE, CODE_SIZE = 0x7210000000, 0x400000
@@ -42,9 +31,9 @@ def is_ldst(w):
 def is_store(w):
     if not is_ldst(w):
         return False
-    if (w & 0x3B000000) == 0x18000000:  # literal
+    if (w & 0x3B000000) == 0x18000000:
         return False
-    return not (w >> 22) & 1  # L bit, same position for structures, pairs and single registers
+    return not (w >> 22) & 1
 
 
 def is_literal(w):
@@ -52,20 +41,18 @@ def is_literal(w):
 
 
 def class_key(w):
-    """Opcode signature: register fields (Rd, Rn, Rm) cleared."""
     if is_ldst(w):
         return w & 0xFFE0FC00 if (w & 0xBE000000) == 0x0C000000 else w & 0xFFFFFC00
     return w & 0xFFE0FC00
 
 
 def candidates(r):
-    """Every opcode bit pattern of the FP/SIMD data-processing and load/store spaces, random registers."""
     out = []
     for p in range(1 << 19):
         hi, mid = p >> 15, p & 0x7FFF
         rr = r.getrandbits(10)
-        out.append((hi << 28) | (0b111 << 25) | (mid << 10) | rr)  # data processing
-        out.append((hi << 28) | (1 << 27) | (1 << 26) | (mid << 10) | rr)  # loads/stores
+        out.append((hi << 28) | (0b111 << 25) | (mid << 10) | rr)
+        out.append((hi << 28) | (1 << 27) | (1 << 26) | (mid << 10) | rr)
     for sf in (0, 1):
         for C in (0, 1):
             for sz in range(4):
@@ -76,7 +63,6 @@ def candidates(r):
 
 
 def validity(lifter, ws, emu):
-    """Map word -> (lifter accepts, Unicorn accepts); words are placed at CODE + 4i."""
     mu = emu.mu
     res = {}
     step = CODE_SIZE // 4
@@ -112,7 +98,7 @@ def make_case(r, w):
         x = [BASE_AREA + r.randrange(0, 0x100) for _ in range(31)]
         rm = (w >> 16) & 31
         if rm < 31 and rm != (w >> 5) & 31:
-            reg_off = (w & 0x3B200C00) == 0x38200800  # register offset
+            reg_off = (w & 0x3B200C00) == 0x38200800
             post_reg = (w & 0xBF800000) in (0x0C800000, 0x0D800000)
             if reg_off or post_reg:
                 x[rm] = r.randrange(0, 0x100)
@@ -122,7 +108,7 @@ def make_case(r, w):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--encodings', type=int, default=20000)
     ap.add_argument('--cases', type=int, default=8)
     ap.add_argument('--seed', type=int, default=1)
@@ -159,7 +145,6 @@ def main():
             for w in ws[:args.show // 2]:
                 print(f'    {w:08x} {dis(w)}')
 
-    # Stratified sample of valid encodings: one per opcode signature first.
     valid = [w for w, (lok, uok) in val.items() if lok and uok]
     r.shuffle(valid)
     seen, pick = set(), []
@@ -170,7 +155,6 @@ def main():
             pick.append(w)
     picked = set(pick)
     pick = (pick + [w for w in valid if w not in picked])[:args.encodings]
-    # Placed at CODE + 4i; literal loads get an offset into the code region.
     for i, w in enumerate(pick):
         pc = CODE + 4 * i
         if is_literal(w):

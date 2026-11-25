@@ -1,65 +1,27 @@
-"""Static checks of the upscalers' waits for the device (runtime/vk/vk_dlaa.c "what the upscalers let go of while the GPU
-may still use it", runtime/vk/vk_ffx.cpp, runtime/vk/vk_ffx4.cpp, runtime/vk/vk_fsr3.c).
-
-It fails when:
-- vkDeviceWaitIdle is called in vk_dlaa.c outside vk_upscaler_device_idle, in vk_ffx.cpp outside vk_ffx_probe_cache
-  (the --probe-ffx-cache path), or anywhere in vk_ffx4.cpp or vk_fsr3.c: each such wait stalls the replaying thread with the queue
-  lock held;
-- vk_upscaler_device_idle is called outside vk_upscaler_settle and vk_upscaler_gpu_wait (the rollback switch
-  NX2SARIA_UPSCALER_IDLE_WAIT=1, a full list, a refused creation's failed wait);
-- one of the places that let something go (vk_dlaa.c free_size, free_snap, stale_sizes, release_kept, hudless_from,
-  pb_images, retire_idle and evaluate, vk_ffx.cpp and vk_ffx4.cpp context_for, vk_fsr3.c ctx_for) does not call
-  vk_upscaler_let_go, which
-  frees what the GPU is past and which the rollback switch turns into a wait for the device;
-- one of the places that create a DLSS feature or an FSR context (vk_dlaa.c evaluate, vk_ffx.cpp and vk_ffx4.cpp
-  context_for, vk_fsr3.c ctx_for) does not call vk_upscaler_gpu_wait: a creation refused while what was let go of is still in flight
-  then fails for want of its video memory, where the wait for the device of 0.10.1 had freed it first;
-- one of the places that let go of what the GPU may still use (those above, the helpers that hand it to the lists,
-  vk_dlaa.c retire_size, retire_feat, retire_snap, retire_hl and retire_pb, vk_ffx.cpp and vk_ffx4.cpp retire_up,
-  vk_fsr3.c retire_ctx and vk_fsr3_upscale, and the FSR files' trims and release_idle calls) frees something at once: a
-  destroy that takes an idle device or a half-made object (vk_dlaa.c destroy_size, destroy_snap, hl_destroy,
-  pb_destroy, feat_release, N.release, vkDestroyImageView, vmaDestroyImage; the library files' A.destroy; vk_fsr3.c
-  free_ctx, vkDestroyImageView, vmaDestroyImage), which on a GPU still running a frame is a use after free. vk_dlaa.c hudless_from, pb_images and snap_for may destroy only after their first image2d call, what of the new
-  images was made and never used;
-- a whole list is taken whatever its gates (upd_take_all) outside teardown (vk_dlaa.c vk_dlaa_release, vk_ffx.cpp
-  vk_ffx_release, vk_ffx4.cpp vk_ffx4_release, vk_fsr3.c vk_fsr3_release) and a full list's fallback (vk_dlaa.c
-  dead_put, the library files' retire_up, vk_fsr3.c retire_ctx), or there before vk_upscaler_settle's wait for the
-  device;
-- NX2SARIA_UPSCALER_IDLE_WAIT has no sections[] entry in cfg.c or no line in nx2saria.ini.example (its known[] name and
-  its metas[] row, and a // that would hide them, are tests/cfg_rows_check.py's);
-- perf.c's mark_name has another count of names than host.h has PERF_M_* kinds: a kind without a name prints a null
-  string on a slow frame's line;
-- vk_dlaa.c pb_images does not note PB.used after the last call that clears PB: idle_release then took the images it
-  had just made for 600 presents unused and freed them while the frame that used them could be in flight.
-
-No GPU, no game files, any Python. Usage: upscaler_idle_check.py [repository root]
-"""
 import re
 import sys
 from pathlib import Path
 
-WAIT_ALLOWED = {   # where vkDeviceWaitIdle may be called
+WAIT_ALLOWED = {
     'vk/vk_dlaa.c': {'vk_upscaler_device_idle'},
     'vk/vk_ffx.cpp': {'vk_ffx_probe_cache'},
     'vk/vk_ffx4.cpp': set(),
     'vk/vk_fsr3.c': set(),
 }
-IDLE_ALLOWED = {'vk_upscaler_settle', 'vk_upscaler_gpu_wait'}   # vk_dlaa.c: who may call vk_upscaler_device_idle
-LET_GO = {   # functions that let something go and must call vk_upscaler_let_go
+IDLE_ALLOWED = {'vk_upscaler_settle', 'vk_upscaler_gpu_wait'}
+LET_GO = {
     'vk/vk_dlaa.c': ['free_size', 'free_snap', 'stale_sizes', 'release_kept', 'hudless_from', 'pb_images', 'retire_idle',
                   'evaluate'],
     'vk/vk_ffx.cpp': ['context_for'],
     'vk/vk_ffx4.cpp': ['context_for'],
     'vk/vk_fsr3.c': ['ctx_for'],
 }
-REFUSED = {   # functions that create a feature or context and must retry a refusal after vk_upscaler_gpu_wait
+REFUSED = {
     'vk/vk_dlaa.c': ['evaluate'],
     'vk/vk_ffx.cpp': ['context_for'],
     'vk/vk_ffx4.cpp': ['context_for'],
     'vk/vk_fsr3.c': ['ctx_for'],
 }
-# Callees that free at once, without a wait: each is for an idle device (teardown) or for what no submission named yet
-# (a half-made object).
 FREE_NOW = {
     'vk/vk_dlaa.c': ['destroy_size', 'destroy_snap', 'hl_destroy', 'pb_destroy', 'feat_release', 'N.release',
                   'vkDestroyImageView', 'vmaDestroyImage'],
@@ -67,32 +29,25 @@ FREE_NOW = {
     'vk/vk_ffx4.cpp': ['A.destroy'],
     'vk/vk_fsr3.c': ['free_ctx', 'vkDestroyImageView', 'vmaDestroyImage'],
 }
-NO_FREE_NOW = {   # functions that let go of what the GPU may still use: no FREE_NOW callee anywhere in them
+NO_FREE_NOW = {
     'vk/vk_dlaa.c': ['free_size', 'free_snap', 'stale_sizes', 'release_kept', 'retire_idle', 'evaluate', 'retire_size',
                   'retire_feat', 'retire_snap', 'retire_hl', 'retire_pb'],
     'vk/vk_ffx.cpp': ['context_for', 'trim', 'retire_up', 'vk_ffx_trim_idle', 'vk_ffx_release_idle'],
     'vk/vk_ffx4.cpp': ['context_for', 'vk_ffx4_trim', 'retire_up', 'vk_ffx4_release_idle'],
     'vk/vk_fsr3.c': ['ctx_for', 'trim', 'retire_ctx', 'vk_fsr3_release_idle', 'vk_fsr3_upscale'],
 }
-# Functions that let go of the old images and then make new ones: no FREE_NOW callee before their first image2d call;
-# after it, the failure path destroys what of the new images was made, which no submission named.
 NO_FREE_BEFORE_MAKE = {'vk/vk_dlaa.c': ['hudless_from', 'pb_images', 'snap_for']}
-# Where upd_take_all may be called, and whether vk_upscaler_settle's wait for the device must come before it there.
 TAKE_ALL = {
     'vk/vk_dlaa.c': {'vk_dlaa_release': False, 'dead_put': True},
     'vk/vk_ffx.cpp': {'vk_ffx_release': False, 'retire_up': True},
     'vk/vk_ffx4.cpp': {'vk_ffx4_release': False, 'retire_up': True},
     'vk/vk_fsr3.c': {'vk_fsr3_release': False, 'retire_ctx': True},
 }
-# A function definition: at column 0, a return type, the name, the parameters and the body's brace (the runtime's
-# style); declarations end with ';' before any '{'. Read in code whose string literals are blanked: extern "C" is
-# extern " " there.
 FUNC = re.compile(r'^(?:extern "[^"\n]*" )?(?:static )?(?:inline )?[A-Za-z_][\w \*]*?\b([A-Za-z_]\w*)\s*\([^;{}]*\)\s*\{',
                   re.M)
 
 
 def blank_comments(src):
-    """src with comments and string literals replaced by spaces (newlines kept), so offsets stay and only code is read."""
     out, i, n = list(src), 0, len(src)
     while i < n:
         if src.startswith('//', i):
@@ -121,7 +76,6 @@ def blank_comments(src):
 
 
 def functions(code):
-    """[(name, body start, body end)] of each function defined in code (comments blanked)."""
     found = []
     for m in FUNC.finditer(code):
         depth, k = 0, m.end() - 1
@@ -145,18 +99,16 @@ def enclosing(funcs, pos):
 
 
 def calls(code, funcs, callee):
-    """[(line, enclosing function)] of each call of callee (its definition left out)."""
     out = []
     for m in re.finditer(r'\b%s\s*\(' % re.escape(callee), code):
         fn = enclosing(funcs, m.start())
-        if fn is None:   # the definition's own head, or a declaration
+        if fn is None:
             continue
         out.append((code.count('\n', 0, m.start()) + 1, fn))
     return out
 
 
 def call_offsets(code, callee, a, b):
-    """The offsets of each call of callee between a and b."""
     return [m.start() for m in re.compile(r'\b%s\s*\(' % re.escape(callee)).finditer(code, a, b)]
 
 

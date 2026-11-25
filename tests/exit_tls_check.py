@@ -1,10 +1,3 @@
-"""Build and run tests/exit_tls_check.c: an ExitProcess or exit() that none of the game's own ends asked for leaves the
-log queue's lines and one note in the log file, naming the calls that led to it by module and offset
-(runtime/platform/win32.c exit_note_tls); TerminateProcess, plat_exit and a return from main after plat_exit_orderly
-leave none. Windows only; no game files.
-
-Usage: exit_tls_check.py
-"""
 import os
 import re
 import shutil
@@ -23,10 +16,10 @@ LAYOUT = '''// A stand-in for the generated layout.h (tests/exit_tls_check.py).
 '''
 NOTE = 'exit: the process is ending through ExitProcess'
 
-CASES = [   # mode, the queued line in the file, a note in the file
+CASES = [
     ('exitprocess', True, True),
     ('exit', True, True),
-    ('terminate', None, False),   # the queued line may or may not have been written: the kill came while it gathered
+    ('terminate', None, False),
     ('platexit', True, False),
     ('return', None, False),
 ]

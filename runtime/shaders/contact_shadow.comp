@@ -1,20 +1,17 @@
 #version 450
-// Screen-space contact shadows (runtime/vk_contact.c). Each pixel of the game's lit scene colour marches a short way
-// toward the sun through the linear depth target; when the ray passes behind something close in front of it, the pixel
-// is in a contact shadow the shadow maps are too coarse to show, and its colour is darkened.
 layout(local_size_x = 8, local_size_y = 8) in;
 
-layout(binding = 0) uniform sampler2D lin_depth;                // the game's linear depth: view distance / far
-layout(binding = 1, r11f_g11f_b10f) uniform image2D scene;      // the lit scene colour, darkened in place
+layout(binding = 0) uniform sampler2D lin_depth;
+layout(binding = 1, r11f_g11f_b10f) uniform image2D scene;
 
 layout(push_constant) uniform Params {
-    vec4 proj;    // projection x scale, y scale, far plane, strength (0..1)
-    vec4 light;   // view-space direction toward the sun (xyz), march length in metres at 10 m (w)
-    vec4 size;    // width, height, 1/width, 1/height
-    vec4 opt;     // x: debug (1: write the shadow factor as grey)
+    vec4 proj;
+    vec4 light;
+    vec4 size;
+    vec4 opt;
 } pc;
 
-vec3 view_pos(vec2 uv, float z) {   // z: distance in front of the camera
+vec3 view_pos(vec2 uv, float z) {
     vec2 ndc = uv * 2.0 - 1.0;
     return vec3(ndc.x * z / pc.proj.x, -ndc.y * z / pc.proj.y, -z);
 }
@@ -24,7 +21,7 @@ vec2 to_uv(vec3 p) {
     return vec2(0.5 + 0.5 * p.x * pc.proj.x / z, 0.5 - 0.5 * p.y * pc.proj.y / z);
 }
 
-float ign(vec2 px) {   // interleaved gradient noise: a per-pixel start offset that hides the step pattern
+float ign(vec2 px) {
     return fract(52.9829189 * fract(dot(px, vec2(0.06711056, 0.00583715))));
 }
 
@@ -32,15 +29,11 @@ void main() {
     ivec2 px = ivec2(gl_GlobalInvocationID.xy);
     if (px.x >= int(pc.size.x) || px.y >= int(pc.size.y)) return;
     float d = texelFetch(lin_depth, px, 0).x;
-    if (d <= 0.0 || d >= 0.999) return;   // nothing drawn, or the sky
+    if (d <= 0.0 || d >= 0.999) return;
     float z = d * pc.proj.z;
     if (z > 80.0) return;
     vec2 uv = (vec2(px) + 0.5) * pc.size.zw;
     vec3 p = view_pos(uv, z);
-    // The surface's normal from the depth of its neighbours (the nearer of each pair, so an edge takes the side the pixel
-    // is on). A surface turned away from the sun is already unlit in the game's own shading: a march from it runs into
-    // the surface itself at once, and darkening it again turned a character with the sun behind him brown and black.
-    // The march counts only on surfaces facing the sun, fading in over the first part of that range.
     ivec2 sz2 = ivec2(pc.size.xy) - 1;
     float zl = texelFetch(lin_depth, clamp(px - ivec2(1, 0), ivec2(0), sz2), 0).x * pc.proj.z;
     float zr = texelFetch(lin_depth, clamp(px + ivec2(1, 0), ivec2(0), sz2), 0).x * pc.proj.z;
@@ -49,10 +42,9 @@ void main() {
     vec3 dx = abs(zr - z) < abs(z - zl) ? view_pos(uv + vec2(pc.size.z, 0.0), zr) - p : p - view_pos(uv - vec2(pc.size.z, 0.0), zl);
     vec3 dy = abs(zd - z) < abs(z - zu) ? view_pos(uv + vec2(0.0, pc.size.w), zd) - p : p - view_pos(uv - vec2(0.0, pc.size.w), zu);
     vec3 n = normalize(cross(dy, dx));
-    if (dot(n, p) > 0.0) n = -n;   // toward the camera
+    if (dot(n, p) > 0.0) n = -n;
     float facing = smoothstep(0.05, 0.3, dot(n, pc.light.xyz));
     if (facing <= 0.0) return;
-    // the march grows with distance, as one pixel covers more ground; thickness keeps thin blades from hiding the sky
     float len = pc.light.w * clamp(z / 10.0, 0.4, 3.0);
     float thick = 0.15 + z * 0.01;
     const int STEPS = 16;
@@ -64,14 +56,12 @@ void main() {
         vec2 quv = to_uv(q);
         if (any(lessThan(quv, vec2(0.0))) || any(greaterThan(quv, vec2(1.0)))) break;
         float sz = texelFetch(lin_depth, ivec2(quv * pc.size.xy), 0).x * pc.proj.z;
-        float delta = -q.z - sz;   // how far the scene at that pixel is in front of the ray point
+        float delta = -q.z - sz;
         if (delta > 0.02 + z * 0.002 && delta < thick) {
-            occ = 1.0 - float(i) / float(STEPS);   // a hit close to the pixel shadows more than one at the end
+            occ = 1.0 - float(i) / float(STEPS);
             break;
         }
     }
-    // The darkening stands for the sunlight the pixel loses; the sky's and the bounced light stay, so even a full hit at
-    // full strength keeps part of the colour (MAX_DARK).
     const float MAX_DARK = 0.6;
     float fade = 1.0 - smoothstep(40.0, 80.0, z);
     float k = 1.0 - MAX_DARK * pc.proj.w * occ * fade * facing;

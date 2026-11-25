@@ -1,7 +1,3 @@
-// tests/log_privacy_check.py builds this with runtime/log_privacy.c: the folders read from this process's environment
-// (HOME, its resolved form, USER), the switch, the start line and the strings and copies the game writes. Stand-ins for
-// the log, the settings and the environment. Usage: log_privacy_env_check <text>...: prints "log: <line>" for each log
-// line and "str: <text short>", "dup: <text short or (none)>" for each argument, then "count: <n>".
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>

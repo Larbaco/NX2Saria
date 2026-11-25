@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/pass_hooks_check.c: runtime/vk/vk_pass_hooks.h, which pass begin runs the frame's pass hooks
-(vk_exec.c vk_exec_pass_begin): a parallel group's run once, at its first chunk's first pass, so a pass begun again
-later does not put its own target back as the upscaler's light target.
-
-No GPU, no game files, any Python.
-
-Usage: pass_hooks_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

@@ -1,19 +1,3 @@
-"""tools/make_game.py on Linux with or without the system's SDL3 (issue #11: Ubuntu 24.04 and Linux Mint 22 package
-none):
-- sdl3_choice takes the system's SDL3 when the compiler finds its headers, so a distribution that packages SDL3 builds
-  with the same commands as before, else the build kit's (tools/sdl3_pin.py); NX2SARIA_SDL3 = kit or system decides
-  instead, and a wrong value or a choice that cannot be met stops with the reason;
-- the kit's SDL3 goes ahead of the system's folders for the runtime's sources only, the link names the kit's library
-  by its path, and the check's program runs with the library beside it, as the game will;
-- a program that does not start for want of a library the kit's SDL3 needs names it and the package that holds it;
-- the kit's libSDL3.so.0 goes beside the game, and goes away again when the game is linked against the system's, but
-  a libSDL3.so.0 this build did not put there stays, with a line that says so;
-- the build log's line names the compiler, its version and where SDL3 came from;
-- every Linux kit carries tools/sdl3_pin.py.
-No network, no game files.
-
-Run: python tests/make_game_sdl3_test.py
-"""
 import contextlib
 import io
 import os
@@ -35,7 +19,6 @@ VERSION_H = '#define SDL_MAJOR_VERSION {}\n#define SDL_MINOR_VERSION {}\n#define
 
 
 def stopped(fn, *args):
-    """(the value, '') of fn(*args), or (None, the error text make_game.fail printed)."""
     err = io.StringIO()
     with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
         try:
@@ -59,7 +42,7 @@ class Sdl3ChoiceTest(unittest.TestCase):
         (sdl / 'lib' / sdl3_pin.LIB).write_bytes(b'\x7fELF the kit\'s library')
         (sdl / sdl3_pin.STAMP).write_text(sdl3_pin.DEB_VERSION + '\n')
         self.sdl = sdl
-        self.system = ''   # what sdl3_version finds without the kit's folder
+        self.system = ''
         for p in (mock.patch.object(mg, 'KIT', self.kit), mock.patch.object(mg, 'EVENTS', False),
                   mock.patch.object(mg, 'sdl3_version', self.version),
                   mock.patch.dict(os.environ, {}, clear=False)):
@@ -75,7 +58,7 @@ class Sdl3ChoiceTest(unittest.TestCase):
         self.system = '3.4.20'
         sdl, _ = stopped(mg.sdl3_choice, 'clang', {})
         self.assertEqual((sdl.source, sdl.version, sdl.include, sdl.lib), ('system', '3.4.20', [], '-lSDL3'))
-        self.assertEqual(mg.link_libs(sdl), mg.LINK_LIBS)   # the link of before, so nothing links again
+        self.assertEqual(mg.link_libs(sdl), mg.LINK_LIBS)
         self.system = ''
         sdl, _ = stopped(mg.sdl3_choice, 'clang', {})
         self.assertEqual(sdl.source, 'kit')
@@ -107,7 +90,7 @@ class Sdl3ChoiceTest(unittest.TestCase):
         self.assertIsNone(sdl)
         self.assertIn('NX2SARIA_SDL3 is "bundled"', said)
         del os.environ['NX2SARIA_SDL3']
-        os.environ['NX2NAVI_SDL3'] = 'kit'   # the older spelling is read too (make_game.py setting_env)
+        os.environ['NX2NAVI_SDL3'] = 'kit'
         self.system = '3.4.20'
         self.assertEqual(stopped(mg.sdl3_choice, 'clang', {})[0].source, 'kit')
 
@@ -135,14 +118,13 @@ class Sdl3ChoiceTest(unittest.TestCase):
         kit = mg.Sdl3('kit', '3.4.18', ['-I', str(self.sdl / 'include')], str(self.sdl / 'lib' / sdl3_pin.LIB), 'x')
         keyed = mg.link_key_libs(kit)
         sha = mg.sha256_file(self.sdl / 'lib' / sdl3_pin.LIB)
-        # the kit by its place in the kit, not by the folder an AppImage is mounted in this time
         self.assertEqual(keyed, [f'<kit>/toolchain/sdl3/lib/libSDL3.so.0@{sha}' if x == kit.lib else x
                                  for x in mg.link_libs(kit)])
         self.assertNotIn(str(self.kit), ' '.join(keyed))
         system = mg.Sdl3('system', '3.4.20', [], '-lSDL3', 'y')
         self.assertEqual(mg.link_key_libs(system), mg.LINK_LIBS)
         self.assertEqual(mg.link_key_libs(None), mg.LINK_LIBS)
-        self.assertEqual(mg.sdl3_tag(), '')   # unset: the compile key of every game built so far
+        self.assertEqual(mg.sdl3_tag(), '')
         os.environ['NX2SARIA_SDL3'] = 'Kit'
         self.assertEqual(mg.sdl3_tag(), '|sdl3 kit')
 
@@ -165,10 +147,9 @@ class Sdl3ChoiceTest(unittest.TestCase):
             beside = out / mg.SDL3_SO
             self.assertEqual(beside.read_bytes(), b'\x7fELF the kit\'s library')
             self.assertEqual(mg.place_sdl3(out, cache, kit), f'SDL3 3.4.18 from the kit: libSDL3.so.0 beside {mg.EXE_NAME}')
-            line = mg.place_sdl3(out, cache, system)   # the runpath would load the kit's copy ahead of the system's
+            line = mg.place_sdl3(out, cache, system)
             self.assertIn('the kit\'s libSDL3.so.0 an earlier build put beside', line)
             self.assertFalse(beside.exists())
-            # the build cache deleted since: a copy with the kit's bytes is still the kit's
             mg.place_sdl3(out, cache, kit)
             (cache / mg.SDL3_PLACED).unlink()
             self.assertIn('an earlier build put beside', mg.place_sdl3(out, cache, system))
@@ -189,8 +170,6 @@ class Sdl3ChoiceTest(unittest.TestCase):
 
 @unittest.skipIf(os.name == 'nt', 'the check is the Linux build\'s')
 class PreflightWithTheKitSdl3Test(unittest.TestCase):
-    """make_game.preflight with the kit's SDL3, every command recorded instead of run."""
-
     def setUp(self):
         td = tempfile.TemporaryDirectory()
         self.addCleanup(td.cleanup)
@@ -208,10 +187,10 @@ class PreflightWithTheKitSdl3Test(unittest.TestCase):
         def run(cmd, **kw):
             cmd = [str(c) for c in cmd]
             ran.append(cmd)
-            if len(cmd) == 1:   # the check's program
+            if len(cmd) == 1:
                 beside.append((Path(cmd[0]).parent / mg.SDL3_SO).is_file())
                 return subprocess.CompletedProcess(cmd, *run_result)
-            if '-fsyntax-only' not in cmd:   # its link
+            if '-fsyntax-only' not in cmd:
                 return subprocess.CompletedProcess(cmd, *link_result)
             return subprocess.CompletedProcess(cmd, 0, '', '')
         out, err = io.StringIO(), io.StringIO()
@@ -234,14 +213,14 @@ class PreflightWithTheKitSdl3Test(unittest.TestCase):
         failed, ran, beside, out, _ = self.check((0, '3.4.18\n', ''), work=work)
         self.assertFalse(failed)
         compile_, link, probe = ran
-        self.assertEqual(Path(probe[0]).parent.parent, work)   # built and run in the build cache, not in /tmp
+        self.assertEqual(Path(probe[0]).parent.parent, work)
         self.assertLess(compile_.index('kit/vulkan'), compile_.index(self.sdl.include[1]))
         self.assertLess(compile_.index(self.sdl.include[1]), compile_.index(str(mg.KIT / 'runtime')))
         self.assertEqual(link[-len(mg.LINK_LIBS):], mg.link_libs(self.sdl))
         self.assertIn(str(self.lib), link)
         self.assertIn(self.sdl.include[1], link)
         self.assertIn('-Wl,-rpath,$ORIGIN', link)
-        self.assertEqual(beside, [True])   # the program finds the kit's library where the game will
+        self.assertEqual(beside, [True])
         self.assertIn('check: the compiler is clang version 18.1.3 (clang); SDL3 3.4.18 from the kit (no SDL3 here)',
                       out)
         self.assertIn('check: 1 runtime files and the libraries pass, and SDL3 3.4.18 loads', out)
@@ -252,14 +231,14 @@ class PreflightWithTheKitSdl3Test(unittest.TestCase):
         self.assertTrue(failed)
         self.assertIn('libdecor-0.so.0 is missing', err)
         self.assertIn('sudo apt install libdecor-0-0', err)
-        self.sdl = mg.Sdl3('system', '3.4.18', [], '-lSDL3', 'its headers are found')   # headers without a library
+        self.sdl = mg.Sdl3('system', '3.4.18', [], '-lSDL3', 'its headers are found')
         failed, _, beside, _, err = self.check((127, '', './probe: error while loading shared libraries: libSDL3.so.0: '
                                                          'cannot open shared object file: No such file or directory\n'))
         self.assertTrue(failed)
         self.assertEqual(beside, [False])
         self.assertIn('libSDL3.so.0 is missing. Install the package that holds it, or build with the kit\'s SDL3: '
                       'NX2SARIA_SDL3=kit', err)
-        failed, _, _, _, err = self.check((-11, '', ''))   # ended by a signal: nothing on its stderr
+        failed, _, _, _, err = self.check((-11, '', ''))
         self.assertTrue(failed)
         self.assertIn('does not start here (it was ended by signal 11)', err)
         failed, _, _, _, err = self.check((3, '', 'something went wrong\n'))
@@ -270,7 +249,7 @@ class PreflightWithTheKitSdl3Test(unittest.TestCase):
         failed, ran, _, _, err = self.check((0, '', ''), link_result=(1, '', 'ld.lld: error: unable to find library '
                                                                              '-lSDL3\n'))
         self.assertTrue(failed)
-        self.assertEqual(len(ran), 2)   # no program to run without its link
+        self.assertEqual(len(ran), 2)
         self.assertIn('the linker no libSDL3: install SDL3\'s development package, or build with the kit\'s SDL3: '
                       'NX2SARIA_SDL3=kit', err)
         failed, _, _, _, err = self.check((0, '', ''), link_result=(1, '', 'ld.lld: error: unable to find library -lvpx\n'))
@@ -291,7 +270,6 @@ class Sdl3VersionTest(unittest.TestCase):
             self.assertEqual(mg.sdl3_version(Path(td) / 'no-such-clang', env), '')
 
     def test_the_check_s_program_compiles(self):
-        """make_game.SDL3_PROBE against headers that declare what it uses as SDL3/SDL.h does."""
         with tempfile.TemporaryDirectory() as td:
             inc = Path(td) / 'include'
             (inc / 'SDL3').mkdir(parents=True)
@@ -305,9 +283,6 @@ class Sdl3VersionTest(unittest.TestCase):
 
 class KitsCarrySdl3PinTest(unittest.TestCase):
     def test_every_linux_kit_carries_sdl3_pin(self):
-        """make_game.py kit_sdl3 imports sdl3_pin inside a try, so a kit without it fails only on a Linux system
-        without SDL3, asking for a package Ubuntu 24.04 does not have: the zip kit lists it, and the AppImage's kit
-        copies all of tools/ (make_appimage.py) and carries the files besides."""
         import make_appimage
         import make_kit
         self.assertIn('sdl3_pin.py', make_kit.TOOLS)

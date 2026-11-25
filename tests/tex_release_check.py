@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/tex_release_check.c: runtime/vk/vk_tex_release.h, which says how long a released texture is kept,
-how much the released ones may hold past the size bound, and how many seconds ago a present was. The check also runs
-simulated sessions shaped by the take-back figures of two players' logs against the old and new defaults.
-
-No GPU, no game files, any Python.
-
-Usage: tex_release_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

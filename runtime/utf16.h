@@ -1,10 +1,7 @@
-// UTF-8 <-> UTF-16 conversion for the strings the guest keeps in UTF-16 (software keyboard, probes). Portable C, no
-// OS calls; malformed UTF-8 bytes and unpaired surrogates become U+FFFD.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
 
-// utf8 into out as NUL-terminated UTF-16, at most cap units with the NUL; returns the units written before the NUL.
 static inline size_t utf8_to_utf16(const char *utf8, uint16_t *out, size_t cap) {
     const unsigned char *s = (const unsigned char *)utf8;
     size_t n = 0;
@@ -35,8 +32,6 @@ static inline size_t utf8_to_utf16(const char *utf8, uint16_t *out, size_t cap) 
     return n;
 }
 
-// NUL-terminated (or n units, whichever comes first) UTF-16 into out as NUL-terminated UTF-8, at most cap bytes with
-// the NUL; returns the bytes written before the NUL.
 static inline size_t utf16_to_utf8(const uint16_t *in, size_t n, char *out, size_t cap) {
     size_t k = 0;
     if (!cap) return 0;

@@ -1,10 +1,3 @@
-// tests/submit_clone_check.py builds this: runtime/nvn/nvn_submit_guard.h, a synchronous submission's deferred binds when
-// another guest thread may be replaying the same recording copy. Four threads submit two hand-built copies while a
-// "game" thread rewrites the handle arrays their deferred binds read; a quarter of the calls give their copy twice. A
-// replay must see its copy's handles unchanged from its resolve to its end, the in-flight count must be back to 0,
-// both the in-place and the clone path must run, and a copy given twice in one call must stay in place when its first
-// occurrence does. Then nvn_copy_again and nvn_resolve_binds step by step. "old" resolves in place without the guard
-// (0.10.1) and only prints what it sees, to show that the harness catches the race.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -61,7 +54,6 @@ static void snap(const uint8_t *p, uint64_t out[BINDS][32]) {
             out[b][i] = __atomic_load_n(&((const p_bind_handles *)(q + 8))->h[i], __ATOMIC_RELAXED);
 }
 
-// nvn_api_cmd.c nvn_submit_prepare, the replay, nvn_submit_done; handles are copy numbers + 1, a clone's out is 0
 static void submitter(void *arg) {
     uint64_t r = (uint64_t)(uintptr_t)arg * 0x2545F4914F6CDD1Dull + 7;
     static uint64_t a[THREADS][BINDS][32], b2[THREADS][BINDS][32];
@@ -88,9 +80,9 @@ static void submitter(void *arg) {
         const uint8_t *bad = NULL;
         for (int i = 0; i < n; i++) nvn_resolve_binds(use[i], 0, &reads, &changed, NULL, &bad);
         for (int i = 0; i < n; i++) {
-            snap(use[i], a[me]);   // the replay reads the binds at its start ...
+            snap(use[i], a[me]);
             for (volatile int s = 0; s < 300; s++) {}
-            snap(use[i], b2[me]);   // ... and at its end (or a held continuation copies them)
+            snap(use[i], b2[me]);
             if (memcmp(a[me], b2[me], sizeof a[me])) __atomic_add_fetch(&torn, 1, __ATOMIC_RELAXED);
         }
         for (int i = 0; i < n; i++) {
@@ -119,7 +111,6 @@ static void stress(void) {
           (unsigned long long)in_place, (unsigned long long)again, (unsigned long long)clones);
 }
 
-// ---- nvn_resolve_binds, one thread
 static uint64_t noted, noted_nth[8];
 static void note(const p_bind_handles *b, const uint64_t *now, uint64_t nth) {
     if (noted < 8) noted_nth[noted] = nth;
@@ -127,8 +118,6 @@ static void note(const p_bind_handles *b, const uint64_t *now, uint64_t nth) {
     if (b->h[0] == now[0]) printf("submit_clone_check: FAIL: a note came after the handles were written\n"), fails++;
 }
 
-// nvn_copy_again with nvn_copy_enter as nvn_submit_prepare uses them, one thread: occurrence i of handles h stays in
-// place (1) or is cloned (0); a clone's out is 0 and leaves its count at once.
 static int prepare_one(uint32_t *b, const uint64_t *h, uint64_t *out, int i) {
     out[i] = h[i];
     if (nvn_copy_enter(b) || nvn_copy_again(h, out, i)) return 1;
@@ -138,13 +127,11 @@ static int prepare_one(uint32_t *b, const uint64_t *h, uint64_t *out, int i) {
 }
 
 static void steps(void) {
-    // a copy given twice in one call with nothing else in flight: both in place, two counts, both left after the replay
     uint32_t b = 0;
     uint64_t h[3] = {11, 22, 11}, out[3];
     int p0 = prepare_one(&b, h, out, 0), p1 = prepare_one(&(uint32_t){0}, h, out, 1), p2 = prepare_one(&b, h, out, 2);
     CHECK(p0 && p1 && p2 && b == 2, "a copy given twice in one call was cloned (%d %d %d, %u in flight)", p0, p1, p2, b);
     nvn_copy_leave(&b), nvn_copy_leave(&b);
-    // another thread's submission in flight: both occurrences cloned, the count back to that one's
     b = 1;
     p0 = prepare_one(&b, h, out, 0), p2 = prepare_one(&b, h, out, 2);
     CHECK(!p0 && !p2 && b == 1, "a copy in flight elsewhere was resolved in place (%d %d, %u in flight)", p0, p2, b);
@@ -156,21 +143,21 @@ static void steps(void) {
     uint8_t *q = buf;
     *(op_hdr *)q = (op_hdr){OP_BEGIN, 8}, q += 8;
     uint8_t *changed_rec = q;
-    q = bind_rec(q, OP_BIND_TEX, 0, 4, arr[0]);    // its handles differ from the game's: read and written
+    q = bind_rec(q, OP_BIND_TEX, 0, 4, arr[0]);
     uint8_t *same_rec = q;
-    q = bind_rec(q, OP_BIND_SAMP, 0, 4, arr[1]);   // made equal below: read, not counted as changed
+    q = bind_rec(q, OP_BIND_SAMP, 0, 4, arr[1]);
     uint8_t *nosrc = q;
-    q = bind_rec(q, OP_BIND_IMG, 0, 4, NULL);      // immediate: untouched
+    q = bind_rec(q, OP_BIND_IMG, 0, 4, NULL);
     uint8_t *zero = q;
-    q = bind_rec(q, OP_BIND_TEX, 0, 0, arr[0]);    // n 0: untouched
+    q = bind_rec(q, OP_BIND_TEX, 0, 0, arr[0]);
     uint8_t *big = q;
-    q = bind_rec(q, OP_BIND_TEX, 0, 33, arr[0]);   // n over 32: untouched
+    q = bind_rec(q, OP_BIND_TEX, 0, 33, arr[0]);
     *(op_hdr *)q = (op_hdr){OP_CALL, 16}, memcpy(q + 8, &(uint64_t){(uint64_t)(uintptr_t)callee}, 8), q += 16;
     *(op_hdr *)q = (op_hdr){OP_END, 8};
     uint8_t *c = callee;
     *(op_hdr *)c = (op_hdr){OP_BEGIN, 8}, c += 8;
     uint8_t *called_rec = c;
-    c = bind_rec(c, OP_BIND_TEX, 8, 2, called_arr);   // reached through the call
+    c = bind_rec(c, OP_BIND_TEX, 8, 2, called_arr);
     *(op_hdr *)c = (op_hdr){OP_END, 8};
     memcpy(((p_bind_handles *)(same_rec + 8))->h, arr[1], 4 * 8);
     for (int i = 0; i < 32; i++) ((p_bind_handles *)(nosrc + 8))->h[i] = 7, ((p_bind_handles *)(zero + 8))->h[i] = 7;
@@ -192,7 +179,6 @@ static void steps(void) {
     rd = 0, noted = 0;
     nd = nvn_resolve_binds(buf, 0, &rd, NULL, note, &bad);
     CHECK(nd == 3 && rd == 3 && noted == 0, "a second resolve with nothing changed noted %llu", (unsigned long long)noted);
-    // 17 calls deep: the 17th call stops it
     for (int i = 0; i < 17; i++) {
         *(op_hdr *)chain[i] = (op_hdr){OP_CALL, 16};
         memcpy(chain[i] + 8, &(uint64_t){(uint64_t)(uintptr_t)chain[i + 1]}, 8);
@@ -205,7 +191,7 @@ static void steps(void) {
     CHECK(nvn_resolve_binds(chain[0], 0, NULL, NULL, NULL, &bad) == 0, "calls 16 deep were refused");
     uint8_t corrupt[32] = {0};
     *(op_hdr *)corrupt = (op_hdr){OP_BEGIN, 8};
-    *(op_hdr *)(corrupt + 8) = (op_hdr){OP_BIND_TEX, 12};   // a size not a multiple of 8
+    *(op_hdr *)(corrupt + 8) = (op_hdr){OP_BIND_TEX, 12};
     bad = NULL;
     CHECK(nvn_resolve_binds(corrupt, 0, NULL, NULL, NULL, &bad) == -1 && bad == corrupt + 8,
           "a corrupt record was not reported where it is");

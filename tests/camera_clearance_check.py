@@ -1,17 +1,4 @@
 # needs: clang, py:numpy, py:lz4
-"""Check the camera's clearance on pictures that are not 16:9: the patch set camera_clearance
-(recomp/patches-v111.txt) and runtime/patches/camera_clearance.c.
-
-The set's two sites, lifted by recomp/lifter.py as the generator lifts them: main+0x71a844 and main+0x71b624 keep their
-load of the camera's ratio and then call the patch page's +0xe00. The generator's own check of a patched site (gen.py
-Emitter.patched_effect) takes them: no alternative uses flags. (Whether flags are live across the call depends on the
-whole function, which needs the game's main: on the bench, the camera step's generated C with and without the set
-differs only in the sites' two lines.) No other set calls the slot, and only camera_clearance.c registers it. Then
-tests/camera_clearance_check.c builds camera_clearance.c with the rest of the runtime stubbed and calls the host
-function as the sites call it.
-
-Usage: camera_clearance_check.py
-"""
 import os
 import re
 import subprocess
@@ -27,7 +14,7 @@ from patches import load  # noqa: E402
 import runtime_include
 
 SLOT = 0xe00
-SITES = {0x71a844: (0xbd451e6a, 10), 0x71b624: (0xbd451e6e, 14)}   # ldr s10 / s14, [x19, #0x51c]
+SITES = {0x71a844: (0xbd451e6a, 10), 0x71b624: (0xbd451e6e, 14)}
 
 
 def check_sites():
@@ -69,7 +56,7 @@ def check_sites():
     users = sorted(p.name for p in (ROOT / 'runtime').rglob('*.c')
                    if re.search(r'RT_PATCH_PAGE\s*\+\s*(0x%x|%d)\b' % (SLOT, SLOT),
                                 p.read_text(encoding='utf-8', errors='replace'), re.I))
-    assert users == [], users   # camera_clearance.c names it through HOST_SLOT
+    assert users == [], users
     assert '#define HOST_SLOT 0x%x' % SLOT in (ROOT / 'runtime' / 'patches' / 'camera_clearance.c').read_text(encoding='utf-8')
     print('camera_clearance_check: main+0x71a844 and main+0x71b624 keep their load and call the page\'s +0xe00, the '
           'generator takes the sites; no other set or host function uses that slot', flush=True)

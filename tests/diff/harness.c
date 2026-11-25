@@ -1,9 +1,3 @@
-// Runs lifted tests and writes the resulting CPU state per case.
-// Shared by tests/diff/lift.py, simd.py, atomic.py and func.py; the expected state comes from Unicorn on the Python
-// side.
-//
-// argv: buf.bin cases.bin out.bin image base [image base ...]
-// Each image is mapped at its guest address (guest == host), the scratch buffer at BUF.
 #include <stdio.h>
 #include <stdlib.h>
 #ifdef _WIN32
@@ -23,8 +17,8 @@ extern int ntests;
 #define PTR_LO (BUF + 0x8000)
 #define PTR_SPAN 0x20000
 
-static int g_stubs;            // In.stubs of the running case
-static uint64_t g_stub_h;      // digest of every call's state so far
+static int g_stubs;
+static uint64_t g_stub_h;
 
 static uint64_t splitmix(uint64_t z) {
     z += 0x9E3779B97F4A7C15ull;
@@ -35,11 +29,6 @@ static uint64_t splitmix(uint64_t z) {
 
 static uint64_t mix(uint64_t h, uint64_t w) { return (h ^ w) * 0x100000001B3ull; }
 
-// The callee of every call in a function under tests/diff/func.py; Runner.stub there is the same function on the
-// Unicorn side. Folds the target, X0-X30, SP and V0-V7 into a digest, so a register the caller left unwritten at the
-// call changes it, then sets X0-X18, NZCV and V0-V7 from the digest, so a caller reading a register it held across
-// the call sees a value the callee could have left. X0-X7 mostly get pointers into the scratch buffer. The digest
-// and the call count go to the top of the scratch buffer, which the memory check covers.
 static void rt_stub(Cpu *c, uint64_t target) {
     uint64_t h = mix(g_stub_h, target);
     for (int i = 0; i < 31; i++) h = mix(h, c->x[i]);
@@ -103,7 +92,6 @@ static uint32_t crc32_buf(const uint8_t *p, size_t n) {
     return c ^ 0xffffffffu;
 }
 
-// Layouts match IN_FMT / OUT_FMT in tests/diff/common.py.
 struct In { uint64_t k, fpcr, x[32], sp, nzcv; __uint128_t v[32]; uint64_t memchk, stubs; };
 struct Out { uint64_t x[32], sp, nzcv, pc, mem; __uint128_t v[32]; };
 
@@ -154,7 +142,6 @@ int main(int argc, char **argv) {
         }
         memcpy(out.v, c.v, sizeof out.v);
         fwrite(&out, sizeof out, 1, o);
-        // Flushed per case so a crash leaves the completed cases readable.
         fflush(o);
     }
     fclose(o);

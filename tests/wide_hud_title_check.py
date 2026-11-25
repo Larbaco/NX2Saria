@@ -1,17 +1,4 @@
 # needs: clang
-"""Build and run tests/wide_hud_title_check.c: runtime/patches/wide_hud.c's second archive, the title screen's layouts
-(UI/Layout2Archive/Title.Product.*) with TitleMenuBG_00's backdrop over the whole picture (NX2SARIA_WIDE_MENUS = full),
-on layout files and archives the test makes itself. No game files.
-
-With --romfs, also on the game's own title archive: the folder holds romfs.bin and its index.json, and the program
-reads the archive and Pack/ZsDic.pack.zs from romfs.bin at the offsets the index gives, edits it for four shapes of
-picture (21:9, 32:9 and two windows) and prints the log lines of each. Nothing is written.
-
-The program is built with the undefined-behaviour sanitizer (traps), with locals that start as a pattern rather than
-whatever the stack held, and with AddressSanitizer where the toolchain has it (not MSYS2's).
-
-Usage: wide_hud_title_check.py [--romfs DIR]
-"""
 import argparse
 import json
 import os
@@ -20,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 import runtime_include
+
+DESCRIPTION = "Build and run tests/wide_hud_title_check.c: runtime/patches/wide_hud.c's second archive, the title screen's layouts"
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -36,7 +25,6 @@ def compiler():
 
 
 def game_args(folder):
-    """romfs.bin and the offset and size of the title archive and the dictionaries in it."""
     files = {f['path']: f for f in json.loads((folder / 'index.json').read_text(encoding='utf-8'))['files']}
     for rel in (ARCHIVE, DICTIONARIES):
         if rel not in files:
@@ -46,7 +34,7 @@ def game_args(folder):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--romfs', type=Path, help='a folder with romfs.bin and index.json: also check the game\'s archive')
     args = ap.parse_args()
     work = ROOT / 'build' / 'test' / 'wide_hud'
@@ -59,7 +47,6 @@ def main():
     if os.name != 'nt':
         sanitize.append('-fsanitize=address')
     rt = ROOT / 'runtime'
-    # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror',
                            '-Wno-bitwise-instead-of-logical', *sanitize, *runtime_include.flags(rt),
                            str(ROOT / 'tests' / 'wide_hud_title_check.c'), str(rt / 'patches' / 'wide_hud.c'), str(rt / 'hle' / 'sarc.c'),

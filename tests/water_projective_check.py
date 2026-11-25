@@ -1,9 +1,4 @@
 # needs: clang, spirv-as, spirv-val
-"""The water corrections the runtime makes in memory (runtime/gfx/spirv_water.c) against the same steps of
-tools/projective_recipe.py, on two made-up modules: a vertex stage that writes a position and a location 0 output, and
-a fragment stage that reads a location 0 input without perspective. Each side's result must be the same words, and
-valid SPIR-V. A module of another shape must be refused. Needs spirv-as and spirv-val (MSYS2 UCRT64 spirv-tools).
-Usage: python tests/water_projective_check.py [--cc CLANG]"""
 import argparse
 import shutil
 import subprocess
@@ -124,7 +119,6 @@ def main():
         want = edit(src.read_bytes())
         assert mine.read_bytes() == want, f'{name}: the runtime\'s module differs from the recipe\'s'
         subprocess.run([tools[1], '--target-env', 'vulkan1.2', str(mine)], check=True)
-    # each edit refuses the other stage's module
     for name, other in (('vertex', 'fragment'), ('fragment', 'vertex')):
         rc = subprocess.run([str(exe), name, str(out / f'{other}.spv'), str(out / 'refused.spv')]).returncode
         assert rc == 3, f'the {name} edit took a {other} module (exit {rc})'

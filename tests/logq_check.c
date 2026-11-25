@@ -1,5 +1,3 @@
-// runtime/logq.c: log lines queued for the log thread, with a sink of the test's own that can be slow or held.
-// Built and run by tests/logq_check.py; prints each failed check and exits 1 on any.
 #include "logq.c"
 
 #include <stdarg.h>
@@ -8,7 +6,6 @@
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// ---- the sink: everything written, in the order it arrived; each call can take sink_ms, or wait while held is set
 #define OUT_CAP (64u << 20)
 static char *out;
 static volatile size_t out_n;
@@ -24,7 +21,6 @@ static void sink(const char *p, size_t n) {
     plat_xchg32(&in_sink, 0);
 }
 
-// ---- the runtime logq.c reaches: its line about slow writes comes through here
 void rt_log(const char *fmt, ...) {
     char buf[512];
     va_list ap;
@@ -37,7 +33,6 @@ void rt_log(const char *fmt, ...) {
     logq_write(buf, (size_t)n);
 }
 
-// ---- producers: thread t writes lines "t <t> <seq> <padding>\n"
 enum { THREADS = 8 };
 typedef struct { int id, lines, pad, first; uint64_t worst_ns; } Prod;
 static void producer(void *arg) {
@@ -55,7 +50,6 @@ static void producer(void *arg) {
     }
 }
 
-// Waits until everything queued so far is written: the queue is empty while no write of it is under way (its io lock).
 static void settle(void) {
     for (int i = 0; i < 60000; i++) {
         plat_mutex_lock(&Q.io);
@@ -70,16 +64,11 @@ static void settle(void) {
     exit(3);
 }
 
-// The line about slow writes (logq.c say_slow) comes when a write happened to take 2 ms, which on a busy machine is
-// any write. The checks below count bytes and writes, so the test takes the flag say_slow tries and no such line is
-// written until the test gives the flag back. Taking it waits for a line that is being said.
 static void slow_line(int allowed) {
     if (allowed) plat_xchg32(&Q.saying, 0);
     else while (plat_xchg32(&Q.saying, 1)) plat_sleep_ms(1);
 }
 
-// Every line of the output from at on is whole, and each thread's lines come in their order. Returns the lines seen;
-// the slow-write lines ("log: ...") are counted in *notes.
 static int check_lines(size_t at, int *next, int *notes) {
     int lines = 0;
     size_t end = __atomic_load_n(&out_n, __ATOMIC_SEQ_CST);
@@ -115,11 +104,6 @@ static size_t run(Prod *pr, int n, int lines, int pad) {
     return bytes + (size_t)n * (size_t)lines * (size_t)pad;
 }
 
-// ---- the end of a process: `logq_check exit <file>` and `logq_check fatal <file>`, which tests/logq_check.py runs
-// after the checks and whose file it reads. The process logs END_LINES lines together, through the queue and into the
-// file, and ends at once, while the log thread is still gathering them: "exit" as a run ends (plat_exit, whose hook is
-// logq_sync, as main.c log_open sets it), "fatal" as a fatal error ends one (dispatch.c fatal_end: logq_sync, then its
-// own line, then _Exit). Every line has to be in the file, and the fatal line after them.
 #define END_LINES 200
 static PlatAppend *end_file;
 static void end_sink(const char *p, size_t n) { plat_append_write(end_file, p, n); }
@@ -150,7 +134,6 @@ int main(int argc, char **argv) {
     logq_init(sink);
     slow_line(0);
 
-    // 1. Before the queue is on, a line is written by the thread that logs it, before logq_write returns.
     logq_write("t 0 0 \n", 7);
     CHECK(out_n == 7 && sink_calls == 1, "a line without the queue: %zu bytes in %d writes", (size_t)out_n, (int)sink_calls);
     size_t at = 0;
@@ -158,7 +141,6 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 2. With the queue: eight threads, 20,000 lines each; every line arrives whole and each thread's in order.
     CHECK(logq_async(), "the log thread did not start");
     size_t want = at + run(pr, THREADS, 20000, 40);
     settle();
@@ -168,8 +150,6 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 3. A thread that finds the queue's lock taken waits for it, so its line does not pass a line queued before it.
-    //    The test takes both locks itself: the first line stays queued, and the second thread finds the lock taken.
     plat_mutex_lock(&Q.io);
     logq_write("t 0 0 \n", 7);
     plat_mutex_lock(&Q.q);
@@ -187,9 +167,6 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 4. A slow destination (30 ms a write) does not hold the threads that log: 100 lines, a millisecond apart. A
-    //    thread that waited for the writes would take 30 ms for most lines; on a busy machine the scheduler alone can
-    //    hold a few that long, so the check is how many did.
     __atomic_store_n(&sink_ms, 30, __ATOMIC_RELEASE);
     uint64_t worst = 0;
     int waited = 0;
@@ -210,7 +187,6 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 5. The line about slow writes: one after the first slow write, and no second one within ten seconds of it.
     uint64_t told0 = plat_now_ns();
     slow_line(1);
     for (int i = 0; i < 5; i++) {
@@ -220,7 +196,7 @@ int main(int argc, char **argv) {
         settle();
         for (int k = 0; !i && k < 20000 && !__atomic_load_n(&Q.said_at, __ATOMIC_RELAXED); k++) plat_sleep_ms(1);
     }
-    plat_sleep_ms(100);   // the log thread says its line after the write, with no lock held: time for a second one
+    plat_sleep_ms(100);
     slow_line(0);
     settle();
     uint64_t told_s = (plat_now_ns() - told0) / 1000000000ull;
@@ -231,14 +207,13 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 6. A destination that stops while more is logged than the queue holds: the threads wait, nothing is lost.
     __atomic_store_n(&held, 1, __ATOMIC_RELEASE);
-    logq_write("t 0 0 \n", 7);   // the log thread takes it and stops in the sink
+    logq_write("t 0 0 \n", 7);
     for (int i = 0; i < 20000 && !__atomic_load_n(&in_sink, __ATOMIC_ACQUIRE); i++) plat_sleep_ms(1);
     CHECK(in_sink, "the log thread did not reach the sink");
     PlatThread *th[THREADS];
     for (int i = 0; i < THREADS; i++) {
-        pr[i] = (Prod){.id = i, .lines = 2000, .pad = 250};   // 8 x 2000 x 260 bytes: four times the queue
+        pr[i] = (Prod){.id = i, .lines = 2000, .pad = 250};
         th[i] = plat_thread_new(producer, &pr[i], "producer");
         if (!th[i]) { printf("FATAL: no thread\n"); return 3; }
     }
@@ -248,14 +223,11 @@ int main(int argc, char **argv) {
     for (int i = 0; i < THREADS; i++) plat_thread_join(th[i]);
     settle();
     CHECK(stuck == at, "%zu bytes were written while the destination was stopped", stuck - at);
-    at += 7;   // past the line that stopped the log thread
+    at += 7;
     CHECK(check_lines(at, next, &notes) == THREADS * 2000, "lines lost at a full queue");
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 7. The log thread gathers: lines logged together are written together, LOGQ_GATHER_NS after the first of them
-    //    and not before. The clock says whether this thread logged its lines and looked at the output within half that
-    //    time; on a machine too busy for that, the two checks that need it are left out.
     int calls = sink_calls;
     uint64_t g0 = plat_now_ns();
     for (int i = 0; i < 20; i++) {
@@ -276,15 +248,12 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 8. A queue that is half full is written at once, not when the gathering time is up, so a burst that filled one
-    //    half has the other for what it logs next. Each try logs over half the queue's size together and sees how soon
-    //    a write came; on a busy machine the log thread may get its processor late, so one try in three has to show it.
     int prompt = 0, burst = 0;
     for (int tries = 0; tries < 3 && !prompt; tries++) {
         settle();
         size_t b0 = out_n;
         uint64_t h0 = plat_now_ns();
-        pr[0] = (Prod){.id = 0, .lines = 2100, .pad = 250, .first = burst};   // 2100 x 260 bytes: 546,000 of 1,048,576
+        pr[0] = (Prod){.id = 0, .lines = 2100, .pad = 250, .first = burst};
         producer(&pr[0]);
         burst += 2100;
         for (int i = 0; i < 60000 && out_n == b0; i++) plat_sleep_ms(1);
@@ -296,9 +265,6 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 9. logq_flush: what is queued is written before it returns, inside the gathering time, and the queue stays on.
-    //    With the log thread stuck in a write (the test holds its io lock) it gives up within its bound and writes
-    //    nothing, and the line is written once the write is over.
     uint64_t f0 = plat_now_ns();
     for (int i = 0; i < 20; i++) {
         char line[64];
@@ -326,8 +292,6 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 9b. logq_nudge (a focus loss): the log thread writes what it gathers at once, not when the gathering time is up.
-    //     On a machine too busy to log and look within half that time the timing check is left out.
     uint64_t n0 = plat_now_ns();
     for (int i = 0; i < 10; i++) {
         char line[64];
@@ -344,10 +308,6 @@ int main(int argc, char **argv) {
     at = out_n;
     for (int i = 0; i < THREADS; i++) next[i] = 0;
 
-    // 10. logq_sync: what is queued is written before it returns, and later lines are written by their own thread. The
-    //     lines are logged together just before it, so the log thread is still gathering them (the clock says
-    //     whether this thread was in time for that): the batch a fatal error, a crash or the end of the process finds
-    //     queued.
     __atomic_store_n(&sink_ms, 20, __ATOMIC_RELEASE);
     uint64_t s0 = plat_now_ns();
     for (int i = 0; i < 50; i++) {
@@ -365,7 +325,7 @@ int main(int argc, char **argv) {
     calls = sink_calls;
     logq_write("t 2 0 \n", 7);
     CHECK(out_n == at + 7 && sink_calls == calls + 1, "a line after logq_sync was not written at once");
-    logq_sync();   // a second call does nothing
+    logq_sync();
     CHECK(check_lines(at, next, &notes) == 1, "the line after logq_sync");
 
     printf("logq_check: %s (%zu bytes in %d writes)\n", fails ? "FAILED" : "ok", (size_t)out_n, (int)sink_calls);

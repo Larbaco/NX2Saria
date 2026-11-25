@@ -1,9 +1,3 @@
-"""telemetry/src/patch_sets.ts lists the port's patch sets a session report may name (telemetry/src/validate.ts drops
-any other name). It must hold exactly the names of the `set` lines of recomp/patches-v*.txt: a set added there and not
-here would be dropped from every report by the server.
-
-Usage: telemetry_patch_sets_check.py
-"""
 import re
 import sys
 from pathlib import Path

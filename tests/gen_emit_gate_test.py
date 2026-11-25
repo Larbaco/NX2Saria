@@ -1,13 +1,4 @@
 # needs: py:numpy, py:lz4
-"""recomp/gen.py's emission under the memory rule of the compile gate: lift_gate follows the gate's settings (off:
-reserve 0; a malformed reserve: the default, with a warning), pick_jobs sizes the pool by the free memory less the
-reserve, and dispatch() submits a chunk only while the free memory stays at or above the reserve, keeps one chunk
-outstanding whatever the memory, never more than the pool's workers, raises a task's error and gives up on a worker
-that died with its task. emit_all retries with half the workers after a MemoryError on exactly the chunks without a
-result. A fake pool and a fake free memory reading; no game files. Run with the .venv (numpy):
-
-    .venv/bin/python tests/gen_emit_gate_test.py
-"""
 import contextlib
 import io
 import os
@@ -35,13 +26,11 @@ class PickJobsTest(unittest.TestCase):
 
 
     def test_share_of_free_memory(self):
-        # 19 GiB free: 80 % (15.2) is less than free less a 3 GiB reserve (16): 10 workers of 1.5 GiB
         jobs, why = self.pick(19 * GIB, 3 * GIB)
         self.assertEqual(jobs, 10, why)
         self.assertIn('19.0 GiB free memory allows 10 with a 3.0 GiB reserve', why)
 
     def test_reserve_binds_when_free_memory_is_small(self):
-        # 8 GiB free: 80 % is 6.4 GiB, free less a 3 GiB reserve 5 GiB: 3 workers
         self.assertEqual(self.pick(8 * GIB, 3 * GIB)[0], 3)
 
     def test_at_least_one_and_at_most_the_cpus(self):
@@ -53,7 +42,7 @@ class PickJobsTest(unittest.TestCase):
 
     def test_reserve_given_is_used(self):
         with mock.patch.object(gen, 'lift_gate', side_effect=AssertionError('not asked')):
-            self.assertEqual(self.pick(8 * GIB, 3 * GIB, reserve=0)[0], 4)   # 80 % of 8 GiB: 4 workers
+            self.assertEqual(self.pick(8 * GIB, 3 * GIB, reserve=0)[0], 4)
 
     def test_jobs_given_are_kept(self):
         self.assertEqual(self.pick(1 * GIB, 3 * GIB, requested=7), (7, '--jobs'))
@@ -85,7 +74,6 @@ class LiftGateTest(unittest.TestCase):
         self.assertEqual((on, reserve), (False, 0))
 
     def test_gate_off_never_holds(self):
-        # reserve 0 from lift_gate: even no free memory at all lets every worker have a chunk
         pool = FakePool(0, 0)
         results, stats = run_dispatch(pool, jobs=4, reserve=0)
         self.assertEqual(len(results), 12)
@@ -94,12 +82,9 @@ class LiftGateTest(unittest.TestCase):
 
 
 class FakePool:
-    """apply_async runs the task on a timer thread after delay seconds. The free memory it reports (avail) falls by
-    per for each task outstanding."""
-
     def __init__(self, base, per, delay=0.02, never=()):
         self.base, self.per, self.delay = base, per, delay
-        self.never = list(never)   # tasks whose worker dies: no result, no error, and the pool replaces it
+        self.never = list(never)
         self.pids = frozenset({1, 2})
         self.lock = threading.Lock()
         self.outstanding = self.most = 0
@@ -142,7 +127,6 @@ class FakePool:
 
 
 def run_dispatch(pool, jobs, reserve, tasks=range(12), fn=lambda t: t * 10, **kw):
-    """(sorted results, GateStats) of dispatch() over tasks on pool, with the pool's own free memory reading."""
     results, stats = [], gen.GateStats()
     gen.dispatch(pool, fn, list(tasks), jobs, reserve, results.append, stats, available=pool.avail, poll=0.01, **kw)
     return sorted(results), stats
@@ -153,7 +137,6 @@ class DispatchTest(unittest.TestCase):
         return run_dispatch(*a, **kw)
 
     def test_holds_below_the_reserve(self):
-        # free 10, 3 per task, reserve 4: 0, 1 and 2 outstanding leave 10, 7 and 4 (submit), 3 would leave 1 (hold)
         pool = FakePool(10, 3)
         results, stats = self.run_dispatch(pool, jobs=8, reserve=4)
         self.assertEqual(results, [t * 10 for t in range(12)])
@@ -163,7 +146,6 @@ class DispatchTest(unittest.TestCase):
         self.assertEqual(stats.least, 1)
 
     def test_always_one_outstanding(self):
-        # below the reserve from the start: one chunk at a time, never none
         pool = FakePool(1, 1)
         results, stats = self.run_dispatch(pool, jobs=4, reserve=100, tasks=range(5))
         self.assertEqual(results, [t * 10 for t in range(5)])
@@ -196,7 +178,7 @@ class DispatchTest(unittest.TestCase):
 
     def test_a_worker_lost_with_its_task_fails(self):
         pool = FakePool(10**12, 1, never={5})
-        pids = iter([{1, 2}] * 3 + [{1, 3}] * 10**6)   # the pool replaced worker 2
+        pids = iter([{1, 2}] * 3 + [{1, 3}] * 10**6)
         with self.assertRaisesRegex(gen.WorkerLost, r'an emit worker ended without a result \(killed for memory\?\): '
                                                     r'1 chunks outstanding'):
             self.run_dispatch(pool, jobs=3, reserve=1, workers=lambda p: next(pids), lost_after=0.1)
@@ -226,7 +208,7 @@ class EmitAllTest(unittest.TestCase):
         pools, results, before = [], [], []
 
         def make_pool(jobs):
-            before.append({r['number'] for r in results})   # the chunks with a result when this pool starts
+            before.append({r['number'] for r in results})
             pools.append((jobs, FakePool(10**12, 1, delay=0.01)))
             return pools[-1][1]
 
@@ -239,11 +221,11 @@ class EmitAllTest(unittest.TestCase):
         with contextlib.redirect_stderr(err):
             gen.emit_all(tasks, 4, 'test', make_pool, fn, 1, results.append, gen.GateStats(), poll=0.01)
         numbers = sorted(r['number'] for r in results)
-        self.assertEqual(numbers, list(range(20)))   # each chunk's result once
+        self.assertEqual(numbers, list(range(20)))
         self.assertEqual([j for j, _ in pools], [4, 2])
         retried = [t[1] for t in pools[1][1].submitted]
-        self.assertEqual(len(retried), len(set(retried)))      # no chunk twice in the second pool
-        self.assertEqual(set(retried), set(range(20)) - before[1])   # exactly the chunks without a result
+        self.assertEqual(len(retried), len(set(retried)))
+        self.assertEqual(set(retried), set(range(20)) - before[1])
         self.assertIn(9, retried)
         self.assertIn('emit: out of memory with 4 workers, retrying with 2', err.getvalue())
         self.assertIn('emitting with 2 workers (after out of memory)', err.getvalue())
@@ -258,8 +240,6 @@ class EmitAllTest(unittest.TestCase):
 
 
     def lost(self, jobs, never):
-        """(results, pools as (jobs, FakePool), stderr) of emit_all over 12 chunks where the first pool's worker dies
-        with each chunk of never."""
         tasks = [('mod', n) for n in range(12)]
         pools, results = [], []
 
@@ -275,7 +255,7 @@ class EmitAllTest(unittest.TestCase):
 
     def test_a_lost_worker_retries_with_half_the_workers(self):
         results, pools, err = self.lost(4, [('mod', 5)])
-        self.assertEqual(sorted(r['number'] for r in results), list(range(12)))   # each chunk's result once
+        self.assertEqual(sorted(r['number'] for r in results), list(range(12)))
         self.assertEqual([j for j, _ in pools], [4, 2])
         self.assertIn(('mod', 5), pools[1][1].submitted)
         self.assertIn('emit: an emit worker ended without a result (killed for memory?) with 4 workers, retrying '

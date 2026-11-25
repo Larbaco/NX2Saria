@@ -1,10 +1,5 @@
 // Contains code Copyright (c) 2026 Peiikai, Copyright (c) 2026 MacNativeGames contributors (MIT; see
 // THIRD_PARTY_NOTICES.md).
-// NSO loading at the fixed layout bases, dynamic linking with host overrides, the nnMain identity check, sealing,
-// and --probe-loader.
-//
-// The lifted C was generated from the unrelocated words of .text and .rodata and embeds absolute guest addresses, so
-// each module must sit at its layout base and relocations may only write the data segment.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -13,7 +8,6 @@
 #include "layout.h"
 #include "platform/platform.h"
 
-// hostfn.c, for the loader only.
 uint64_t hostfn_register_observer(const char *name, GuestFn fn, uint64_t original);
 
 enum { DT_NULL = 0, DT_PLTRELSZ = 2, DT_HASH = 4, DT_STRTAB = 5, DT_SYMTAB = 6, DT_RELA = 7, DT_RELASZ = 8,
@@ -26,25 +20,23 @@ enum { STB_WEAK = 2, STT_FUNC = 2 };
 typedef struct { uint32_t name; uint8_t info, other; uint16_t shndx; uint64_t value, size; } Elf64Sym;
 typedef struct { uint64_t off, info; int64_t addend; } Elf64Rela;
 
-// How a symbol of a relocation was bound.
 enum { RES_UNSET, RES_GUEST, RES_OVERRIDE, RES_OBSERVER, RES_WEAK, RES_STUB };
 typedef struct { uint64_t value; uint8_t kind; } Res;
 
 typedef struct {
     RtLoaded pub;
-    uint32_t seg_off[3], seg_size[3];   // text, rodata, data (data without bss)
+    uint32_t seg_off[3], seg_size[3];
     const Elf64Sym *syms;
     const char *strtab;
     uint32_t nsyms;
     const Elf64Rela *rela, *jmprel;
     uint64_t nrela, njmprel;
-    const uint64_t *relr;               // DT_RELR (1.4.3): packed RELATIVE relocations
+    const uint64_t *relr;
     uint64_t nrelr, relr_count;
-    uint32_t *hash, hash_mask;          // defined symbols by name
-    Res *res_plain, *res_jump;          // per symbol; JUMP_SLOT may bind an observer
-    uint32_t *funcs, nfuncs;            // defined functions sorted by value (ldr_describe)
-    uint64_t *plt_slot, *plt_stub, nplt;   // PLT stubs sorted by GOT slot (ldr_plt_stub), built on first use
-    // statistics
+    uint32_t *hash, hash_mask;
+    Res *res_plain, *res_jump;
+    uint32_t *funcs, nfuncs;
+    uint64_t *plt_slot, *plt_stub, nplt;
     uint64_t kinds[K_COUNT], sym_import, sym_own;
     uint32_t imports, import_to[MOD_COUNT], weak_unresolved, strong_unresolved;
     uint32_t init_off;
@@ -53,7 +45,7 @@ typedef struct {
 static Mod mods[MOD_COUNT];
 static int nmods;
 static uint64_t identity_refs, stubs;
-static int *ovr_used, *obs_used;   // per linked table entry, plus probe overrides counted separately
+static int *ovr_used, *obs_used;
 static PlatMutex plt_lock = PLAT_MUTEX_INIT;
 
 int ldr_count(void) { return nmods; }
@@ -61,7 +53,6 @@ const RtLoaded *ldr_module(int i) { return i >= 0 && i < nmods ? &mods[i].pub : 
 
 static uint32_t rd32(uint64_t a) { return LD32(a); }
 
-// ---- files
 static uint8_t *read_file(const char *path, size_t *len) {
     uint64_t size = 0;
     uint8_t *p = plat_file_read(path, &size);
@@ -90,7 +81,6 @@ uint8_t *ldr_read_verified(const char *dir, const char *file, size_t *len) {
     return p;
 }
 
-// ---- NSO
 static size_t lz4_decompress(const uint8_t *src, size_t srclen, uint8_t *dst, size_t dstlen) {
     const uint8_t *s = src, *se = src + srclen;
     uint8_t *d = dst, *de = dst + dstlen;
@@ -140,7 +130,6 @@ static void nso_segment(const uint8_t *raw, const Seg *s, uint8_t *dst, const ch
     }
 }
 
-// ---- symbols
 static const char *sym_name(const Mod *m, uint32_t i) { return m->strtab + m->syms[i].name; }
 static int sym_defined(const Mod *m, uint32_t i) { return m->syms[i].shndx != 0; }
 
@@ -173,7 +162,6 @@ static uint64_t module_symbol(const Mod *m, const char *name) {
     return 0;
 }
 
-// The defined symbol in load order (main, subsdk0, sdk); *which is its module index.
 static uint64_t find_symbol(const char *name, int *which) {
     for (int i = 0; i < nmods; i++) {
         uint64_t a = module_symbol(&mods[i], name);
@@ -202,7 +190,6 @@ static void make_funcs(Mod *m) {
     qsort(m->funcs, m->nfuncs, sizeof *m->funcs, by_value);
 }
 
-// ---- loading
 static void parse_dynamic(Mod *m) {
     uint64_t base = m->pub.base;
     uint64_t mod0 = base + rd32(base + 4);
@@ -229,9 +216,8 @@ static void parse_dynamic(Mod *m) {
     if (!m->syms || !m->strtab || (!hash && !gnu_hash))
         rt_fatal("loader: %s lacks DT_SYMTAB, DT_STRTAB or a symbol hash", m->pub.name);
     if (hash) {
-        m->nsyms = rd32(hash + 4);   // nchain
+        m->nsyms = rd32(hash + 4);
     } else {
-        // DT_GNU_HASH only (1.4.3 sdk, subsdk0): one past the last symbol the highest bucket's chain reaches.
         uint32_t nbuckets = rd32(gnu_hash), symoffset = rd32(gnu_hash + 4), bloom = rd32(gnu_hash + 8);
         uint64_t buckets = gnu_hash + 16 + 8ull * bloom, chains = buckets + 4ull * nbuckets;
         uint32_t last = 0;
@@ -252,7 +238,6 @@ static void parse_dynamic(Mod *m) {
     m->njmprel = pltsz / sizeof(Elf64Rela);
 }
 
-// The constructor state flag DT_INIT checks: ADRP xN at DT_INIT+16, LDR wM, [xN, #imm] at +20 or +24.
 static uint64_t decode_ctor_flag(const Mod *m) {
     uint64_t init = m->pub.init;
     if (!init) return 0;
@@ -303,8 +288,6 @@ static void load_module(Mod *m, const char *dir, const RtLayoutEntry *lay) {
     if (!m->res_plain || !m->res_jump) rt_fatal("loader: resolution table allocation");
 }
 
-// ---- relocation
-// A strong import nothing defines: calling it is fatal with its name (expected count 0).
 static void unresolved_stub(Cpu *c) {
     char lr[96];
     rt_fatal("call to unresolved import %s from %s", hostfn_name(c->pc), ldr_describe(c->x[30] - 4, lr, sizeof lr));
@@ -316,8 +299,6 @@ static void mark_used(int observers, const char *name) {
         if (!strcmp(hostfn_table_name(observers, i), name)) (observers ? obs_used : ovr_used)[i] = 1;
 }
 
-// Order: observer (JUMP_SLOT only), override by name, own definition, other modules in load
-// order, weak -> 0, strong -> named fatal stub. Overrides also replace a module's own symbols.
 static Res resolve(Mod *m, uint32_t si, int jump) {
     Res *cache = jump ? &m->res_jump[si] : &m->res_plain[si];
     if (cache->kind != RES_UNSET) return *cache;
@@ -364,10 +345,6 @@ static void relocate_table(Mod *m, const Elf64Rela *r, uint64_t n) {
             if (sym_defined(m, si)) m->sym_own++;
             else m->sym_import++;
             Res s = resolve(m, si, type == R_JUMP_SLOT);
-            // S + A for every symbolic type (the AArch64 ELF ABI), JUMP_SLOT included where the symbol is a guest
-            // function; linkers write 0 there. A host function's address takes no addend (an offset into a host
-            // trampoline means nothing), so such an addend is logged and dropped, as is one on an unresolved weak symbol
-            // (address 0, the guest's own test for an absent function).
             int64_t a = r[i].addend;
             if (type == R_JUMP_SLOT && a && s.kind != RES_GUEST) {
                 rt_log("loader: %s JUMP_SLOT relocation %llu for %s carries addend %lld on a host function: left out",
@@ -380,8 +357,6 @@ static void relocate_table(Mod *m, const Elf64Rela *r, uint64_t n) {
     }
 }
 
-// DT_RELR: an even entry is an offset to relocate (the next bitmap starts after it); an odd entry is a bitmap of the
-// 63 words that follow. Each relocated word holds its addend, as R_AARCH64_RELATIVE with an implicit addend.
 static void relocate_relr(Mod *m) {
     uint64_t base = m->pub.base, where = 0;
     for (uint64_t i = 0; i < m->nrelr; i++) {
@@ -407,7 +382,6 @@ static void relocate_relr(Mod *m) {
     }
 }
 
-// Import table statistics: every undefined named symbol, bound by guest definition (overrides aside).
 static void count_imports(Mod *m) {
     for (uint32_t i = 1; i < m->nsyms; i++) {
         if (sym_defined(m, i) || !*sym_name(m, i)) continue;
@@ -419,7 +393,6 @@ static void count_imports(Mod *m) {
     }
 }
 
-// Every non-JUMP_SLOT reference to nnMain holds the real address.
 static void verify_identity(void) {
     uint64_t real = ldr_symbol("nnMain");
     if (!real) rt_fatal("loader: nnMain is not defined");
@@ -442,7 +415,6 @@ static void verify_identity(void) {
     if (!identity_refs) rt_fatal("loader: no reference to nnMain to check");
 }
 
-// .text and .rodata read-only: guest code never executes from guest memory, and nothing may write them.
 static void seal(Mod *m) {
     if (!plat_mem_protect(m->pub.base, m->pub.data_off, PLAT_PROT_READ))
         rt_fatal("loader: cannot seal %s", m->pub.name);
@@ -473,7 +445,6 @@ void ldr_load(const char *exefs_dir) {
     }
 }
 
-// ---- lookups
 static int module_of(uint64_t a) {
     for (int i = 0; i < nmods; i++)
         if (a - mods[i].pub.base < mods[i].pub.size) return i;
@@ -490,7 +461,7 @@ const char *ldr_describe(uint64_t a, char *buf, int n) {
     }
     const Mod *m = &mods[i];
     uint64_t off = a - m->pub.base;
-    uint32_t lo = 0, hi = m->nfuncs;   // last function with value <= off
+    uint32_t lo = 0, hi = m->nfuncs;
     while (lo < hi) {
         uint32_t mid = (lo + hi) / 2;
         if (m->syms[m->funcs[mid]].value <= off) lo = mid + 1;
@@ -513,7 +484,6 @@ static int by_slot(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-// PLT stubs: adrp x16, page; ldr x17, [x16, #slot]; add x16, x16, #slot; br x17.
 static void find_plt(Mod *m) {
     uint64_t text = m->pub.base + m->seg_off[0], end = text + m->seg_size[0];
     uint64_t cap = 1024, n = 0, *pairs = malloc(cap * 16);
@@ -558,9 +528,6 @@ uint64_t ldr_plt_stub(const char *module, const char *name) {
     return 0;
 }
 
-// ---- --probe-loader
-// Expected values, measured on the 1.1.0, 1.2.1 and 1.4.3 modules.
-// 1.1.0 shares subsdk0 and sdk with 1.2.1 down to every count.
 typedef struct {
     const char *name;
     uint64_t kinds[K_COUNT], total, sym_import, sym_own;
@@ -595,7 +562,6 @@ static void probe_override(Cpu *c) {
     c->x[0] = PROBE_MAGIC;
 }
 
-// .text and .rodata in guest memory equal the NSO: relocations never touched them.
 static void check_segments(const char *dir) {
     for (int i = 0; i < nmods; i++) {
         const Mod *m = &mods[i];

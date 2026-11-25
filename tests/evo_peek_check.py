@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/evo_peek_check.c: runtime/vk/vk_evo_peek.h, the copy of each event-ordered queue's first held wait
-that vk_exec.c vk_exec_held_ready reads without the submission lock, and the decision it makes from that copy. One
-writer republishes while three readers copy: no copy may mix two publishes, and no reader waits for the writer.
-
-No GPU, no game files, any Python.
-
-Usage: evo_peek_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

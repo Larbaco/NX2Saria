@@ -1,20 +1,3 @@
-"""Build and run tests/fatal_exit_check.c: the end of a fatal error (runtime/dispatch.c fatal_end) with the platform
-layer linked. The process ends with its own code and its FATAL line, and without the libraries' detach calls that
-ExitProcess makes (a driver's detach that faulted there turned the end into a crash report with another code). Also
-checks statically that no runtime file outside the platform layer ends the process with _Exit, and that the fatal
-error's end and the lost device's (runtime/vk/vk_device.c lost_wait_exit) end with plat_terminate. No game files, no GPU.
-
-A fatal error stops HD rumble on a thread of its own and waits for it 300 ms at most (runtime/dispatch.c
-rt_rumble_stop_bounded), so a stop that hangs on SDL's lock does not hold the end. RivaTuner's profile is left to the
-next start (runtime/pacing/rtss_limit.c rtss_limit_crash), which on RTSS's own thread ("rtss"), whose lock that thread may
-hold, makes no call into RTSS's library and takes no lock.
-
-Two failures at once end once: two threads that fault, a fault while a fatal error is reported and a fatal error
-while a crash is: the first report is written whole, the process ends with its code, and the second adds no line
-(runtime/dispatch.c rt_ending_enter, which runtime/main.c crash_handler calls first).
-
-Usage: fatal_exit_check.py
-"""
 import os
 import re
 import shutil
@@ -54,7 +37,6 @@ def function(source, signature):
 
 
 def static_checks():
-    """_Exit is ExitProcess in the C runtime: the platform layer alone ends the process (plat_exit, plat_terminate)."""
     bad = 0
     for path in sorted(RT.rglob('*')):
         rel = path.relative_to(RT).as_posix()
@@ -73,7 +55,6 @@ def static_checks():
             bad += 1
     print(f'static: no _Exit outside the platform layer, fatal_end and lost_wait_exit end with plat_terminate: '
           f'{"FAILED" if bad else "ok"}', flush=True)
-    # the crash handler's guard is the one the stand-in in tests/fatal_exit_check.c runs
     main_c = (RT / 'main.c').read_text(encoding='utf-8')
     body = re.sub(r'//[^\n]*', '', function(main_c, 'static void crash_handler(const PlatCrash *x)'))
     first = body[body.index('{') + 1:].strip().split('\n')[0].strip()
@@ -81,14 +62,12 @@ def static_checks():
     print(f'static: main.c crash_handler starts with the shared guard: {"ok" if ok else "FAIL (" + first + ")"}',
           flush=True)
     bad += not ok
-    # the fatal error's summary leaves out what the failure may have left half made, and only tries the map's lock
     flush = re.sub(r'//[^\n]*', '', function((RT / 'diag' / 'perf.c').read_text(encoding='utf-8'), 'void perf_summary_flush_try(void)'))
     ok = ('stutter_report_as(' in flush and 'stutter_report(' not in flush and 'gfx_exit_log' not in flush
           and 'seg_close' not in flush)
     print(f'static: perf.c perf_summary_flush_try tries the stutter map\'s lock and leaves the back end out: '
           f'{"ok" if ok else "FAIL"}', flush=True)
     bad += not ok
-    # both failed ends stop HD rumble through the bounded stop, after RivaTuner's profile is left to the next start
     fatal = re.sub(r'//[^\n]*', '', function((RT / 'dispatch.c').read_text(encoding='utf-8'),
                                               'static void fatal_end(int code, const char *fmt, va_list ap) {'))
     for name, code in (('dispatch.c fatal_end', fatal), ('main.c crash_handler', body)):
@@ -97,8 +76,6 @@ def static_checks():
         print(f'static: {name} stops HD rumble through rt_rumble_stop_bounded after rtss_limit_crash: '
               f'{"ok" if ok else "FAIL"}', flush=True)
         bad += not ok
-    # a first report that hangs: the thread that waits for it ends the process after 30 s with that report's code, and
-    # fatal_end hands its own code to the guard (a hung FATAL must not read as a crash to the launcher)
     dispatch = re.sub(r'//[^\n]*', '', (RT / 'dispatch.c').read_text(encoding='utf-8'))
     enter = function(dispatch, 'int rt_ending_enter(int code)')
     ok = ('__atomic_store_n(&ending_code, code' in enter
@@ -106,7 +83,6 @@ def static_checks():
     print(f'static: dispatch.c rt_ending_enter ends a hung first report with that report\'s code: '
           f'{"ok" if ok else "FAIL"}', flush=True)
     bad += not ok
-    # the fatal error's frame-time summary comes after RTSS's end and the rumble stop, as in the orderly end
     s, p = fatal.find('rt_rumble_stop_bounded('), fatal.find('perf_summary_flush_try(')
     ok = 0 <= s < p
     print(f'static: dispatch.c fatal_end writes the frame-time summary after RTSS\'s end and the rumble stop: '
@@ -116,19 +92,13 @@ def static_checks():
 
 
 CASES = [
-    # mode, exit code, lines that must be there, lines that must not
     ('fatal', 70, ['FATAL: the test\'s fatal error 1', 'frametime: at a fatal error', 'rumble: stopped',
                    'rtss: left to the next start'], ['detach:']),
-    # rt_fatal on RTSS's own thread: rtss_limit_crash runs from there too, and takes no lock there
     ('fatal_rtss', 70, ['FATAL: the test\'s fatal error 3', 'rumble: stopped', 'rtss: left to the next start'],
      ['detach:']),
-    # the rumble stop hangs (SDL's lock held by a thread that crashed): the end goes on after 300 ms
     ('fatal_rumble', 70, ['FATAL: the test\'s fatal error 1'], ['rumble: stopped', 'detach:']),
-    # two faults at once: the first report whole, the second thread waits (dispatch.c rt_ending_enter)
     ('crash_crash', 71, ['report line 1', 'report line 2', 'report line 3'], ['detach:', 'FATAL:']),
-    # a fault while rt_fatal reports: its FATAL line and notes whole, no crash report, rt_fatal's code
     ('fatal_crash', 70, ['FATAL: the test\'s fatal error 1', 'fatal note: end'], ['report line', 'detach:']),
-    # rt_fatal on another thread while a crash is reported: the report whole, the crash report's code
     ('crash_fatal', 71, ['report line 1', 'report line 2', 'report line 3'], ['FATAL:', 'detach:']),
 ]
 
