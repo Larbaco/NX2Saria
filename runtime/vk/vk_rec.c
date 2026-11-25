@@ -1,13 +1,3 @@
-// The recorder thread: see vk_rec.h. One producer (the submitting thread, between rec_begin and rec_end) and one
-// consumer (the recorder) share a ring of 64-bit words. A packet is a header word (op, length in words) and the
-// call's arguments; its pointers point into the packet itself, so the recorder passes the payload to the driver as
-// it is. A packet never wraps: one that does not fit before the end is preceded by a pad. The producer publishes head
-// after each packet; the recorder makes the calls and advances tail, which the producer waits on when the ring is
-// full and in rec_drain. While a part is recorded the recorder spins on head; idle, it sleeps on an event, and a sleep
-// that ends with nothing new goes on without spinning first. The producer wakes a sleeping recorder once: it takes the
-// sleeping flag back itself, so the packets it makes while the recorder is still waking cost no further system call.
-// head, tail and the producer's own words sit on cache lines of their own: the producer writes head and its counters
-// per packet while the recorder reads head in its spin, and the recorder writes tail.
 #define VK_REC_IMPL
 #include <immintrin.h>
 #include <stdlib.h>
@@ -18,26 +8,25 @@
 #include "vk.h"
 #include "platform/platform.h"
 
-#define RING_WORDS (1u << 21)   // 16 MiB: a part of a submission is ~1-2 MiB of packets in the town
+#define RING_WORDS (1u << 21)
 static uint64_t ring[RING_WORDS];
-static _Alignas(64) volatile uint64_t head;   // words published by the producer
-static _Alignas(64) volatile uint64_t tail;   // words consumed by the recorder
-static volatile int32_t sleeping;         // the recorder waits for wake_ev
-static PlatEvent wake_ev;              // auto-reset
-static _Alignas(64) uint64_t put_h;    // producer: words written (published up to head)
-static uint64_t tail_seen;             // producer: tail as it last read it (wait_space); tail only grows
-static VkCommandBuffer rec_cb;         // the part being recorded (set while the recorder is idle)
-static int rec_live;                   // producer: rec_begin started the recorder for rec_cb
+static _Alignas(64) volatile uint64_t head;
+static _Alignas(64) volatile uint64_t tail;
+static volatile int32_t sleeping;
+static PlatEvent wake_ev;
+static _Alignas(64) uint64_t put_h;
+static uint64_t tail_seen;
+static VkCommandBuffer rec_cb;
+static int rec_live;
 static PlatThread *rec_thread;
-static int rec_prio;                   // the submitting thread's priority, which the recorder takes
-static int rec_chk;                    // NX2SARIA_REC_CHECK (rec_check_handle)
-static uint64_t rec_delay_ns;          // NX2SARIA_REC_DELAY_US (rec_main)
-static volatile uint64_t part_h0;      // put_h at rec_begin: where the packets of the part being recorded start
-static volatile uint64_t part_fence;   // the value of the part being recorded (rec_begin)
+static int rec_prio;
+static int rec_chk;
+static uint64_t rec_delay_ns;
+static volatile uint64_t part_h0;
+static volatile uint64_t part_fence;
 
-// Producer statistics, logged by rec_stats_log.
 static struct { uint64_t packets, words, drains, fallbacks, drain_ns, full_waits, parts, parts_on; } RS_;
-static volatile uint64_t full_ns_all, drain_ns_all;   // since the start, for rec_wait_totals (never reset)
+static volatile uint64_t full_ns_all, drain_ns_all;
 
 enum {
     R_PAD, R_BeginQuery, R_BeginRendering, R_BindDescriptorSets, R_BindIndexBuffer, R_BindPipeline, R_BindVertexBuffers2,
@@ -54,7 +43,6 @@ enum {
 
 static uint64_t now_ns(void) { return plat_now_ns(); }
 
-// ---- consumer
 
 static void exec_packet(uint32_t op, void *p);
 
@@ -62,7 +50,7 @@ static void rec_main(void *arg) {
     (void)arg;
     plat_thread_priority(rec_prio);
     uint64_t t = 0;
-    int slept = 0;   // the last thing it did was sleep: nothing new then means still idle, so no spin before the next sleep
+    int slept = 0;
     for (;;) {
         uint64_t h = __atomic_load_n(&head, __ATOMIC_ACQUIRE);
         if (t == h) {
@@ -70,15 +58,13 @@ static void rec_main(void *arg) {
             if (t == h) {
                 __atomic_store_n(&sleeping, 1, __ATOMIC_SEQ_CST);
                 h = __atomic_load_n(&head, __ATOMIC_SEQ_CST);
-                if (t == h) plat_event_wait_ns(&wake_ev, 2000000);   // a missed wake costs at most 2 ms
+                if (t == h) plat_event_wait_ns(&wake_ev, 2000000);
                 __atomic_store_n(&sleeping, 0, __ATOMIC_RELAXED);
                 slept = 1;
                 continue;
             }
         }
         slept = 0;
-        // NX2SARIA_REC_DELAY_US (debug): the recorder falls this far behind each batch it finds, as on a slow machine,
-        // so objects the replay lets go of meet packets it has not made yet (NX2SARIA_REC_CHECK).
         if (rec_delay_ns) plat_sleep_ns(rec_delay_ns);
         for (int k = 0; t != h; k++) {
             uint64_t w = ring[t % RING_WORDS];
@@ -92,10 +78,7 @@ static void rec_main(void *arg) {
     return;
 }
 
-// ---- producer
 
-// Wakes the recorder when it sleeps or is about to: whoever takes the flag back sets the event, once per sleep. Setting
-// the event for a recorder that has not reached its wait yet makes that wait return at once.
 static void wake_if_sleeping(void) {
     if (__atomic_load_n(&sleeping, __ATOMIC_RELAXED) && __atomic_exchange_n(&sleeping, 0, __ATOMIC_SEQ_CST))
         plat_event_set(&wake_ev);
@@ -107,7 +90,7 @@ static void wake(void) {
 }
 
 static void wait_space(uint64_t need) {
-    if (put_h + need - tail_seen <= RING_WORDS) return;   // room even by the older tail
+    if (put_h + need - tail_seen <= RING_WORDS) return;
     tail_seen = __atomic_load_n(&tail, __ATOMIC_ACQUIRE);
     if (put_h + need - tail_seen <= RING_WORDS) return;
     RS_.full_waits++;
@@ -118,7 +101,6 @@ static void wait_space(uint64_t need) {
     full_ns_all += now_ns() - t0;
 }
 
-// Room for a packet of bytes of arguments; the caller fills it and calls pub().
 static void *put(uint32_t op, size_t bytes) {
     uint64_t n = 1 + (bytes + 7) / 8, pos = put_h % RING_WORDS;
     if (n > RING_WORDS / 4) rt_fatal("vk_rec: a packet of %llu bytes", (unsigned long long)bytes);
@@ -130,8 +112,6 @@ static void *put(uint32_t op, size_t bytes) {
     }
     wait_space(n);
     ring[pos] = (uint64_t)op | n << 32;
-    // Packers reserve room for optional arrays they may leave unwritten (BeginRendering's depth and stencil); with
-    // NX2SARIA_REC_CHECK those words would still hold handles from the ring's previous lap.
     if (rec_chk) memset(&ring[pos + 1], 0, (n - 1) * 8);
     put_h += n;
     RS_.packets++, RS_.words += n;
@@ -160,16 +140,6 @@ void rec_wait_totals(uint64_t *full_ns, uint64_t *drain_ns) { *full_ns = full_ns
 void rec_begin(VkCommandBuffer cb, uint64_t fence) {
     static int mode = -1;
     if (mode < 0) {
-        // Default off on AMD GPUs. With the recorder those drivers lost the device or hung the GPU at startup on
-        // RDNA 2, 3 and 4, under AMD's Windows driver and under RADV (issues #5, #40, #277 and #283: a black screen,
-        // or VK_ERROR_DEVICE_LOST with a breadcrumb naming a part of a replay submission, and vk_recorder = 0 gets
-        // past it). Keeping objects until their submission completed and ending a part from the recorder
-        // (rec_end_cb) fixed the white scene on an RX 6700 XT, but not this: 0.2.8 turned the recorder on for every
-        // GPU and the AMD reports came back the same day. NX2SARIA_VK_RECORDER=1 turns it on for an A/B run.
-        // Up to 0.10.1 the low-end GPU mode turned it on for AMD GPUs without mesh shaders (GCN: RX 400/500, Vega;
-        // RDNA 1): every report above is from an RDNA 2-4 card, and those all have mesh shaders. An RX 580 ran with it
-        // and NX2SARIA_REC_CHECK (no hazards), the replay's part of the game's wait after a frame's first submission
-        // 6.9 ms instead of 12. The mode is gone (cfg.c lowend_set): vk_recorder = 1 turns it on there as anywhere.
         const char *set = cfg_get("NX2SARIA_VK_RECORDER");
         int amd_off = vk_caps.amd;
         mode = rt_knob("VK_RECORDER", amd_off ? "0" : "1");
@@ -178,7 +148,7 @@ void rec_begin(VkCommandBuffer cb, uint64_t fence) {
         if (mode) {
             plat_event_init(&wake_ev, 0, 0);
             rec_prio = plat_thread_priority_get();
-            rec_chk = rt_knob("REC_CHECK", "0");   // debug switches, read before the recorder starts
+            rec_chk = rt_knob("REC_CHECK", "0");
             const char *d = cfg_get("NX2SARIA_REC_DELAY_US");
             rec_delay_ns = d && *d && atoi(d) > 0 ? (uint64_t)atoi(d) * 1000 : 0;
             rec_thread = plat_thread_new(rec_main, NULL, "vk recorder");
@@ -197,7 +167,7 @@ void rec_begin(VkCommandBuffer cb, uint64_t fence) {
     RS_.parts++;
     if (!RT_KNOB_ON(mode)) return;
     RS_.parts_on++;
-    rec_cb = cb;   // the recorder is idle: rec_end drained it
+    rec_cb = cb;
     __atomic_store_n(&part_h0, put_h, __ATOMIC_RELEASE);
     __atomic_store_n(&part_fence, fence, __ATOMIC_RELEASE);
     rec_live = 1;
@@ -209,13 +179,6 @@ void rec_end(void) {
     rec_live = 0;
 }
 
-// NX2SARIA_REC_END (default 1): the thread that recorded the part also ends it, after the breadcrumb crumb (kind 0: none)
-// that vk_sync.c writes at the end of a submission. On an RX 6700 XT (driver 26.10.1, issue #5) parts the recorder
-// recorded and the submitting thread ended broke when a submission was split (vk_sync.c vk_sync_split): the GPU hung
-// or the scene turned green, then white. The handoff in rec_drain orders the two threads, so Vulkan allows the old
-// split; the driver did not cope with it. NX2SARIA_REC_END=0 brings the old split back.
-// The line is written only when a part was recorded by the recorder: with the recorder off (the default on AMD) the
-// switch changes nothing, and reports read an unconditional line as proof that the recorder was running (#315).
 typedef struct { int kind; uint64_t n; } A_EndCb;
 int rec_end_cb(VkCommandBuffer cb, int crumb, uint64_t n) {
     static int mode = -1, said;
@@ -248,28 +211,18 @@ void rec_stats_log(void) {
     memset(&RS_, 0, sizeof RS_);
 }
 
-// NX2SARIA_REC_CHECK=1 (debug, recorder on): the packets of the part being recorded are searched word by word for an object
-// vk_memory.c lets go of. put() zeroes each packet's room, so only words a packer wrote can match. A hit is a hazard
-// - at a deferral (destroy 0) when the stamp tl is below the part's value: vk_memory.c collect_locked may destroy the
-//   object once the GPU reaches tl, before the part ran and, with the recorder behind, before it made the call;
-// - at a destruction (destroy 1) always: a packet not made yet hands the driver a dead handle, a made one leaves it
-//   in a command buffer not yet submitted.
-// "Made" means before the tail the recorder published, which trails it by up to 64 packets. Hazards are logged (the
-// first 64) and counted by kind, packet and case for rec_check_log; named deferrals that wait long enough are only
-// counted. Reads race the producer only in words below head, which stay put until the ring
-// wraps (16 MiB later).
 static const char *const kind_name[REC_KINDS] = {"image", "view", "buffer"};
-static volatile int32_t chk_seen[2], chk_named, chk_logged, chk_hz[2][2][REC_KINDS][64];   // [destroy][made][kind][op]
+static volatile int32_t chk_seen[2], chk_named, chk_logged, chk_hz[2][2][REC_KINDS][64];
 void rec_check_handle(int kind, uint64_t handle, int destroy, uint64_t tl, uint64_t gpu) {
     if (!rec_chk || !handle || kind < 0 || kind >= REC_KINDS || !__atomic_load_n(&rec_live, __ATOMIC_RELAXED)) return;
     uint64_t h = __atomic_load_n(&head, __ATOMIC_ACQUIRE), p = __atomic_load_n(&part_h0, __ATOMIC_ACQUIRE);
     uint64_t fence = __atomic_load_n(&part_fence, __ATOMIC_ACQUIRE);
-    if (p > h || h - p > RING_WORDS / 2) return;   // a part this large is not searched
+    if (p > h || h - p > RING_WORDS / 2) return;
     plat_inc32(&chk_seen[destroy != 0]);
     while (p < h) {
         uint64_t w = ring[p % RING_WORDS];
         uint32_t op = (uint32_t)(w & 0xffff), n = (uint32_t)(w >> 32);
-        if (!n) return;   // overwritten meanwhile
+        if (!n) return;
         if (op != R_PAD)
             for (uint32_t i = 1; i < n; i++) {
                 if (ring[(p + i) % RING_WORDS] != handle) continue;
@@ -307,10 +260,8 @@ void rec_check_log(void) {
 }
 
 #define OWNED(cb) (rec_live && (cb) == rec_cb)
-// A call the ring takes no packet for: everything queued first, then the call here.
 #define FALLBACK() (rec_drain(), RS_.fallbacks++)
 
-// Copies n elements of arr after the fixed part at *at and returns where they went (NULL for none).
 static void *tail_copy(uint8_t **at, const void *arr, size_t bytes) {
     if (!arr || !bytes) return NULL;
     void *d = *at;
@@ -320,7 +271,6 @@ static void *tail_copy(uint8_t **at, const void *arr, size_t bytes) {
 }
 #define A8(x) (((x) + 7) & ~(size_t)7)
 
-// ---- fixed-size commands: the arguments after cb, as a struct
 
 #define FIXED(name, params, call_args, ...)                                                                             \
     typedef struct { __VA_ARGS__; } A_##name;                                                                          \
@@ -408,7 +358,6 @@ FIXED(WriteTimestamp, (VkCommandBuffer cb, VkPipelineStageFlagBits s, VkQueryPoo
 FIXED(WriteTimestamp2, (VkCommandBuffer cb, VkPipelineStageFlags2 s, VkQueryPool p, uint32_t q), (cb, s, p, q),
       VkPipelineStageFlags2 s; VkQueryPool p; uint32_t q)
 
-// ---- commands with arrays: a struct with the call's arguments, the arrays after it, pointers into the packet
 
 typedef struct { uint32_t n; const VkViewport *v; } A_SetViewportWithCount;
 void rc_vkCmdSetViewportWithCount(VkCommandBuffer cb, uint32_t n, const VkViewport *v) {
@@ -475,7 +424,7 @@ IMG_CMD(CopyImage, VkImageCopy, (VkCommandBuffer cb, VkImage s, VkImageLayout sl
 IMG_CMD(ResolveImage, VkImageResolve, (VkCommandBuffer cb, VkImage s, VkImageLayout sl, VkImage d, VkImageLayout dl,
         uint32_t n, const VkImageResolve *r), (cb, s, sl, d, dl, n, r), s, sl, d, dl, n, NULL, 0)
 
-typedef struct { uint64_t s, d; VkImageLayout l; uint32_t n; const void *r; } A_Xfer;   // buffer or image handles
+typedef struct { uint64_t s, d; VkImageLayout l; uint32_t n; const void *r; } A_Xfer;
 #define XFER_CMD(name, rtype, params, call, S, D, L)                                                                    \
     void rc_vkCmd##name params {                                                                                       \
         if (!OWNED(cb)) { vkCmd##name call; return; }                                                                  \
@@ -576,7 +525,6 @@ void rc_vkCmdBeginRendering(VkCommandBuffer cb, const VkRenderingInfo *ri) {
     pub();
 }
 
-// ---- extension commands through function pointers
 
 typedef struct { PFN_vkCmdPushDescriptorSetWithTemplateKHR fn; VkDescriptorUpdateTemplate tpl; VkPipelineLayout l;
                  uint32_t set; const void *data; } A_PushTpl;
@@ -627,7 +575,7 @@ void rec_vertex_input(PFN_vkCmdSetVertexInputEXT fn, VkCommandBuffer cb, uint32_
     A_VertexInput *a = put(R_VertexInput, sizeof *a + A8(sizeof *b * nb) + A8(sizeof *v * na));
     uint8_t *at = (uint8_t *)(a + 1);
     *a = (A_VertexInput){fn, nb, na, NULL, NULL};
-    a->b = tail_copy(&at, b, sizeof *b * nb), a->v = tail_copy(&at, v, sizeof *v * na);   // pNext: always NULL there
+    a->b = tail_copy(&at, b, sizeof *b * nb), a->v = tail_copy(&at, v, sizeof *v * na);
     pub();
 }
 
@@ -699,7 +647,6 @@ TARGET_CMD(rec_blend_enable, R_BlendEnable, PFN_vkCmdSetColorBlendEnableEXT, VkB
 TARGET_CMD(rec_blend_equation, R_BlendEquation, PFN_vkCmdSetColorBlendEquationEXT, VkColorBlendEquationEXT)
 TARGET_CMD(rec_write_mask, R_WriteMask, PFN_vkCmdSetColorWriteMaskEXT, VkColorComponentFlags)
 
-// ---- the recorder's side
 
 static void exec_packet(uint32_t op, void *p) {
     VkCommandBuffer cb = rec_cb;
