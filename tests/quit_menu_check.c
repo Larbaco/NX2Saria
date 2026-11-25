@@ -110,7 +110,8 @@ static void choices(void) {
     CHECK(qm_window_label(1, 0, 3) == QM_LABEL_TITLE && qm_window_label(1, 1, 1) == QM_LABEL_CANCEL,
           "the window's two labels with three buttons");
     CHECK(qm_window_label(0, 0, 3) == 3 && qm_window_label(0, 1, 1) == 1 && qm_window_label(1, 0, 0) == 0 &&
-          qm_window_label(1, 0, 2) == 2 && qm_window_label(1, 0, 4) == 4, "every other label stays");
+          qm_window_label(1, 0, 2) == 2 && qm_window_label(1, 0, 4) == 4 && qm_window_label(1, 2, QM_LABEL_QUIT) == QM_LABEL_QUIT &&
+          qm_window_label(0, 3, QM_LABEL_QUIT) == QM_LABEL_QUIT, "every other label stays");
     QmPress p = {0, 0};
     int chosen;
     CHECK(!qm_press(&p, 1, 0, &chosen) && !chosen, "on the entry, nothing pressed");
@@ -167,12 +168,7 @@ static void game_archive(const char *name, const uint8_t *z, size_t zn, const ui
         static const struct { const char *member, *label, *from, *source; } want[] = {
             {QUIT_MENU_MSG_WINDOW, "1010", QUIT_MENU_MSG_PAUSE, QUIT_MENU_LABEL_TITLE_SCREEN},
             {QUIT_MENU_MSG_WINDOW, "1011", QUIT_MENU_MSG_SAVE, QUIT_MENU_LABEL_CANCEL},
-            {QUIT_MENU_MSG_WINDOW, "Pa_Button_02-T_Btn_00", QUIT_MENU_MSG_QUIT, QUIT_MENU_LABEL_QUIT},
-            {QUIT_MENU_MSG_WINDOW, "Pa_Button_02-T_Btn_01", QUIT_MENU_MSG_QUIT, QUIT_MENU_LABEL_QUIT},
-            {QUIT_MENU_MSG_TITLE, "Pa_Button_03-T_Btn_00", QUIT_MENU_MSG_QUIT, QUIT_MENU_LABEL_QUIT},
-            {QUIT_MENU_MSG_TITLE, "Pa_Button_03-T_Btn_01", QUIT_MENU_MSG_QUIT, QUIT_MENU_LABEL_QUIT},
-            {QUIT_MENU_MSG_TITLE, "Pa_Button_03-T_Btn_02", QUIT_MENU_MSG_QUIT, QUIT_MENU_LABEL_QUIT},
-            {QUIT_MENU_MSG_TITLE, "Pa_Button_03-T_BtnSh_00", QUIT_MENU_MSG_QUIT, QUIT_MENU_LABEL_QUIT}};
+            {QUIT_MENU_MSG_WINDOW, "1012", QUIT_MENU_MSG_QUIT, QUIT_MENU_LABEL_QUIT}};
         for (size_t i = 0; i < sizeof want / sizeof *want; i++) {
             size_t ma, mn, sa, sn, tn, un;
             const uint8_t *t, *u;
@@ -188,7 +184,7 @@ static void game_archive(const char *name, const uint8_t *z, size_t zn, const ui
             if (sarc_next(was, was_n, NULL, &a, &wa, &wn) != 1 || sarc_next(now, now_n, NULL, &b, &na, &nn) != 1) same = 0;
             else if (wn != nn || memcmp(was + wa, now + na, wn)) edited++;
         }
-        CHECK(same && edited == 2, "%s: %d of %d members differ, 2 expected", name, edited, count);
+        CHECK(same && edited == 1, "%s: %d of %d members differ, 1 expected", name, edited, count);
         static const char *const old[] = {"0000", "0001", "0002", "1000", "1001", "1003"};
         for (size_t i = 0; i < sizeof old / sizeof *old; i++) {
             size_t wa, wn, na, nn, tn, un;

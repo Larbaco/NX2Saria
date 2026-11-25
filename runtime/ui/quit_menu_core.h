@@ -192,7 +192,7 @@ done:
     return result;
 }
 
-enum { QM_LABEL_TITLE = 10, QM_LABEL_CANCEL = 11 };
+enum { QM_LABEL_TITLE = 10, QM_LABEL_CANCEL = 11, QM_LABEL_QUIT = 12 };
 
 static inline uint32_t qm_window_label(int three, uint32_t button, uint32_t label) {
     if (!three) return label;

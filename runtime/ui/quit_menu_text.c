@@ -33,12 +33,7 @@ int quit_menu_archive(uint8_t **sarc, size_t *n, char *why, size_t why_n) {
             snprintf(why, why_n, "%s has no %s", from[i].member, from[i].label);
             return -1;
         }
-    const QmText window[] = {
-        {"1010", text[1], text_n[1]}, {"1011", text[2], text_n[2]},
-        {"Pa_Button_02-T_Btn_00", text[0], text_n[0]}, {"Pa_Button_02-T_Btn_01", text[0], text_n[0]}};
-    const QmText title[] = {
-        {"Pa_Button_03-T_Btn_00", text[0], text_n[0]}, {"Pa_Button_03-T_Btn_01", text[0], text_n[0]},
-        {"Pa_Button_03-T_Btn_02", text[0], text_n[0]}, {"Pa_Button_03-T_BtnSh_00", text[0], text_n[0]}};
+    const QmText window[] = {{"1010", text[1], text_n[1]}, {"1011", text[2], text_n[2]}, {"1012", text[0], text_n[0]}};
     int count = sarc_count(*sarc, *n), result = -1;
     if (count <= 0) {
         snprintf(why, why_n, "the message archive is no SARC");
@@ -46,18 +41,17 @@ int quit_menu_archive(uint8_t **sarc, size_t *n, char *why, size_t why_n) {
     }
     const uint8_t **with = calloc((size_t)count, sizeof *with);
     size_t *with_n = calloc((size_t)count, sizeof *with_n);
-    uint8_t *made[2] = {NULL, NULL};
+    uint8_t *made = NULL;
     if (!with || !with_n) {
         snprintf(why, why_n, "out of memory");
         goto done;
     }
-    int a = add_labels(*sarc, *n, QUIT_MENU_MSG_WINDOW, window, 4, with, with_n, count, &made[0]);
-    int b = add_labels(*sarc, *n, QUIT_MENU_MSG_TITLE, title, 4, with, with_n, count, &made[1]);
-    if (a < 0 || b < 0) {
-        snprintf(why, why_n, "%s is not the message file this expects", a < 0 ? QUIT_MENU_MSG_WINDOW : QUIT_MENU_MSG_TITLE);
+    int a = add_labels(*sarc, *n, QUIT_MENU_MSG_WINDOW, window, 3, with, with_n, count, &made);
+    if (a < 0) {
+        snprintf(why, why_n, "%s is not the message file this expects", QUIT_MENU_MSG_WINDOW);
         goto done;
     }
-    if (a + b == 0) {
+    if (a == 0) {
         result = 0;
         goto done;
     }
@@ -69,10 +63,9 @@ int quit_menu_archive(uint8_t **sarc, size_t *n, char *why, size_t why_n) {
     }
     free(*sarc);
     *sarc = rebuilt, *n = rn;
-    result = a + b;
+    result = a;
 done:
-    free(made[0]);
-    free(made[1]);
+    free(made);
     free(with);
     free(with_n);
     return result;

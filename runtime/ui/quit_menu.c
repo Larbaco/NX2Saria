@@ -32,7 +32,7 @@ enum { AT_NONE, AT_TITLE, AT_PAUSE };
 #define ARMED_MS 250
 
 static uint64_t main_lo, main_hi;
-static volatile int32_t g_texts, g_quit;
+static volatile int32_t g_texts, g_title, g_pause, g_quit;
 static volatile uint64_t g_title_ms, g_pause_ms, g_window, g_chosen_ms;
 
 static int ok_at(uint64_t p, uint64_t n) { return p >= 0x10000 && p < (1ull << 47) && mem_host_readable(p, n); }
@@ -57,7 +57,27 @@ int quit_menu_wanted(void) {
     return RT_V111 && rt_patch_enabled(set);
 }
 
-static int enabled(void) { return quit_menu_wanted() && __atomic_load_n(&g_texts, __ATOMIC_RELAXED); }
+typedef struct { uint32_t at, word; } Site;
+static const Site title_sites[] = {{0x2d13b0, 0xaa0003f3}, {0x3405bfc, 0x2a1303e3}, {0x3406964, 0xd0004fe2},
+                                   {0x3406968, 0x91023842}};
+static const Site pause_sites[] = {{0x2d13b0, 0xaa0003f3}, {0x3405bfc, 0x2a1303e3}, {0x3405b04, 0x1e201000},
+                                   {0x3405b38, 0x52800021}, {0x3405b3c, 0x52800022}};
+
+static int sites_ok(const Site *sites, size_t n, const char *off_flag, char *why, size_t why_n) {
+    if (test_flag(off_flag)) return snprintf(why, why_n, "NX2SARIA_QUIT_MENU_TEST=%s", off_flag), 0;
+    for (size_t i = 0; i < n; i++) {
+        uint64_t a = MOD_MAIN_BASE + sites[i].at;
+        if (!ok_at(a, 4)) return snprintf(why, why_n, "main+%#x cannot be read", sites[i].at), 0;
+        if (rd32(a) != sites[i].word)
+            return snprintf(why, why_n, "main+%#x holds %08x, not the %08x its site expects", sites[i].at, rd32(a),
+                            sites[i].word), 0;
+    }
+    return 1;
+}
+
+static int title_on(void) { return quit_menu_wanted() && __atomic_load_n(&g_title, __ATOMIC_RELAXED); }
+static int pause_on(void) { return quit_menu_wanted() && __atomic_load_n(&g_pause, __ATOMIC_RELAXED); }
+static int enabled(void) { return title_on() || pause_on(); }
 
 void quit_menu_texts(int made, int archives, const char *language, double ms, const char *why) {
     int set = rt_patch_set("quit_menu");
@@ -67,15 +87,21 @@ void quit_menu_texts(int made, int archives, const char *language, double ms, co
                set < 0 ? "missing from this build" : "off");
         return;
     }
-    if (archives > 0 && made == archives) {
-        __atomic_store_n(&g_texts, 1, __ATOMIC_RELEASE);
-        rt_log("quit_menu: on (NX2SARIA_QUIT_MENU): Quit Game on the title screen and in the pause menu's Title Screen "
-               "confirmation; the game's own labels in %d message archive(s) for the language %s (%.0f ms)", archives,
-               language, ms);
+    if (!(archives > 0 && made == archives)) {
+        rt_log("quit_menu: off: the labels are in %d of %d message archives for the language %s (%s); the game's menus "
+               "stay as they are", made, archives, language, why && *why ? why : "no message archive in the RomFS");
         return;
     }
-    rt_log("quit_menu: off: the labels are in %d of %d message archives for the language %s (%s); the game's menus "
-           "stay as they are", made, archives, language, why && *why ? why : "no message archive in the RomFS");
+    __atomic_store_n(&g_texts, 1, __ATOMIC_RELEASE);
+    char title_why[120] = "", pause_why[120] = "";
+    int title = sites_ok(title_sites, sizeof title_sites / sizeof *title_sites, "notitle", title_why, sizeof title_why);
+    int pause = sites_ok(pause_sites, sizeof pause_sites / sizeof *pause_sites, "nopause", pause_why, sizeof pause_why);
+    __atomic_store_n(&g_title, title, __ATOMIC_RELEASE);
+    __atomic_store_n(&g_pause, pause, __ATOMIC_RELEASE);
+    rt_log("quit_menu: %s (NX2SARIA_QUIT_MENU): title screen %s%s%s%s, pause menu's Title Screen confirmation %s%s%s%s; "
+           "the game's own labels in %d message archive(s) for the language %s (%.0f ms)", title || pause ? "on" : "off",
+           title ? "on" : "off", title ? "" : " (", title_why, title ? "" : ")", pause ? "on" : "off", pause ? "" : " (",
+           pause_why, pause ? "" : ")", archives, language, ms);
 }
 
 static int screen_is(uint64_t s, const char *want) {
@@ -191,7 +217,7 @@ static void title_tick(uint64_t s) {
     if (!ok_at(root, PANE_STRIDE)) return;
     uint64_t where = 0;
     int depth = hidden_at(root, &where);
-    if (depth > 0 && depth <= TITLE_PART_DEPTH && !test_flag("noshow")) {
+    if (depth > 0 && depth <= TITLE_PART_DEPTH) {
         static int lines;
         uint32_t was = rd32(where + PANE_FLAGS), now = was | PANE_SHOWN;
         if (now != was) {
@@ -230,14 +256,14 @@ void quit_menu_screen_host(Cpu *c) {
     if (!enabled()) return;
     if (!main_hi) main_lo = MOD_MAIN_BASE, main_hi = MOD_MAIN_BASE + MAIN_SIZE;
     if (!game_object(s, SCR_PROJ + 64)) return;
-    if (screen_is(s, "Title_00")) title_tick(s);
-    else if (screen_is(s, "SystemWindow_00")) window_tick(s);
+    if (title_on() && screen_is(s, "Title_00")) title_tick(s);
+    else if (pause_on() && screen_is(s, "SystemWindow_00")) window_tick(s);
 }
 
 void quit_menu_window_count_host(Cpu *c) {
     float buttons = 2.0f;
     uint64_t s = c->x[19];
-    if (enabled() && (uint32_t)c->x[20] == WINDOW_KIND_TITLE && !test_flag("nopause")) {
+    if (pause_on() && (uint32_t)c->x[20] == WINDOW_KIND_TITLE) {
         static int lines;
         buttons = 3.0f;
         __atomic_store_n(&g_window, s, __ATOMIC_RELEASE);
@@ -253,8 +279,10 @@ void quit_menu_window_count_host(Cpu *c) {
 }
 
 void quit_menu_window_label_host(Cpu *c) {
-    int three = enabled() && c->x[21] == __atomic_load_n(&g_window, __ATOMIC_ACQUIRE);
-    c->x[3] = qm_window_label(three, (uint32_t)c->x[20], (uint32_t)c->x[19]);
+    int three = pause_on() && c->x[21] == __atomic_load_n(&g_window, __ATOMIC_ACQUIRE);
+    uint32_t label = (uint32_t)c->x[19];
+    if (label == QM_LABEL_QUIT && !__atomic_load_n(&g_texts, __ATOMIC_ACQUIRE)) label = 1;
+    c->x[3] = qm_window_label(three, (uint32_t)c->x[20], label);
 }
 
 static int armed(uint64_t now) {

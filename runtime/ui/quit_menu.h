@@ -11,7 +11,6 @@
 #define QUIT_MENU_MSG_PAUSE "LayoutMsg/PlusMenu_00.msbt"
 #define QUIT_MENU_MSG_SAVE "LayoutMsg/SystemSaveLoad_00.msbt"
 #define QUIT_MENU_MSG_WINDOW "LayoutMsg/SystemWindow_00.msbt"
-#define QUIT_MENU_MSG_TITLE "LayoutMsg/Title_00.msbt"
 #define QUIT_MENU_LABEL_QUIT "Pa_Button_01-T_Btn_00"
 #define QUIT_MENU_LABEL_TITLE_SCREEN "Pa_System_00-Pa_Button_04-T_Btn_00"
 #define QUIT_MENU_LABEL_CANCEL "Pa_CheckButton_01-T_Btn_00"
