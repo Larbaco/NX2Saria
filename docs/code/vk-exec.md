@@ -7399,7 +7399,7 @@ than `max` submissions.
 
 Uniform blocks as of the submit call. NVN starts the GPU when `nvnQueueSubmitCommands` returns and the GPU reads the
 constants soon after; here the replay records for several milliseconds, and the GPU reads a pool's bytes when it runs
-the part that uses them (the VRAM mirror's sync copies run then, `runtime/vk/vk_memory.c` "VRAM mirror"). Meanwhile the
+the part that uses them (the sync copies of the VRAM mirror of `runtime/vk/vk_memory.c` run then). Meanwhile the
 game, having handed the frame over, rewrites per-object uniform blocks on other threads with no fence: late draws read
 another object's matrix (phantom rocks, a flat far field; the 1.2.1 game's producer `f_70008c6460`, 14-24 ms after the
 submit). So at the start of a submission's recording every uniform range it binds is copied into an arena of its own,
@@ -7410,40 +7410,40 @@ and the uniform bindings of the replay use the copy.
 - A range the GPU wrote in a submission that has not completed is left out: its bytes reach guest memory only with that
   submission's write-back, the mirror holds them until then.
 - A GPU write within the submission (UpdateUniformBuffer, a storage buffer a shader writes, a buffer copy or fill, an
-  image-to-buffer copy: `vk_usnap_drop`) drops the copies it touches from then on, so later draws read the result.
+  image-to-buffer copy: `vk_usnap_drop()`) drops the copies it touches from then on, so later draws read the result.
 - The arena goes back to a free list once the submission's fence is done (completion thread).
 
 The copy is taken at the submit call: where `vk_exec_record` starts when the replay runs on the submitting thread, and
-by the submitting thread itself with `NX2SARIA_REPLAY_ASYNC` (`vk_usnap_take`), where the record starts up to a frame
-later on the replay thread. Taken only there, it held whatever the game had put into those bytes by then: in a graveyard
-the block of the shadow pass came out with another block's values in the frame its allocator moved on to the next
-stretch of memory, about every 364 frames, and that frame's sunlight was all in shadow (a dark frame with the interface
-intact). `NX2SARIA_UBO_SNAPSHOT=0` binds live memory as before; `=ab` alternates (`NX2SARIA_AB`).
+by the submitting thread itself with `NX2SARIA_REPLAY_ASYNC` (`vk_usnap_take()`), where the record starts up to a frame
+later on the replay thread. Taken only at the record's start, it held whatever the game had put into those bytes by
+then: in a graveyard the block of the shadow pass came out with another block's values in the frame its allocator moved
+on to the next stretch of memory, about every 364 frames, and that frame's sunlight was all in shadow (a dark frame with
+the interface intact). `NX2SARIA_UBO_SNAPSHOT=0` binds live memory as before; `=ab` alternates (`NX2SARIA_AB`).
 
-- `Arena`:
-  - `uint8_t *cpu`: with DLSS (`vk_dlaa_available`) or frame generation alone (`vk_dlaa_fg_only`), the same bytes in
-    host memory for the CPU's reads (`vk_usnap_bytes`): map is often device memory through the BAR, written fast but
-    read back at about a microsecond a cache line. Without DLSS nothing reads them back, and the bytes go into map in
-    one copy.
-- `Reg`: dropped: 0, 1 (a GPU write in flight: dropped for every lookup), or the earliest place in the stream
-  (`vk_exec_stream_pos`) of a drop that ran; pos: the write's place in the stream.
-- `U`:
-  - `int mode`: `rt_knob`: 0 off, 1 on, 2 ab.
-  - `int on`: this submission has a snapshot.
-  - `Rng *col`: collected ranges.
-  - `Reg *reg`: merged, sorted by lo, disjoint.
-  - `Wrote *wr`: GPU writes of submissions not known to be complete.
-  - `uint64_t subs, regions, bytes, copy_ns, hits, drops, inflight, refused, off_subs`: since the last summary.
-  - `uint64_t chunk_drops`: so far: GPU writes recorded by replay chunks that dropped copied ranges.
-- `gather_lock`: U.col, `sort_col`'s buffer and collect's neighbour cache: the submitting thread (`vk_usnap_take`) and
-  the replay thread (`vk_usnap_begin`, for a submission nothing was taken for) both collect.
-- `Taken`: A copy taken at the submit call for the replay thread (`vk_usnap_take`), in submission order.
-  - `uint64_t first, total, refused, ns`: first, n: the submission's first handle and handle count.
+The structures:
+
+- `Arena`: one submission's copies. `map` is the buffer's mapping. `cpu` is there with DLSS (`vk_dlaa_available`) or
+  frame generation alone (`vk_dlaa_fg_only`): the same bytes in host memory for the CPU's reads (`vk_usnap_bytes()`),
+  because `map` is often device memory through the BAR, written fast but read back at about a microsecond a cache line.
+  Without either nothing reads them back, and the bytes go into `map` in one copy.
+- `Reg`: a copied region. `dropped` is 0, 1 (a GPU write in flight: dropped for every lookup), or the earliest place in
+  the stream (`vk_exec_stream_pos`) of a drop that ran.
+- `Wrote`: a GPU write; `pos` is the write's place in the stream.
+- `U`: the replay's state. `mode` is the `rt_knob` value stored plus 1 (0: not read yet; then 1 off, 2 on, 3 ab); `on`
+  says this submission has a snapshot; `col` holds the collected ranges, `reg` the merged ones (sorted by `lo`,
+  disjoint), `wr` the GPU writes of submissions not known to be complete. The counters from `subs` to `off_subs` run
+  since the last summary; `chunk_drops` runs since the start: GPU writes recorded by replay chunks that dropped copied
+  ranges.
+- `gather_lock` guards `U.col`, the buffer of `sort_col()` and the neighbour cache of `collect()`: the submitting
+  thread (`vk_usnap_take()`) and the replay thread (`vk_usnap_begin()`, for a submission nothing was taken for) both
+  collect.
+- `Taken`: a copy taken at the submit call for the replay thread (`vk_usnap_take()`), queued in submission order.
+  `first` and `n` are the submission's first handle and handle count, by which `adopt()` knows it.
 
 ### `arena_get()`
 
-- Transfer source: DLAA copies the camera block out (`runtime/vk/vk_dlaa.c` `mv_pass()`).
-- Device-local through the BAR when the device has it (the GPU reads constants on every draw), else host memory.
+The buffer is a transfer source too: DLAA copies the camera block out (`runtime/vk/vk_dlaa.c` `mv_pass()`). Its memory
+is device-local through the BAR when the device has it (the GPU reads constants on every draw), else host memory.
 
 ### `arena_done()`
 
@@ -7451,20 +7451,20 @@ Completion thread: the GPU has read it.
 
 ### `collect()`
 
-- The vertex stage's object and bone blocks: also the game's other copy on either side, which still holds last frame's
-  (`runtime/vk/vk_mvprev.c`).
-- Which neighbours lie in an imported pool, per block and `vk_mem_gen`: the same blocks are bound by many draws, and two
-  resolves for each binding were a quarter of the snapshot's time.
-- A neighbour past its pool would make the whole merged region fail the pool check below, and the bindings in it read
-  live memory again.
+Walks a recording, through its jumps and calls (to `CALL_DEPTH`), and lists every `OP_BIND_UBO` range.
+
+For the vertex stage's object and bone blocks it also lists the game's other copy on either side (`vk_mvprev_step`),
+which still holds last frame's (`runtime/vk/vk_mvprev.c`). A neighbour is listed only when it lies in an imported pool:
+one past its pool would make the whole merged region fail the pool check of the caller, and the bindings in it would
+read live memory again. Which neighbours do is cached per block and `vk_mem_gen` (1024 entries): the same blocks are
+bound by many draws, and two resolves for each binding were a quarter of the snapshot's time.
 
 ### `sort_col()`
 
 Sorts the collected ranges by lo. A town frame binds about 10,000 uniform ranges and qsort took half a millisecond of
 the copy's 0.96 ms on the game thread, so they go through an LSD radix sort on (lo - lowest) / ALIGN, three passes of 11
-bits; qsort is left for a span that does not fit in 33 bits (2 TiB).
-
-- `if (src != U.col) memcpy(U.col, src, (size_t)n * sizeof *src)`: three passes end in tmp.
+bits; qsort is left for a span that does not fit in 33 bits (2 TiB). Three passes end in the temporary buffer, so the
+result is copied back.
 
 ### `wr_prune()`
 
@@ -7473,27 +7473,25 @@ one block before every draw: hundreds of equal entries), each with the newest fe
 
 ### `wr_hits()`
 
-`wr_prune` ran: disjoint, sorted.
+A binary search: it needs the list as `wr_prune()` leaves it, disjoint and sorted.
 
 ### `summary()`
 
-- `char clears[512]`: among the GPU writes: the small buffer clears and the counter records they covered.
+Every 3600 submissions. The line ends with `vk_exec_clear_stats`: among the GPU writes, the small buffer clears and the
+counter records they covered.
 
-### `copy_some()`
+### `copy_some()`, `copy_down()`
 
-`copy_regions`'s work, sliced for the replay workers (`vk_exec_par`): regions of the game's memory into the arena, then
-the host copy into the device copy in `COPY_SLICE` pieces.
+The work of `copy_regions()`, sliced for the replay workers (`vk_exec_par`): `copy_some()` copies regions of the game's
+memory into the arena, `copy_down()` the host copy into the device copy in `COPY_SLICE` pieces.
 
 ### `copy_regions()`
 
-The bytes of regions `reg[0..nreg`) (total bytes in all) into a's device copy, through its host copy with DLSS. With par
-(the replay thread at a submission's start), split over the replay workers: about 700 regions and 0.7 MiB in Hyrule
-Field, half a millisecond of the submitting thread's time on one thread.
-
-- `if (vk_dlaa_available() || vk_dlaa_fg_only())`: the motion pass reads the camera
-  (`runtime/vk/vk_dlaa.c` `mv_pass()`).
-- `if (dst != a->map)`: sequential writes into the device copy.
-- `vmaFlushAllocation(vk_ctx()->vma, a->alloc, 0, total)`: a no-op on coherent memory.
+The bytes of regions `reg[0..nreg)` (`total` bytes in all) into the arena's device copy, through its host copy with
+DLSS or frame generation, whose motion pass reads the camera (`runtime/vk/vk_dlaa.c` `mv_pass()`); the device copy is
+then filled with sequential writes. With `par` (the replay thread at a submission's start) the work is split over the
+replay workers: about 700 regions and 0.7 MiB in Hyrule Field, half a millisecond of the submitting thread's time on one
+thread. The flush at the end is a no-op on coherent memory.
 
 ### `owners_wanted()`
 
@@ -7504,39 +7502,40 @@ models in guest memory at every submission is left out.
 ### `vk_usnap_take()`
 
 `NX2SARIA_REPLAY_ASYNC`, the submitting thread before the submission is queued for the replay: the uniform ranges it
-binds are copied now, while they hold what the game submitted. `vk_usnap_begin` takes the copy over when the replay
-reaches the submission, and leaves out there what GPU writes in flight touch (the replay knows them only then).
-
-- `for (int i = 0; i < U.ncol;)`: merged, keeping what lies wholly in one imported pool.
+binds are copied now, while they hold what the game submitted. The collected ranges are merged, and what lies wholly in
+one imported pool is kept. `vk_usnap_begin()` takes the copy over when the replay reaches the submission, and leaves
+out there what GPU writes in flight touch (the replay knows them only then).
 
 ### `adopt()`
 
-The copy `vk_usnap_take` made for this submission becomes the replay's. 0: none was taken.
+The copy `vk_usnap_take()` made for this submission becomes the replay's. 0: none was taken.
 
-- In submission order: an entry ahead of this submission's belongs to one that never reached the replay.
-- `for (int i = 0; i < U.nreg; i++)`: a GPU write in flight: the mirror holds those bytes, not guest memory.
+The queue is in submission order, so an entry ahead of this submission's belongs to one that never reached the replay
+and is freed. A region a GPU write in flight touches is marked dropped: the mirror holds those bytes, not guest memory.
 
 ### `vk_usnap_begin()`
 
-- `if (!U.mode) U.mode = rt_knob("UBO_SNAPSHOT", "1") + 1`: stored +1: 0 is "not read yet".
-- `wr_prune()`: `vk_usnap_drop` goes on listing the GPU's writes with snapshots off: without this the list only grew.
-- Without a producer snapshot, asynchronous replay must not read present-day actor ownership.
-- Merge, keeping only what lies wholly in one imported pool and no GPU write in flight touches.
-- `copy_regions(U.arena, U.reg, U.nreg, total, 1)`: the replay thread at the submission's start.
+The start of a submission's recording. With snapshots off it still prunes the write list: `vk_usnap_drop()` goes on
+listing the GPU's writes then, and without the prune the list only grew. When `adopt()` finds no copy, it collects
+here: the ranges are merged, keeping only what lies wholly in one imported pool and no GPU write in flight touches, and
+copied with the replay workers' help.
+
+The player's model ownership is captured here only when the replay is not asynchronous: without a snapshot from the
+submitting thread, asynchronous replay must not read present-day actor ownership.
 
 ### `first_above()`
 
-First region whose end is above a.
+First region whose end is above `a`.
 
 ### `vk_usnap_find()`
 
-- Consecutive bindings mostly name the region the last one did: that one is tried before the binary search. The regions
-  are sorted and disjoint, so the region that holds addr is the one `first_above` finds.
-- `static _Thread_local int hint`: per thread: the replay workers look up at once.
+Consecutive bindings mostly name the region the last one did: that one (`hint`) is tried before the binary search. The
+regions are sorted and disjoint, so the region that holds `addr` is the one `first_above()` finds. The hint is per
+thread: the replay workers look up at once.
 
 ### `vk_usnap_drop()`
 
-- `drop_lock`: the replay workers' shaders write storage at once.
+`drop_lock` is taken while chunks are recorded (`vk_exec_shared`): the replay workers' shaders write storage at once.
 
 The replay workers (`runtime/vk/vk_exec.c`) record the chunks of a group at once, and with `NX2SARIA_REPLAY_PIPE` the
 submitting thread goes on past the group meanwhile. A drop holds from its place in the stream on (`vk_exec_stream_pos`):
@@ -7549,16 +7548,18 @@ never run beside in the stream (`tests/usnap_order_check.c` forces both orders).
 
 ### `wr_overlaps()`
 
-A GPU write of a submission not known to be complete touches [lo, hi). A linear scan: `vk_usnap_drop` appends after
-`wr_prune` sorted the list, so `wr_hits`'s binary search does not hold here; only called on rare paths.
+A GPU write of a submission not known to be complete, at or before this place in the stream, touches [lo, hi). A linear
+scan: `vk_usnap_drop()` appends after `wr_prune()` sorted the list, so the binary search of `wr_hits()` does not hold
+here; only called on rare paths.
 
 ### `cpu_written()`
 
-The same test `vk_usnap_begin` keeps regions by.
+The same test `vk_usnap_begin()` keeps regions by.
 
 ### `vk_usnap_read()`
 
-- `int lk = vk_exec_shared()`: a chunk's drop may grow the list.
+The bytes from the copy (1), or, for memory the CPU writes that no GPU write touches, from guest memory (2). The write
+list is read under `drop_lock` while chunks are recorded: a chunk's drop may grow the list.
 
 ### `host_copy()`
 
@@ -7577,8 +7578,8 @@ trimmed) and the GPU-write list (the replay thread's; read without a lock, a lin
 
 Ownership travels with the uniform snapshot. A missing, GPU-written, or overlapping range is not a match.
 
-- The producer excludes overlapping identities and sorts the remaining disjoint ranges once. Most scene draws are
-  unowned, so do not scan every player binding for each one.
+The producer excludes overlapping identities and sorts the remaining disjoint ranges once, so the lookup is a binary
+search: most scene draws are unowned, and scanning every player binding for each one would be wasted.
 
 ## `runtime/vk/vk_gpa.c`
 
