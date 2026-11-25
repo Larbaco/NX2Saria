@@ -1,8 +1,3 @@
-// The menus' black bars (runtime/patches/wide_bars.c) against stand-in interface screens: the screens the set wide_bars' site
-// hands over, the share of the width each present blacks out for each state of the menu backgrounds and the loading
-// fade, a movie, the log lines, a screen destroyed and another set up in its place, a full table, and the registers the
-// host function leaves. Built by tests/wide_bars_check.py, which writes the stand-in layout.h; "no-set" runs a start
-// whose generated C lacks the set.
 #include <assert.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -10,14 +5,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-uint64_t test_main_base = 0x7000000000ull;   // layout.h's MOD_MAIN_BASE: the vtables are numbers compared, never read
+uint64_t test_main_base = 0x7000000000ull;
 
 #include "wide_bars.c"
 
 #define MENU_BG (0x4be4fb0ull)
 #define LOADING_FADE (0x4be7b30ull)
 #define EVENT_FADE (0x4be61c8ull)
-#define SCREEN_BASE (0x4bec998ull)   // what a destroyed screen's vtable becomes (its destructor's base class)
+#define SCREEN_BASE (0x4bec998ull)
 #define UNMAPPED 0x1000ull
 
 static int have_set = 1, set_on;
@@ -27,7 +22,7 @@ int mem_readable(uint64_t a, uint64_t n) { (void)n; return a && a != UNMAPPED; }
 static int movie;
 int ov_movie_live(void) { return movie; }
 
-static int log_lines, full_lines;   // full_lines: the lines about a screen left out of a full table
+static int log_lines, full_lines;
 static char last_log[512];
 void rt_log(const char *fmt, ...) {
     va_list ap;
@@ -50,7 +45,6 @@ static void set_vt(Screen *s, uint64_t vt) {
     memcpy(s->b, &v, 8);
 }
 
-// The site: the screen in x19, x8 just loaded from it; every register the same afterwards.
 static void setup(uint64_t screen) {
     Cpu c, before;
     memset(&c, 0x5a, sizeof c);
@@ -110,7 +104,6 @@ int main(int argc, char **argv) {
     make(&event, EVENT_FADE, 0);
     make(&other, 0x4b4dfc0ull, 2);
 
-    // before wide_init: nothing to black out, whatever is up
     setup((uintptr_t)&menu);
     setup((uintptr_t)&loading);
     setup((uintptr_t)&event);
@@ -129,7 +122,6 @@ int main(int argc, char **argv) {
     wide_bars_init(MARGIN, 0);
     assert(set_on);
 
-    // the screens the game sets up: the two menu backgrounds and the loading fade are watched, the others not
     setup((uintptr_t)&menu);
     setup((uintptr_t)&system_bg);
     setup((uintptr_t)&loading);
@@ -138,14 +130,13 @@ int main(int argc, char **argv) {
     setup(0);
     setup(UNMAPPED);
     assert(watched() == 4);
-    setup((uintptr_t)&menu);   // set up again: still once
+    setup((uintptr_t)&menu);
     assert(watched() == 4);
     assert(strstr(last_log, "watching the event fade"));
 
-    expect(0, NULL);   // play: every watched screen closed
+    expect(0, NULL);
     expect(0, NULL);
 
-    // the pause menu: black from its opening to its close
     menu.b[0x1a6] = 1;
     expect(MARGIN, "black from present");
     assert(strstr(last_log, "pause or system menu"));
@@ -157,13 +148,11 @@ int main(int argc, char **argv) {
     expect(0, "shown again");
     assert(strstr(last_log, "after 3 presents black") && strstr(last_log, "background screen closed"));
 
-    // the system menu's background, the other screen of the class
     system_bg.b[0x1a6] = 2;
     expect(MARGIN, "pause or system menu");
     system_bg.b[0x1a6] = 0;
     expect(0, "shown again");
 
-    // The wide loading fade only needs side bars while fully open.
     loading.b[0x1a6] = 1;
     expect(0, NULL);
     loading.b[0x1a6] = 2;
@@ -173,14 +162,12 @@ int main(int argc, char **argv) {
     loading.b[0x1a6] = 0;
     expect(0, NULL);
 
-    // An event fade also keeps its margins black; other screens do not.
     event.b[0x1a6] = 1;
     other.b[0x1a6] = 2;
     expect(MARGIN, "event fade is active");
     event.b[0x1a6] = 0;
     expect(0, NULL);
 
-    // a movie, also under a menu; the sides come back once both are gone
     movie = 1;
     expect(MARGIN, "a movie plays");
     menu.b[0x1a6] = 2;
@@ -190,12 +177,10 @@ int main(int argc, char **argv) {
     menu.b[0x1a6] = 0;
     expect(0, "the menu's background screen closed");
 
-    // a screen the game destroys: its vtable becomes the base class's, its state no longer counts and its entry frees
     menu.b[0x1a6] = 2;
     set_vt(&menu, SCREEN_BASE);
     expect(0, "is gone");
     assert(watched() == 3);
-    // another menu background set up at the same address is watched again
     make(&menu, MENU_BG, 1);
     setup((uintptr_t)&menu);
     assert(watched() == 4);
@@ -203,7 +188,6 @@ int main(int argc, char **argv) {
     menu.b[0x1a6] = 0;
     expect(0, "shown again");
 
-    // a full table: one line, and the screens already watched still count
     for (int i = 0; i < BARS_SCREENS + 2; i++) {
         make(&spare[i], i & 1 ? LOADING_FADE : MENU_BG, 0);
         setup((uintptr_t)&spare[i]);
@@ -215,7 +199,6 @@ int main(int argc, char **argv) {
     system_bg.b[0x1a6] = 0;
     expect(0, "shown again");
 
-    // a destroyed screen's slot goes to the next screen set up
     set_vt(&loading, SCREEN_BASE);
     Screen late;
     make(&late, LOADING_FADE, 2);
@@ -225,7 +208,6 @@ int main(int argc, char **argv) {
     late.b[0x1a6] = 0;
     expect(0, "shown again");
 
-    // A tall picture watches fades and movies without clearing their full-height image margins.
     wide_bars_init(0, 0);
     late.b[0x1a6] = 1;
     expect_at(__LINE__, 0, 0, "no margins cleared");
@@ -242,7 +224,6 @@ int main(int argc, char **argv) {
     movie = 0;
     expect(0, NULL);
 
-    // the lines about the sides stop after BARS_TOLD
     wide_bars_init(MARGIN, 0);
     for (int i = 0; i < BARS_TOLD; i++) {
         system_bg.b[0x1a6] = 2;

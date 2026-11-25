@@ -1,4 +1,11 @@
-"""Git worktrees for agent tasks: .worktrees/<tag> on branch task/<tag>, linked to the main checkout's ignored data.
+import argparse
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+DESCRIPTION = """Git worktrees for agent tasks: .worktrees/<tag> on branch task/<tag>, linked to the main checkout's ignored data.
 
   worktree.py new <tag> [--base REF]       create the worktree and the links, print its path
   worktree.py list                         worktrees with branch, ahead/behind main, dirty or not
@@ -10,13 +17,6 @@ CLAUDE.local.md as hard links. Nothing is copied.
 `remove` deletes the links first (os.rmdir / os.unlink never follow a junction), checks that none is left, and only
 then lets git delete the worktree. Stdlib only.
 """
-import argparse
-import os
-import re
-import subprocess
-import sys
-from pathlib import Path
-
 LINK_DIRS = ['build', 'generated', 'refs', 'toolchain', '.venv', '.venv-py314', 'game', '.claude', 'notes']
 LINK_FILES = ['config.local.toml', 'CLAUDE.local.md']
 MAIN_BRANCH = 'main'
@@ -31,13 +31,11 @@ def git(cwd, *args, check=True):
 
 
 def main_checkout(start):
-    """The main checkout: the parent of the shared .git directory, whichever worktree `start` is in."""
     common = git(start, 'rev-parse', '--path-format=absolute', '--git-common-dir').stdout.strip()
     return Path(common).resolve().parent
 
 
 def is_link(p):
-    """True for a junction or symlink."""
     return os.path.islink(p) or os.path.isjunction(p)
 
 
@@ -50,7 +48,6 @@ def make_junction(target, link):
 
 
 def drop_link(p):
-    """Remove one link without touching what it points at. A real directory or file is left alone."""
     if os.path.isjunction(p) or os.path.islink(p):
         os.rmdir(p) if os.path.isjunction(p) else os.unlink(p)
         return True
@@ -75,13 +72,12 @@ def link_data(main, wt):
 
 
 def unlink_data(wt):
-    """Remove the links of a worktree. A file link goes by os.unlink: it only drops one name of the data."""
     for name in LINK_DIRS:
         drop_link(wt / name)
     for name in LINK_FILES:
         p = wt / name
         if os.path.lexists(p) and not is_link(p):
-            os.unlink(p)    # a hard link looks like a plain file; its data survives under the main checkout's name
+            os.unlink(p)
     left = [n for n in LINK_DIRS if is_link(wt / n)]
     if left:
         sys.exit(f'links still present in {wt}: {left}; not removing the worktree')
@@ -149,7 +145,7 @@ def cmd_remove(a):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('new')
     p.add_argument('tag')

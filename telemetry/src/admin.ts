@@ -4,7 +4,7 @@
 
 import type { Env } from "./env";
 import { SUMMARY_COLUMNS } from "./db";
-import { VERSION_RE } from "./validate";
+import { FEEDBACK_KINDS, VERSION_RE } from "./validate";
 import { error, respond } from "./http";
 
 const DAY_S = 86400;
@@ -61,6 +61,7 @@ interface Filters {
   days: number;
   version: string | null;
   since: number;
+  kind: string | null;
 }
 
 function filtersOf(url: URL, now: number): Filters {
@@ -68,7 +69,9 @@ function filtersOf(url: URL, now: number): Filters {
   const days = (ALLOWED_DAYS as readonly number[]).includes(daysParam) ? daysParam : DEFAULT_DAYS;
   const versionParam = url.searchParams.get("version") ?? "";
   const version = VERSION_RE.test(versionParam) ? versionParam : null;
-  return { days, version, since: now - days * DAY_S };
+  const kindParam = url.searchParams.get("kind") ?? "";
+  const kind = (FEEDBACK_KINDS as readonly string[]).includes(kindParam) ? kindParam : null;
+  return { days, version, since: now - days * DAY_S, kind };
 }
 
 // WHERE clause and its parameters for the sessions table (version is summary.version).
@@ -79,10 +82,12 @@ function sessionsWhere(f: Filters): { sql: string; params: (string | number)[] }
 }
 
 // The same filter on comments: version is the attached summary's, or the launcher's when no summary came with it.
-function feedbackWhere(f: Filters): { sql: string; params: (string | number)[] } {
-  return f.version === null
-    ? { sql: "received_at >= ?", params: [f.since] }
-    : { sql: "received_at >= ? AND COALESCE(version, launcher_version) = ?", params: [f.since, f.version] };
+function feedbackWhere(f: Filters, kind: string | null = f.kind): { sql: string; params: (string | number)[] } {
+  const where =
+    f.version === null
+      ? { sql: "received_at >= ?", params: [f.since] as (string | number)[] }
+      : { sql: "received_at >= ? AND COALESCE(version, launcher_version) = ?", params: [f.since, f.version] };
+  return kind === null ? where : { sql: `${where.sql} AND kind = ?`, params: [...where.params, kind] };
 }
 
 function query(f: Filters): string {
@@ -228,14 +233,44 @@ function gpuLabel(name: string | null, vendor: string | null): string {
   return `${name ?? "(unknown)"}${vendor ? ` [${vendor}]` : ""}`;
 }
 
+interface FeedbackRow {
+  id: number;
+  received_at: number;
+  version: string | null;
+  launcher_version: string;
+  gpu_name: string | null;
+  gpu_vendor: string | null;
+  os_family: string | null;
+  text: string;
+  has_log: number;
+  session_end: string | null;
+  fatal: string | null;
+  log_lines: number | null;
+}
+
+function recentFeedbackSql(where: string): string {
+  return `SELECT id, received_at, version, launcher_version, gpu_name, gpu_vendor, os_family, text,
+                 log_tail IS NOT NULL AS has_log,
+                 json_extract(summary_json, '$.session.end') AS session_end,
+                 json_extract(summary_json, '$.fatal') AS fatal,
+                 LENGTH(COALESCE(log_head, '')) - LENGTH(REPLACE(COALESCE(log_head, ''), char(10), ''))
+                   + LENGTH(COALESCE(log_tail, '')) - LENGTH(REPLACE(COALESCE(log_tail, ''), char(10), '')) AS log_lines
+          FROM feedback WHERE ${where} ORDER BY received_at DESC, id DESC LIMIT 50`;
+}
+
+function logLink(id: number, label: string): string {
+  return `<a href="/v1/admin/feedback/${encodeURIComponent(String(id))}/log">${escapeHtml(label)}</a>`;
+}
+
 export async function renderPanel(request: Request, env: Env, now: number): Promise<Response> {
   const url = new URL(request.url);
   const f = filtersOf(url, now);
   const db = env.DB;
   const sw = sessionsWhere(f);
-  const fw = feedbackWhere(f);
+  const fw = feedbackWhere(f, "comment");
+  const cw = feedbackWhere(f, "crash");
 
-  const [head, comments, versions, perfRows, fatalRows, recent, versionChoices] = await Promise.all([
+  const [head, comments, crashLogs, versions, perfRows, fatalRows, recent, recentCrashes, versionChoices] = await Promise.all([
     db
       .prepare(
         `SELECT COUNT(*) AS sessions,
@@ -247,6 +282,10 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
     db
       .prepare(`SELECT COUNT(*) AS n FROM feedback WHERE ${fw.sql}`)
       .bind(...fw.params)
+      .first<{ n: number }>(),
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM feedback WHERE ${cw.sql}`)
+      .bind(...cw.params)
       .first<{ n: number }>(),
     countBy(db, f, "version", 50),
     all<PerfRow>(
@@ -262,22 +301,8 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
        ORDER BY received_at DESC LIMIT ${STATS_ROW_CAP}`,
       sw.params,
     ),
-    all<{
-      id: number;
-      received_at: number;
-      version: string | null;
-      launcher_version: string;
-      gpu_name: string | null;
-      gpu_vendor: string | null;
-      text: string;
-      has_log: number;
-    }>(
-      db,
-      `SELECT id, received_at, version, launcher_version, gpu_name, gpu_vendor, text,
-              log_tail IS NOT NULL AS has_log
-       FROM feedback WHERE ${fw.sql} ORDER BY received_at DESC, id DESC LIMIT 50`,
-      fw.params,
-    ),
+    all<FeedbackRow>(db, recentFeedbackSql(fw.sql), fw.params),
+    all<FeedbackRow>(db, recentFeedbackSql(cw.sql), cw.params),
     all<{ version: string }>(db, "SELECT version FROM releases ORDER BY published_at DESC, version DESC LIMIT 100", []),
   ]);
 
@@ -359,7 +384,21 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
   <td>${escapeHtml(c.version ?? c.launcher_version)}</td>
   <td>${escapeHtml(c.gpu_name === null ? "" : gpuLabel(c.gpu_name, c.gpu_vendor))}</td>
   <td class="comment">${escapeHtml(c.text)}</td>
-  <td>${c.has_log ? `<a href="/v1/admin/feedback/${encodeURIComponent(String(c.id))}/log">log</a>` : ""}</td>
+  <td>${c.has_log ? logLink(c.id, "log") : ""}</td>
+</tr>`,
+    )
+    .join("");
+
+  const crashRows = recentCrashes
+    .map(
+      (c) => `<tr>
+  <td class="n">${escapeHtml(isoDate(c.received_at))}</td>
+  <td>${escapeHtml(c.version ?? c.launcher_version)}</td>
+  <td>${escapeHtml(c.os_family)}</td>
+  <td>${escapeHtml(c.gpu_name === null ? "" : gpuLabel(c.gpu_name, c.gpu_vendor))}</td>
+  <td>${escapeHtml(c.session_end)}</td>
+  <td class="comment">${escapeHtml(c.fatal)}</td>
+  <td>${logLink(c.id, `log (${c.log_lines ?? 0} lines)`)}</td>
 </tr>`,
     )
     .join("");
@@ -385,11 +424,14 @@ export async function renderPanel(request: Request, env: Env, now: number): Prom
   <button type="submit">Show</button>
   <a href="/v1/admin/sessions.csv?${escapeHtml(q)}">sessions.csv</a>
   <a href="/v1/admin/feedback.csv?${escapeHtml(q)}">feedback.csv</a>
+  <a href="/v1/admin/feedback.csv?${escapeHtml(q)}&amp;kind=comment">comments only</a>
+  <a href="/v1/admin/feedback.csv?${escapeHtml(q)}&amp;kind=crash">crash logs only</a>
 </form>
 
 <section class="cards">
   <div class="card"><b id="sessions">${sessions}</b><span>sessions</span></div>
   <div class="card"><b id="comments">${comments?.n ?? 0}</b><span>comments</span></div>
+  <div class="card"><b id="crash-logs">${crashLogs?.n ?? 0}</b><span>crash logs sent</span></div>
   <div class="card"><b id="abnormal">${abnormalPct.toFixed(1)}%</b><span>sessions with end other than normal</span></div>
 </section>
 
@@ -421,6 +463,11 @@ ${capNote(fatalRows.length)}
 <div class="scroll"><table><caption>The 50 newest</caption>
 <thead><tr><th class="n">date (UTC)</th><th>version</th><th>gpu</th><th>text</th><th>log</th></tr></thead>
 <tbody>${commentRows || '<tr><td colspan="5" class="empty">No data.</td></tr>'}</tbody></table></div>
+
+<h2>Recent crash logs</h2>
+<div class="scroll"><table><caption>The 50 newest</caption>
+<thead><tr><th class="n">date (UTC)</th><th>version</th><th>os</th><th>gpu</th><th>end</th><th>fatal</th><th>log</th></tr></thead>
+<tbody>${crashRows || '<tr><td colspan="7" class="empty">No data.</td></tr>'}</tbody></table></div>
 </main></body></html>`;
 
   return respond(html, 200, "text/html; charset=utf-8");
@@ -462,6 +509,7 @@ export async function sessionsCsv(request: Request, env: Env, now: number): Prom
 const FEEDBACK_CSV_COLUMNS = [
   "id",
   "received_at",
+  "kind",
   "launcher_version",
   "version",
   "gpu_name",
@@ -477,7 +525,7 @@ export async function feedbackCsv(request: Request, env: Env, now: number): Prom
   const w = feedbackWhere(f);
   const rows = await all<Record<string, unknown>>(
     env.DB,
-    `SELECT id, received_at, launcher_version, version, gpu_name, gpu_vendor, os_family, text,
+    `SELECT id, received_at, kind, launcher_version, version, gpu_name, gpu_vendor, os_family, text,
             log_tail IS NOT NULL AS has_log, summary_json
      FROM feedback WHERE ${w.sql} ORDER BY received_at DESC, id DESC LIMIT ${CSV_ROW_CAP}`,
     w.params,
@@ -488,8 +536,14 @@ export async function feedbackCsv(request: Request, env: Env, now: number): Prom
 
 // ---- Log view ----
 
+export const LOG_HEAD_TITLE = "==== the start of the log ====";
+export const LOG_TAIL_TITLE = "==== the end of the log ====";
+
 export async function feedbackLog(env: Env, id: number): Promise<Response> {
-  const row = await env.DB.prepare("SELECT log_tail FROM feedback WHERE id = ?").bind(id).first<{ log_tail: string | null }>();
+  const row = await env.DB.prepare("SELECT log_tail, log_head FROM feedback WHERE id = ?")
+    .bind(id)
+    .first<{ log_tail: string | null; log_head: string | null }>();
   if (row === null || row.log_tail === null) return error(404, "not found");
-  return respond(row.log_tail, 200, "text/plain; charset=utf-8");
+  const text = row.log_head === null ? row.log_tail : `${LOG_HEAD_TITLE}\n${row.log_head}\n${LOG_TAIL_TITLE}\n${row.log_tail}`;
+  return respond(text, 200, "text/plain; charset=utf-8");
 }

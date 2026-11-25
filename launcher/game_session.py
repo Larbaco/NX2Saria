@@ -166,6 +166,25 @@ def game_end(game_dir, code, started=None, restarted=False):
     return GameEnd(f'the game ended with code 0{how}', '', '', False)
 
 
+END_KINDS = {70: 'fatal', 71: 'crash', 72: 'device_lost'}
+
+
+def end_kind(code, end):
+    if not end.message:
+        return ''
+    if code in (0, None):
+        return 'fatal'
+    if code < 0 and os.name != 'nt':
+        return f'code {exit_code_text(code)}'
+    code &= 0xFFFFFFFF
+    return END_KINDS.get(code) or f'code {exit_code_text(code)}'
+
+
+def end_asked(game_dir, code):
+    return (code is not None and code < 0 and os.name != 'nt' and -code in ASKED_SIGNALS
+            and not last_fatal(game_dir))
+
+
 class GameRun:
     """A Play of the game, followed through the copies its own Restart starts. The Restart (runtime/gfx/gfx_present.c
     gfx_window_closed) starts the exe again (runtime/platform/win32.c plat_restart) and ends the process before it
@@ -181,6 +200,7 @@ class GameRun:
     def __init__(self, proc, game_dir, started):
         self.proc, self.game_dir, self.started, self.restarted = proc, game_dir, started, False
         self.last_pid = None
+        self.kind, self.asked = '', False
 
     def alive(self):
         """Whether the process followed runs; nothing else is looked at. A winsys.GameCopy whose exit code could not
@@ -214,6 +234,9 @@ class GameRun:
             self.restarted = True
             self.proc = collections.namedtuple('EndedCopy', 'pid returncode ended')(None, codes[-1], True)
 
+    def code(self):
+        return None if self.proc is None else self.proc.returncode
+
     def end(self):
         """game_end for this run, once running() said False."""
         return game_end(self.game_dir, None if self.proc is None else self.proc.returncode, self.started,
@@ -223,6 +246,7 @@ class GameRun:
 def finish_game(run, log):
     end = run.end()
     log(end.log)
+    run.kind, run.asked = end_kind(run.code(), end), end_asked(run.game_dir, run.code())
     if telemetry.enabled():
         telemetry.synthesize_crash(run.game_dir, log)
     if end.note:

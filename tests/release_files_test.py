@@ -1,8 +1,3 @@
-"""tools/release_files.py: what the release workflow (.github/workflows/release.yml) refuses before it attests and
-publishes, and the release page text. Standard library only, so the content guard workflow runs it.
-
-    python tests/release_files_test.py
-"""
 import hashlib
 import json
 import sys
@@ -28,7 +23,6 @@ def repo(tmp, version, notes=NOTES, tag=None):
 
 
 def release(tmp, ver, notes=NOTES, runtime='NX2Saria-runtime-py3.14.9-1.zip'):
-    """A folder with the files the Windows and Linux builds hand to the release workflow."""
     d = Path(tmp) / 'dist'
     d.mkdir()
     entries = {}
@@ -102,7 +96,7 @@ class Files(unittest.TestCase):
         for line in sums:
             digest, name = line.split('  ')
             self.assertEqual(digest, hashlib.sha256((d / name).read_bytes()).hexdigest())
-        rf.check_files('v0.19.0-rc.1', self.notes, d)   # a second run over its own SHA256SUMS.txt
+        rf.check_files('v0.19.0-rc.1', self.notes, d)
 
     def test_crlf_notes_are_the_same_notes(self):
         d = release(self.tmp.name, '0.19.0', notes=NOTES.replace('\n', '\r\n'))
@@ -216,7 +210,7 @@ class Body(unittest.TestCase):
         self.assertTrue(rc.startswith('**Pre-release:** a release candidate'))
         self.assertTrue(pre.startswith('**Pre-release:** 0.19.0 becomes the stable release'))
         self.assertTrue(stable.startswith(NOTES.splitlines()[0]))
-        self.assertEqual(rc_own.count('Pre-release'), 1)   # the notes' own line only, no second one on top
+        self.assertEqual(rc_own.count('Pre-release'), 1)
         self.assertTrue(rc_own.startswith('Pre-release: a test build.'))
         for b in (rc, pre, stable):
             self.assertIn(NOTES.rstrip(), b)

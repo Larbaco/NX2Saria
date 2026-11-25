@@ -1,15 +1,3 @@
-"""Check tools/layout_dump.py and tools/layout_preview.py on a layout archive the test makes itself. No game files.
-
-The archive is a SARC with two BFFH layouts: Main (a group pane that is scaled and moved, a picture in it, a text with a
-left origin anchored to its parent's right edge, a part that instantiates Sub) and Sub (one picture). Main has one
-animation with a curve of the group's translate x and a constant of the picture's scale x. The checks: the tables,
-panes, parts and tracks read back; the panes' extents on the grid; the curve's value between keys; the dump's text,
-JSON and --find-animated output; each edit operation of a spec and the span of a curve whose keys move; a spec whose
-expected value differs is refused and changes nothing; the preview's SVG files and index. A separate layout checks
-picture bindings, UV transforms, default alpha and texture patterns. With NumPy it also checks pixels and clipping.
-
-Usage: python3 -I tests/layout_tools_check.py
-"""
 import json
 import struct
 import subprocess
@@ -31,7 +19,6 @@ def check(cond, what):
         print(f'FAIL: {what}')
 
 
-# ---- a BFFH writer: the records the reader follows, at offsets it finds through the header
 class Bffh:
     def __init__(self):
         self.b = bytearray(b'BFFH' + bytes(0x300 - 4))
@@ -77,7 +64,6 @@ class Bffh:
         return self.put(v.to_bytes(6, 'little'), 1)
 
     def curve(self, keys):
-        """keys: [(frame, value, slope)]"""
         frames = self.put(b''.join(struct.pack('<f', f) for f, _, _ in keys))
         floats = self.put(b''.join(struct.pack('<ff', v, s) for _, v, s in keys))
         fr = self.put(struct.pack('<ffQII', keys[0][0], keys[-1][0], frames, len(keys), 4))
@@ -85,7 +71,6 @@ class Bffh:
         return self.put(struct.pack('<QQQ', fr, va, 0))
 
     def animation(self, name, length, tracks, target=7, target_field=0x7f):
-        """tracks: [(pane, group, prop, [(component, keys)], [(component, value)])]"""
         curves, ccomp, consts, kcomp, entries = [], [], [], [], []
         for pane, group, prop, tcurves, tconsts in tracks:
             first = len(curves) if tcurves else 0xffff
@@ -183,9 +168,6 @@ def textured_layout():
 
 
 def split_layout():
-    """RootPane, N_Strip (a group), P_Bg (a 1000-wide picture at x 500 in it, made like the game's: its record with the
-    colour and corner lists inside it, a material with one texture map), P_After (a group after it, whose x an
-    animation keys), and the two sections' headers, so that the split moves what follows P_Bg."""
     f = Bffh()
     panes = [('RootPane', f.pane(0, 0, 0, 0, -1, 0)),
              ('N_Strip', f.pane(0, 0, 0, 0, 0, 0)),
@@ -220,13 +202,12 @@ def split_layout():
 
 
 def check_split():
-    # the names' hash, CityHash64, on names of the game's layouts (both of its short-name branches and the 17-32 one)
     for name, want in (('RootPane', 0x55a7ab4a9d264968), ('N_All_00', 0x7b2f820ba988bfbc),
                        ('P_MenuBg_00', 0x8fb0748a44554936), ('P_Equipment3DFade_00', 0x8a617cf9dbbc0ad)):
         check(ld.name_hash(name) == want, f'name_hash({name}) = {ld.name_hash(name):#x}, not {want:#x}')
     lay = ld.Layout('Split', bytearray(split_layout()))
-    pieces = [{'src': [0, 400], 'at': [0, 400], 'f': [1, 1]},       # the left part, moved by out
-              {'src': [390, 410], 'at': [400, 400], 'f': [1, 2]},   # a seam over the gap the next piece's move opens
+    pieces = [{'src': [0, 400], 'at': [0, 400], 'f': [1, 1]},
+              {'src': [390, 410], 'at': [400, 400], 'f': [1, 2]},
               {'src': [400, 1000], 'at': [400, 1000], 'f': [2, 2]}]
     out = 100.0
     ed, lines = ld.apply_ops(lay, [{'op': 'split', 'pane': 'P_Bg', 'pieces': pieces}], out)
@@ -256,7 +237,6 @@ def check_split():
     hashes = ld.u64(d, ld.TABLES['panes'] + 16)
     check([ld.u64(d, hashes + 8 * j) for j in (3, 4)] == [ld.name_hash('P_Bg_1'), ld.name_hash('P_Bg_2')],
           'split: the new panes\' name hashes')
-    # what the split refuses: a pane with children, a rotated or scaled picture, a piece outside the picture
     for bad, what in (({'op': 'split', 'pane': 'N_Strip', 'pieces': pieces}, 'a group'),
                       ({'op': 'split', 'pane': 'P_Bg', 'pieces': [{'src': [-50, 400], 'at': [0, 400], 'f': [0, 0]}]},
                        'a piece outside the picture'),
@@ -365,8 +345,6 @@ def main():
         check(main_l.part_animations('Pa_Sub_00') == [('SubState', 2.5)], 'authored part animation frame')
         check(main_l.panes[1].children == [2, 3], 'children')
 
-        # extents on the grid: the group at x 100 scaled 2; the picture 50 in it, 40 wide; the text anchored to the
-        # group's right edge (100 in its space) with a left origin
         boxes = ld.place(main_l)
         check(abs(boxes[2].left - 160) < 1e-3 and abs(boxes[2].right - 240) < 1e-3,
               f'picture extent {boxes[2].left} .. {boxes[2].right}')
@@ -374,7 +352,6 @@ def main():
               f'text extent {boxes[3].left} .. {boxes[3].right}')
         check(abs(boxes[1].bottom - (50 - 100)) < 1e-3 and abs(boxes[1].top - 150) < 1e-3, 'group height')
 
-        # tracks
         slide = main_l.animations[0]
         check(slide.name == 'Slide' and slide.length == 10 and len(slide.tracks) == 3, 'animation')
         t0 = slide.tracks[0]
@@ -393,7 +370,6 @@ def main():
         check(('N_Group_00', 'translate x', ['Slide (curve)']) in found and
               ('P_Pic_00', 'scale x', ['Slide (constant)']) in found and len(found) == 2, f'find-animated {found}')
 
-        # the command line
         r = run(ROOT / 'tools' / 'layout_dump.py', archive, '--layout', 'Main')
         check(r.returncode == 0 and 'Pa_Sub_00 -> Sub' in r.stdout and 'N_Group_00 translate: x [0:100 10:300]; y =50'
               in r.stdout and '| 160 .. 240' in r.stdout, f'dump text:\n{r.stdout}{r.stderr}')
@@ -410,7 +386,6 @@ def main():
         r = run(ROOT / 'tools' / 'layout_dump.py', archive, '--layout', 'Nope')
         check(r.returncode != 0 and 'no layout Nope' in r.stderr, 'a missing layout is an error')
 
-        # edits at 21:9 (out 640)
         out = ld.out_units(ld.parse_aspect('21:9'))
         check(abs(out - 640) < 1e-3 and ld.out_units(ld.parse_aspect('16:9')) == 0 and
               abs(ld.out_units(ld.parse_aspect('32:9')) - 1920) < 1e-3, f'out {out}')
@@ -452,7 +427,6 @@ def main():
                 check(why in str(e), f'refusal says {e}')
         check(bytes(main_l.data) == before, 'a refused spec changes nothing')
 
-        # the preview: before | after SVGs, the index, a refused spec stops it
         spec = tmp / 'spec.json'
         spec.write_text(json.dumps({'Main': ops[:2], 'Sub': [{'op': 'move', 'pane': 'P_Inner_00', 'f': -1,
                                                                'x': 100}]}))
@@ -474,7 +448,6 @@ def main():
         check(r.returncode != 0 and 'x is 50, the spec expects 49' in r.stderr and
               not (tmp / 'refused' / 'Main_21x9.svg').exists(), f'refused preview: {r.stderr}')
 
-        # a damaged file is a format error, not a crash
         data = main_layout()
         for cut in (8, 0x120, 0x2fc, len(data) // 2, len(data) * 3 // 4):
             try:

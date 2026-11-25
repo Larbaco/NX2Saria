@@ -1,11 +1,3 @@
-// tests/frame_owed_check.py builds this: runtime/vk/vk_frame_owed.h, a frame's bookkeeping in replay order, with one
-// presenting thread, three replaying threads that hold the lock for their replays, a few of them for HOLD_MS, and a
-// present thread that takes each presented frame from the presenting thread (one in waiting at most, as vk_backend.c
-// present_image hands it over), blits it and then submits under the lock (vk_backend.c present_main). Every
-// frame's bookkeeping must run once and in frame order, never during a replay, before the body of any replay that took
-// the lock after the frame was presented, and before the present thread's blit of the frame; the presenting thread
-// must never wait for a replay. "frame_owed_check old" leaves out the present thread's fo_close, as the branch first
-// had it, to show that the blit check sees a blit before its frame's bookkeeping (it then fails).
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,7 +8,7 @@
 #define FRAMES 20000
 #define REPLAYERS 3
 #define HOLD_MS 40
-#define PRESENT_MAX_NS 20000000ull   // a present that waited for a long hold would take up to HOLD_MS
+#define PRESENT_MAX_NS 20000000ull
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { printf("frame_owed_check: FAIL: " __VA_ARGS__); printf("\n"); fails++; } } while (0)
@@ -26,12 +18,11 @@ static FrameOwed FO;
 static volatile int32_t in_replay, in_long, stop;
 static volatile uint64_t presented, ends, bad_order, during_replay, late, ran_here, long_holds, during_long;
 static uint64_t last_end, present_max_ns;
-static uint64_t ended;   // the newest frame whose bookkeeping returned, kept apart from FO.done (atomic)
-static uint64_t slot;    // the frame handed to the present thread << 1 | left owed (PresentJob.owed); 0: none (atomic)
-static uint64_t blits, blit_early, closed_here;   // the present thread's
+static uint64_t ended;
+static uint64_t slot;
+static uint64_t blits, blit_early, closed_here;
 static int old_mode;
 
-// vk_backend.c frame_end's stand-in, run with the lock held.
 static void frame_end(uint64_t frame, void *arg) {
     (void)arg;
     if (__atomic_load_n(&in_replay, __ATOMIC_ACQUIRE)) __atomic_add_fetch(&during_replay, 1, __ATOMIC_RELAXED);
@@ -42,7 +33,6 @@ static void frame_end(uint64_t frame, void *arg) {
     __atomic_store_n(&ended, frame, __ATOMIC_RELEASE);
 }
 
-// vk_sync.c vk_sync_try_locked with vk_backend.c fo_here
 static int try_run(void *arg) {
     (void)arg;
     if (!plat_mutex_trylock(&sub_lock)) return 0;
@@ -51,7 +41,6 @@ static int try_run(void *arg) {
     return 1;
 }
 
-// vk_sync.c submit: the lock, the owed frames (vk_present_frames_owed), then the replay's body
 static void replayer(void *arg) {
     uint64_t r = (uint64_t)(uintptr_t)arg * 0x2545F4914F6CDD1Dull + 3;
     while (!__atomic_load_n(&stop, __ATOMIC_ACQUIRE)) {
@@ -75,7 +64,6 @@ static void replayer(void *arg) {
     }
 }
 
-// vk_backend.c fo_blit_locked: the lock, waiting for it, and what is owed
 static void run_locked(void *arg) {
     (void)arg;
     plat_mutex_lock(&sub_lock);
@@ -83,9 +71,6 @@ static void run_locked(void *arg) {
     plat_mutex_unlock(&sub_lock);
 }
 
-// vk_backend.c present_main: each frame handed over, its bookkeeping made sure of when it was left owed
-// (present_frame_closed), the blit, which must see that frame's bookkeeping done, then the blit's submission (vk_sync.c
-// submit).
 static void present_thread(void *arg) {
     (void)arg;
     for (;;) {
@@ -100,7 +85,7 @@ static void present_thread(void *arg) {
         if ((j & 1) && !old_mode && fo_close(&FO, frame, run_locked, NULL)) closed_here++;
         blits++;
         if (__atomic_load_n(&ended, __ATOMIC_ACQUIRE) < frame) blit_early++;
-        for (volatile int i = 0; i < 2000; i++) {}   // the blit's recording
+        for (volatile int i = 0; i < 2000; i++) {}
         plat_mutex_lock(&sub_lock);
         if (fo_waiting(&FO)) fo_run(&FO, frame_end, NULL);
         __atomic_store_n(&in_replay, 1, __ATOMIC_RELEASE);
@@ -112,8 +97,6 @@ static void present_thread(void *arg) {
 
 int main(int argc, char **argv) {
     old_mode = argc > 1 && !strcmp(argv[1], "old");
-    // one thread first: the present runs its own frame's bookkeeping when the lock is free, and two presents with the
-    // lock held elsewhere leave both frames to the next holder, which runs them in order
     int here = fo_present(&FO, 1, try_run, NULL);
     CHECK(here && ends == 1 && FO.done == 1, "a present with the lock free did not run its own bookkeeping");
     plat_mutex_lock(&sub_lock);
@@ -145,7 +128,6 @@ int main(int argc, char **argv) {
         if (d > present_max_ns) present_max_ns = d;
         if (lng) during_long++;
         __atomic_store_n(&presented, f, __ATOMIC_RELEASE);
-        // the hand-off: the present thread took the frame before (vk_backend.c present_image's wait while pending)
         while (__atomic_load_n(&slot, __ATOMIC_ACQUIRE)) plat_yield();
         __atomic_store_n(&slot, f << 1 | (uint64_t)!here, __ATOMIC_RELEASE);
         for (volatile int i = 0; i < 20000; i++) {}

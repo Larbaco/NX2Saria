@@ -297,6 +297,9 @@ def states(app):
         app.comment_log, app.comment_message = True, ''
         app.show('comment', 1)
 
+    def crash_offer_screen():
+        app.open_crash_offer_preview()
+
     result = [('1-first-run', first_run), ('2-installing', installing), ('3-home', home),
             ('4a-whats-new-before', whats_new_before), ('4-update-ready', update_ready),
             ('4b-whats-new-end', whats_new_end), ('5-updating', updating), ('6-settings', settings),
@@ -306,7 +309,8 @@ def states(app):
             ('13-customize', customize), ('14-color-scheme', color_scheme), ('15-custom-picker', custom_picker),
             ('16-first-scheme', restore_scheme), ('17-mods', mods_screen), ('18-mod-order', mod_order),
             ('19-home-again', restore_game), ('20-consent', consent), ('21-sent-view', sent_view),
-            ('22-reports', reports), ('23-comment', comment)]
+            ('22-reports', reports), ('23-comment', comment),
+            ('24-crash-offer', crash_offer_screen)]
     if sys.platform.startswith('linux'):
         result.insert(9, ('9-udmabuf', udmabuf))
     return result

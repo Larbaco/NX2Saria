@@ -1,49 +1,4 @@
 # Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-"""Build the 60 fps RomFS overlay for NX2Saria 1.1.0, 1.2.1 or 1.4.3 (runtime/hle/romfs.c, NX2SARIA_ROMFS_PATCHES).
-
-UI/LayoutArchive/Common.Product.<110 or 140>.Nin_NX_NVN.blarc.zs: the weapon / shield / material quick menus capture the game
-picture for their background when the panes C_CaptureBG_00, C_CaptureClearBG_00 and P_CaptureClearBG_00 become
-visible at animation frame 1.0 (anim/ShortCutBG_00_In.bflan), AutoBuilder the same with C_CaptureBG_00
-(anim/AutoBuilder_00_In.bflan). UI animations advance 0.5 frames per game frame at 60 fps, so the capture lands after
-the world stopped drawing and the background can be black. The visibility keys move to frame 0.0: the live world is
-captured at once (the weapon, shield, material and ability wheels were checked at 60 fps and 30 fps).
-
---aspect <w>x<h> (a game resolution of another shape than 16:9, such as 3440x1440 or 1280x800) also lays the UI out
-for that shape (tools/ultrawide_layout.py): menus keep their 16:9 proportions in the middle, full-screen backgrounds
-cover the screen and the HUD moves to the screen's corners (wider) or its top and bottom edges (narrower). nx2saria.exe
-loads that overlay from romfs-patches-<w>x<h> when the game resolution is that size (runtime/hle/romfs.c overlay_init);
-the camera's side of it is the patch set aspect (recomp/patches-v121.txt, patches-v143.txt).
-
---prompts xbox | xbox-label: the same overlay with Xbox button icons in the game's prompts, for prompts = xbox
-(runtime/hle/romfs.c overlay_init loads romfs-patches-xbox or romfs-patches-xbox-label in place of romfs-patches). Drawn
-from the game's own files on the player's machine, nothing added (tools/button_icons.py, which needs fontTools):
-- both: L, R, ZL, ZR, Plus, Minus and the d-pad become LB, RB, LT, RT, Menu, View and a cross in the button font
-  (scft/External.bfotf, the same font in each Font/Font*.Nin_NX_NVN.bfarc.zs), and L and ZL in the button guide's images
-  (Nt_KeyTexL_00 and Nt_KeyTexZL_00 of timg/__Combined.bntx in the Common archive). The fonts grow, so the overlay also
-  carries the resource size table (System/Resource/ResourceSizeTable.Product.<n>...rsizetable.zs) with their entries
-  raised by as much.
-- xbox, for pad_layout = nintendo. That layout plays an Xbox pad by position: the button that does Switch A is
-  labelled B, so the face buttons' prompts are swapped to name the labels, A with B and X with Y:
-  - the action prompt (blyt/DoCommand_00.bflyt) draws the letter images Nt_KeyTexA/B/X/Y_00 of timg/__Combined.bntx in
-    the Common archive: their image data is swapped (same format, size and tiling). Around it, a diamond names the
-    other face buttons with one-letter text panes (T_B_00, T_X_00, ...). The game fills them from the messages of the
-    same name in LayoutMsg/DoCommand_00.msbt of each Mals/<language> archive, over the layout's own text: both have
-    their letters swapped the same way. The diamond's shape (Nt_KeyBtnSubBase*) shows the button's position, which
-    stays right.
-  - every other prompt: the glyphs U+E040 A, U+E041 B, U+E042 X, U+E043 Y of the button font trade places.
-- xbox-label, for pad_layout = xbox and auto. Those layouts put Switch A on the button labelled A (auto picks xbox for
-  every pad not labelled the Nintendo way), so the face buttons keep their letters; the action prompt's diamond keeps
-  the Switch positions (A on the right).
---xbox-prompts is the older name of --prompts xbox.
---prompts pc: keyboard and mouse prompts, for prompts = pc (romfs-patches-pc, or romfs-patches-pc-<w>x<h> with
---aspect): every button of the button font is drawn as the key or mouse button the keyboard defaults put on it
-(button_icons.pc_icons; --binds <nx2saria.ini> takes the first key of its bind_ lines instead, or an existing nx2navi.ini), and so are the button
-guide's images (A, B, X, Y, L, ZL and the stick's two). The one-letter panes around the action prompt name the keys
-with one character of the Normal font (E, an arrow for Shift, a bar for Space, L and R for the mouse buttons).
-
-Input: build/extracted/<version>/romfs (romfs.bin and index.json, verified by tools/extract.py). Output:
-build/<version>/romfs-patches/<path> by default (romfs-patches-<style> with --prompts), and <out>/manifest.tsv (path, size, SHA-256 of the overlay, SHA-256 of the original). Run with .venv-py314.
-"""
 import argparse
 import compression.zstd as zstd
 import hashlib
@@ -53,8 +8,10 @@ import re
 import struct
 from pathlib import Path
 
+DESCRIPTION = ('Build the 60 fps RomFS overlay for NX2Saria 1.1.0, 1.2.1 or 1.4.3 (runtime/hle/romfs.c, '
+               'NX2SARIA_ROMFS_PATCHES).')
 root = Path(__file__).resolve().parents[1]
-ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+ap = argparse.ArgumentParser(description=DESCRIPTION)
 ap.add_argument('--version', choices=('v110', 'v121', 'v143'), default='v121')
 ap.add_argument('--romfs', type=Path, help='default build/extracted/<version>/romfs')
 ap.add_argument('--out', type=Path,
@@ -75,7 +32,6 @@ files = {f['path']: f for f in index['files']}
 
 
 def sarc_nodes(data):
-    """(name, node offset, absolute start, end) of every SARC member, in SFAT order."""
     assert data[:4] == b'SARC' and data[6:8] == b'\xff\xfe'
     header, size, start = struct.unpack_from('<HxxII', data, 4)
     assert size == len(data) and data[header:header + 4] == b'SFAT'
@@ -93,12 +49,10 @@ def sarc_nodes(data):
 
 
 def sarc_members(data):
-    """name -> (absolute start, end) of every SARC member."""
     return {name: (lo, hi) for name, _, lo, hi in sarc_nodes(data)}
 
 
 def flvi_keys(data, base):
-    """(pane name, absolute key offset, keys) of every FLVI (visibility) step track in the BFLAN at data[base:]."""
     assert data[base:base + 4] == b'FLAN' and data[base + 4:base + 6] == b'\xff\xfe'
     pos, out = base + 0x14, []
     for _ in range(struct.unpack_from('<H', data, base + 0x10)[0]):
@@ -124,9 +78,6 @@ def flvi_keys(data, base):
 
 
 def bntx_swap(data, base, pairs):
-    """Swap the image data of each (name, name) pair of textures in the BNTX at data[base:] (names without the ^
-    suffix). Both of a pair must have the same header from flags to layout (format, size, tiling, mips) and image
-    size, so the bytes of one are a valid image of the other."""
     assert data[base:base + 4] == b'BNTX' and data[base + 0x20:base + 0x24] == b'NX  '
     count, table = struct.unpack_from('<IQ', data, base + 0x24)
     found = {}
@@ -147,8 +98,6 @@ def bntx_swap(data, base, pairs):
 
 
 def bflyt_letters(data, base, end, swap):
-    """Swap the text of the one-letter text panes T_<letter>_<n> (A, B, X or Y) in the BFLYT at data[base:end] by
-    swap (letter -> letter); the names of the panes changed. Same length (one UTF-16 letter and its terminator)."""
     assert data[base:base + 4] == b'FLYT'
     pos, changed = base + struct.unpack_from('<H', data, base + 6)[0], []
     while pos + 8 <= end:
@@ -168,9 +117,6 @@ def bflyt_letters(data, base, end, swap):
 
 
 def msbt_letters(data, swap):
-    """Swap the one-letter messages labelled T_<letter>_<n> (A, B, X or Y) in the UTF-16 MSBT data (a bytearray) by
-    swap; the labels changed. The game sets a layout's text panes from the messages of the same name in
-    Mals/<language>/LayoutMsg/<layout>.msbt, over the text stored in the layout."""
     assert data[:8] == b'MsgStdBn' and data[0x0c] == 1, 'not a UTF-16 MSBT'
     sections, pos = {}, 0x20
     for _ in range(struct.unpack_from('<H', data, 0x0e)[0]):
@@ -198,8 +144,6 @@ def msbt_letters(data, swap):
 
 
 def sarc_replace(data, new):
-    """The SARC data with the members named in new (name -> bytes) replaced. The header, SFAT and SFNT stay; the
-    members are laid out again in their old order, each at an offset with at least the alignment its old one had."""
     start = struct.unpack_from('<I', data, 12)[0]
     out = bytearray(data[:start])
     for name, node, lo, hi in sorted(sarc_nodes(data), key=lambda n: n[2]):
@@ -212,17 +156,16 @@ def sarc_replace(data, new):
     return bytes(out)
 
 
-COMMON = {'v110': '110', 'v121': '110', 'v143': '140'}   # the version in the name of each game's Common archive
+COMMON = {'v110': '110', 'v121': '110', 'v143': '140'}
 ARCHIVE = f'UI/LayoutArchive/Common.Product.{COMMON[args.version]}.Nin_NX_NVN.blarc.zs'
 MEMBERS = {
     'anim/ShortCutBG_00_In.bflan': ('C_CaptureBG_00', 'C_CaptureClearBG_00', 'P_CaptureClearBG_00'),
     'anim/AutoBuilder_00_In.bflan': ('C_CaptureBG_00',),
 }
 KEY_TEXTURES = (('Nt_KeyTexA_00', 'Nt_KeyTexB_00'), ('Nt_KeyTexX_00', 'Nt_KeyTexY_00'))
-KEY_GLYPHS = ((0xE040, 0xE041), (0xE042, 0xE043))   # A B, X Y in scft/External.bfotf
-KEY_LETTERS = {'A': 'B', 'B': 'A', 'X': 'Y', 'Y': 'X'}   # the face-button diamond around the action prompt
+KEY_GLYPHS = ((0xE040, 0xE041), (0xE042, 0xE043))
+KEY_LETTERS = {'A': 'B', 'B': 'A', 'X': 'Y', 'Y': 'X'}
 FONTS = sorted(p for p in files if re.fullmatch(r'Font/Font(_\w+)?\.Nin_NX_NVN\.bfarc\.zs', p))
-# The message archive of each language: the newest version in the RomFS (Mals/USen.Product.121.sarc.zs on 1.2.1).
 MALS = {}
 for p in files:
     m = re.fullmatch(r'Mals/(\w+)\.Product\.(\d+)\.sarc\.zs', p)
@@ -230,13 +173,11 @@ for p in files:
         MALS[m[1]] = (int(m[2]), p)
 MALS = sorted(p for _, p in MALS.values())
 LAYOUT_MSG = 'LayoutMsg/DoCommand_00.msbt'
-# The resource size table (System/Resource/ResourceSizeTable.Product.<n>...rsizetable.zs, any <n>), likewise the
-# newest version in the RomFS.
 RESTBL = max((p for p in files if p.startswith('System/Resource/ResourceSizeTable.') and p.endswith('.rsizetable.zs')),
              key=lambda p: int((re.search(r'\.(\d+)\.', p) or [0, 0])[1]), default=None)
-by_position = args.prompts == 'xbox'   # the face buttons' prompts swapped to the labels (pad_layout = nintendo)
+by_position = args.prompts == 'xbox'
 pc = args.prompts == 'pc'
-letter_panes = by_position or pc      # the one-letter panes around the action prompt change
+letter_panes = by_position or pc
 if args.prompts:
     assert FONTS, 'no Font/Font*.Nin_NX_NVN.bfarc.zs in the RomFS'
     assert MALS or not letter_panes, 'no Mals/<language>.Product.<version>.sarc.zs in the RomFS'
@@ -289,10 +230,10 @@ if args.aspect:
 diff = [i for i in range(len(original)) if original[i] != blarc[i]]
 touched = [members[m] for m in (*MEMBERS, *layout)]
 assert diff and all(any(lo <= i < hi for lo, hi in touched) for i in diff), diff
-outputs = {ARCHIVE: bytes(blarc)}   # RomFS path -> new contents (before compression)
+outputs = {ARCHIVE: bytes(blarc)}
 prompts = None
 if args.prompts:
-    sizes = {ARCHIVE: len(original)}   # RomFS path -> size of the original's contents
+    sizes = {ARCHIVE: len(original)}
 
     def unpack(path):
         frame = zstd.get_frame_info(originals[path])
@@ -325,7 +266,7 @@ if args.prompts:
         assert 'blyt/DoCommand_00.bflyt' in letters, 'no letter panes in blyt/DoCommand_00.bflyt'
     hud = icons.bntx_redraw(blarc, bntx, icons.PC_HUD_TEXTURES if pc else icons.HUD_TEXTURES, drawn)
     outputs[ARCHIVE] = bytes(blarc)
-    fonts = {}   # each distinct font is drawn once (1.4.3's four archives hold the same one)
+    fonts = {}
     for path, bfarc in archives.items():
         lo, hi = sarc_members(bfarc)[icons.FONT]
         otf, key = icons.bfotf_decode(bfarc[lo:hi])
@@ -342,7 +283,6 @@ if args.prompts:
         mals[lo:hi] = msbt
         outputs[path] = bytes(mals)
         messages[path] = len(changed)
-    # An archive that grew needs as much more room in the resource size table, or the game stops when it loads it.
     grown = {path: len(data) - sizes[path] for path, data in outputs.items() if len(data) > sizes[path]}
     if grown:
         outputs[RESTBL] = icons.grow_restbl(unpack(RESTBL), grown)

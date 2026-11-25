@@ -1,13 +1,3 @@
-"""Build and run tests/sha256_paths_check.c with every clang this machine has: runtime/sha256.c's portable C and SHA-NI
-block functions give the FIPS 180-4 hashes and the same hash of every message, and its CPUID check finds the SHA
-extensions exactly where the processor reports them (/proc/cpuinfo's sha_ni on Linux; __builtin_cpu_supports where
-the compiler takes "sha", clang 19 and later). The compilers are the one the build uses (CC, MSYS2 UCRT64's clang on
-Windows, else clang on PATH) and, on Linux, each /usr/lib/llvm-*/bin/clang, so that a distribution's older default
-(Ubuntu 24.04's clang 18) is covered beside a newer one; each builds the file generic (as tools/make_game.py builds the
-runtime), for x86-64-v2 (tools/build_game.py --cpu v2) and, where this CPU runs it, x86-64-v3. No game files.
-
-Usage: sha256_paths_check.py
-"""
 import glob
 import os
 import re
@@ -27,7 +17,6 @@ def llvm_major(path):
 
 
 def compilers(env):
-    """(label, path) of each distinct clang to try, the build's own first; a CC that does not resolve fails."""
     found = []
     if os.environ.get('CC'):
         cc = shutil.which(os.environ['CC']) or os.environ['CC']
@@ -46,7 +35,6 @@ def compilers(env):
         if real in seen or not os.path.isfile(real):
             continue
         seen.add(real)
-        # On Windows only a MinGW clang builds the runtime; an MSVC-targeting one lacks its headers here
         if os.name == 'nt':
             target = subprocess.run([cc, '-dumpmachine'], capture_output=True, text=True, errors='replace').stdout
             if not target.strip().endswith('-windows-gnu'):
@@ -58,7 +46,6 @@ def compilers(env):
 
 
 def cpu_flags():
-    """The processor's feature flags from /proc/cpuinfo (Linux), None where there is none to read."""
     try:
         flags = re.search(r'^flags\s*:(.*)$', Path('/proc/cpuinfo').read_text(), re.M)
     except OSError:

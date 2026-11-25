@@ -1,15 +1,4 @@
 #!/usr/bin/env python3
-"""Fails when runtime code outside runtime/platform/ uses the Win32 API directly.
-
-Runtime code goes through runtime/platform/platform.h. The Win32 back ends of the window system are Win32 by design and
-are not scanned: files named *_win.c / *_win.cpp (runtime/ and runtime/ui/), whose SDL counterparts (*_sdl.*) serve
-other hosts. Nor are the branches of a shared file that only a Windows build compiles (windows_only_lines): a file
-with a portable path of its own may reach a Windows-only library there (the upscalers' DLLs, RivaTuner's shared
-memory). Any other file that still uses Win32 goes into ALLOWED with the reason; a file in ALLOWED that no longer
-matches is noted, so the entry gets removed.
-
-Usage: python tools/check_platform.py [--root DIR]   (DIR holds runtime/; default: the repository root)
-"""
 import argparse
 import bisect
 import re
@@ -18,7 +7,6 @@ from pathlib import Path
 
 from build_game import RUNTIME_DIRS
 
-# Per-file allowlist of shared files that still use Win32, with the reason. Empty: every shared file is portable.
 ALLOWED = {}
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*[<"](windows|winsock2|ws2tcpip|synchapi|memoryapi|processthreadsapi|'
@@ -51,7 +39,6 @@ CALL_RE = re.compile(r"\b(" + "|".join(CALLS) + r")\b")
 
 
 def strip(text):
-    """Blank comments and string literals, keeping line numbers."""
     def blank(m):
         return re.sub(r"[^\n]", " ", m.group(0))
     text = re.sub(r"/\*.*?\*/", blank, text, flags=re.S)
@@ -65,12 +52,7 @@ WIN_IFNOT = re.compile(r"#\s*(ifndef\s+_WIN32|if\s+!\s*defined\s*\(\s*_WIN32\s*\
 
 
 def windows_only_lines(code):
-    """The numbers (from 0) of the lines of code (comments blanked: strip) that only a Windows build compiles: the
-    branch of #ifdef _WIN32, #if defined(_WIN32) or #if _WIN32 up to its #else, #elif or #endif, the #else branch of
-    #ifndef _WIN32 or #if !defined(_WIN32), and whatever a conditional inside such a branch holds. The directives
-    themselves are not among them. Any other branch counts as compiled everywhere, #elif defined(_WIN32) and
-    #if defined(_WIN32) && X too: such a branch is scanned, which can fail the check but never lets a use through."""
-    lines, stack = set(), []   # stack: [kind ('win', 'notwin', 'other'), whether its open branch is Windows-only]
+    lines, stack = set(), []
     for n, line in enumerate(code.split("\n")):
         s = line.strip()
         m = DIRECTIVE.match(s)
@@ -93,13 +75,12 @@ def windows_only_lines(code):
 
 def scan(path):
     raw = path.read_text(encoding="utf-8", errors="replace")
-    code = strip(raw)   # the same lines as raw
+    code = strip(raw)
     skip = windows_only_lines(code)
     starts = [0] + [i + 1 for i, c in enumerate(raw) if c == "\n"]
 
     def guarded(pos):
         return bisect.bisect_right(starts, pos) - 1 in skip
-    # an include's match can begin on the line before it (^\s* takes that line's newline): its end is on its own line
     hits = [("include", m.group(0).strip()) for m in INCLUDE.finditer(raw) if not guarded(m.end() - 1)]
     hits += [("call", m.group(1)) for m in CALL_RE.finditer(code) if not guarded(m.start())]
     return hits

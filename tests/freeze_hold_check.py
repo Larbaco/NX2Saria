@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/freeze_hold_check.c: runtime/freeze_hold.h, which says when the freezing of idle guest regions
-waits (the backoff after slow freezes and its quiet time, and the hold around area loads).
-
-No GPU, no game files, any Python.
-
-Usage: freeze_hold_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

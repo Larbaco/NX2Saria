@@ -1,5 +1,3 @@
-// runtime/vk/vk_fg_stats.h: how frame generation's log line sorts the game's frames (gameplay, the menu, no scene) and
-// when it writes one. Built and run by tests/fg_stats_check.py; prints each failed check and exits 1 on any.
 #include <stdio.h>
 #include <string.h>
 
@@ -10,8 +8,6 @@ static int fails;
 
 #define MS 1000000ull
 
-// A session as the 0.12.1 Windows log had it: 4600 frames of title, movie and file menu, then gameplay at 60 fps,
-// every frame generated (two presents each), with the settings menu open for 300 frames in between.
 static void session(FgStats *s, char lines[][1024], int *nlines, uint64_t frames) {
     uint64_t presents = 0, t = 0;
     for (uint64_t f = 0; f < frames; f++, t += 16667000ull) {
@@ -30,7 +26,6 @@ static void session(FgStats *s, char lines[][1024], int *nlines, uint64_t frames
 static char lines[400][1024];
 
 int main(void) {
-    // the order of the reasons
     CHECK(fgs_classify(1, 1, 1, 1, 1, 0) == FGS_MENU, "the menu comes first, whatever the frame had");
     CHECK(fgs_classify(1, 0, 0, 0, 0, 0) == FGS_MENU, "the menu over no scene is the menu");
     CHECK(fgs_classify(0, 0, 0, 1, 1, 0) == FGS_NO_SCENE, "no scene and no inputs: no scene");
@@ -41,7 +36,6 @@ int main(void) {
     CHECK(fgs_classify(0, 1, 1, 1, 1, 1) == FGS_CUT, "a history start");
     CHECK(fgs_classify(0, 1, 1, 1, 1, 0) == FGS_GENERATED, "generated");
 
-    // nothing due before a period's worth
     FgStats s;
     memset(&s, 0, sizeof s);
     char buf[1024];
@@ -55,13 +49,11 @@ int main(void) {
           "presents over the period's time: %s", buf);
     CHECK(fgs_line(&s, "fg", 0, 0, buf, sizeof buf) == -1, "the next period starts empty");
 
-    // a long stretch without a scene (a movie) still reports, after FGS_IDLE frames
     memset(&s, 0, sizeof s);
     for (int i = 0; i < FGS_IDLE; i++) fgs_count(&s, FGS_NO_SCENE, (uint64_t)i, (uint64_t)i * 16 * MS);
     CHECK(fgs_line(&s, "fsr3fg", FGS_IDLE, 60000 * MS, buf, sizeof buf) == 1, "a line after %d frames of any kind", FGS_IDLE);
     CHECK(strstr(buf, "fsr3fg: 0 gameplay frames: 0 generated (0.0%)") && strstr(buf, "3600 without a scene"), "%s", buf);
 
-    // the 0.12.1 session: the run's share is the gameplay's, the title and the menu are apart
     memset(&s, 0, sizeof s);
     int n = 0;
     session(&s, lines, &n, 21600);
@@ -77,7 +69,6 @@ int main(void) {
     CHECK(strstr(last, "GPU 2.00 ms a generated frame") != NULL, "GPU time: %s", last);
     CHECK(strstr(last, "the run: ") != NULL, "the run's totals: %s", last);
 
-    // a long session: every line up to FGS_LINES, then one period in FGS_EVERY, the counts carried in the totals
     memset(&s, 0, sizeof s);
     int written = 0;
     uint64_t t = 0;
@@ -90,14 +81,12 @@ int main(void) {
           "%d lines written for %llu periods", written, (unsigned long long)s.periods);
     CHECK(s.total[FGS_GENERATED] == (uint64_t)FGS_PERIOD * (FGS_LINES + 10 * FGS_EVERY), "the totals keep every frame");
 
-    // a new swapchain counts its presents from 0: the period's presents and time start again there, not at 0
     memset(&s, 0, sizeof s);
     for (int i = 0; i < 300; i++) fgs_count(&s, FGS_GENERATED, 5000 + 2 * (uint64_t)i, (uint64_t)i * 16 * MS);
     for (int i = 0; i < 300; i++) fgs_count(&s, FGS_GENERATED, 2 * (uint64_t)i, 60000 * MS + (uint64_t)i * 16 * MS);
     CHECK(fgs_line(&s, "fg", 600, 60000 * MS + 300 * 16 * MS, buf, sizeof buf) == 1, "a line at 600");
     CHECK(strstr(buf, "600 presents in 4.8 s") != NULL, "the presents since the new swapchain: %s", buf);
 
-    // GPU times out of range are not taken
     memset(&s, 0, sizeof s);
     fgs_gpu(&s, 0), fgs_gpu(&s, -1), fgs_gpu(&s, 5000), fgs_gpu(&s, 1.5);
     CHECK(s.gpu_n == 1 && s.gpu_ms == 1.5, "GPU samples %llu, %.2f ms", (unsigned long long)s.gpu_n, s.gpu_ms);

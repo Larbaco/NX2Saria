@@ -1,16 +1,5 @@
 # needs: game, exe, py:zstandard
 # args: --exe {exe} --version v121
-"""The mods folder served as RomFS overlays (runtime/hle/romfs.c, runtime/patches/mods.c): load order, added files, case, Unicode.
-
-    .venv\\Scripts\\python tests\\mods_romfs_check.py --exe build\\v121-<tag>\\nx2saria.exe --version v121
-
-Builds a mods folder in a temp directory with files of its own bytes at real RomFS paths (from
-build/extracted/<version>/romfs/index.json), runs `nx2saria.exe --probe-fs` on it and reads the `mods:` lines of the log.
---probe-fs compares the bytes it reads through the RomFS with every overlay file, so a wrong winner fails it too.
-A second folder checks the merged resource size table the start writes to the profile (runtime/hle/romfs.c
-restbl_overlay): a grown file's entry, an added file's, a shipped table's and another version's table's.
-Needs the extracted RomFS of the version.
-"""
 import argparse
 import json
 import os
@@ -22,6 +11,9 @@ import zlib
 from pathlib import Path
 
 import zstandard
+
+DESCRIPTION = ('The mods folder served as RomFS overlays (runtime/hle/romfs.c, runtime/patches/mods.c): load order, added '
+               'files, case, Unicode.')
 
 ROOT = Path(__file__).resolve().parents[1]
 UNI = 'Ж мод'
@@ -46,7 +38,6 @@ def put(root, mod, rel, data, part='romfs', times=64):
 
 
 def run(exe, mods, order, disabled=''):
-    """--probe-fs with a profile of its own beside mods (the merged resource size table is written there)."""
     env = dict(os.environ, NX2SARIA_MODS_DIR=str(mods), NX2SARIA_MODS_ORDER=order, NX2SARIA_MODS_DISABLED=disabled)
     profile = Path(mods).parent / 'profile'
     r = subprocess.run([str(exe), '--profile', str(profile), '--probe-fs'], env=env, capture_output=True, timeout=600)
@@ -54,8 +45,6 @@ def run(exe, mods, order, disabled=''):
     return r.returncode, log
 
 
-# ---- the resource size table (RESTBL: "RESTBL", u32 version, u32 name length, u32 hashed count, u32 named count,
-# {u32 crc32, u32 size} sorted, then {char[name length], u32 size})
 def restbl_read(data):
     raw = zstandard.ZstdDecompressor().decompress(data)
     assert raw[:6] == b'RESTBL'
@@ -71,7 +60,6 @@ def restbl_read(data):
 
 
 def restbl_pack(entries, raw):
-    """raw (a table) with the sizes of its hashed entries set from entries (crc32 -> size, existing hashes only)."""
     out = bytearray(raw)
     hashed = struct.unpack_from('<I', raw, 14)[0]
     for i in range(hashed):
@@ -104,7 +92,7 @@ def restbl_case(exe, version, check, tmp):
     put(mods, 'Grow', grown, zs.compress(bytes(was + 100000)), times=1)
     put(mods, 'Grow', 'Pack/Actor/ModTest_Added.pack.zs', zs.compress(bytes(50000)), times=1)
     put(mods, 'Ships', table_path, restbl_pack({key(shipped_key): game[key(shipped_key)] + 12345}, game_raw), times=1)
-    put(mods, 'Old', old_key, b'old', times=1)   # smaller than the original: only its table raises it
+    put(mods, 'Old', old_key, b'old', times=1)
     put(mods, 'Old', table_path.replace('.Product.', '.Product.999', 1) if '.Product.' in table_path else
         'System/Resource/ResourceSizeTable.Product.999.Nin_NX_NVN.rsizetable.zs',
         restbl_pack({key(old_key): game[key(old_key)] + 7777, key(old_other): game[key(old_other)] + 5555},
@@ -128,7 +116,7 @@ def restbl_case(exe, version, check, tmp):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--exe', type=Path, required=True)
     ap.add_argument('--version', choices=('v121', 'v143'), required=True)
     args = ap.parse_args()
@@ -152,9 +140,8 @@ def main():
         put(mods, 'Low', 'New/added.bin', b'mod-E')
         put(mods, 'Case', p1case, b'mod-F')
         put(mods, UNI, p2, b'mod-G')
-        # a file of another game version's (no RomFS has a Product.999 table): counted, never served
         put(mods, 'Low', 'System/Resource/ResourceSizeTable.Product.999.rsizetable.zs', b'mod-H')
-        put(mods, 'Lite', 'Lite/added.bin', b'mod-I', part='romfslite')   # a mod manager's romfslite folder
+        put(mods, 'Lite', 'Lite/added.bin', b'mod-I', part='romfslite')
 
         code, log = run(args.exe, mods, f'Top|Low|{UNI}|Case')
         check(code == 0, 'probe-fs passes with five mods (served bytes equal the winners\' files)', log)

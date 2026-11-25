@@ -1,71 +1,44 @@
-// Guest address -> host function lookup for indirect branches (rt_dispatch, declared in cpu.h).
-//
-// One flat table covers every module's code range: slot (pc - lo) >> 2 holds the host function for a guest
-// function start, as a 32-bit offset from an anchor address. Lookup is one range check and one load. The table is
-// built once by rt_dispatch_init and never written again, so threads read it without locks.
 #pragma once
 #include <stdbool.h>
 #include <stdint.h>
 
 #include "cpu.h"
 
-// A lifted module: its place in the guest layout and the generator's sorted function table.
 typedef struct RtModule {
     const char *name;
-    uint64_t base, size;      // guest image (layout.h MOD_<NAME>_BASE / _SIZE)
-    const uint64_t *addrs;    // <mod>_fn_addrs: guest function starts, strictly ascending
-    const GuestFn *fns;       // <mod>_fn_ptrs: the lifted function for each start
-    uint64_t count;           // <mod>_fn_count
+    uint64_t base, size;
+    const uint64_t *addrs;
+    const GuestFn *fns;
+    uint64_t count;
 } RtModule;
 
-// The module glue that tools/build_game.py writes for each build (build/<version>/modules.c), from layout.json and
-// layout.h: every module of the layout, and the modules linked into this executable.
 typedef struct RtLayoutEntry { const char *name; uint64_t base, size; } RtLayoutEntry;
 extern const RtLayoutEntry rt_layout[];
 extern const int rt_layout_count;
 int rt_linked_modules(RtModule *out, int max);
 
-// Register a host function at a guest address outside every module (HLE entry points). Allowed only before
-// rt_dispatch_init; the registry is fixed afterwards.
 void rt_register_host(uint64_t addr, GuestFn fn);
 
-// Build the table from the modules (kept by pointer; they must outlive the process). Call it once, before any guest
-// thread starts: thread creation publishes the table to the threads. Fatal on a malformed table:
-// unsorted or duplicate starts, a start outside its module, overlapping modules, host code spread over 4 GiB.
 void rt_dispatch_init(const RtModule *mods, int count);
 
-// The host function for a guest address, or NULL when nothing is there. Does not run guest code.
 GuestFn rt_dispatch_lookup(uint64_t pc);
 
-// "0x7000001234 (main+0x1234)" for a guest address inside a module, else the bare address. Returns buf.
 const char *rt_guest_name(uint64_t pc, char *buf, int size);
 
 typedef struct RtDispatchStats {
-    uint64_t lo, hi;          // guest range the table covers
-    uint64_t slots;           // (hi - lo) / 4
-    uint64_t table_bytes;     // reserved for the table
-    uint64_t functions;       // filled slots
-    uint64_t host_fns;        // rt_register_host entries
+    uint64_t lo, hi;
+    uint64_t slots;
+    uint64_t table_bytes;
+    uint64_t functions;
+    uint64_t host_fns;
 } RtDispatchStats;
 RtDispatchStats rt_dispatch_stats(void);
 
-// Runtime fatal error: message to stderr, then exit. Used by the dispatcher and the stubs.
 void rt_fatal(const char *fmt, ...) __attribute__((noreturn, format(printf, 1, 2)));
-// The same end with an exit code of its own, for a failure that a script or the launcher tells from the others by it
-// (vk_device.c vk_device_lost_check ends with RT_LOST_EXIT). rt_fatal ends with RT_FATAL_EXIT; 71 is the crash report's
-// (main.c crash_handler).
 #define RT_FATAL_EXIT 70
 #define RT_LOST_EXIT 72
 void rt_fatal_code(int code, const char *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));
-// Lines of context for a fatal error's report, which rt_fatal and the crash report (main.c crash_handler) write after
-// their own: fn logs one with rt_log. It runs on the failing thread, which may hold any lock, so it reads only what
-// needs none. At most four; adding one twice keeps one. rt_fatal_notes runs them, once per process.
 void rt_fatal_note_add(void (*fn)(void));
 void rt_fatal_notes(void);
-// The one end of a failed run: the fatal error (rt_fatal) and the crash report (main.c crash_handler) call it first,
-// with the code they end the process with. 1 for the first caller, which reports and ends the process; 0 for that
-// thread again (a failure inside its own report), which ends at once with its code; any other thread waits, logging
-// nothing, until the process ends, and after 30 s ends it with the first caller's code.
 int rt_ending_enter(int code);
-// HD rumble stopped before a failed run ends, on a thread of its own that the caller waits for 300 ms at most.
 void rt_rumble_stop_bounded(void);

@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/dlssg_device_check.c: runtime/vk/vk_dlssg_device.h, which card counts as usable while DLSS Frame
-Generation's interposer is in use and how the device is made when the interposer cannot make it (vk_device.c
-pick_device, vk_dlssg.c vk_dlssg_create_device), with stand-ins for the interposer and the loader.
-
-No GPU, no game files, any Python.
-
-Usage: dlssg_device_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

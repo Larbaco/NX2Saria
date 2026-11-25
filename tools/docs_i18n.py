@@ -1,31 +1,3 @@
-"""Check the repository's Markdown links and keep the translated player docs in step with their English sources.
-
-docs/translating.md describes the layout. In short: English is the source; README.md has translations at the root as
-README.<lang>.md, and docs/<name>.md has them as docs/<lang>/<name>.md. Each translation starts with a header line
-
-    <!-- translation: lang=pt-BR source=docs/install.md source-hash=<sha1> reviewed=no -->
-
-where source-hash is the SHA-1 of the English file the translation was made from, with that file's language block
-left out (adding a language changes the block, not what there is to translate). Every page of a translated
-set (the source and its translations) carries a language block between <!-- languages --> and <!-- /languages -->,
-written by this tool: the links to the other languages and, in a translation, the notice that the English version
-prevails.
-
-Commands:
-    check [--strict]        fail on a broken relative link or anchor in any Markdown file, a bad translation header,
-                            a language block that differs from the generated one, or a translation that links to
-                            the English page of a doc it has in its own language; warn when a translation is older
-                            than its source (--strict fails then too). The content guard workflow runs it.
-    status                  each translated source and language: ok, stale or missing, and whether it was reviewed.
-    diff <translation>      what changed in the English source since the translation was made (looks for the
-                            recorded version in the source's git history).
-    stamp <translation>...  record the source's current hash in the header after the translation was brought up to
-                            date; --reviewed also marks it reviewed by a speaker of its language.
-    bars [--write]          show (or write) the language blocks that differ from the generated ones.
-
-Standard library only, so it runs before any environment is set up.
-"""
-
 import argparse
 import difflib
 import hashlib
@@ -36,9 +8,11 @@ import sys
 import unicodedata
 from pathlib import Path
 
+DESCRIPTION = ("Check the repository's Markdown links and keep the translated player docs in step with their "
+               'English sources.')
+
 ROOT = Path(__file__).resolve().parent.parent
 
-# Language codes are menu_lang's (runtime/cfg/cfg.c); the names are those the menu shows (runtime/ui/ui_text.c LANG_NAMES).
 LANGS = {
     'en': 'English',
     'pt-BR': 'Português (Brasil)',
@@ -48,7 +22,6 @@ LANGS = {
 
 ISSUES = 'https://github.com/Larbaco/NX2Saria/issues'
 
-# The notices of a translation's language block. {src} is the relative link to the English page.
 NOTICE = {
     'pt-BR': 'Tradução da [versão em inglês]({src}). Se as duas divergirem, vale a versão em inglês.',
     'ru': 'Перевод [английской версии]({src}). Если они расходятся, действует английская версия.',
@@ -61,7 +34,6 @@ UNREVIEWED = {
     'zh-Hans': f'本译文尚未经母语者审校。欢迎在[问题跟踪器]({ISSUES})中提出修改。',
 }
 
-# Markdown that is not ours: pinned checkouts, vendored and third-party code.
 SKIP_PREFIXES = ('refs/', 'runtime/third_party/', 'tools/vendor/', 'build/', 'generated/')
 ENGLISH_ONLY = ('docs/code/',)
 
@@ -69,9 +41,9 @@ HEADER_RE = re.compile(r'<!-- translation: lang=(\S+) source=(\S+) source-hash=(
 BLOCK_RE = re.compile(r'<!-- languages -->\n(.*?)<!-- /languages -->\n', re.S)
 FENCE_RE = re.compile(r'^(```|~~~).*?^\1[^\n]*$', re.S | re.M)
 LINK_RES = (
-    re.compile(r'\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)'),     # [text](target) and ![alt](target)
-    re.compile(r'\b(?:href|src)="([^"]+)"'),                   # HTML links and images
-    re.compile(r'^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)', re.M),  # reference definitions
+    re.compile(r'\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)'),
+    re.compile(r'\b(?:href|src)="([^"]+)"'),
+    re.compile(r'^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s|$)', re.M),
 )
 SCHEME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9+.-]*:')
 
@@ -81,12 +53,10 @@ def rel(p: Path) -> str:
 
 
 def without_block(text: str) -> str:
-    """The text with its language block and the blank lines after it left out: the text before the block existed."""
     return re.sub(BLOCK_RE.pattern + r'\n*', '', text, count=1, flags=BLOCK_RE.flags)
 
 
 def source_hash(text: str) -> str:
-    """What a translation records of its source: the SHA-1 of the source without its language block."""
     return hashlib.sha1(without_block(text).encode('utf-8')).hexdigest()
 
 
@@ -96,14 +66,9 @@ def markdown_files() -> list[Path]:
     return sorted(ROOT / f for f in out if f and not f.startswith(SKIP_PREFIXES) and (ROOT / f).is_file())
 
 
-# ---------------------------------------------------------------------------------------------------------------
-# Anchors
-
 def slug(heading: str) -> str:
-    """GitHub's anchor for a heading: the rendered text lower-cased, with everything but letters, marks, numbers,
-    connector punctuation, spaces and hyphens taken out, and spaces turned into hyphens."""
-    text = re.sub(r'!?\[([^\]]*)\]\([^)]*\)', r'\1', heading)      # a link keeps its text
-    text = re.sub(r'<[^>]+>', '', text)                            # HTML tags
+    text = re.sub(r'!?\[([^\]]*)\]\([^)]*\)', r'\1', heading)
+    text = re.sub(r'<[^>]+>', '', text)
     text = text.strip().lower()
     kept = ''.join(c for c in text if c in ' -' or unicodedata.category(c)[0] in 'LMN' or
                    unicodedata.category(c) == 'Pc')
@@ -132,7 +97,7 @@ def anchors(path: Path) -> set[str]:
 
 def links(text: str) -> list[str]:
     text = FENCE_RE.sub('', text)
-    text = re.sub(r'`[^`\n]*`', '', text)          # code spans
+    text = re.sub(r'`[^`\n]*`', '', text)
     text = re.sub(r'<!--.*?-->', '', text, flags=re.S)
     found = []
     for r in LINK_RES:
@@ -146,9 +111,6 @@ def resolve(page: Path, target: str) -> tuple[Path, str]:
     return dest, anchor
 
 
-# ---------------------------------------------------------------------------------------------------------------
-# Translations
-
 class Translation:
     def __init__(self, path: Path, lang: str, source: Path, hash_: str, reviewed: bool):
         self.path, self.lang, self.source, self.hash, self.reviewed = path, lang, source, hash_, reviewed
@@ -158,14 +120,12 @@ class Translation:
 
 
 def translation_path(source: Path, lang: str) -> Path:
-    """Where the translation of an English page into lang lives."""
     if source.parent == ROOT:
         return ROOT / f'{source.stem}.{lang}.md'
     return source.parent / lang / source.name
 
 
 def page_language(path: Path) -> str | None:
-    """The language a path names as a translation (README.<lang>.md, docs/<lang>/x.md), or None for English."""
     if path.parent == ROOT:
         m = re.match(r'^[^.]+\.(.+)\.md$', path.name)
         return m.group(1) if m and m.group(1) in LANGS else None
@@ -208,9 +168,8 @@ def link_to(page: Path, target: Path) -> str:
 
 
 def language_block(page: Path, source: Path, versions: dict[str, Path], tr: Translation | None) -> str:
-    """The text between the language markers of a page of a translated set."""
     lang = tr.lang if tr else 'en'
-    html = source.parent == ROOT          # the READMEs centre it in HTML, as their header is
+    html = source.parent == ROOT
     items = []
     for code, name in LANGS.items():
         if code not in versions:
@@ -259,9 +218,6 @@ def with_block(path: Path, text: str, block: str) -> str:
     return '\n'.join(lines[:at] + [wrapped.rstrip('\n'), ''] + lines[at:])
 
 
-# ---------------------------------------------------------------------------------------------------------------
-# Commands
-
 def cmd_check(strict: bool) -> int:
     errors: list[str] = []
     warnings: list[str] = []
@@ -272,7 +228,7 @@ def cmd_check(strict: bool) -> int:
     for page in files:
         text = page.read_text(encoding='utf-8')
         lang = page_language(page)
-        body = BLOCK_RE.sub('', text)     # the language block links to the other languages on purpose
+        body = BLOCK_RE.sub('', text)
         for target in links(text):
             if SCHEME_RE.match(target) or target.startswith('//'):
                 continue
@@ -396,7 +352,7 @@ def cmd_bars(write: bool) -> int:
 def main() -> int:
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding='utf-8')
-    ap = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     sub = ap.add_subparsers(dest='cmd', required=True)
     p = sub.add_parser('check')
     p.add_argument('--strict', action='store_true', help='fail on a stale translation too')

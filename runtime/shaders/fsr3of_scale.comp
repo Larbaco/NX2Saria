@@ -20,9 +20,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 
-// Modified: compiled by tools/build_shaders.py into runtime/fsr3of_scale_spv.h for runtime/vk_fsr3fg.c,
-// with the options of fsr3fg_options.h.
-
 #version 450
 
 #extension GL_GOOGLE_include_directive : require
@@ -44,25 +41,25 @@
 
 #ifndef FFX_OPTICALFLOW_BLOCK_SIZE
 #define FFX_OPTICALFLOW_BLOCK_SIZE 8
-#endif // #ifndef FFX_OPTICALFLOW_BLOCK_SIZE
+#endif
 
 #ifndef FFX_OPTICALFLOW_THREAD_GROUP_WIDTH
 #define FFX_OPTICALFLOW_THREAD_GROUP_WIDTH 4
-#endif // #ifndef FFX_OPTICALFLOW_THREAD_GROUP_WIDTH
+#endif
 
 #ifndef FFX_OPTICALFLOW_THREAD_GROUP_HEIGHT
 #define FFX_OPTICALFLOW_THREAD_GROUP_HEIGHT 4
-#endif // #ifndef FFX_OPTICALFLOW_THREAD_GROUP_HEIGHT
+#endif
 
 #ifndef FFX_OPTICALFLOW_THREAD_GROUP_DEPTH
 #define FFX_OPTICALFLOW_THREAD_GROUP_DEPTH 4
-#endif // #ifndef FFX_OPTICALFLOW_THREAD_GROUP_DEPTH
+#endif
 
 #include "opticalflow/ffx_opticalflow_scale_optical_flow_advanced_v5.h"
 
 #ifndef FFX_OPTICALFLOW_NUM_THREADS
 #define FFX_OPTICALFLOW_NUM_THREADS layout (local_size_x = FFX_OPTICALFLOW_THREAD_GROUP_WIDTH, local_size_y = FFX_OPTICALFLOW_THREAD_GROUP_HEIGHT, local_size_z = FFX_OPTICALFLOW_THREAD_GROUP_DEPTH) in;
-#endif // #ifndef FFX_OPTICALFLOW_NUM_THREADS
+#endif
 
 FFX_OPTICALFLOW_NUM_THREADS
 void main()

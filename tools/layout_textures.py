@@ -1,4 +1,3 @@
-"""Decode and composite the static art used by the layout preview."""
 import ctypes
 import hashlib
 import importlib
@@ -28,13 +27,11 @@ ARCHIVE_DIR = 'UI/Layout2Archive/'
 
 
 def decoder():
-    """Import the BNTX decoder independently of the extracted-RomFS reader's Python 3.14 dependency."""
     try:
         return importlib.import_module('ui_textures')
     except ModuleNotFoundError as e:
         if e.name != 'compression':
             raise
-    # The preview supplies decompressed bytes through layout_dump.unpack_zs. Only Romfs uses this import.
     compression = ModuleType('compression')
     compression.zstd = None
     sys.modules['compression'] = compression
@@ -45,14 +42,13 @@ def decoder():
 
 
 def astc_library(cache):
-    """Build the standalone CPU decoder on demand, without building or loading the game."""
     src = ld.ROOT / 'runtime' / 'gfx' / 'tex_astc.c'
     library = cache / ('astc.dll' if os.name == 'nt' else 'astc.so')
     if not library.is_file() or library.stat().st_mtime < src.stat().st_mtime:
         cc = shutil.which('clang') or shutil.which('cc')
         if not cc:
             raise ld.FormatError('decoding ASTC textures needs clang or a C compiler')
-        import build_game   # the runtime's include folders: tex.h includes headers from several
+        import build_game
         includes = [*build_game.runtime_include_dirs(ld.ROOT / 'runtime'), ld.ROOT / 'toolchain' / 'vma',
                     Path(cc).resolve().parents[1] / 'include' / 'vma']
         if path := os.environ.get('NX2SARIA_VMA_INCLUDE'):
@@ -114,7 +110,6 @@ class TextureStore:
         return self.images[key]
 
     def decode(self, archive, name):
-        # A loose .blarc can be renamed. Common also supplies shared art used by other archives.
         for label in dict.fromkeys((archive, 'Common')):
             if label not in self.paths:
                 continue
@@ -156,7 +151,6 @@ def save_panels(path, panels, gap):
 
 
 def uv_of(binding, u, v):
-    """Map quad coordinates to texture coordinates around the texture centre."""
     sx, sy = binding.scale
     tx, ty = binding.translate
     c, s = math.cos(binding.rotation), math.sin(binding.rotation)
@@ -174,7 +168,6 @@ def texel_indices(i, length, wrap):
 
 
 def sample(texture, binding, u, v):
-    """Bilinear filtering in texel-centre coordinates, with the sampler's wrap modes."""
     h, w = texture.shape[:2]
     u, v = uv_of(binding, u, v)
     x, y = u * w - 0.5, v * h - 0.5
@@ -199,7 +192,6 @@ def bounds(quad):
 
 
 def blend(dest, source):
-    """Source-over for straight RGBA bytes."""
     if Image is not None:
         dest[:] = np.asarray(Image.alpha_composite(Image.fromarray(dest), Image.fromarray(source)))
         return
@@ -213,7 +205,6 @@ def blend(dest, source):
 
 
 def paint(canvas, quad, region, tint, texture, binding, alpha):
-    """Draw only the part of the quad inside the active scissor and output picture."""
     l, t, r, b = region
     inverse = np.linalg.inv(quad)
     x = np.arange(l, r, dtype=np.float32)[None, :] + 0.5
@@ -225,7 +216,6 @@ def paint(canvas, quad, region, tint, texture, binding, alpha):
     else:
         pixels = sample(texture, binding, u, v)
     colour = np.clip(tint, 0, 1).astype(np.float32)
-    # Palette RGB values are linear; decoded colour textures and the output PNG are display encoded.
     colour[:3] = np.where(colour[:3] < 0.0031308, colour[:3] * 12.92, 1.055 * colour[:3] ** (1 / 2.4) - 0.055)
     pixels *= colour
     pixels[..., 3] *= inside * alpha
@@ -302,7 +292,6 @@ class Renderer:
 
     def draw_picture(self, layout, picture, quad, region, alpha, state, maps):
         material = picture.material
-        # Multi-texture windows use a shader to combine their fills and edges.
         if picture.window and len(material.textures) > 1:
             return
         colour = tuple(state.get((ld.COLOUR, 4 * i), value) for i, value in enumerate(material.colour))

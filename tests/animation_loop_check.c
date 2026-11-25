@@ -1,4 +1,3 @@
-// The single-frame loop patch, with the two clock paths and draw path pointing at test entries.
 #include <assert.h>
 #include <stdio.h>
 
@@ -62,7 +61,6 @@ int main(void) {
     animation_loop_host(c);
     assert(c->v[1] == fb_s(3.0f) && c->v[0] == fb_s(3.0f));
 
-    // A descriptor outside its own array cannot advance a fallback slot through the patch.
     ST16(addr(secondary) + 0x1a, 2);
     animation_loop_host(c);
     assert(c->v[1] == fb_s(1.5f) && clock_calls == 2);
@@ -93,7 +91,7 @@ int main(void) {
     ST16(addr(primary) + 0x18, 0);
     verify_pose(c, 0.75f, 0.75f);
     desc_init(addr(primary));
-    verify_pose(c, 1.0f, 1.0f);   // the fractional pose is the only part we change
+    verify_pose(c, 1.0f, 1.0f);
     render_step = 1.0f;
     verify_pose(c, 0.75f, 0.75f);
     puts("animation_loop_check: clock and pose keep whole updates for verified single-frame loops");

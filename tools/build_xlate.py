@@ -1,21 +1,3 @@
-"""Build the shader translator: build/xlate/nx2navi_xlate.exe (vendored translator 1.3.2 + patches, NativeAOT, SPIR-V for Vulkan).
-
-Copies tools/vendor/ryujinx to build/xlate/ryujinx, applies tools/xlate/patches/*.patch there (tools/vendor stays
-byte-identical), then runs `dotnet publish`. Needs the .NET 10 SDK, the MSVC build
-tools and vswhere.exe (docs/building.md). Run with .venv. On Linux it builds build/xlate/nx2navi_xlate for linux-x64, which
-NativeAOT links with the system's clang (no MSVC); NativeAOT builds for the OS it runs on only.
-
-Next to the exe it writes nx2navi_xlate.id: the translator identity, a sha256 over everything the build reads (this script,
-Program.cs, the csproj, the patches, the vendor tree). runtime/gfx/gfx_shader.c puts it into every shader cache key, so a
-translator change re-keys the cache without a hand-made KEY_VERSION bump. Only a build writes it: the packaging scripts
-(make_launcher.py, make_appimage.py, make_kit.py) take a translator whose .id names this checkout's
-sources for one built from them (check_built), so no option writes an .id beside an exe it did not build.
-
-  python tools/build_xlate.py [--out DIR]
-
---out builds into DIR instead of build/xlate (a task build dir: nx2saria.exe takes the translator next to it).
-"""
-
 import argparse
 import hashlib
 import os
@@ -24,6 +6,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+
+DESCRIPTION = ("Build the shader translator: build/xlate/nx2navi_xlate.exe (vendored translator 1.3.2 + "
+               "patches, NativeAOT, SPIR-V for Vulkan).")
 
 ROOT = Path(__file__).resolve().parent.parent
 VENDOR = ROOT / "tools" / "vendor" / "ryujinx"
@@ -36,8 +21,6 @@ VSWHERE_DIR = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"
 
 
 def tree_hashes(base: Path) -> dict[str, str]:
-    """Hash every source file; src/*/obj and src/*/bin are build output (an IDE restore writes them, the vendor
-    .gitignore ignores them and prepare_sources() drops them), so they are left out."""
     def build_output(rel: Path) -> bool:
         return len(rel.parts) > 2 and rel.parts[0] == "src" and rel.parts[2] in ("obj", "bin")
 
@@ -49,17 +32,14 @@ def tree_hashes(base: Path) -> dict[str, str]:
 
 
 def mng_pin() -> str:
-    """The MacNativeGames commit tools/fetch_refs.sh pins."""
     for line in (ROOT / "tools" / "fetch_refs.sh").read_text(encoding="utf-8").splitlines():
         f = line.split()
-        if len(f) >= 4 and f[:2] == ["fetch", "MacNativeGames"]:   # a fifth word asks for the history
+        if len(f) >= 4 and f[:2] == ["fetch", "MacNativeGames"]:
             return f[3]
     sys.exit("tools/fetch_refs.sh pins no MacNativeGames commit")
 
 
 def pinned_blobs() -> dict[str, str]:
-    """Git blob ids of vendor/ryujinx in the refs/ checkout at the pinned commit. The checkout itself may be newer than the pin or
-    carry CRLF line ends (core.autocrlf), so its files are not compared."""
     out = subprocess.run(["git", "-C", str(MNG_VENDOR.parent.parent), "ls-tree", "-r", mng_pin(), "vendor/ryujinx"],
                          capture_output=True, text=True)
     if out.returncode != 0:
@@ -72,7 +52,6 @@ def pinned_blobs() -> dict[str, str]:
 
 
 def blob_ids(base: Path) -> dict[str, str]:
-    """Git blob ids of the source files tree_hashes() hashes."""
     ids = {}
     for rel in tree_hashes(base):
         data = (base / rel).read_bytes()
@@ -81,7 +60,6 @@ def blob_ids(base: Path) -> dict[str, str]:
 
 
 def verify_vendor() -> None:
-    """tools/vendor/ryujinx must be byte-identical to the refs/ checkout's copy at the pinned commit (when present)."""
     if not MNG_VENDOR.is_dir():
         print("refs/MacNativeGames missing: vendor comparison skipped")
         return
@@ -102,10 +80,6 @@ def prepare_sources() -> Path:
     patches = sorted((XLATE / "patches").glob("*.patch"))
     if len(patches) != 40:
         sys.exit(f"expected 40 patches, found {len(patches)}")
-    # build/xlate is inside this checkout, and git inside a repository reads a "diff --git" patch's paths from the
-    # repository's top: those hunks fall outside the directory handed to --directory, git skips every file of the patch
-    # and still exits 0. GIT_CEILING_DIRECTORIES stops git from walking up to the checkout, so it reads each patch as it
-    # would outside a repository, and a "Skipped patch" line fails the build (including 0021's PRMT implementation).
     env = dict(os.environ, GIT_CEILING_DIRECTORIES=str(BUILD.parent), LC_ALL="C")
     for patch in patches:
         for extra in (["--check"], []):
@@ -121,13 +95,10 @@ def prepare_sources() -> Path:
     return src
 
 
-# What the identity covers besides the sources: the publish settings in main(). Change it with them.
 BUILD_SETTINGS = "PublishAot=true InvariantGlobalization=true Release"
 
 
 def strip_code(text: str, xml: bool = False) -> str:
-    """C# (or MSBuild XML) without its comments, trailing spaces and blank lines, string and character literals kept:
-    what the compiler sees, so that a comment-only edit keeps the identity (and so every shader cache key)."""
     out, i, n = [], 0, len(text)
     while i < n:
         c = text[i]
@@ -168,7 +139,6 @@ def strip_code(text: str, xml: bool = False) -> str:
 
 
 def code_digest(path: Path) -> str:
-    """sha256 of a file, comments left out of C# and MSBuild files (strip_code)."""
     data = path.read_bytes()
     if path.suffix in (".cs", ".csproj", ".props", ".targets"):
         data = strip_code(data.decode("utf-8-sig", errors="replace"), xml=path.suffix != ".cs").encode()
@@ -176,9 +146,6 @@ def code_digest(path: Path) -> str:
 
 
 def identity() -> str:
-    """sha256 over what the translator is built from, comments left out: the patched tree as the build compiles it
-    (build/xlate/ryujinx from prepare_sources), tools/xlate's own sources and the publish settings. Without a prepared
-    tree, the vendor tree and the patch files as they are."""
     h = hashlib.sha256()
     h.update(f"settings\0{BUILD_SETTINGS}\n".encode())
     for name in ("Program.cs", "AmpereLowering.cs", "MeshSpirv.cs", "nx2navi_xlate.csproj"):
@@ -204,10 +171,6 @@ def write_identity(exe: Path) -> None:
 
 
 def source_identity() -> str:
-    """The identity a translator built from this checkout's sources gets: the vendor tree copied and patched in a
-    temporary folder (prepare_sources) and hashed as the build hashes it (identity). identity() over a build folder
-    hashes the tree its last build prepared, so a patch or vendor change made since then would not show. Nothing is
-    compiled; it takes a few seconds and needs git on PATH (prepare_sources applies the patches with it)."""
     import tempfile
     global BUILD
     old = BUILD
@@ -221,11 +184,6 @@ def source_identity() -> str:
 
 
 def check_built(folder: Path, exe: str = EXE) -> str | None:
-    """None when folder holds the translator exe and an nx2navi_xlate.id naming this checkout's sources
-    (source_identity); otherwise why not. The packaging scripts stop on the reason: 0.10.0 and 0.10.1 shipped the
-    0.9.2 translator (identity 4d051299) after tools/xlate/Program.cs had raised the texture pool to 40960 slots, so
-    their translations still clamped every pool handle to slot 32767 and the ground went see-through after some area
-    loads. exe: the file name on the release's OS (EXE is this machine's)."""
     folder = Path(folder)
     for name in (exe, "nx2navi_xlate.id"):
         if not (folder / name).is_file():
@@ -239,7 +197,7 @@ def check_built(folder: Path, exe: str = EXE) -> str | None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("--out", type=Path, help="build directory instead of build/xlate")
     parser.add_argument("--llvm", type=Path, help="Linux: an LLVM directory whose bin/clang and lld link the exe")
     parser.add_argument("--sysroot", type=Path, help="Linux: link against this sysroot's glibc instead of the host's")

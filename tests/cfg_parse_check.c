@@ -1,17 +1,3 @@
-// runtime/cfg/cfg.c's reading of the settings file and environment, with stand-ins for what cfg.c links against. Built and
-// run by tests/cfg_parse_check.py: `cfg_parse_check <case> <ini>` loads the file the script wrote and prints every line
-// cfg.c logged ("log: ...") and what the case reads back ("got: ...").
-//   load     cfg_load on the file; then cfg_init's check of the environment (the variables the script set)
-//   full     cfg_load on the file, then two cfg_set of keys the file does not have
-//   read     cfg_load on the file and cfg_init's check of the environment; then what cfg_get, cfg_bool and cfg_int give
-//            for a list of keys
-//   lowend   cfg_load on the file and cfg_init; then what cfg_bool gives for the switch of the low-end GPU mode,
-//            which is gone (cfg.c lowend_set), what two of the mode's keys read and the default of one of them
-//   norow    cfg_int and cfg_double of a key without a row whose value (the environment's) does not parse
-//   older    cfg_load on the file twice and cfg_init; then what cfg_get gives for three keys: the older NX2NAVI_ names
-//            in the file and the environment, and their log lines
-//   testset  a test hook's values (cfg_set_test, ui/menu.cpp NX2SARIA_MENU_TEST_SET) through four saves: test values
-//            only, a player's change beside them, the player's cfg_set of a test key, and cfg_test_keep (SAVE=1)
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -41,7 +27,7 @@ void rt_fatal(const char *fmt, ...) {
     exit(3);
 }
 const char *bugcap_replay_dir(void) { return NULL; }
-int cfg_supported(const char *key) { (void)key; return 1; }   // cfg_support.c: no patch sets here, every key counts
+int cfg_supported(const char *key) { (void)key; return 1; }
 void perf_size(PerfSizes *s, const char *name, uint64_t count, uint64_t limit, uint64_t bytes) {
     (void)s, (void)name, (void)count, (void)limit, (void)bytes;
 }
@@ -52,8 +38,6 @@ int plat_exe_path(char *out, size_t n) {
     strcpy(out, p);
     return 1;
 }
-// cfg.c find_ini renames an nx2navi.ini without an nx2saria.ini; NX2SARIA_TEST_RENAME_FAIL=1 refuses it, as a file in
-// use would be refused
 int plat_fs_rename(const char *from, const char *to, int durable) {
     (void)durable;
     const char *fail = getenv("NX2SARIA_TEST_RENAME_FAIL");
@@ -81,7 +65,6 @@ uint8_t *plat_file_read(const char *path, uint64_t *size) {
     return d;
 }
 int64_t plat_file_size(const char *p) { (void)p; return -1; }
-// prints what a save would write ("write: <file's text>"), so a case sees which keys reached the file; writes nothing
 int plat_file_write_atomic(const char *p, const void *d, size_t n) {
     (void)p;
     printf("write: %.*s\n", (int)n, (const char *)d);
@@ -95,7 +78,6 @@ int plat_thread_spawn(PlatThreadFn fn, void *arg, const char *name, size_t stack
     fn(arg);
     return 1;
 }
-// hw_detect.c: nothing known of the hardware, so the recommended preset is high, which sets nothing
 void hw_detect(PresetHw *hw, const char *no_probe, void (*before_probe)(void), char *skipped, size_t skipped_cap,
                char *note, size_t note_cap, double *probe_ms) {
     (void)no_probe, (void)before_probe;
@@ -113,7 +95,7 @@ int main(int argc, char **argv) {
         if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
         printf("got: pace_smooth '%s'\n", cfg_get("NX2SARIA_PACE_SMOOTH") ? cfg_get("NX2SARIA_PACE_SMOOTH") : "(unset)");
         printf("--- environment\n");
-        cfg_init();   // finds no settings file next to the stand-in exe; checks the environment's values
+        cfg_init();
         cfg_start(0);
         return 0;
     }
@@ -142,7 +124,6 @@ int main(int argc, char **argv) {
         printf("--- save 4: SAVE=1\n");
         printf("got: kept %d\n", cfg_test_keep());
         cfg_save_to(ini);
-        // the menu's draft over a test value: a preview (cfg_set) and its revert put the test's value back as the test's
         printf("--- save 5: a preview of a test value, reverted\n");
         cfg_set_test("NX2SARIA_VOLUME", "50");
         const char *was;
@@ -194,7 +175,7 @@ int main(int argc, char **argv) {
         printf("got: cfg_int %d cfg_double %g\n", cfg_int("NX2SARIA_NO_ROW_CHECK"), cfg_double("NX2SARIA_NO_ROW_CHECK"));
         return 0;
     }
-    if (!strcmp(argv[1], "older")) {   // the file loaded twice, as a reload reads it again; then cfg_init
+    if (!strcmp(argv[1], "older")) {
         for (int i = 0; i < 2; i++)
             if (!cfg_load(ini)) return printf("cfg_load failed\n"), 2;
         cfg_init();

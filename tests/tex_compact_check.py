@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/tex_compact_check.c: runtime/vk/vk_tex_compact.h, which from a table of what lies in the
-allocator's blocks says how much of them is holes and chooses the blocks a texture compaction empties.
-
-No GPU, no game files, any Python.
-
-Usage: tex_compact_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

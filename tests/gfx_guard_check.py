@@ -1,15 +1,4 @@
 # needs: clang
-"""Build and run tests/gfx_guard_check.c: runtime/gfx/gfx_guard.h, the checks of the presentation path that must not trust
-what they are given: the game's crop cut to the image without int overflow (runtime/gfx/gfx_present.c present_image),
-the swapchain image list taken whole or not at all (create_swapchain), and how often a repeating failure is logged.
-Where the compiler has it, the harness is built with the signed overflow sanitizer, so a sum that overflows traps.
-
-Then a scan of runtime/gfx/gfx_present.c and runtime/vk/vk_texture.c: no swapchain image query, semaphore, fence, command
-pool, command buffer or sampler create there may drop its result (a call that starts a statement), and a failed
-vkCreateSampler may not end the game (rt_fatal right after it). No game files, no GPU.
-
-Usage: gfx_guard_check.py
-"""
 import os
 import re
 import shutil
@@ -22,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
 try:
     from common import MSYS_BIN, compiler  # noqa: E402
-except ImportError:   # a Python without the differential tests' packages: the same compiler choice without them
+except ImportError:
     MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
     def compiler():
@@ -38,7 +27,6 @@ SCANNED = ('gfx/gfx_present.c', 'vk/vk_texture.c')
 
 
 def strip_comments(src):
-    """src with comments and string literals blanked, line breaks kept, so positions still name their lines."""
     out, k, n = [], 0, len(src)
     while k < n:
         if src.startswith('//', k):
@@ -64,9 +52,6 @@ def strip_comments(src):
 
 
 def statement_level(src, at):
-    """1 when the expression at src[at] starts a statement or follows a comma operator outside any parentheses: what it
-    returns is dropped. Walks back over whitespace to the nearest significant character, then over a comma's left side
-    to the statement's start, keeping count of brackets."""
     k = at - 1
     while k >= 0 and src[k].isspace():
         k -= 1
@@ -81,7 +66,7 @@ def statement_level(src, at):
             depth += 1
         elif c in '([':
             if depth == 0:
-                return False   # inside an argument list or a condition
+                return False
             depth -= 1
         elif depth == 0 and c in ';{}':
             return True
@@ -90,7 +75,6 @@ def statement_level(src, at):
 
 
 def scan(root):
-    """Problems as 'file:line: text'; one per call that drops its result, and one per fatal sampler failure."""
     problems = []
     call = re.compile(r'\b(' + '|'.join(CHECKED_CALLS) + r')\s*\(')
     for name in SCANNED:
@@ -99,7 +83,7 @@ def scan(root):
             line = src.count('\n', 0, m.start(1)) + 1
             if statement_level(src, m.start(1)):
                 problems.append(f'runtime/{name}:{line}: the result of {m.group(1)} is dropped')
-            if m.group(1) == 'vkCreateSampler':   # the call's statement and the one after it may not end the game
+            if m.group(1) == 'vkCreateSampler':
                 e = src.find(';', m.end())
                 e = src.find(';', e + 1) if e >= 0 else -1
                 if 'rt_fatal' in src[m.end():e if e >= 0 else len(src)]:
@@ -108,7 +92,6 @@ def scan(root):
 
 
 def self_test():
-    """The scan catches each kind of fault in a made-up file and passes its fixed form."""
     import tempfile
     bad = ('void f(void) {\n    vkCreateSemaphore(d, &i, NULL, &s);\n    for (;;) vkCreateFence(d, &i, NULL, &f);\n'
            '    if (x) y(); else vkGetSwapchainImagesKHR(d, sc, &n, img);\n    a = 1, vkCreateCommandPool(d, &p, NULL, &q);\n'
@@ -123,7 +106,7 @@ def self_test():
             (Path(t) / 'runtime' / name).parent.mkdir(parents=True, exist_ok=True)
             (Path(t) / 'runtime' / name).write_text(bad if name == SCANNED[0] else good)
         found = scan(Path(t))
-    want = 6   # the semaphore, the fence, the image query, the pool after a comma, two fatal samplers; the good file nothing
+    want = 6
     ok = len(found) == want and all(SCANNED[0] in p for p in found)
     if not ok:
         print('gfx_guard_check: FAIL: the scan\'s self-test found %d problems, expected %d:\n  %s'
@@ -154,13 +137,12 @@ def main():
     return 1 if rc or problems or log_lines() else 0
 
 
-LOG_LINES = ['"gfx: %s failed \\(%d\\), %u times: %s; the swapchain is made again', '"gfx: vkCreateSampler failed \\(%d\\), %u times: %s"', '"gfx: %s failed \\(%d\\), %d times: the %s presenter', '"gfx: presentation checks on \\(no setting\\)', '"gfx: the game\\\'s crop %d,%d %dx%d %s the %dx%d image: .*%u times"']   # the log's lines a run is checked by (the formats in the runtime's source)
+LOG_LINES = ['"gfx: %s failed \\(%d\\), %u times: %s; the swapchain is made again', '"gfx: vkCreateSampler failed \\(%d\\), %u times: %s"', '"gfx: %s failed \\(%d\\), %d times: the %s presenter', '"gfx: presentation checks on \\(no setting\\)', '"gfx: the game\\\'s crop %d,%d %dx%d %s the %dx%d image: .*%u times"']
 
 
 def log_lines():
-    """0 when every log line this change leaves is in the runtime's source as its format string."""
     src = ''.join((ROOT / 'runtime' / f).read_text(encoding='utf-8', errors='replace') for f in ['gfx/gfx_present.c', 'vk/vk_texture.c'])
-    src = re.sub(r'"\s*\n\s*"', '', src)   # adjacent string literals as one
+    src = re.sub(r'"\s*\n\s*"', '', src)
     missing = [p for p in LOG_LINES if not re.search(p, src)]
     for p in missing:
         print('gfx_guard_check: FAIL: no log line matching %s in %s' % (p, ', '.join(['gfx/gfx_present.c', 'vk/vk_texture.c'])))

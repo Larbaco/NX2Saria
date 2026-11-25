@@ -1,8 +1,4 @@
 # needs: clang, py:capstone, py:unicorn
-"""Build and run tests/ds3_check.c: runtime/input/input_ds3.c's input report decoding and output report layout.
-
-Usage: ds3_check.py
-"""
 import os
 import subprocess
 import sys

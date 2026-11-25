@@ -1,5 +1,13 @@
 # needs: clang
-"""HD rumble for controllers with linear actuators (runtime/input/rumble_hd.c): builds it with tests/rumble_hd_check.c and
+import argparse
+import math
+import os
+import subprocess
+import sys
+from pathlib import Path
+import runtime_include
+
+DESCRIPTION = """HD rumble for controllers with linear actuators (runtime/input/rumble_hd.c): builds it with tests/rumble_hd_check.c and
 checks
 
   - known values: the neutral value, full amplitude, single bands, an odd amplitude step;
@@ -15,24 +23,15 @@ above 100.
 
 No game files, no SDL, no controller. Usage: python tests/rumble_hd_check.py [--cc <clang>]
 """
-import argparse
-import math
-import os
-import subprocess
-import sys
-from pathlib import Path
-import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
-LOW = (40.875885, 626.286133)     # Hz, the low band's ends
-HIGH = (81.75177, 1252.572266)    # ... and the high band's
+LOW = (40.875885, 626.286133)
+HIGH = (81.75177, 1252.572266)
 
 
 def step_amp(k):
-    """The amplitude of step k, from the published table's rule: step 1 alone, then quarter, sixteenth and
-    thirty-second octaves."""
     if k == 0:
         return 0.0
     if k == 1:
@@ -45,7 +44,6 @@ def step_amp(k):
 
 
 def decode(b):
-    """Four report bytes to (amp_low step, freq_low Hz, amp_high step, freq_high Hz)."""
     hf = b[0] | (b[1] & 1) << 8
     ha = b[1] >> 1
     lf = b[2] & 0x7f
@@ -62,7 +60,7 @@ def nearest_step(a):
 
 def check_sweep(lines):
     fails = 0
-    half = 2 ** (1 / 64) * 1.0005   # half a frequency step, and the rounding of a float
+    half = 2 ** (1 / 64) * 1.0005
     for line in lines:
         f = line.split()
         al, fl, ah, fh = (float(x) for x in f[:4])
@@ -75,7 +73,6 @@ def check_sweep(lines):
             continue
         for name, a, got in (('low', al, la), ('high', ah, ha)):
             want = nearest_step(a)
-            # at a boundary between two steps either neighbour is the nearest
             if got != want and (got == 0 or want == 0 or
                                 abs(abs(math.log(min(a, 1.0) / step_amp(got))) -
                                     abs(math.log(min(a, 1.0) / step_amp(want)))) > 2e-3):
@@ -95,7 +92,7 @@ def check_sweep(lines):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

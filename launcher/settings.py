@@ -35,6 +35,7 @@ DEFAULTS = {
     'telemetry_closed': '',       # the launcher version the server told it takes no more reports (HTTP 410)
     'telemetry_asked': '',        # the launcher version whose question about session reports was answered or closed
     'telemetry_notice': '',       # '1': reports were turned on by the question's countdown or by closing it; told once
+    'crash_log_offer': 'on',
 }
 
 # Keys whose changes save() does not log: bookkeeping of the update check rather than a choice of the player.
@@ -94,7 +95,7 @@ class Settings(dict):
         """Default Settings: the choices go back to their defaults; the game folder, dump and history stay."""
         keep = {k: self[k] for k in ('game_dir', 'dump', 'last_check', 'last_seen', 'feed_repo', 'github_token',
                                      'rolled_back', 'telemetry', 'telemetry_closed', 'telemetry_asked',
-                                     'telemetry_notice')}
+                                     'telemetry_notice', 'crash_log_offer')}
         self.clear()
         self.update(DEFAULTS)
         self.update(keep)

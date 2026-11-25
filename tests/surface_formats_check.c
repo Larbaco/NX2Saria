@@ -25,7 +25,6 @@ static VkResult vkGetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice phys, VkSu
     if (mode == DATA_EMPTY) { *count = 0; return VK_SUCCESS; }
     if (mode == ALWAYS_INCOMPLETE || *count < 72) return VK_INCOMPLETE;
     for (uint32_t i = 0; i < 72; i++) formats[i] = (VkSurfaceFormatKHR){97, 0};
-    // A usable HDR10 pair may be beyond the former 64-entry cutoff.
     formats[65] = (VkSurfaceFormatKHR){58, 1000104008};
     formats[66] = (VkSurfaceFormatKHR){64, 1000104008};
     *count = 72;

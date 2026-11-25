@@ -1,12 +1,3 @@
-// The session summary's gatherer (session_summary.h): what the game knows about the run at its end, written once to
-// logs/session-summary.json beside logs/nx2saria.log. The launcher reads it after the process ends; the game sends
-// nothing. A hard crash writes none (main.c crash_handler): the launcher builds that one from the log.
-//
-// What cannot change during the run (the OS, CPU and RAM, the version) is read at the start, on the main thread. The
-// rest is read at the end: the GPU from values vk_caps.c stored when the device was made (no driver call, which a lost
-// device could hang), the settings through cfg_value (the live values: a change made in the menu counts), the frame
-// times from perf.c's session histogram after its ft_stop, and the boot's prewarm numbers from their stores. All into
-// static buffers: the fatal end runs this on a failing thread that may hold any lock, where allocation is not safe.
 #include <stdio.h>
 #include <string.h>
 
@@ -18,11 +9,9 @@
 #include "session_summary.h"
 #include "sysinfo.h"
 
-// Builds without the Vulkan back end (the null renderer's tools) have no device and no boot prewarm.
 __attribute__((weak)) int vk_caps_gpu(SsGpu *out) { (void)out; return 0; }
 __attribute__((weak)) int gfx_shader_prewarm_stats(int64_t *ms, int64_t *translated) { (void)ms, (void)translated; return 0; }
 __attribute__((weak)) int vk_pipeline_boot_stats(int64_t *built, int64_t *ms) { (void)built, (void)ms; return 0; }
-// Builds without the widescreen sets' code (the tools) have no picture of their own.
 __attribute__((weak)) int wide_picture_known(unsigned *w, unsigned *h) { (void)w, (void)h; return 0; }
 __attribute__((weak)) int rt_patches_on(const char **names, int cap) { (void)names, (void)cap; return -1; }
 __attribute__((weak)) int mods_in_use(int *count, int *code) { (void)count, (void)code; return 0; }
@@ -38,8 +27,6 @@ static int wine = -1;
 
 void session_summary_start(void) {
     start_ns = plat_now_ns();
-    // Beside the log file; a run whose log goes to a redirected stderr (tools/run_game.py, a script) has none, and its
-    // summary goes to logs/ beside the executable, where the launcher looks (main.c log_open makes the same folder).
     const char *log = rt_log_path();
     char exe[PLAT_PATH_MAX * 3];
     int beside_exe = 0;
@@ -52,15 +39,13 @@ void session_summary_start(void) {
         if (s && beside_exe) {
             snprintf(s, sizeof path - (size_t)(s - path), "/logs");
             plat_file_mkdir_p(path);
-            s += 5;   // the end of ".../logs": its separator before the file's name
+            s += 5;
             *s = '/';
         }
         if (s) snprintf(s + 1, sizeof path - (size_t)(s + 1 - path), "%s", FILE_NAME);
         else path[0] = 0;
     }
-    // An earlier run's summary goes now: a crash writes none, and the launcher must not read the old one as this run's.
     if (path[0]) plat_file_delete(path);
-    // A release's version carries its commit after a "+" (host.h rt_port_version); the summary keeps the release.
     snprintf(version, sizeof version, "%.*s", (int)strcspn(rt_port_version, "+"), rt_port_version);
     snprintf(game_version, sizeof game_version, "%d.%d.%d", rt_game_version / 100, rt_game_version / 10 % 10,
              rt_game_version % 10);
@@ -77,8 +62,6 @@ void session_summary_start(void) {
     float used, total, proc;
     plat_mem_info(&used, &total, &proc);
     ram_mb = total > 0 ? (int64_t)total : -1;
-    // cfg_preset_custom's first call makes its key list under a lock: made here, on the main thread, the fatal end's
-    // call takes none (cfg_start chose the tier before this, memory.c mem_init).
     (void)cfg_preset_custom();
     __atomic_store_n(&armed, 1, __ATOMIC_RELEASE);
     if (path[0])
@@ -88,8 +71,6 @@ void session_summary_start(void) {
         rt_log("telemetry: no session summary this run: no folder for it");
 }
 
-// A setting's value as the summary writes it (session_summary.h ss_setting); NULL for a key without a row in cfg.c,
-// which cfg_value would end the process on.
 static const char *setting(const char *key, char *out, size_t cap) {
     const CfgMeta *m = cfg_meta(key);
     if (!m) return NULL;
@@ -140,8 +121,6 @@ static void write_summary(const char *end, const char *fatal_line) {
         snprintf(picture_v, sizeof picture_v, "%ux%u", pw, ph);
         s.picture = picture_v;
     }
-    // The quality preset in use (cfg.c "quality presets"): the tier's name, the one "recommended" stands for included,
-    // or "custom" when the player changed a setting the tier sets, as the menu shows it; null before cfg_start chose one.
     int tier = cfg_preset_in_use();
     if (tier >= 0) s.preset = cfg_preset_custom() ? "custom" : cfg_preset_name(tier);
     s.upscaler = setting("UPSCALER", up_v, sizeof up_v);
@@ -149,7 +128,6 @@ static void write_summary(const char *end, const char *fatal_line) {
     s.dlss = setting("DLSS", dlss_v, sizeof dlss_v);
     s.framegen = setting("FRAMEGEN", fg_v, sizeof fg_v);
     s.vk_present = setting("VK_PRESENT", present_v, sizeof present_v);
-    // a number of frames per second; "display" and "unlimited" have none, and "other" is not one
     const char *fps = setting("FPS_LIMIT", fps_v, sizeof fps_v);
     if (fps && fps[0] >= '0' && fps[0] <= '9') {
         int64_t v = 0;

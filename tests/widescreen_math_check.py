@@ -1,5 +1,4 @@
 # needs: clang
-"""Compile and run the aspect, scene, heap and Vert+ formulas without game data."""
 import os
 import shutil
 import subprocess

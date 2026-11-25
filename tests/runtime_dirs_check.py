@@ -9,7 +9,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import build_game  # noqa: E402
 import make_game  # noqa: E402
 
-NOT_SOURCES = {'platform', 'shaders', 'third_party', 'dlssg'}   # compiled apart, or not part of the game's compile
+NOT_SOURCES = {'platform', 'shaders', 'third_party', 'dlssg'}
 
 
 def main():

@@ -1,34 +1,3 @@
-"""Build NX2Saria-Linux-<version>-x86_64.AppImage: the Linux build kit as one file, which builds Ocarina of Time on the
-player's PC from their own dump with tools/make_game.py, as NX2Saria-Setup.exe does on Windows. Started without
-arguments on a desktop it opens a window to install, update and play (tools/appimage_gui.py, which runs AppRun
-with --events and reads its progress lines).
-
-    python3 tools/make_appimage.py --python <standalone CPython 3.14> --appimagetool <appimagetool> [--out dist]
-                                   [--dlss libnvidia-ngx-dlss.so.<version> | --no-dlss]
-
-The AppImage holds no game files: the kit's tools/, recomp/, runtime/ and docs, the shader translator built by
-tools/build_xlate.py from this checkout's sources (bin/nx2navi_xlate; the script stops first on another, check_built),
-NVIDIA's DLSS library with its notice (bin/, tools/dlss_pin.py: downloaded from NVIDIA's DLSS SDK repository and
-checked, or --dlss; not with --no-dlss: an AppImage made without the library downloads it after a build on machines with
-NVIDIA's driver, AppRun's get_dlss), the pinned Vulkan Memory Allocator header, the pinned Vulkan headers
-(toolchain/vulkan-headers, tools/vulkan_pin.py: the runtime names Vulkan extensions newer than the headers many
-distributions package), the pinned SDL3 (toolchain/sdl3, tools/sdl3_pin.py: its headers and libSDL3.so.0, for the
-distributions that package no SDL3, Ubuntu 24.04 and Linux Mint 22 among them; tools/make_game.py sdl3_choice takes the
-system's where the compiler finds it), and a relocatable CPython 3.14 (python-build-standalone, as `uv python install
-3.14` puts in ~/.local/share/uv/python) with numpy, lz4, zstandard, fonttools and pillow, and the button art
-make_game.py's prompts step draws from (as make_kit.py takes it: the repository's prompt-art folder or the folders
---prompt-art names, the pictures tools/prompt_art.py art_files names with its SOURCE.md, into the kit's prompt-art
-folder; with --no-prompt-art that step is skipped and the game keeps the Switch prompts). zbic, the GPL package that unpacks the game's program files, is not bundled: the AppImage installs it with pip
-into ~/.local/share/nx2saria/pydeps the first time it runs. An existing ~/.local/share/nx2navi/pydeps is reused in
-place.
-
-The compiler and the other libraries come from the system (README-BuildKit.md, "Linux"): before a build the AppImage
-checks for clang, clang++ and lld, asks that compiler for the libraries' headers (so headers it finds through its own
-folders or CPATH count), and names the packages for Arch, Fedora and Debian, Ubuntu and Mint; --check, which reads
-the dump only, needs none of them. Whether they are new enough is found out by trying them: tools/make_game.py
-checks the runtime's sources with that compiler, and links and runs a program against those libraries, before the
-build's long steps (preflight).
-"""
 import argparse
 import os
 import shutil
@@ -37,10 +6,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+DESCRIPTION = ('Build NX2Saria-Linux-<version>-x86_64.AppImage: the Linux build kit as one file, which builds '
+               'Ocarina of Time on the')
+
 ROOT = Path(__file__).resolve().parent.parent
 KIT_DIRS = ('launcher', 'recomp', 'runtime', 'licenses')
 KIT_FILES = ('VERSION', 'LICENSE', 'LICENSE-ADDITIONS', 'THIRD_PARTY_NOTICES.md', 'nx2saria.ini.example')
-TOOLS_SKIP = ('vendor', 'xlate', '__pycache__')   # the translator ships built (bin/); its sources stay out
+TOOLS_SKIP = ('vendor', 'xlate', '__pycache__')
 PACKAGES = ('numpy==2.5.4', 'lz4==4.4.5', 'zstandard==0.25.0', 'fonttools==4.68.0', 'pillow==12.3.0')
 PYTHON_REMOVED = {
     '_dbm': 'links Berkeley DB 6.0.19, whose Sleepycat licence asks for the complete source of every program that uses '
@@ -211,10 +183,6 @@ def copy_tree(src, dst, skip=()):
 
 
 def carry_sdl3(kit):
-    """The pinned SDL3 (tools/sdl3_pin.py) into the kit's toolchain/sdl3, fetched and checked into this checkout's
-    toolchain/sdl3 first when it is not there yet: tools/make_game.py builds against it on a system without SDL3. The
-    copy is checked file by file against the pinned files' digest, so a checkout's folder changed since its fetch
-    does not go into a release."""
     import sdl3_pin
     dst = kit / sdl3_pin.FOLDER
     shutil.copytree(sdl3_pin.resolve(ROOT / sdl3_pin.FOLDER), dst)
@@ -227,7 +195,7 @@ def carry_sdl3(kit):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--python', type=Path, required=True,
                     help='a relocatable CPython 3.14 folder (python-build-standalone, ~/.local/share/uv/python/cpython-3.14*)')
     ap.add_argument('--appimagetool', type=Path, required=True, help='appimagetool-x86_64.AppImage')
@@ -256,9 +224,9 @@ def main():
     import prompt_art
     a.prompt_art = prompt_art.release_art(a.prompt_art, a.no_prompt_art)
     if a.prompt_art:
-        prompt_art.art_files(a.prompt_art)   # the art is all there before anything is built
+        prompt_art.art_files(a.prompt_art)
     import build_xlate
-    reason = build_xlate.check_built(xlate, 'nx2navi_xlate')   # the translator of this checkout's sources, or none
+    reason = build_xlate.check_built(xlate, 'nx2navi_xlate')
     if reason:
         sys.exit(reason)
     import python_licences
@@ -273,7 +241,7 @@ def main():
     kit = app / 'usr' / 'kit'
     kit.mkdir(parents=True)
     import build_shaders
-    build_shaders.build(ROOT / 'runtime')   # the image carries the runtime's shaders compiled (runtime/*_spv.h)
+    build_shaders.build(ROOT / 'runtime')
     for d in KIT_DIRS:
         copy_tree(ROOT / d, kit / d)
     copy_tree(ROOT / 'tools', kit / 'tools', TOOLS_SKIP)
@@ -281,18 +249,15 @@ def main():
         shutil.copy2(ROOT / f, kit / f)
     (kit / 'docs').mkdir()
     shutil.copy2(ROOT / 'docs' / 'README-BuildKit.md', kit / 'docs' / 'README-BuildKit.md')
-    # the notice AppRun's get_dlss writes beside a library it downloads; its sha256 line is the one make_game.py reads
     pin = dlss_pin.pin(linux=True)
     (kit / 'docs' / pin.notice).write_text(dlss_pin.notice_text(linux=True), encoding='utf-8')
     (kit / 'bin').mkdir()
     for f in ('nx2navi_xlate', 'nx2navi_xlate.id'):
         shutil.copy2(xlate / f, kit / 'bin' / f)
-    if dlss:   # DLSS: NGX loads it from beside the game (runtime/vk/vk_dlaa.c); make_game.py copies it there
+    if dlss:
         dlss_pin.place(dlss, kit / 'bin', linux=True)
     (kit / 'toolchain' / 'vma').mkdir(parents=True)
     shutil.copy2(ROOT / 'toolchain' / 'vma' / 'vk_mem_alloc.h', kit / 'toolchain' / 'vma' / 'vk_mem_alloc.h')
-    # The Vulkan headers the runtime is written against, ahead of the system's on the player's machine
-    # (tools/build_game.py vulkan_include finds them in the kit): fetched and checked here when not there yet
     import vulkan_pin
     shutil.copytree(vulkan_pin.resolve(ROOT / vulkan_pin.FOLDER), kit / vulkan_pin.FOLDER)
     carry_sdl3(kit)
@@ -304,7 +269,7 @@ def main():
     shutil.copytree(a.python, py, symlinks=True)
     from linux_runtime import runtime_id
     (py / 'runtime-id.txt').write_text(runtime_id(py / 'bin' / 'python3', RUNTIME_PINS) + '\n', encoding='utf-8')
-    for marker in py.glob('lib/python3*/EXTERNALLY-MANAGED'):   # uv marks its Pythons; this copy is the AppImage's own
+    for marker in py.glob('lib/python3*/EXTERNALLY-MANAGED'):
         marker.unlink()
     subprocess.run([py / 'bin' / 'python3', '-m', 'pip', 'install', '--quiet', '--disable-pip-version-check',
                     '--no-warn-script-location', *PACKAGES], check=True)
@@ -324,7 +289,7 @@ def main():
     (app / 'AppRun').write_text(apprun, encoding='utf-8')
     (app / 'AppRun').chmod(0o755)
     (app / 'nx2saria.desktop').write_text(DESKTOP, encoding='utf-8')
-    from PIL import Image   # the window icon of runtime/nx2saria.ico, as PNG
+    from PIL import Image
     with Image.open(ROOT / 'runtime' / 'nx2saria.ico') as ico:
         ico.size = max(ico.ico.sizes())
         ico.convert('RGBA').save(app / 'nx2saria.png')

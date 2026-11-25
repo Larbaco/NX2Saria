@@ -1,10 +1,3 @@
-// plat_restart on Linux (runtime/platform/linux.c): the game it starts may run on every processor this one could
-// before plat_cpu_reserve took a core for the recording thread, whichever thread asks for the restart. No game files.
-// Build and run from the repository root:
-//   clang -O2 -ffunction-sections -fdata-sections -Iruntime -c runtime/platform/linux.c -o /tmp/plat.o
-//   clang -O2 -Wall -Iruntime tests/platform_restart_mask_test.c /tmp/plat.o -Wl,--gc-sections -lpthread -ldl -o /tmp/restart_mask
-//   /tmp/restart_mask      (exit 77: this machine has no core plat_cpu_reserve would take)
-// The test starts itself again through plat_restart; that copy only writes how many processors it may run on.
 #define _GNU_SOURCE
 #include <pthread.h>
 #include <sched.h>
@@ -21,7 +14,6 @@ static int allowed(void) {
     return sched_getaffinity(0, sizeof set, &set) ? -1 : CPU_COUNT(&set);
 }
 
-// What the copy plat_restart started wrote, waiting up to 5 s for it; -1 when it never came.
 static int restarted_count(const char *path) {
     for (int i = 0; i < 500; i++) {
         FILE *f = fopen(path, "r");
@@ -41,7 +33,6 @@ static int restarted_count(const char *path) {
 
 static atomic_int go, done;
 
-// A thread that existed before the core was taken, as the game's main thread does: it asks for the restart.
 static void *other_thread(void *arg) {
     (void)arg;
     while (!atomic_load(&go)) usleep(1000);
@@ -52,7 +43,7 @@ static void *other_thread(void *arg) {
 
 int main(void) {
     const char *out = getenv(OUT);
-    if (getenv("NX2SARIA_RESTART_WAIT") && out) {   // the copy plat_restart started
+    if (getenv("NX2SARIA_RESTART_WAIT") && out) {
         FILE *f = fopen(out, "w");
         if (f) fprintf(f, "%d\n", allowed()), fclose(f);
         return 0;
@@ -71,7 +62,7 @@ int main(void) {
     while (!atomic_load(&done)) usleep(1000);
     pthread_join(th, NULL);
     int from_other = restarted_count(path);
-    plat_restart();   // and from the thread that holds the core
+    plat_restart();
     int from_holder = restarted_count(path);
     printf("%d processors before; the core taken: %s; a restart from another thread starts with %d, from the holder with %d\n",
            before, which, from_other, from_holder);

@@ -1,13 +1,3 @@
-// runtime/sha256.c with each block function: the FIPS 180-4 vectors and an RFC 4231 HMAC through the public calls,
-// once in portable C and once on the SHA extensions when the CPU has them, and both forms against each other on
-// messages of many lengths, fed in pieces of many sizes. tests/sha256_paths_check.py builds and runs it.
-//
-// Every SHA-NI round instruction the hashes run is counted (rounds below), so a run that was meant for one form and
-// ran the other fails instead of comparing portable C with itself.
-//
-// Prints "cpuid sha_ni=<0|1>" (what sha256_ni found), on clang 19 and later and GCC also "builtin sha_ni=<0|1>"
-// (__builtin_cpu_supports, a second opinion), then "compared ni=<0|1> ..." (whether the SHA-NI form ran) and one line
-// per failure; exit code 0 when all pass.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +5,7 @@
 
 #if defined(__x86_64__)
 #include <immintrin.h>
-static long rounds;   // sha256rnds2 instructions blocks_ni has run
+static long rounds;
 __attribute__((target("sha"))) static inline __m128i counted_rnds2(__m128i a, __m128i b, __m128i k) {
     rounds++;
     return _mm_sha256rnds2_epu32(a, b, k);
@@ -40,7 +30,6 @@ static void expect(const char *what, const uint8_t got[32], const char *want) {
     }
 }
 
-// The FIPS 180-4 examples, the 448-bit two-block one, a million 'a', and HMAC-SHA256 test case 2 of RFC 4231.
 static void vectors(void) {
     uint8_t d[32];
     sha256("abc", 3, d);
@@ -66,7 +55,6 @@ static uint8_t next_byte(void) {
     return (uint8_t)(rng >> 32);
 }
 
-// One message hashed in pieces of `piece` bytes (0: in one call) with the form g_ni selects.
 static void hash_pieces(const uint8_t *m, size_t n, size_t piece, uint8_t out[32]) {
     Sha256 s;
     sha256_init(&s);
@@ -75,7 +63,6 @@ static void hash_pieces(const uint8_t *m, size_t n, size_t piece, uint8_t out[32
     sha256_final(&s, out);
 }
 
-// The two block functions on the same state and blocks, without the padding the public calls add.
 static int compare_blocks(void) {
     static uint8_t m[64 * 300];
     int checked = 0;
@@ -95,7 +82,6 @@ static int compare_blocks(void) {
     return checked;
 }
 
-// The form a run was meant for is the one that ran: rounds grows with SHA-NI and stays put in portable C.
 static void ran(const char *what, long before, int ni) {
     if ((rounds > before) != ni) {
         printf("FAIL %s: meant for %s, but %ld SHA-NI rounds ran\n", what, ni ? "SHA-NI" : "portable C", rounds - before);
@@ -129,8 +115,6 @@ int main(void) {
     vectors();
     ran("the vectors on SHA-NI", before, 1);
     int block_runs = compare_blocks();
-    // Whole messages: every length from 0 to 300 bytes and some long ones, each in one call and in pieces that cut
-    // the 64-byte blocks in different places.
     static uint8_t m[70000];
     for (size_t i = 0; i < sizeof m; i++) m[i] = next_byte();
     const size_t longs[] = {1000, 4095, 4096, 4097, 65535, 65536, 65537, 70000};

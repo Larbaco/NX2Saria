@@ -1,14 +1,3 @@
-"""Build and run tests/session_summary_check.c: runtime/session_summary_fmt.c, the JSON text of logs/session-summary.json
-(runtime/session_summary.c writes it at the game's end). Each sample summary (all fields, all null, hostile strings and
-numbers past the limits, a device-lost end) must parse as JSON with exactly the summary's keys, each value of its type
-and within its limits: strings printable and capped, settings and display values in [A-Za-z0-9_.:x+-] or "other",
-vendor and device as 0x and 4 hex digits, numbers with at most one decimal. The C side checks the value rules (a setting
-outside its list, ranges, the OS name, the frame-time 1% low). Also checks statically that the two ends call the
-writer where they should (runtime/gfx/gfx_present.c rt_exit_steps, runtime/dispatch.c fatal_end) and that the hard crash
-(runtime/main.c crash_handler) writes none. No game files.
-
-Usage: session_summary_check.py
-"""
 import json
 import os
 import re
@@ -29,8 +18,6 @@ def compiler():
         return str(MSYS_BIN / 'clang.exe')
     return shutil.which('clang') or 'clang'
 
-# The summary's keys and the types of their leaves: str, int, float (an int or a number with one decimal), bool,
-# 'hex' (0x and 4 hex digits) and 'token' (a display or settings value). None in a tuple: the leaf may be null.
 SCHEMA = {
     'schema': 'str', 'version': 'str', 'game_version': 'str',
     'os': {'family': 'family', 'name': ('text', 64), 'wine': 'bool'},
@@ -55,7 +42,6 @@ TOKEN = re.compile(r'[A-Za-z0-9_.:x+-]{1,32}')
 
 
 def check_leaf(path, kind, v, raw):
-    """Problems with one leaf, as a list of strings."""
     if v is None:
         return [] if path not in NOT_NULL else [f'{path} is null']
     kind, cap = kind if isinstance(kind, tuple) else (kind, None)
@@ -111,7 +97,6 @@ def check_obj(prefix, schema, obj, raw):
         if k not in obj:
             continue
         if isinstance(kind, dict):
-            # never a null group: the server refuses one (telemetry/src/validate.ts); its leaves are null instead
             bad += check_obj(path, kind, obj[k], raw)
         else:
             bad += check_leaf(path, kind, obj[k], raw)
@@ -119,7 +104,6 @@ def check_obj(prefix, schema, obj, raw):
 
 
 def expect(name, s):
-    """What each case must hold beyond the schema."""
     bad = []
     if name == 'full':
         want = {'version': '0.19.0-rc.2', 'game_version': '1.1.1', 'schema': 'nx2saria.session/1'}
@@ -131,7 +115,6 @@ def expect(name, s):
         if s['display'] != {'output': '2560x1440', 'render_scale': 'game', 'fullscreen': True, 'game_aspect': '16:10',
                             'picture': '2304x1440'}:
             bad.append(f'full: display {s["display"]}')
-        # the names that are not a patch set's (spaces, empty, a mod's set is still a name) are left out
         if s['patches'] != ['fps60', 'wide_hud', 'mod_1a2b3c4d', 'zstd'] or s['mods'] != {'count': 2, 'code': 1}:
             bad.append(f'full: patches {s["patches"]}, mods {s["mods"]}')
     elif name == 'all_null':
@@ -207,7 +190,7 @@ def main():
                            '-o', str(exe), '-lm'], env=env)
     bad += subprocess.run([str(exe), str(work)], env=env).returncode != 0
     for name in ('full', 'all_null', 'hostile', 'device_lost'):
-        raw = (work / f'{name}.json').read_text(encoding='utf-8')   # strict: invalid UTF-8 fails here
+        raw = (work / f'{name}.json').read_text(encoding='utf-8')
         try:
             s = json.loads(raw)
         except ValueError as e:

@@ -1,17 +1,4 @@
 # needs: clang, py:capstone, py:unicorn
-"""Differential test of exclusives and atomics against Unicorn (max CPU model, which has the ARMv8.1 LSE atomics).
-
-Single steps cannot cover these: a store exclusive only succeeds after a load exclusive, and the A57 model rejects
-LSE. So this test enumerates every variant and runs short sequences, with the monitor cleared before each case:
-
-- LDXR/LDAXR then STXR/STLXR to the same address (succeeds), all sizes;
-- LDXP/LDAXP then STXP/STLXP to the same address (succeeds) or 16 bytes further (fails), W and X pairs;
-- STXR and STXP alone (fail without a monitor);
-- LDADD, LDCLR, LDEOR, LDSET, LDSMAX, LDSMIN, LDUMAX, LDUMIN and SWP, every size and ordering;
-- CAS and CASP, every size and ordering, with the compare value equal to memory in half of the cases.
-
-Needs no game files. Usage: atomic.py [--cases K] [--seed S] [--jobs J]
-"""
 import argparse
 import os
 import platform
@@ -27,9 +14,11 @@ from unicorn import arm64_const as A
 from common import BUF, BUF_SIZE, ROOT, Emu, build_harness, diff_state, dis, rand_fpcr, rand_v, rand_x, run_harness
 from lifter import Lifter
 
+DESCRIPTION = ('Differential test of exclusives and atomics against Unicorn (max CPU model, which has the ARMv8.1 '
+               'LSE atomics).')
 BUF_MID = BUF + 0x10000
 CODE = 0x7220000000
-SLOT = 16  # bytes of code per test
+SLOT = 16
 CLREX = 0xD5033F5F
 
 
@@ -62,12 +51,10 @@ def stxr(size, o0, rs, rn, rt):
 
 
 def regs(r, n, exclude=()):
-    """n distinct general registers 0-30 outside exclude."""
     return r.sample([i for i in range(31) if i not in exclude], n)
 
 
 def tests(r):
-    """[(words, rn, kind)]: kind 'cas'/'casp' marks compare-and-swap tests (state gets a matching compare value)."""
     out = []
     for size in range(4):
         for a in (0, 1):
@@ -85,7 +72,7 @@ def tests(r):
                 rn = r.choice(regs(r, 1) + [31])
                 rs, rt = (2 * i for i in r.sample(range(15), 2))
                 if rn in (rs, rs + 1):
-                    rs = 30 if rn < 30 else 0  # Rs+1 = XZR or away from Rn
+                    rs = 30 if rn < 30 else 0
                 out.append(([casp(sz, l, rs, o0, rn, rt)], rn, 'casp'))
     for size in range(4):
         for o0 in (0, 1):
@@ -100,20 +87,17 @@ def tests(r):
             out.append(([ldxp(sz, o0, rt2, rn, rt)], rn, 'excl'))
             out.append(([ldxp(sz, o0, rt2, rn, rt), stxp(sz, o0, rs, d2, rn, d1)], rn, 'excl'))
             out.append(([stxp(sz, o0, rs, d2, rn, d1)], rn, 'excl'))
-            # A store exclusive to another address fails; Rn is advanced between the two by an ADD.
             if rn != 31:
-                add = 0x91004000 | rn << 5 | rn  # add xn, xn, #16
+                add = 0x91004000 | rn << 5 | rn
                 out.append(([ldxp(sz, o0, rt2, rn, rt), add, stxp(sz, o0, rs, d2, rn, d1)], rn, 'excl'))
     return out
 
 
 def unicorn_wrong(w):
-    """LDSMAX/LDSMIN on bytes, halfwords and words: Unicorn 2.1 (QEMU 5.0) compares them unsigned."""
     return (w & 0x3F200C00) == 0x38200000 and (w >> 30) < 3 and not (w >> 15) & 1 and (w >> 12) & 7 in (4, 5)
 
 
 def model_signed_minmax(w, x, sp, nzcv, v, buf0):
-    """Reference for unicorn_wrong(w) words, from the ARM pseudocode: returns the expected state and memory CRC."""
     nb = 1 << (w >> 30)
     rs, rn, rt = (w >> 16) & 31, (w >> 5) & 31, w & 31
     addr = sp if rn == 31 else x[rn]
@@ -154,7 +138,7 @@ def make_case(r, words, rn, kind, buf0):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cases', type=int, default=64)
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
@@ -191,7 +175,7 @@ def main():
                 cases.append((k, fpcr, x, sp, nzcv, v, True))
                 expect.append(model_signed_minmax(words[0], x, sp, nzcv, v, buf0))
                 continue
-            mu.emu_start(CODE, CODE + 4, count=1)  # clear the exclusive monitor
+            mu.emu_start(CODE, CODE + 4, count=1)
             try:
                 ox, osp, onz, opc, ov = emu.run(pc, fpcr, x, sp, nzcv, v, count=len(words))
             except uc.UcError as e:

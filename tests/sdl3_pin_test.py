@@ -1,12 +1,3 @@
-"""tools/sdl3_pin.py, the SDL3 a Linux build kit carries for systems that have none (issue #11: Ubuntu 24.04 and Linux
-Mint 22 package no SDL3): the pinned packages give the headers, the library and its copyright file and nothing else;
-another package, a package without what it should hold or with other files is refused; when the packages are gone
-from the pool the same files come from the dated sysroot, checked against its SHA-256; only what an earlier unpack
-wrote is replaced; a damaged package is an error with a reason, not a crash. No network, no game files: the packages
-and the sysroot are made here.
-
-Run: python tests/sdl3_pin_test.py
-"""
 import contextlib
 import hashlib
 import io
@@ -27,7 +18,6 @@ VERSION_H = b'#define SDL_MAJOR_VERSION   3\n#define SDL_MINOR_VERSION   4\n#def
 
 
 def ar(members):
-    """An ar archive (a Debian package) of (name, bytes) members."""
     out = io.BytesIO()
     out.write(b'!<arch>\n')
     for name, body in members:
@@ -37,7 +27,6 @@ def ar(members):
 
 
 def tar_bytes(files, links=(), hard=(), mode='w:xz'):
-    """A tar archive of {name: bytes} regular files, (name, target) symbolic links and (name, target) hard links."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode=mode) as tar:
         for name, body in files.items():
@@ -88,8 +77,6 @@ class Sdl3PinTest(unittest.TestCase):
         kept = {}
         sdl3_pin.deb_files(self.runtime, kept)
         sdl3_pin.deb_files(self.dev, kept)
-        # the sysroot: the same files where the packages install them, beside others, the copyright file a hard link
-        # to the development package's
         files = {k[2:]: v for k, v in {**RUNTIME, **DEV}.items() if 'libsdl3-0/copyright' not in k}
         files.update({'usr/share/doc/libsdl3-dev/copyright': RUNTIME['./usr/share/doc/libsdl3-0/copyright'],
                       'usr/lib/i386-linux-gnu/libSDL3.so.0.4.18': b'the 32-bit library, not kept',
@@ -109,7 +96,6 @@ class Sdl3PinTest(unittest.TestCase):
         return sorted(p.relative_to(folder).as_posix() for p in folder.rglob('*') if p.is_file())
 
     def resolve(self, *args, **kw):
-        """sdl3_pin.resolve, quiet; (folder or None, the message it stopped with, what it printed)."""
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             try:
@@ -118,7 +104,6 @@ class Sdl3PinTest(unittest.TestCase):
                 return None, str(e), out.getvalue()
 
     def urlopen(self, served):
-        """An urlopen that serves {url: bytes} and answers 404 for any other address."""
         fetched = []
 
         def urlopen(url, timeout):
@@ -133,16 +118,16 @@ class Sdl3PinTest(unittest.TestCase):
         self.assertEqual(self.resolve(dest, [self.tmp / 'b.deb', self.tmp / 'a.deb'])[0], dest)
         self.assertEqual(self.files(dest), KEPT)
         lib = dest / 'lib' / sdl3_pin.LIB
-        self.assertFalse(lib.is_symlink())   # the library's file itself under its soname, not the package's link
+        self.assertFalse(lib.is_symlink())
         self.assertEqual(lib.read_bytes(), b'\x7fELF the library')
         self.assertTrue(lib.stat().st_mode & 0o111)
         self.assertFalse((self.tmp / 'etc').exists())
         self.assertTrue(sdl3_pin.have(dest))
         self.assertEqual(sdl3_pin.header_version((dest / 'include' / 'SDL3' / 'SDL_version.h').read_text()), (3, 4, 18))
-        self.assertEqual(self.resolve(dest)[0], dest)   # there already: nothing is fetched or unpacked again
-        (dest / sdl3_pin.STAMP).unlink()   # a folder cut short while it was written
+        self.assertEqual(self.resolve(dest)[0], dest)
+        (dest / sdl3_pin.STAMP).unlink()
         self.assertFalse(sdl3_pin.have(dest))
-        (dest / sdl3_pin.STAMP).write_bytes('3.4.18é'.encode())   # a stamp that is not ASCII
+        (dest / sdl3_pin.STAMP).write_bytes('3.4.18é'.encode())
         self.assertFalse(sdl3_pin.have(dest))
 
     def test_downloads_what_is_not_on_disk_and_checks_it(self):
@@ -188,12 +173,11 @@ class Sdl3PinTest(unittest.TestCase):
         with mock.patch.object(sdl3_pin.urllib.request, 'urlopen', urlopen):
             folder, said, out = self.resolve(dest)
         self.assertEqual((folder, said), (dest, ''))
-        self.assertEqual(fetched, [self.urls['libsdl3-0'], sdl3_pin.SYSROOT[0]])   # the first 404 ends the pool's turn
+        self.assertEqual(fetched, [self.urls['libsdl3-0'], sdl3_pin.SYSROOT[0]])
         self.assertIn('not in the Steam Runtime\'s pool', out)
         self.assertEqual(self.files(dest), KEPT)
-        self.assertEqual((dest / 'lib' / sdl3_pin.LIB).read_bytes(), b'\x7fELF the library')   # the 64-bit one
+        self.assertEqual((dest / 'lib' / sdl3_pin.LIB).read_bytes(), b'\x7fELF the library')
         self.assertEqual((dest / sdl3_pin.NOTICE).read_bytes(), RUNTIME['./usr/share/doc/libsdl3-0/copyright'])
-        # the same archive from disk; another archive is refused, and a sysroot that cannot be fetched says what to do
         local = self.tmp / 'sysroot.tar.gz'
         local.write_bytes(self.sysroot)
         self.assertEqual(self.resolve(self.tmp / 'from-disk', sysroot=local)[0], self.tmp / 'from-disk')
@@ -204,8 +188,7 @@ class Sdl3PinTest(unittest.TestCase):
         self.assertIsNone(folder)
         self.assertRegex(said, r'(SHA-256 differs|reading .* failed)')
         self.assertFalse((self.tmp / 'refused').exists())
-        # a download cut short after the archive's end marker is told from another file
-        longer = self.sysroot + bytes(100)   # the pinned file; local holds it without its last 100 bytes
+        longer = self.sysroot + bytes(100)
         with mock.patch.object(sdl3_pin, 'SYSROOT', (sdl3_pin.SYSROOT[0], hashlib.sha256(longer).hexdigest())), \
                 mock.patch.object(sdl3_pin, 'SYSROOT_SIZE', len(longer)):
             folder, said, _ = self.resolve(self.tmp / 'short', sysroot=local)
@@ -221,7 +204,7 @@ class Sdl3PinTest(unittest.TestCase):
             self.assertIn(sha, said)
 
     def test_replaces_only_what_an_earlier_unpack_wrote(self):
-        dest = self.tmp / 'toolchain'   # a folder that holds other things too
+        dest = self.tmp / 'toolchain'
         (dest / 'vulkan-headers').mkdir(parents=True)
         (dest / 'vulkan-headers' / 'keep.h').write_text('kept')
         (dest / 'include' / 'other').mkdir(parents=True)
@@ -237,7 +220,7 @@ class Sdl3PinTest(unittest.TestCase):
         a, b = {}, {}
         sdl3_pin.deb_files(odd, a)
         sdl3_pin.deb_files(good, b)
-        self.assertEqual(a, b)   # members of odd sizes are padded
+        self.assertEqual(a, b)
         negative = b'!<arch>\n' + f'{"data.tar.xz/":<16}{0:<12}{0:<6}{0:<6}{"100644":<8}{-60:<10}`\n'.encode()
         cut = good[:-200]
         bad_magic = bytearray(good)

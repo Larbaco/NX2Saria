@@ -1,21 +1,4 @@
-"""Build the RomFS index the runtime binary-searches (runtime/hle/romfs.c) and its romfs_config.h.
-
-Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
-
-Input: <romfs>/index.json ({status, romfs_size, romfs_sha256, files: [{path, offset, size}]}) as tools/extract.py
-writes it, and <romfs>/romfs.bin, whose size must match. Output, both in the build directory (never in the repo):
-
-    romfs-index.bin   NX2NRFS1 layout: header <8sQQ (magic, count, strings offset), count 24-byte rows <QQII (offset,
-                      size, name offset, name length including the NUL), then the NUL-terminated names; rows sorted by
-                      the UTF-8 bytes of the path, which is the order strcmp sees
-    romfs_config.h    ROMFS_IMAGE_SIZE, ROMFS_IMAGE_SHA256, ROMFS_INDEX_SHA256, ROMFS_FILE_COUNT
-
-Both are rewritten only when their bytes change, so Ninja does not rebuild romfs.c for nothing.
-
-    .venv\\Scripts\\python tools\\romfs_index.py --romfs build\\extracted\\v121\\romfs --out build\\v121
-
-Standard library only.
-"""
+# Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
 import argparse
 import hashlib
 import json
@@ -26,13 +9,13 @@ from pathlib import Path
 
 from check_content import GENERATED_MARKER
 
+DESCRIPTION = 'Build the RomFS index the runtime binary-searches (runtime/hle/romfs.c) and its romfs_config.h.'
 MAGIC = b'NX2NRFS1'
 HEADER = struct.Struct('<8sQQ')
 ROW = struct.Struct('<QQII')
 
 
 def build_index(manifest):
-    """The index bytes for an index.json manifest; exits on a malformed one."""
     files = sorted(manifest['files'], key=lambda e: e['path'].encode())
     size = manifest['romfs_size']
     strings = bytearray()
@@ -61,7 +44,6 @@ def write_if_changed(path, data):
 
 
 def write(romfs, out):
-    """Write romfs-index.bin and romfs_config.h into out. Returns (file count, index bytes, seconds)."""
     t0 = time.monotonic()
     manifest = json.loads((romfs / 'index.json').read_text(encoding='utf-8'))
     if manifest.get('status') != 'pass':
@@ -83,8 +65,6 @@ def write(romfs, out):
 
 
 def write_placeholder(out):
-    """romfs_config.h without a RomFS (no extracted game on this machine): nx2saria.exe builds, and fs_init stops with a
-    named fatal."""
     (out / 'romfs-index.bin').unlink(missing_ok=True)
     config = (f'// No RomFS found by tools/romfs_index.py; do not edit. {GENERATED_MARKER}\n'
               '#pragma once\n'
@@ -97,7 +77,7 @@ def write_placeholder(out):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--romfs', type=Path, required=True, help='directory with romfs.bin and index.json')
     ap.add_argument('--out', type=Path, required=True, help='build directory')
     args = ap.parse_args()

@@ -1,16 +1,4 @@
 # needs: py:numpy
-"""Self-test of tests/maxwell_warp_emu.py: hand-encoded Maxwell sequences against hand-computed results.
-
-Part 1 runs Maxwell words encoded here from the field layouts of the translator's Decoders/InstDecoders.cs (integer and logic
-ops, SHFL.IDX with clamp and segment masks, LDS/STS sizes, F2F, HFMA2, FFMA rounding, PRMT, predicates, EXIT, BRA).
-Part 2, when build/xlate/nx2navi_xlate.exe exists, lowers SM86 HMMA.1688 / HMMA.16816, LDSM and MOVM with
-nx2navi_xlate --lower and checks the emulated result against exactly representable reference values (small
-integers, so every F16 rounding is exact and only the fragment layout can be wrong), and HFMA2.RELU as the translator
-runs it (the translator drops PRMT, so AmpereLowering.cs Half must not use it). tests/tensor_lowering_check.py checks
-the same lowerings against hardware results.
-
-  python tests/maxwell_warp_emu_selftest.py
-"""
 
 from __future__ import annotations
 
@@ -22,7 +10,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import maxwell_warp_emu as emu  # noqa: E402
 
-PT = 7 << 16          # guard field: predicate PT
+PT = 7 << 16
 LANES = 32
 lane = np.arange(LANES, dtype=np.int64)
 failures: list[str] = []
@@ -38,8 +26,6 @@ def check(name: str, got, want):
         bad = np.nonzero(got != want)[0][:6]
         failures.append(f"{name}: " + ", ".join(f"lane {b} got {int(got[b]):#x} want {int(want[b]):#x}" for b in bad))
 
-
-# ---- Maxwell encoders (InstDecoders.cs field positions) -----------------------------------------------------------
 
 def guard(p: int, inv: bool = False) -> int:
     return (p | (8 if inv else 0)) << 16
@@ -57,7 +43,7 @@ def shl_i(d, a, n): return 0x3848000000000000 | n << 20 | a << 8 | d | PT
 def shr_i(d, a, n, signed=False): return 0x3828000000000000 | (1 << 48 if signed else 0) | n << 20 | a << 8 | d | PT
 def shr_r(d, a, b): return 0x5C28000000000000 | b << 20 | a << 8 | d | PT
 def prmt(d, a, sel, c): return 0x5BC0000000000000 | c << 39 | sel << 20 | a << 8 | d | PT
-def isetp_i(pd, a, imm, cmp, signed=False):   # ISETP.cmp Pd, PT, Ra, imm, PT (AND)
+def isetp_i(pd, a, imm, cmp, signed=False):
     return 0x3660000000000000 | cmp << 49 | (1 << 48 if signed else 0) | 7 << 39 | (imm & 0x7FFFF) << 20 | a << 8 | pd << 3 | 7 | PT
 def shfl(d, a, b, c, mode=0, b_imm=False, c_imm=False, pd=7):
     return (0xEF10000000000000 | pd << 48 | (c << 34 if c_imm else c << 39) | (1 << 29 if c_imm else 0)
@@ -93,10 +79,7 @@ def merge(*specs):
     return out
 
 
-# ---- part 1: hand-encoded sequences -------------------------------------------------------------------------------
-
 def part1():
-    # IADD32I, MOV32I, IADD3 with a negated operand, ISCADD.
     r = emu.run([mov32i(1, 0x7FFFFFFF), iadd32i(2, 0, 5), iadd32i(3, 1, 1), iadd32i(4, 0, -3),
                  iadd3(5, 0, 2, 1, neg_b=True), iscadd(6, 0, 2, 4), EXIT], per_lane("R0", lane * 3))
     check("IADD32I", r[:, 2], lane * 3 + 5)
@@ -106,7 +89,6 @@ def part1():
     check("ISCADD", r[:, 6], ((lane.astype(np.int64) * 3) << 4) + lane * 3 + 5)
     check("RZ stays 0", r[:, 255], 0)
 
-    # S2R lane id, LOP32I, SHL/SHR, LOP3, SHR by register.
     r = emu.run([s2r(1), lop32i(2, 1, 3, 0), shl_i(3, 1, 3), shr_i(4, 1, 2), lop32i(5, 1, 0xF0, 1),
                  lop32i(6, 1, 0x5, 2), lop3(7, 1, 2, 3, 0x96), mov32i(8, 0x80000000), shr_i(9, 8, 4, signed=True),
                  shr_r(10, 3, 2), EXIT], {})
@@ -120,17 +102,16 @@ def part1():
     check("SHR.S32", r[:, 9], 0xF8000000)
     check("SHR by register", r[:, 10], (lane << 3) >> (lane & 3))
 
-    # SHFL.IDX: the whole warp by a lane register; a segment of 4 lanes; out of range lanes keep their own value.
     vals = lane * 0x101 + 7
     seq = [s2r(1), iadd32i(2, 1, 1), lop32i(2, 2, 31, 0),
-           shfl(3, 0, 2, 31, c_imm=True),                         # (lane + 1) % 32
-           shfl(4, 0, 1, 0x1C03, b_imm=True, c_imm=True),          # segments of 4: lane (t & ~3) | 1
-           shfl(5, 0, 5, 0x1803, b_imm=True, c_imm=True, pd=0),    # segments of 8, clamp 3: index 5 invalid
-           shfl(6, 0, 2, 0x1803, b_imm=True, c_imm=True, pd=1),    # index 2 valid
-           shfl(7, 0, 1, 0x1F, mode=3, b_imm=True, c_imm=True),     # BFLY 1
-           shfl(8, 0, 2, 0x00, mode=2, b_imm=True, c_imm=True),     # DOWN 2, clamp 0: lanes > 0... invalid
-           shfl(9, 0, 2, 0x1F, mode=2, b_imm=True, c_imm=True),     # DOWN 2
-           shfl(10, 0, 1, 0, mode=1, b_imm=True, c_imm=True),      # UP 1
+           shfl(3, 0, 2, 31, c_imm=True),
+           shfl(4, 0, 1, 0x1C03, b_imm=True, c_imm=True),
+           shfl(5, 0, 5, 0x1803, b_imm=True, c_imm=True, pd=0),
+           shfl(6, 0, 2, 0x1803, b_imm=True, c_imm=True, pd=1),
+           shfl(7, 0, 1, 0x1F, mode=3, b_imm=True, c_imm=True),
+           shfl(8, 0, 2, 0x00, mode=2, b_imm=True, c_imm=True),
+           shfl(9, 0, 2, 0x1F, mode=2, b_imm=True, c_imm=True),
+           shfl(10, 0, 1, 0, mode=1, b_imm=True, c_imm=True),
            EXIT]
     w = emu.run_warp(seq, per_lane("R0", vals))
     r = w.r
@@ -145,14 +126,13 @@ def part1():
     check("SHFL.DOWN", r[:, 9], np.where(lane + 2 <= 31, vals[np.minimum(lane + 2, 31)], vals))
     check("SHFL.UP", r[:, 10], np.where(lane >= 1, vals[np.maximum(lane.astype(np.int64) - 1, 0)], vals))
 
-    # STS / LDS: 32, 16 and 8 bits, sign extension, 64 and 128 bits, the immediate offset.
-    seq = [s2r(1), shl_i(2, 1, 2),                                  # R2 = 4 * lane
-           sts(1, 2, 0x100, 4),                                    # word [0x100 + 4t] = t
+    seq = [s2r(1), shl_i(2, 1, 2),
+           sts(1, 2, 0x100, 4),
            lds(3, 2, 0x100, 4),
            lds(4, 2, 0x100, 2), lds(5, 2, 0x102, 2), lds(6, 2, 0x101, 0),
            mov32i(7, 0x8001F0F0), sts(7, 255, 0x40, 4), lds(8, 255, 0x40, 3), lds(9, 255, 0x42, 3),
            lds(10, 255, 0x40, 1), lds(11, 255, 0x41, 0),
-           lds(12, 255, 0x100, 6),                                 # R12-R15 = words 0..3 of the table
+           lds(12, 255, 0x100, 6),
            mov32i(16, 0xABCD), sts(16, 255, 0x82, 2), lds(17, 255, 0x80, 4),
            EXIT]
     r = emu.run(seq, {})
@@ -168,13 +148,12 @@ def part1():
         check(f"LDS.128 word {k}", r[:, 12 + k], k)
     check("STS.U16 at +2", r[:, 17], 0xABCD0000)
 
-    # F2F: F32 from either F16 half (exact), F16 from F32 (round to nearest even, high half zero).
     src = hpair(1.5, -0.333251953125)
     seq = [mov32i(1, src), f2f(2, 1, 2, 1), f2f(3, 1, 2, 1, high=True),
            mov32i(4, f32bits(1 / 3)), f2f(5, 4, 1, 2),
-           mov32i(6, f32bits(1 + 2 ** -11)), f2f(7, 6, 1, 2),             # tie: to even (1.0)
-           mov32i(8, f32bits(1 + 3 * 2 ** -11)), f2f(9, 8, 1, 2),         # tie: to even (1 + 2^-9)
-           mov32i(10, f32bits(70000.0)), f2f(11, 10, 1, 2),                # overflow: inf
+           mov32i(6, f32bits(1 + 2 ** -11)), f2f(7, 6, 1, 2),
+           mov32i(8, f32bits(1 + 3 * 2 ** -11)), f2f(9, 8, 1, 2),
+           mov32i(10, f32bits(70000.0)), f2f(11, 10, 1, 2),
            EXIT]
     r = emu.run(seq, {})
     check("F2F.F32.F16 H0", r[:, 2], f32bits(1.5))
@@ -184,7 +163,6 @@ def part1():
     check("F2F.F16.F32 tie up", r[:, 9], 0x3C02)
     check("F2F.F16.F32 overflow", r[:, 11], 0x7C00)
 
-    # HFMA2: per half F32 FMA then F16; neg C; saturate.
     seq = [mov32i(1, hpair(1.5, 2.0)), mov32i(2, hpair(2.0, -0.5)), mov32i(3, hpair(0.25, 1.0)),
            hfma2(4, 1, 2, 3), hfma2(5, 1, 2, 3, neg_c=True), hfma2(6, 1, 2, 3, sat=True),
            mov32i(7, hpair(1 + 2 ** -10, 1.0)), mov32i(8, hpair(1 + 2 ** -10, 2 ** -11)), mov32i(9, hpair(0.0, 1.0)),
@@ -193,19 +171,16 @@ def part1():
     check("HFMA2", r[:, 4], hpair(3.25, 0.0))
     check("HFMA2 -C", r[:, 5], hpair(2.75, -2.0))
     check("HFMA2.SAT", r[:, 6], hpair(1.0, 0.0))
-    # (1 + 2^-10)^2 = 1 + 2^-9 + 2^-20 -> F16 1 + 2^-9; 1 + 2^-11 is an F16 tie -> 1.0.
     check("HFMA2 rounding", r[:, 10], hpair(1 + 2 ** -9, 1.0))
 
-    # The translator's Optimizer.PropagatePack: an F16 result unpacked again without an integer operation in between is the
-    # unrounded F32 value (directly or through a MOV); LOP in between, or a guarded pack, keeps the F16 rounding.
     third, third16 = f32bits(1 / 3), f32bits(float(np.float16(1 / 3)))
-    seq = [mov32i(1, third), f2f(2, 1, 1, 2), f2f(3, 2, 2, 1),               # pack, unpack: folded
-           mov(4, 2), f2f(5, 4, 2, 1),                                       # through a MOV: folded
-           lop32i(6, 2, 0xFFFFFFFF, 0), f2f(7, 6, 2, 1),                     # through LOP: rounded
-           s2r(8), isetp_i(0, 8, 32, 1),                                     # P0 = lane < 32, true everywhere
-           f2f(9, 1, 1, 2) & ~(0xF << 16) | guard(0), f2f(10, 9, 2, 1),       # guarded pack: rounded
+    seq = [mov32i(1, third), f2f(2, 1, 1, 2), f2f(3, 2, 2, 1),
+           mov(4, 2), f2f(5, 4, 2, 1),
+           lop32i(6, 2, 0xFFFFFFFF, 0), f2f(7, 6, 2, 1),
+           s2r(8), isetp_i(0, 8, 32, 1),
+           f2f(9, 1, 1, 2) & ~(0xF << 16) | guard(0), f2f(10, 9, 2, 1),
            mov32i(11, hpair(40000.0, 1.0)), mov32i(12, hpair(2.0, 2.0)), mov32i(13, 0), mov32i(16, hpair(0.5, 0.5)),
-           hfma2(14, 11, 12, 13), hfma2(15, 14, 16, 13),                     # 40000 * 2 = inf as F16, * 0.5 again
+           hfma2(14, 11, 12, 13), hfma2(15, 14, 16, 13),
            EXIT]
     r = emu.run(seq, {})
     check("F2F.F16 then F2F.F32: unrounded (PropagatePack)", r[:, 3], third)
@@ -215,15 +190,12 @@ def part1():
     check("HFMA2 overflow stored as F16 inf", r[:, 14], hpair(np.inf, 2.0))
     check("HFMA2 into HFMA2: the unrounded 80000 halved", r[:, 15], hpair(40000.0, 1.0))
 
-    # FFMA: rounded once. Exact a*b + c lies just below an F32 halfway point; F64 alone would round to the tie and
-    # then to even (0x3f800002), the fused result is 0x3f800001.
     seq = [mov32i(1, 0x39800001), mov32i(2, 0x397FFFFE), mov32i(3, 0x3F800001), ffma(4, 1, 2, 3),
            mov32i(5, f32bits(3.0)), mov32i(6, f32bits(0.5)), ffma(7, 5, 6, 5), EXIT]
     r = emu.run(seq, {})
     check("FFMA single rounding at a tie", r[:, 4], 0x3F800001)
     check("FFMA", r[:, 7], f32bits(4.5))
 
-    # PRMT: a no-op as the translator translates it, the Maxwell byte permute otherwise (0xbb99: sign of bytes 1 and 3).
     seq = [mov32i(1, 0x7F80C000), mov32i(2, 0xBB99), mov32i(3, 0x11111111), prmt(3, 1, 2, 255),
            mov32i(4, 0x3210), mov32i(5, 0x22222222), prmt(5, 1, 4, 255), EXIT]
     r = emu.run(seq, {}, prmt="ryujinx")
@@ -232,12 +204,11 @@ def part1():
     check("PRMT sign replicate (Maxwell)", r[:, 3], 0x0000FFFF)
     check("PRMT identity (Maxwell)", r[:, 5], 0x7F80C000)
 
-    # Predicates: ISETP, a guarded write, an inverted guard, EXIT of some lanes, a uniform BRA over one instruction.
-    seq = [s2r(1), isetp_i(0, 1, 16, 1),                           # P0 = lane < 16
+    seq = [s2r(1), isetp_i(0, 1, 16, 1),
            mov32i(2, 0xAAAA, g=guard(0)), mov32i(3, 0xBBBB, g=guard(0, inv=True)),
-           bra(emu.slot_address(6) - emu.slot_address(4) - 8), mov32i(4, 0xDEAD),   # skipped
+           bra(emu.slot_address(6) - emu.slot_address(4) - 8), mov32i(4, 0xDEAD),
            mov32i(5, 0x5555),
-           (EXIT & ~(0xF << 16)) | guard(0, inv=True),             # lanes >= 16 exit
+           (EXIT & ~(0xF << 16)) | guard(0, inv=True),
            mov32i(6, 0x6666), EXIT]
     w = emu.run_warp(seq, regs_all(R2=1, R3=1, R6=1))
     check("ISETP.LT", w.p[:, 0], lane < 16)
@@ -247,7 +218,6 @@ def part1():
     check("after BRA", w.r[:, 5], 0x5555)
     check("guarded EXIT", w.r[:, 6], np.where(lane < 16, 0x6666, 1))
 
-    # Unknown opcodes raise with the word.
     global checks
     checks += 1
     try:
@@ -258,10 +228,7 @@ def part1():
             failures.append(f"unknown opcode message: {e}")
 
 
-# ---- part 2: lowered SM86 tensor instructions ---------------------------------------------------------------------
-
 def hmma_case(k16: bool, rng):
-    """HMMA.{1688,16816}.F16 R4, R8, R12, R16 with small integers; returns (sm86, regs_in, expected D regs)."""
     K = 16 if k16 else 8
     A = rng.integers(-3, 4, size=(16, K)).astype(np.float64)
     B = rng.integers(-3, 4, size=(K, 8)).astype(np.float64)
@@ -294,8 +261,6 @@ def part2(exe: Path):
             check(f"HMMA.{'16816' if k16 else '1688'} D R{reg} (lowered, {len(words)} words)",
                   r[:, reg], [want[t][reg] for t in range(LANES)])
 
-    # LDSM.16.M88.4 R4, [R1] and LDSM.16.MT88.1 R8, [R1]: matrix m row r at 0x200 * m + 0x20 * r (16 bytes used),
-    # element (m, row, col) = 0x1000 * m + 0x100 * row + col.
     smem = bytearray(0x1000)
     for m in range(4):
         for row in range(8):
@@ -309,25 +274,22 @@ def part2(exe: Path):
         words, _, _ = emu.lower(sm86, exe)
         r = emu.run(words, addr, bytes(smem))
         for m in range(1 << size):
-            if transpose:   # column t/4 of rows 2(t%4) (low) and 2(t%4)+1 (high)
+            if transpose:
                 want = [el(m, 2 * (t % 4), t // 4) | el(m, 2 * (t % 4) + 1, t // 4) << 16 for t in range(LANES)]
-            else:           # row t/4, columns 2(t%4), 2(t%4)+1
+            else:
                 want = [el(m, t // 4, 2 * (t % 4)) | el(m, t // 4, 2 * (t % 4) + 1) << 16 for t in range(LANES)]
             check(f"LDSM.16.{'MT88' if transpose else 'M88'}.{1 << size} matrix {m}", r[:, dst + m], want)
 
-    # MOVM.16.MT88 R2, R1: element (row, col) = 8 * row + col at lane 4 row + col / 2, half col % 2.
     regs_in = {t: {"R1": (8 * (t // 4) + 2 * (t % 4)) | (8 * (t // 4) + 2 * (t % 4) + 1) << 16} for t in range(LANES)}
     words, _, _ = emu.lower([0x23A | 7 << 12 | 2 << 16 | 1 << 24, 0, 0, 0], exe)
     r = emu.run(words, regs_in)
     want = [(8 * (2 * (t % 4)) + t // 4) | (8 * (2 * (t % 4) + 1) + t // 4) << 16 for t in range(LANES)]
     check("MOVM.16.MT88", r[:, 2], want)
 
-    # HFMA2.RELU R0, R1, R2, R3 (PT) as the translator runs it (no PRMT: AmpereLowering.cs Half builds the mask with
-    # integer operations), whatever the scratch registers held before: negative sums become +0, positive ones stay.
     sm86 = [0x231 | 7 << 12 | 0 << 16 | 1 << 24, 2, 3 | 0x8000 | 0x03800000, 0]
     words, _, _ = emu.lower(sm86, exe)
-    for a, b, c, want in (((1.0, -2.0), (-3.0, 0.5), (1.0, 0.25), (0.0, 0.0)),       # sums -2.0, -0.75
-                          ((1.0, 2.0), (3.0, -0.5), (1.0, 0.25), (4.0, 0.0))):      # sums 4.0, -0.75
+    for a, b, c, want in (((1.0, -2.0), (-3.0, 0.5), (1.0, 0.25), (0.0, 0.0)),
+                          ((1.0, 2.0), (3.0, -0.5), (1.0, 0.25), (4.0, 0.0))):
         regs_in = regs_all(R1=hpair(*a), R2=hpair(*b), R3=hpair(*c))
         for fill in (0, 0x7FC0DEAD):
             w = emu.run_warp(words, regs_in, prmt="ryujinx", fill=fill)

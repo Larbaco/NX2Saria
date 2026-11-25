@@ -1,20 +1,4 @@
 # needs: git
-"""Check the shader translator guard of the packaging scripts (tools/build_xlate.py source_identity and check_built,
-used by tools/make_launcher.py check_xlate, tools/make_kit.py and tools/make_appimage.py):
-
-- a folder whose nx2navi_xlate.id names this checkout's sources passes; a missing exe or .id is refused;
-- a folder built before a patch changed is refused, although identity() over its own prepared tree equals its .id;
-- build_xlate.py has no option that writes an .id beside an exe it did not build (--id-only is gone);
-- make_launcher.check_xlate and make_kit stop on a foreign translator, make_kit before it downloads or deletes
-  anything; make_launcher and make_appimage run the check before their slow steps;
-- tools/xlate_smoke.py pool_check, which make_launcher.check_xlate runs on the exe on Windows: spirv_clamps reads the
-  array lengths and the UMin clamps of a module made here, pool_check refuses an exe that does not run, check_xlate
-  refuses such an exe beside a matching .id, and a translator built here (build/xlate) passes when there is one.
-
-Needs git on PATH (prepare_sources applies the patches with it) and tools/vendor. No game files; any Python 3.10+.
-
-Usage: xlate_package_check.py
-"""
 import contextlib
 import inspect
 import io
@@ -46,7 +30,6 @@ def folder(base, name, ident, exe=True):
 
 
 def spirv(*instructions):
-    """A SPIR-V module of these instructions, each (opcode, operand words...), after a five-word header."""
     words = [0x07230203, 0x00010300, 0, 100, 0]
     for op, *ops in instructions:
         words += [(len(ops) + 1) << 16 | op, *ops]
@@ -102,8 +85,6 @@ def main():
         no_id = folder(base, 'no_id', None)
         other = folder(base, 'other', '4d051299931d390e' + '0' * 48)
 
-        # A folder built before a patch changed: its prepared tree differs from a fresh one by one file, and its .id
-        # is identity() over that tree, as build_xlate.main wrote it then.
         stale = base / 'stale'
         old = build_xlate.BUILD
         build_xlate.BUILD = stale
@@ -131,19 +112,17 @@ def main():
         print('check_built: this checkout\'s translator passes; missing files, another identity and a stale build '
               'are refused')
 
-        # --id-only is gone: the option is refused and writes nothing.
         bare = folder(base, 'bare', None)
         r = subprocess.run([sys.executable, str(ROOT / 'tools' / 'build_xlate.py'), '--id-only', '--out', str(bare)],
                            capture_output=True, text=True)
         assert r.returncode != 0 and not (bare / 'nx2navi_xlate.id').exists(), r.stdout + r.stderr
         print('build_xlate.py: --id-only refused, no .id written')
 
-        # The packaging scripts, with the fresh identity computed once.
         build_xlate.source_identity = lambda: want
         pool_checks(base)
         import make_launcher
         import make_kit
-        xlate_smoke.pool_check = lambda exe: None   # the stand-in exes do not run: pool_checks covers the real one
+        xlate_smoke.pool_check = lambda exe: None
         assert refused(make_launcher.check_xlate, good) is None
         for bad in (other, stale, no_exe):
             assert refused(make_launcher.check_xlate, bad)
@@ -157,7 +136,6 @@ def main():
         assert why and 'other sources' in why and not out.exists()
         print('make_launcher and make_kit stop on a foreign translator (make_kit before any download)')
 
-    # The check comes before the slow steps.
     src = inspect.getsource(make_launcher.main)
     assert src.index('check_xlate(a.xlate)') < src.index('shutil.rmtree(out') < src.index('toolchain.make_lock')
     import make_appimage

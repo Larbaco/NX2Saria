@@ -1,5 +1,3 @@
-// runtime/diag/hang_watch.c's decisions on made-up readings, a second apart, with stand-ins for what it reads and calls.
-// Built and run by tests/hang_watch_check.py; prints each failed check and exits 1 on any.
 #include "hang_watch.c"
 
 #include <stdarg.h>
@@ -8,7 +6,6 @@
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// ---- the runtime hang_watch.c reaches
 GfxStats gfx_counters;
 uint64_t rt_guest_start_ns = 1;
 static int focused = 1, minimized, ending, flushes, syncs, wait_reports;
@@ -31,7 +28,6 @@ void rt_log(const char *fmt, ...) {
 }
 int cfg_int(const char *name) { (void)name; return 20; }
 
-// ---- the readings: t seconds, the frames shown so far, focus, and the GPU's issued and done values
 static HangWatch w;
 static uint64_t t_s;
 static int run(int seconds, int frames_move, int gpu_move) {
@@ -71,7 +67,7 @@ int main(void) {
           wait_reports, syncs);
     r = run(5, 1, 1) + run(30, 0, 0);
     CHECK(r == 1, "%d reports for a second stall after progress, want 1", r);
-    focused = 0;   // the GPU stops: reported whatever the focus
+    focused = 0;
     issued_v += 3;
     r = run(30, 0, 0);
     CHECK(r == 1, "%d reports for submissions not done, want 1", r);
@@ -81,7 +77,6 @@ int main(void) {
     r += run(60, 0, 0);
     CHECK(r == 0, "%d reports after the third: at most 3 a run", r);
     CHECK(w.reports == 3, "%d reports in all, want 3", w.reports);
-    // a fresh watch: the GPU idle (nothing outstanding) is no stall
     w = (HangWatch){.limit_ns = 20000000000ull};
     focused = 0;
     issued_v = done_v;

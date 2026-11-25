@@ -1,7 +1,3 @@
-// The session summary's JSON text (session_summary.h ss_format) and the small value rules it shares with the
-// gatherer (ss_setting, ss_os_name, ss_frametime). Plain C with no runtime calls: tests/session_summary_check.c builds
-// this file alone. No allocation and no locale-dependent formatting, since session_summary.c runs it on a failing
-// thread at a fatal error.
 #include <stdio.h>
 #include <string.h>
 
@@ -10,7 +6,7 @@
 typedef struct {
     char *p;
     size_t cap, n;
-    int full;   // something did not fit
+    int full;
 } Buf;
 
 static void put_raw(Buf *b, const char *s, size_t k) {
@@ -25,7 +21,6 @@ static void put_raw(Buf *b, const char *s, size_t k) {
 
 static void put(Buf *b, const char *s) { put_raw(b, s, strlen(s)); }
 
-// Whole numbers through snprintf's %lld, which no locale changes; v below 0 is null, above max is max.
 static void put_int(Buf *b, int64_t v, int64_t max) {
     if (v < 0) {
         put(b, "null");
@@ -37,8 +32,6 @@ static void put_int(Buf *b, int64_t v, int64_t max) {
     put_raw(b, t, (size_t)k);
 }
 
-// One decimal, rounded, made from whole numbers: printf's %f takes the decimal separator of the C locale, and a
-// library that sets another one would write "59,9". NaN and values below 0 are null, values above max are max.
 static void put_dec1(Buf *b, double v, double max) {
     if (!(v >= 0)) {
         put(b, "null");
@@ -51,24 +44,20 @@ static void put_dec1(Buf *b, double v, double max) {
     put_raw(b, s, (size_t)k);
 }
 
-// The length of the UTF-8 sequence at s (n bytes left) when it is a valid one and not a C1 control (U+0080-U+009F);
-// 0 otherwise. Overlong forms, surrogates and code points above U+10FFFF are invalid.
 static int utf8_len(const unsigned char *s, size_t n) {
     unsigned c = s[0];
     int k = c >= 0xF0 && c <= 0xF4 ? 4 : c >= 0xE0 ? 3 : c >= 0xC2 && c < 0xE0 ? 2 : 0;
     if (!k || (size_t)k > n) return 0;
     for (int i = 1; i < k; i++)
         if ((s[i] & 0xC0) != 0x80) return 0;
-    if (c == 0xC2 && s[1] < 0xA0) return 0;              // C1 controls
-    if (c == 0xE0 && s[1] < 0xA0) return 0;              // overlong
-    if (c == 0xED && s[1] >= 0xA0) return 0;             // surrogates
-    if (c == 0xF0 && s[1] < 0x90) return 0;              // overlong
-    if (c == 0xF4 && s[1] >= 0x90) return 0;             // above U+10FFFF
+    if (c == 0xC2 && s[1] < 0xA0) return 0;
+    if (c == 0xE0 && s[1] < 0xA0) return 0;
+    if (c == 0xED && s[1] >= 0xA0) return 0;
+    if (c == 0xF0 && s[1] < 0x90) return 0;
+    if (c == 0xF4 && s[1] >= 0x90) return 0;
     return k;
 }
 
-// A free-text string as a JSON string of at most max characters (code points): quotes and backslashes escaped, tabs and
-// line ends as one space, other control characters and invalid UTF-8 dropped, spaces at both ends left out.
 static void put_text(Buf *b, const char *s, int max) {
     if (!s) {
         put(b, "null");
@@ -77,7 +66,7 @@ static void put_text(Buf *b, const char *s, int max) {
     const unsigned char *p = (const unsigned char *)s;
     size_t n = strlen(s);
     put(b, "\"");
-    int chars = 0, spaces = 0, any = 0;   // spaces held back until a character follows them
+    int chars = 0, spaces = 0, any = 0;
     for (size_t i = 0; i < n && chars < max;) {
         unsigned c = p[i];
         if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
@@ -105,7 +94,6 @@ static void put_text(Buf *b, const char *s, int max) {
     put(b, "\"");
 }
 
-// A display or settings value: 1..32 characters of [A-Za-z0-9_.:x+-], else "other"; NULL is null.
 static void put_token(Buf *b, const char *s) {
     if (!s) {
         put(b, "null");
@@ -135,7 +123,6 @@ static void put_hex16(Buf *b, int64_t v) {
     put_raw(b, t, (size_t)k);
 }
 
-// The fixed values (schema, versions, end): the token rules, with "" for NULL instead of null.
 static void put_required(Buf *b, const char *s) {
     if (!s || !*s) put(b, "\"\"");
     else put_token(b, s);
@@ -217,7 +204,7 @@ int ss_format(const SessionSummary *s, char *out, size_t cap) {
         put(&b, ", \"over_100ms\": ");
         put_int(&b, s->over_100ms, 0);
         put(&b, "}");
-    } else {   // no frame counted: an object of nulls, as every other group; the server takes no null group
+    } else {
         put(&b, "{\"fps_mean\": null, \"fps_low_1pct\": null, \"worst_ms\": null, \"over_25ms\": null, "
                 "\"over_100ms\": null}");
     }
@@ -266,7 +253,6 @@ static int same_ci(const char *a, size_t an, const char *b, size_t bn) {
     return 1;
 }
 
-// A whole number of at most 9 digits, else -1.
 static long whole(const char *s, size_t n) {
     if (!n || n > 9) return -1;
     long v = 0;
@@ -286,7 +272,7 @@ const char *ss_setting(const char *value, const char *allowed, char *out, size_t
         const char *dots = NULL;
         for (size_t i = 0; i + 1 < k; i++)
             if (p[i] == '.' && p[i + 1] == '.') dots = p + i;
-        if (dots) {   // "lo..hi": the value as a whole number, written without leading zeros or sign
+        if (dots) {
             long lo = whole(p, (size_t)(dots - p)), hi = whole(dots + 2, (size_t)(p + k - dots - 2)), v = whole(value, vn);
             if (lo >= 0 && hi >= lo && v >= lo && v <= hi) {
                 snprintf(out, cap, "%ld", v);
@@ -312,7 +298,7 @@ void ss_os_name(const char *raw, char *out, size_t cap) {
         return;
     }
     snprintf(out, cap, "%s", raw);
-    char *k = strstr(out, " (Linux ");   // linux.c plat_os_version adds the kernel's release after the name
+    char *k = strstr(out, " (Linux ");
     if (k && k > out) *k = 0;
 }
 
@@ -321,11 +307,11 @@ void ss_frametime(const uint32_t *hist, int bins, uint64_t bin_ns, uint64_t fram
     *fps_mean = *fps_low_1pct = *worst_ms = 0;
     if (!frames || !sum_ns) return;
     *fps_mean = frames * 1e9 / sum_ns;
-    uint64_t cut = (frames + 99) / 100, acc = 0, low = 0;   // the slowest 1% of frames
+    uint64_t cut = (frames + 99) / 100, acc = 0, low = 0;
     for (int b = bins - 1; b >= 0; b--) {
         acc += hist[b];
         if (acc >= cut) {
-            low = (uint64_t)(b + 1) * bin_ns;   // upper edge of the bin
+            low = (uint64_t)(b + 1) * bin_ns;
             break;
         }
     }

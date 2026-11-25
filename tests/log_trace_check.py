@@ -1,26 +1,4 @@
 # needs: clang
-"""The log lines of the pipeline cache stamp, the play gate of the background builds and the presentation and sampler
-failures, as the runtime's own code writes them: each function is cut from its source file by its text, built with
-stand-ins for what it calls (real files in a scratch folder for the stamp, a clock the harness moves for the play
-gate, a vkCreateSampler that fails on request), and run through a session's events. What its rt_log calls write goes
-to build/test/log_trace/nx2saria-sample.log, and each line a player's log is read by must be there with the numbers
-the events give:
-
-- runtime/vk/vk_pipeline.c cache_stamp_check over the starts of an update (no stamp, the same translator, another one the
-  carry serves, another one it does not while a file is held open and then free, the starts after) and a preparation
-  under yet another translator: "vk: pipeline cache stamp <id> none|matches|differs: <action>, <MB>", the files
-  deleted or kept as the line says, and the line's note that the run's exit writes pipeline-cache.bin on exactly the
-  starts in play without that file (which saves write it: tests/cache_stamp_check.c);
-- the play gate ("the play gate" to vk_pipeline_probe_buildgate): the start's line, then frames shown while builders
-  rest, and "vk: background builds paused in play: N frames, M builds deferred" with those counts; with the setting
-  at 0 the start's "off" line and no other;
-- runtime/gfx/gfx_present.c swapchain_unusable failing 20 times: "gfx: vkGetSwapchainImagesKHR failed (5), N times: ..."
-  for N = 1 to 8 and 16 only;
-- runtime/vk/vk_texture.c make_sampler: a failed vkCreateSampler that the plain retry makes, and one it does not, each
-  "gfx: vkCreateSampler failed (-1), N times: ..." with what stood in.
-
-No game files, no GPU (Vulkan headers only). Usage: log_trace_check.py [--cc <clang>]
-"""
 import argparse
 import os
 import re
@@ -35,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
 try:
     from common import MSYS_BIN, compiler  # noqa: E402
-except ImportError:   # a Python without the differential tests' packages: the same compiler choice without them
+except ImportError:
     MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
     def compiler():
@@ -51,7 +29,6 @@ def source(name):
 
 
 def function(src, signature):
-    """The function that starts with signature, through the closing brace at the start of a line."""
     at = src.index(signature)
     end = src.index('\n}\n', at) + 3
     return src[at:end]
@@ -80,7 +57,6 @@ static void rt_log(const char *fmt, ...) {
 }
 '''
 
-# ---- the pipeline cache stamp
 STAMP = COMMON + r'''
 #include "vk_cache_stamp.h"
 #define PLAT_PATH_MAX 260
@@ -156,7 +132,6 @@ int main(int argc, char **argv) {
 }
 '''
 
-# ---- the play gate
 GATE = COMMON + r'''
 #include "vk_play_gate.h"
 typedef int PlatMutex;
@@ -200,7 +175,6 @@ int main(int argc, char **argv) {
 }
 '''
 
-# ---- swapchain_unusable
 SWAP = COMMON + r'''
 #include <vulkan/vulkan.h>
 #include "gfx_guard.h"
@@ -228,7 +202,6 @@ int main(int argc, char **argv) {
 }
 '''
 
-# ---- make_sampler
 SAMP = COMMON + r'''
 #include <math.h>
 #include <vulkan/vulkan.h>
@@ -302,7 +275,7 @@ def main():
     work.mkdir(parents=True)
     log = work / 'nx2saria-sample.log'
     inc = [*runtime_include.flags()]
-    vk = ROOT / 'toolchain' / 'vulkan-headers' / 'include'   # build_game.py's pinned headers, when fetched
+    vk = ROOT / 'toolchain' / 'vulkan-headers' / 'include'
     if vk.is_dir():
         inc = ['-I', str(vk)] + inc
 
@@ -333,10 +306,6 @@ def main():
             fails += 1
             print('log_trace_check: FAIL: ' + what)
 
-    # The stamp: none, matches, differs kept for the carry, differs read while a file is held open, differs deleted
-    # (650 MB, both files), matches with the file still due (its run ended before its exit), matches once written, a
-    # preparation's deletion (it writes the file itself), off. Only a start in play without pipeline-cache.bin says
-    # that its exit writes it.
     st = [ln for ln in lines if 'pipeline cache stamp' in ln]
     due = "pipeline-cache.bin is written at this run's exit; "
     want(len(st) == 9, f'{len(st)} stamp lines, expected 9')
@@ -358,11 +327,8 @@ def main():
         want('vk: pipeline cache stamp off (NX2SARIA_PIPELINE_CACHE_STAMP 0)' in st[8], 'start 9: ' + st[8])
         for i in (0, 1, 2, 3, 6, 7):
             want(due not in st[i], f'start {i + 1} says its exit writes pipeline-cache.bin: ' + st[i])
-    # The files kept while one is held open (start 4), gone at start 5.
     want(out['stamp'].split() == 'held 1 1 drop 0 0'.split(), 'the files: ' + ' '.join(out['stamp'].split()))
 
-    # The play gate: on at 600, a rest only in play; of the 120 heavy frames the first came before the builders began
-    # their rest, so 119 count; five builds held back, each once though two builders rested.
     want('menu rest 0\nplay rest 1\npause rest 0\nload rest 0' in out['gate'], 'when it rests: ' + out['gate'])
     want(any('] vk: background builds rest in play: while the frame shown has 600 draws or more' in ln for ln in lines),
          'no start line with 600')
@@ -375,13 +341,11 @@ def main():
          'no off line at 0')
     want('play rest 0' in out['gate_off'], 'the gate at 0 rested')
 
-    # swapchain_unusable: 20 failures, logged at 1-8 and 16.
     sw = [int(m.group(1)) for m in re.finditer(r'\] gfx: vkGetSwapchainImagesKHR failed \(5\), (\d+) times: the image '
                                                r'list, 3 of 4 images; the swapchain is made again', text)]
     want(sw == [1, 2, 3, 4, 5, 6, 7, 8, 16], f'swapchain lines at counts {sw}')
     want(out['swap'].strip() == '0 20 20 1', 'swapchain_unusable: returns, drops, unlocks, dirty: ' + out['swap'].strip())
 
-    # make_sampler: the plain retry made the first; the second fell back. Four calls, two of them plain.
     sm = [ln for ln in lines if 'vkCreateSampler failed' in ln]
     want(len(sm) == 2, f'{len(sm)} sampler lines, expected 2')
     if len(sm) == 2:

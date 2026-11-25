@@ -27,7 +27,7 @@ from pathlib import Path
 
 from . import net, versions
 from .build import game_log_path, last_fatal
-from .context import shorten
+from .context import short_paths_on, shorten_always
 
 # The server's address (telemetry/, the project's own Worker). Empty, the window shows nothing of session reports.
 TELEMETRY_URL = 'https://nx2saria-telemetry.larbaco-ct.workers.dev'
@@ -206,7 +206,7 @@ def synthesize_crash(game_dir, log=None):
     s = empty_summary(*ver)
     s['os']['family'] = os_family()
     s['session']['end'] = 'crash'
-    s['fatal'] = printable(shorten(fatal)).strip()[:FATAL_LIMIT]
+    s['fatal'] = printable(shorten_always(fatal)).strip()[:FATAL_LIMIT]
     path = _logs(game_dir) / SUMMARY
     tmp = path.with_name(path.name + '.tmp')
     try:
@@ -221,16 +221,34 @@ def synthesize_crash(game_dir, log=None):
     return s
 
 
-def log_tail(game_dir, lines=TAIL_LINES, limit=TAIL_LIMIT):
-    """The last lines of the game's log for a comment: at most lines lines and limit bytes (UTF-8), the last ones
-    kept, the account's folders written short. None when there is no log."""
+class Line(str):
+    changed = False
+
+
+def sent_line(raw):
+    short = shorten_always(raw)
+    line = Line(printable(short, '\t'))
+    line.changed = short != raw
+    return line
+
+
+def shortened_note(lines):
+    changed = sum(1 for ln in lines if getattr(ln, 'changed', False))
+    if not changed and short_paths_on():
+        return ''
+    why = 'the log had them in full' if short_paths_on() else 'NX2SARIA_LOG_SHORT_PATHS=0 leaves them in full there'
+    return (f'telemetry: personal folders written short in {changed} of {len(lines)} log lines for sending; the log '
+            f'on disk is not changed ({why})')
+
+
+def log_tail_lines(game_dir, lines=TAIL_LINES, limit=TAIL_LIMIT):
     try:
         with open(game_log_path(game_dir), 'rb') as f:
             f.seek(max(0, f.seek(0, 2) - LOG_TAIL_READ))
             text = f.read().decode('utf-8', 'replace')
     except OSError:
-        return None
-    kept = [printable(shorten(ln), '\t') for ln in text.splitlines()[-lines:]]
+        return []
+    kept = [sent_line(ln) for ln in text.splitlines()[-lines:]]
     total = 0
     out = []
     for ln in reversed(kept):
@@ -239,7 +257,15 @@ def log_tail(game_dir, lines=TAIL_LINES, limit=TAIL_LIMIT):
             break
         out.append(ln)
         total += size
-    return '\n'.join(reversed(out)) + '\n' if out else None
+    out.reverse()
+    return out
+
+
+def log_tail(game_dir, lines=TAIL_LINES, limit=TAIL_LIMIT):
+    """The last lines of the game's log for a comment: at most lines lines and limit bytes (UTF-8), the last ones
+    kept, the account's folders written short. None when there is no log."""
+    out = log_tail_lines(game_dir, lines, limit)
+    return '\n'.join(out) + '\n' if out else None
 
 
 # ---------------------------------------------------------------- what is sent
@@ -295,6 +321,7 @@ class Reporter:
         self.url = server_url() if url is None else url.rstrip('/')
         self.errors = 0
         self.told_no_server = False
+        self.shortened = ''
 
     def error(self, line):
         """A failed request's line for launcher.log; MAX_ERROR_LINES in one run, then silence."""
@@ -411,20 +438,25 @@ class Reporter:
             return Result(False, 'the server no longer takes comments')
         if self.no_server():
             return Result(False, 'no server is set up')
-        tail = log_tail(game_dir) if attach_log and game_dir else None
+        lines = log_tail_lines(game_dir) if attach_log and game_dir else []
         data = {'launcher_version': self.version, 'text': text,
-                'summary': last_summary(game_dir, self.settings), 'log_tail': tail}
+                'summary': last_summary(game_dir, self.settings),
+                'log_tail': '\n'.join(lines) + '\n' if lines else None}
         raw = body(data)
         while len(raw) > FEEDBACK_LIMIT and data['log_tail']:   # escaped characters can make the log lines grow
-            lines = data['log_tail'].splitlines()
-            data['log_tail'] = '\n'.join(lines[len(lines) // 4 + 1:]) + '\n' if len(lines) > 1 else None
+            lines = lines[len(lines) // 4 + 1:] if len(lines) > 1 else []
+            data['log_tail'] = '\n'.join(lines) + '\n' if lines else None
             raw = body(data)
+        self.shortened = shortened_note(lines) if lines else ''
         if len(raw) > FEEDBACK_LIMIT:
             return Result(False, 'the comment is too big')
         return Request('feedback', 'POST', '/v1/feedback', raw)
 
     def finish_feedback(self, req, answer):
         status, error = answer
+        if self.shortened:
+            self.log(self.shortened)
+            self.shortened = ''
         if status in (200, 201):
             self.log(f'telemetry: comment sent (HTTP {status}, {len(req.data)} bytes)')
             return Result(True, '')

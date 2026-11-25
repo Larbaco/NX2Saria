@@ -1,24 +1,16 @@
-"""Write runtime/nvn/nvn_procs.inc: the NVN proc names NX2Saria 1.2.1 loads.
-
-Source names come from NVN_DIR in refs/ (MIT, Copyright (c) 2026 MacNativeGames contributors; see
-THIRD_PARTY_NOTICES.md): names.txt plus the NVN_EXTRA definitions of nx2navi_nvn_ext.c, minus the two names 1.2.1 does
-not load. No game data is read.
-
-Run with .venv: python tools/gen_nvn_procs.py
-"""
+# The NVN proc names: Copyright (c) 2026 MacNativeGames contributors (MIT; see THIRD_PARTY_NOTICES.md).
 
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# the game folder of the refs checkout that holds the NVN front end
 NVN_DIR = next((ROOT / "refs/MacNativeGames/games").glob("*/third_party/d2r_gfx/gfx/nvn"),
                ROOT / "refs/MacNativeGames/games/third_party/d2r_gfx/gfx/nvn")
 OUT = ROOT / "runtime/nvn/nvn_procs.inc"
 
 NOT_LOADED = {"nvnDeviceApplyDeferredFinalizes", "nvnQueueAcquireTexture"}
-SUBSDK0 = [  # section 0.1: asked by the movie library through nvnDeviceGetProcAddress
+SUBSDK0 = [
     "nvnDeviceGetProcAddress",
     "nvnSyncFinalize",
     "nvnSyncGetNvRmSyncNVX",
@@ -26,7 +18,6 @@ SUBSDK0 = [  # section 0.1: asked by the movie library through nvnDeviceGetProcA
     "nvnTextureGetNvRmSurfaceNVX",
 ]
 MAIN_COUNT = 534
-# NVN2 (Switch 2) procs this host implements; the rest of the NVN2 names get traps (runtime/nvn/nvn_procs.c nvn_trap).
 NVN2 = [
     "nvnCommandBufferDrawMeshTasks",
     "nvnCommandBufferDrawMeshTasksIndirect",
@@ -50,7 +41,6 @@ def main() -> int:
         print(f"expected {MAIN_COUNT} distinct main names, found {len(main_names)} "
               f"({len(set(main_names))} distinct)", file=sys.stderr)
         return 1
-    # nvnDeviceGetProcAddress is in both lists; keep one row per name.
     extra_sub = [n for n in SUBSDK0 if n not in main_names]
     rows = sorted(main_names) + sorted(extra_sub) + sorted(n for n in NVN2 if n not in main_names)
     text = "".join(f"NVN_PROC({n})\n" for n in rows)

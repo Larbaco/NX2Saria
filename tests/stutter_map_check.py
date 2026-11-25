@@ -1,9 +1,3 @@
-"""tools/stutter_map.py reads the lines runtime/diag/stutter_map.c writes: lines made with the runtime's format strings
-(copied below; keep them in step with stutter_map_init's neighbours stutter_frame and stutter_report) parse into the
-areas, causes and pipelines they hold.
-
-    python tests/stutter_map_check.py
-"""
 import sys
 import tempfile
 from pathlib import Path
@@ -15,13 +9,11 @@ C_SOURCE = Path(__file__).resolve().parent.parent / 'runtime' / 'diag' / 'stutte
 
 
 def c_fmt(fmt, *args):
-    """A C printf format with %llu, %u and %d as Python's %d."""
     return fmt.replace('%llu', '%d').replace('%u', '%d') % args
 
 
 def main():
     src = C_SOURCE.read_text(encoding='utf-8')
-    # the format strings the parser depends on must still be in the runtime
     for piece in ('stutter map (%s): %.1f min of play in %d areas; %llu hitches in play and %llu ',
                   '"after area loads; %llu long frames were a change of pace (the frames after them as long), not "',
                   '"hitches; in play by cause:"', 'stutter map:   %s: %.1f min at %.0f fps; hitches %llu (%.2f a minute',
@@ -38,11 +30,9 @@ def main():
         'pipeline missing: vertex 1a2b3c4d/5e6f7a8b 23.9 ms (skipped)',
         '[host] ' + c_fmt('stutter: frame %llu at %.1f s, %.1f ms (frames about %.1f ms) in %s%s:', 1300, 80.0, 60.0, 7.0,
                           'Kakariko Village', ', after its load') + ' unattributed 55.0 (charged to unattributed)',
-        # an episode of three frames: its head carries their summed time
         '[host] ' + c_fmt('stutter: frame %llu at %.1f s, %.1f ms (frames about %.1f ms) in %s%s:%s; an episode of %d '
                           "frames to frame %llu, %.1f ms the first, the parts above the first frame's", 1400, 90.0, 274.0,
                           7.0, 'Kakariko Village', '', ' fence 77.1 replay 4.0 (charged to fence)', 3, 1402, 87.0),
-        # a cause with a hyphen in its name
         '[host] ' + c_fmt('stutter: frame %llu at %.1f s, %.1f ms (frames about %.1f ms) in %s%s:', 1500, 95.0, 41.0, 7.0,
                           'Kakariko Village', '') + ' hand-off 33.0 (charged to hand-off)',
         '[host] ' + c_fmt('stutter map (%s): %.1f min of play in %d areas; %llu hitches in play and %llu '

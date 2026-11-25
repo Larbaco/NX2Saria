@@ -1,6 +1,3 @@
-// The function-local flag helpers of runtime/cpu.h (Flags, fc_*, fnz_*, nz_*, adc*f) against the packed helpers
-// (subs64() and friends, COND_xx), which tests/diff/lift.py checks against Unicorn. Built and run by
-// tests/flags_check.py; prints the first mismatches and exits 1 on any.
 #include <stdio.h>
 
 #include "cpu.h"
@@ -43,7 +40,6 @@ static int cond(const Cpu *c, int cc) {
     }
 }
 
-// The condition argument is not constant here, so this also covers the switch default paths.
 #define CHECK(NAME, OLD, NEW, FC, FNZ)                                                     \
     do {                                                                                   \
         Cpu c = {0};                                                                       \
@@ -100,9 +96,9 @@ int main(void) {
     for (int k = 0; k < 2000000; k++, n++) {
         uint64_t a = next(), b = next();
         switch (k & 3) {
-        case 1: b = a; break;                       // equal operands
-        case 2: b = a + (next() & 3) - 1; break;    // neighbours
-        case 3: a &= 0xff, b &= 0xff; break;        // small values
+        case 1: b = a; break;
+        case 2: b = a + (next() & 3) - 1; break;
+        case 3: a &= 0xff, b &= 0xff; break;
         }
         one(a, b);
     }

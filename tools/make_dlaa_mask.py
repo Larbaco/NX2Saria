@@ -1,33 +1,3 @@
-"""The SPIR-V of DLSS's reactive mask pass (vk_dlaa.c, mask_pass) as runtime/dlaa_mask_spv.h, assembled here like
-tools/make_mvobj_fs.py. tools/build_shaders.py writes the header from HEADER when the game is built; run on its own,
-this script writes it too.
-
-The shader, as GLSL:
-
-    #version 450
-    layout(local_size_x = 8, local_size_y = 8) in;
-    layout(binding = 0) uniform sampler2D before;   // the light target when the transparents start
-    layout(binding = 1) uniform sampler2D after;    // the light target when DLSS runs
-    layout(binding = 2, r8) uniform writeonly image2D mask;
-    layout(push_constant) uniform P { vec4 p; };    // render size xy, threshold z, gain w
-    void main() {
-        vec2 g = vec2(gl_GlobalInvocationID.xy);
-        if (g.x < p.x && g.y < p.y) {
-            ivec2 c = ivec2(gl_GlobalInvocationID.xy);
-            vec3 b = texelFetch(before, c, 0).rgb, a = texelFetch(after, c, 0).rgb;
-            vec3 d = abs(a - b);
-            float dm = max(max(d.r, d.g), d.b);
-            float m = max(max(max(a.r, a.g), a.b), max(max(b.r, b.g), b.b));
-            float r = dm / max(m, 1e-4);
-            imageStore(mask, c, vec4(clamp((r - p.z) * p.w, 0.0, 1.0)));
-        }
-    }
-
-The mask is the share of a pixel's colour the transparents changed (particles, smoke, sparks: what has no motion
-vectors of its own), 0 where nothing was drawn over the solid scene.
-
-    python tools/make_dlaa_mask.py
-"""
 import struct
 from pathlib import Path
 
@@ -76,17 +46,17 @@ OpLoad, OpAccessChain, OpVectorShuffle, OpCompositeExtract, OpCompositeConstruct
 OpImage, OpImageFetch, OpImageWrite, OpConvertUToF, OpBitcast = 100, 95, 99, 112, 124
 OpFSub, OpFMul, OpFDiv, OpFOrdLessThan, OpLogicalAnd = 131, 133, 136, 184, 167
 OpSelectionMerge, OpBranch, OpBranchConditional = 247, 249, 250
-FAbs, FMax, FClamp = 4, 40, 43   # GLSL.std.450
+FAbs, FMax, FClamp = 4, 40, 43
 UniformConstant, Input, PushConstant = 0, 1, 9
 Binding, DescriptorSet, Block, Offset, BuiltIn, NonReadable = 33, 34, 2, 35, 11, 25
 GlobalInvocationId = 28
 
 a = Asm()
-a.op('cap', OpCapability, 1)    # Shader
-a.op('cap', OpCapability, 49)   # StorageImageExtendedFormats (r8)
+a.op('cap', OpCapability, 1)
+a.op('cap', OpCapability, 49)
 glsl = a.id()
 a.op('ext', OpExtInstImport, glsl, *string('GLSL.std.450'))
-a.op('mem', OpMemoryModel, 0, 1)   # Logical GLSL450
+a.op('mem', OpMemoryModel, 0, 1)
 main = a.id()
 t_void, t_fn, t_bool, t_f, t_i, t_u = a.id(), a.id(), a.id(), a.id(), a.id(), a.id()
 t_v2, t_v3, t_v4, t_v2i, t_v2u, t_v3u = a.id(), a.id(), a.id(), a.id(), a.id(), a.id()
@@ -95,8 +65,8 @@ t_psimg, t_pwimg, t_pgid, t_pc, t_ppc, t_ppv4 = a.id(), a.id(), a.id(), a.id(), 
 v_before, v_after, v_mask, v_gid, v_p = a.id(), a.id(), a.id(), a.id(), a.id()
 c_i0, c_zero, c_one, c_eps = a.id(), a.id(), a.id(), a.id()
 
-a.op('entry', OpEntryPoint, 5, main, *string('main'), v_gid)   # GLCompute
-a.op('exec', OpExecutionMode, main, 17, 8, 8, 1)   # LocalSize
+a.op('entry', OpEntryPoint, 5, main, *string('main'), v_gid)
+a.op('exec', OpExecutionMode, main, 17, 8, 8, 1)
 a.op('dec', OpDecorate, v_gid, BuiltIn, GlobalInvocationId)
 for var, binding in ((v_before, 0), (v_after, 1), (v_mask, 2)):
     a.op('dec', OpDecorate, var, DescriptorSet, 0)
@@ -118,9 +88,9 @@ a.op(T, OpTypeVector, t_v4, t_f, 4)
 a.op(T, OpTypeVector, t_v2i, t_i, 2)
 a.op(T, OpTypeVector, t_v2u, t_u, 2)
 a.op(T, OpTypeVector, t_v3u, t_u, 3)
-a.op(T, OpTypeImage, t_img, t_f, 1, 0, 0, 0, 1, 0)     # 2D, sampled, format unknown
+a.op(T, OpTypeImage, t_img, t_f, 1, 0, 0, 0, 1, 0)
 a.op(T, OpTypeSampledImage, t_simg, t_img)
-a.op(T, OpTypeImage, t_wimg, t_f, 1, 0, 0, 0, 2, 15)   # 2D, storage, R8
+a.op(T, OpTypeImage, t_wimg, t_f, 1, 0, 0, 0, 2, 15)
 a.op(T, OpTypePointer, t_psimg, UniformConstant, t_simg)
 a.op(T, OpTypePointer, t_pwimg, UniformConstant, t_wimg)
 a.op(T, OpTypePointer, t_pgid, Input, t_v3u)
@@ -170,7 +140,7 @@ c = ins(OpBitcast, t_v2i, gu)
 
 def fetch(var):
     img = ins(OpImage, t_img, ins(OpLoad, t_simg, var))
-    texel = ins(OpImageFetch, t_v4, img, c, 2, c_i0)   # Lod 0
+    texel = ins(OpImageFetch, t_v4, img, c, 2, c_i0)
     return ins(OpVectorShuffle, t_v3, texel, texel, 0, 1, 2)
 
 

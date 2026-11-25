@@ -1,20 +1,3 @@
-"""The Linux AppImage's window (tools/make_appimage.py): pick the dump and the game folder, install or update the game
-with progress, and play. AppRun opens it when the AppImage starts without arguments on a desktop (double-click); the
-command line keeps working as before.
-
-It runs AppRun itself with --events, which does what the command line does (the package check, zbic, make_game.py,
-NVIDIA's DLSS, play.sh) and prints make_game.py's "@@" progress lines (tools/make_game.py, --events) plus its own for
-the steps around it. The last dump and folder are remembered in ~/.config/nx2saria/appimage.json, the last run's output
-in ~/.cache/nx2saria/build.log (Details opens it). Existing ~/.config/nx2navi and ~/.cache/nx2navi folders are reused
-in place when the new folders do not exist.
-
-The window is one Tk canvas. The Tk that comes with python-build-standalone has no Xft, so its only font is X11's
-bitmap "fixed", unreadable on a high-DPI screen: text is drawn with Pillow in the desktop's own font (fc-match
-sans-serif) as PNG images, everything is sized by the screen's DPI (Tk's winfo_fpixels, which follows Xft.dpi), and the
-file choosers are the desktop's (kdialog or zenity, else Tk's). Without fc-match or Pillow, text falls back to Tk's.
-
-    python3 tools/appimage_gui.py --apprun <AppRun> [--icon <png>]
-"""
 import argparse
 import base64
 import io
@@ -29,8 +12,12 @@ import tkinter as tk
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))   # AppRun starts this with python -I: no script folder on the path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from private_paths import shorten  # noqa: E402
+
+DESCRIPTION = ("The Linux AppImage's window (tools/make_appimage.py): pick the dump and the game folder, "
+               'install or update the game')
+
 
 def _xdg(name, fallback):
     value = os.environ.get(name, '')
@@ -48,7 +35,6 @@ CACHE = _brand_dir(_xdg('XDG_CACHE_HOME', Path.home() / '.cache'))
 APPS = _xdg('XDG_DATA_HOME', Path.home() / '.local' / 'share') / 'applications'
 DEFAULT_OUT = Path.home() / 'Games' / 'Ocarina'
 
-# make_game.py's steps (STEPS, plus check) and AppRun's own around them, in the order they run
 STEPS = ('deps', 'check', 'exefs', 'romfs', 'lift', 'compile', 'shaders', 'prompts', 'dlss')
 
 TEXT = {
@@ -124,7 +110,6 @@ def fc_font(pattern):
 
 
 class Text:
-    """Text as PNG images in the desktop's font (Pillow), cached; None when that is not possible (Tk's text then)."""
     def __init__(self, scale):
         self.scale, self.cache = scale, {}
         try:
@@ -176,7 +161,6 @@ class Text:
 
 
 def pick_file(title, start):
-    """The desktop's file chooser (kdialog, zenity), else Tk's."""
     if shutil.which('kdialog'):
         r = subprocess.run(['kdialog', '--title', title, '--getopenfilename', str(start), '*.nup|Switch 2 (*.nup)'],
                            capture_output=True, text=True)
@@ -203,9 +187,6 @@ def pick_dir(title, start):
 
 
 def exec_quote(path):
-    """A path as one quoted argument of a desktop entry's Exec line: inside the quotes a backslash goes before a
-    quote, a backtick, a dollar sign and a backslash, the line itself doubles each backslash again, and a percent sign
-    is doubled so that it is no field code."""
     out = str(path)
     for ch in '\\"`$':
         out = out.replace(ch, '\\' + ch)
@@ -213,7 +194,7 @@ def exec_quote(path):
 
 
 class App:
-    W, H = 760, 640   # logical pixels (96 dpi); everything is drawn at scale
+    W, H = 760, 640
 
     def __init__(self, root, apprun, icon):
         self.root, self.apprun, self.icon = root, apprun, icon
@@ -224,7 +205,7 @@ class App:
         self.out = cfg.get('out', str(DEFAULT_OUT))
         self.shortcut = cfg.get('shortcut', True)
         self.proc, self.events, self.log = None, queue.Queue(), []
-        self.rows = {s: [0.0, ''] for s in STEPS}   # fraction, state
+        self.rows = {s: [0.0, ''] for s in STEPS}
         self.status, self.status_color = T['ready'], 'dim'
         self.confirm = self.close_armed = False
         self.dirty = True
@@ -255,7 +236,6 @@ class App:
     def mark(self):
         self.dirty = True
 
-    # ---- drawing
     def label(self, x, y, text, pt=11, color='text', bold=False, anchor='nw'):
         if self.text.ok:
             return self.c.create_image(x, y, image=self.text.image(text, pt, COLORS[color], bold), anchor=anchor)
@@ -269,7 +249,6 @@ class App:
         return self.c.create_polygon(pts, smooth=True, fill=fill, outline=outline)
 
     def button(self, key, x1, y, text, primary=False, enabled=True):
-        """A button whose right edge is at x1; returns its left edge."""
         pt = 11
         width = (self.text.font(pt, True).getlength(text) if self.text.ok else len(text) * self.px(8)) + self.px(36)
         h = self.px(40)
@@ -297,7 +276,6 @@ class App:
             y += self.px(20)
         y += self.px(12)
 
-        # the dump and the folder
         for key, title, value in (('dump', T['dump'], self.nup), ('out', T['folder'], self.out)):
             self.rect(m, y, w - m, y + self.px(56), self.px(10), COLORS['panel'])
             self.label(m + self.px(14), y + self.px(8), title, 10, 'dim', bold=True)
@@ -310,7 +288,6 @@ class App:
             self.button('pick_' + key, w - m - self.px(10), y + self.px(8), T['browse'], enabled=not self.proc)
             y += self.px(68)
 
-        # the steps
         y += self.px(4)
         label_w = self.px(270)
         state_w = self.px(90)
@@ -329,7 +306,6 @@ class App:
                 self.label(w - m, y, text, 10, color, anchor='ne')
             y += self.px(30)
 
-        # status, the shortcut box, the buttons
         y += self.px(8)
         for line in self.text.wrap(self.status, 10.5, False, w - 2 * m)[:4]:
             self.label(m, y, line, 10.5, self.status_color)
@@ -354,7 +330,6 @@ class App:
         self.button('details', x - self.px(10), by, T['details'], enabled=CACHE.joinpath('build.log').is_file() or bool(self.log))
         self.dirty = False
 
-    # ---- input
     def hit(self, e):
         for key, (x0, y0, x1, y1, enabled) in self.buttons.items():
             if enabled and x0 <= e.x <= x1 and y0 <= e.y <= y1:
@@ -392,7 +367,6 @@ class App:
             save_config({'nup': self.nup, 'out': self.out, 'shortcut': self.shortcut})
         self.mark()
 
-    # ---- the build
     def main_button(self):
         if self.proc:
             if not self.confirm:
@@ -439,7 +413,7 @@ class App:
 
     def line(self, text):
         if not text.startswith('@@'):
-            text = shorten(text)   # build.log is attached to issues: the account's folders short (private_paths.py)
+            text = shorten(text)
             self.log.append(text)
             del self.log[:-5000]
             if text.startswith('Missing:'):
@@ -494,7 +468,7 @@ class App:
 
     def details(self):
         log = CACHE / 'build.log'
-        if self.log:   # the run in progress, as far as it went
+        if self.log:
             try:
                 CACHE.mkdir(parents=True, exist_ok=True)
                 log.write_text('\n'.join(self.log) + '\n', encoding='utf-8')
@@ -504,7 +478,6 @@ class App:
             subprocess.Popen(['xdg-open', str(log)], start_new_session=True, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
 
-    # ---- play and the menu entry
     def play(self):
         play = Path(self.out) / 'play.sh'
         if play.is_file():
@@ -537,7 +510,7 @@ class App:
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--apprun', type=Path, required=True)
     ap.add_argument('--icon', type=Path)
     a = ap.parse_args()

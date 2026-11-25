@@ -1,64 +1,3 @@
-"""Run the checks under tests/ in parallel and print one summary.
-
-Each test is a script that exits 0 when it passes. The runner finds every tests/*_check.py and tests/*_test.py and the
-few others EXTRA lists, and runs each with the interpreter the runner runs with, from the repository's root. Run it
-with the Python the tests need: .venv (Python 3.12, tools/requirements.txt) for most, .venv-py314 for the ones that
-need compression.zstd (`--needs py:compression.zstd` picks those).
-
-A test says what it cannot run without in comment lines of its own file, each at the start of a line:
-
-    # needs: windows
-    # needs: sdl3, py:unicorn
-    # args: --cc {cc}
-
-`needs` takes one or more requirements, comma separated:
-
-    windows, linux   the operating system
-    game             the game's files extracted under build/extracted (tools/extract.py)
-    exe              the game's executable, given to the runner with --exe
-    xlate            the shader translator, build/xlate/nx2navi_xlate (tools/build_xlate.py)
-    gpu              a Vulkan device: on Linux a /dev/dri/renderD* node or /dev/nvidia0; on Windows taken as present
-    display          a desktop to open a window on: on Linux $DISPLAY or $WAYLAND_DISPLAY (xvfb-run gives one)
-    sdl3             SDL3's development files: the C compiler finds <SDL3/SDL.h> and links -lSDL3
-    vulkan           Vulkan headers of 1.4 or later where the C compiler looks (CPATH counts; Ubuntu 24.04's are
-                     1.3; tools/vulkan_pin.py fetches the build's into toolchain/vulkan-headers/include)
-    vma              vk_mem_alloc.h where the tests look: $VMA_INCLUDE, MSYS2 UCRT64's include/vma, toolchain/vma
-                     (tools/build_game.py vma_include fetches it there) or /usr/include
-    pkg:<name>       a library pkg-config knows (pkg:sdl3)
-    py:<module>      a Python module the runner's interpreter imports (py:unicorn, py:compression.zstd)
-    file:<path>      a file or folder, relative to the repository's root
-    clang            a C compiler: $CC, else clang on PATH (on Windows MSYS2 UCRT64's, C:\\msys64\\ucrt64\\bin)
-    <program>        anything else: a program on PATH (git, objdump), MSYS2 UCRT64's on Windows too
-    linux:<req>, windows:<req>   <req>, on that operating system only (linux:sdl3: the Linux build of the test links
-                     SDL3, the Windows one does not)
-
-A test whose requirement is missing is skipped, with the requirement as the reason. --with REQ takes a requirement as
-present and --without REQ as missing, whatever the machine has.
-
-`args` gives the test's command line. {exe} is the --exe path, {xlate} the translator, {cc} the C compiler ($CC, else
-MSYS2 UCRT64's clang on Windows, else clang) and {root} the repository's root.
-
-tests/known_failures.txt lists the tests that fail on main today, each with its reason, optionally only on some
-operating systems, and the tests that fail only now and then (flaky):
-
-    name: reason
-    name [linux]: reason
-    name [flaky]: reason
-    name [flaky:case, flaky:other_case]: reason
-
-A known failure still runs. It is counted apart and does not fail the run; one that passes is reported, so its line
-can go (and fails the run with --strict). A flaky test counts as passed when it passes; when it fails it is reported
-as flaky and does not fail the run. With cases named, only a failure of those unittest cases is flaky (the FAIL: and
-ERROR: lines of the test's output); a failure of any other case is a failure.
-
-    python tests/run.py [filters...] [--jobs N] [--timeout S] [--list] [--show-output] [--needs REQ]
-                        [--with REQ] [--without REQ] [--exe PATH] [--strict]
-
-A filter keeps the tests whose name holds it (`vk`, `cfg_rows`, `diff/`); with several, a test that holds any of them.
-Each test's output goes to build/test-runs/<name>.log, and the last lines of each failure are printed after the
-summary (all of it with --show-output). Exit code 0 when every test that ran passed or failed as known, 1 when one
-failed or timed out, 2 for a bad command line.
-"""
 import argparse
 import concurrent.futures
 import functools
@@ -75,6 +14,8 @@ import threading
 import time
 from pathlib import Path
 
+DESCRIPTION = 'Run the checks under tests/ in parallel and print one summary.'
+
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = ROOT / 'tests'
 KNOWN_FILE = TESTS / 'known_failures.txt'
@@ -88,7 +29,7 @@ EXTRA = ('excl_mt.py', 'maxwell_warp_emu_selftest.py', 'diff/simd.py', 'diff/ato
 NEEDS = re.compile(r'^# needs:(.*)$', re.M)
 ARGS = re.compile(r'^# args:(.*)$', re.M)
 KNOWN_LINE = re.compile(r'^(\S+?)(?:\s+\[([^\]]+)\])?:\s*(\S.*)$')
-FAILED_CASE = re.compile(r'^(?:FAIL|ERROR): (\w+) \(', re.M)   # unittest's line for each case that failed
+FAILED_CASE = re.compile(r'^(?:FAIL|ERROR): (\w+) \(', re.M)
 SYSTEMS = ('linux', 'windows')
 TAIL_LINES = 30
 
@@ -98,13 +39,11 @@ def this_system():
 
 
 def discover():
-    """Every test as (name, path): the name is the path under tests/ without .py, with / between folders."""
     paths = set(TESTS.glob('*_check.py')) | set(TESTS.glob('*_test.py')) | {TESTS / e for e in EXTRA}
     return [(p.relative_to(TESTS).with_suffix('').as_posix(), p) for p in sorted(paths) if p.is_file()]
 
 
 def markers(path):
-    """(requirements, args template) of a test file."""
     text = path.read_text(encoding='utf-8', errors='replace')
     reqs = [n.strip() for m in NEEDS.finditer(text) for n in m.group(1).split(',') if n.strip()]
     args = ARGS.search(text)
@@ -121,7 +60,6 @@ def compiler():
 
 @functools.cache
 def builds(source, *flags):
-    """Whether the C compiler builds this program (and links it with flags)."""
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / 'probe.c'
         src.write_text(source)
@@ -148,7 +86,6 @@ def has_program(name):
 
 
 def has(req, args):
-    """(present, the reason to skip when it is not) of one requirement."""
     system, sep, rest = req.partition(':')
     if sep and system in SYSTEMS:
         return (has(rest, args) if this_system() == system else (True, ''))
@@ -200,8 +137,6 @@ def missing(reqs, args):
 
 
 def read_known(path):
-    """{name: (reason, systems or None, flaky)} from the known-failures file, flaky None for a known failure, () for a
-    flaky test and the case names for flaky cases; # comments and blank lines are left out."""
     known = {}
     if not path.is_file():
         return known
@@ -223,8 +158,6 @@ def read_known(path):
 
 
 def flaky_failure(log, cases):
-    """Whether a failed run of a flaky test is the flakiness listed: any failure when no case is named, else one in
-    which every case that failed is named."""
     if not cases:
         return True
     failed = set(FAILED_CASE.findall(log.read_text(encoding='utf-8', errors='replace')))
@@ -239,7 +172,6 @@ class Runner:
         self.stopping = False
 
     def run(self, name, cmd):
-        """(state, seconds, log path): state is 'pass', 'fail' or 'timeout'."""
         log = LOG_DIR / f'{name.replace("/", "__")}.log'
         start = time.monotonic()
         group = ({'creationflags': subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == 'nt'
@@ -261,7 +193,7 @@ class Runner:
                 with self.lock:
                     self.procs.discard(proc)
         if os.name != 'nt':
-            kill_tree(proc)   # what the test left running in its process group
+            kill_tree(proc)
         return state, time.monotonic() - start, log
 
     def stop(self):
@@ -293,7 +225,7 @@ def annotate(kind, text):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('filters', nargs='*', help='keep the tests whose name holds one of these')
     ap.add_argument('--jobs', '-j', type=int, default=min(8, os.cpu_count() or 1),
                     help='tests run at once (default: the CPUs, at most 8)')
@@ -345,7 +277,7 @@ def main():
         return 0
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-    results = {}   # name -> (status, seconds, log path or skip reason)
+    results = {}
     to_run = []
     for n, p, reqs, template in plan:
         miss = missing(reqs, args)

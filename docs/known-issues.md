@@ -15,6 +15,10 @@ release notes say so. The [README](../README.md#status-and-known-issues) has the
   as tangerineturtle1/NX2navi#794, tangerineturtle1/NX2navi#475 and tangerineturtle1/NX2navi#736.
 - **FSR 4 on Radeon RX 6000 (RDNA 2)**: AMD's driver offers FSR 4 on these cards and it runs, but it costs far more GPU
   time than on newer cards (about 12 ms a frame at 1440p on an RX 6750 XT). FSR 3.1 is the lighter choice there.
+- **On Linux with Mesa 26, the game can end with "the GPU device was lost" on some AMD cards.** Session reports show
+  it on Radeon RX 480, RX 580 and RX 6800S with Mesa 26.2 and 26.3, seconds or minutes into a session; reports with
+  Mesa 25.2 do not show it. The cause is not known yet. If it happens to you, please open an issue with
+  `logs/nx2saria.log` and the kernel's lines after the crash (`journalctl -k -b`).
 
 ## Frame generation
 

@@ -1,11 +1,3 @@
-"""tools/build_game.py through the memory gate: build.ninja's compile rules run tools/memgate.py wrap and the link and
-rc rules stay as they were; the text is the same from one call to the next; each compile's need comes from the lift
-manifest's chunk_info (or the source's size, or the runtime's default); the peaks the wrappers record are learned and
-summed up; and, where ninja and clang are on PATH, a three-file Ninja build through the wrapper end to end. No game
-files, no game build.
-
-Run: python tests/build_game_gate_test.py
-"""
 import json
 import os
 import shutil
@@ -50,7 +42,6 @@ class Tmp(unittest.TestCase):
 
 
 def rule(text, name):
-    """The indented lines of one rule in build.ninja text."""
     lines = text.splitlines()
     i = lines.index(f'rule {name}')
     body = []
@@ -78,16 +69,12 @@ class NinjaFileTest(Tmp):
         self.assertTrue(gate.endswith(' --name $out -- '))
         self.assertIn(f'command = {gate}$cc $genflags -MD -MF $out.d -c $in -o $out', rule(text, 'cc_gen'))
         self.assertIn(f'command = {gate}$cc $rtflags -MD -MF $out.d -c $in -o $out', rule(text, 'cc_rt'))
-        # the link and windres rules as before
         self.assertIn('command = $cc $ldflags @$out.rsp $libs -o $out', rule(text, 'link'))
         self.assertTrue(all('memgate' not in line for line in rule(text, 'rc') + rule(text, 'link')))
-        # Ninja runs at most the job count, the pool of generated compiles too
         self.assertIn('pool gen\n  depth = 6', text)
-        # the same text from one call to the next: build.ninja is rewritten only when it changes
         self.assertEqual(text, self.ninja(mods))
 
     def test_a_compiler_cache_leaves_the_gate_out(self):
-        """sccache's server runs the compiles, out of the wrapper's reach: the commands are the ones before the gate."""
         mods = self.chunks()
         with mock.patch.dict(os.environ, {'SCCACHE': 'sccache'}):
             text = self.ninja(mods)
@@ -100,7 +87,6 @@ class NinjaFileTest(Tmp):
         self.assertIn("memory gate: off: the compiles run in sccache's server", line)
 
     def test_the_command_names_paths_below_the_root_relatively(self):
-        """A moved checkout keeps build.ninja: the venv's Python and tools/memgate.py are named from the root."""
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop('SCCACHE', None)
             with mock.patch.object(build_game.sys, 'executable', str(ROOT / '.venv' / 'bin' / 'python')):
@@ -126,11 +112,10 @@ class NeedsTest(Tmp):
         name = lambda o: build_game.flag_path(self.out / 'obj' / o)   # noqa: E731
         self.assertEqual(todo[name('main/main_0000.o')][1:], (300, 900, 120, None))
         self.assertEqual(todo[name('main/main_0001.o')][1:], (200, 200, 0, None))
-        self.assertEqual(todo[name('main/main_table.o')][1:], (50, 50, 0, None))   # not in chunk_info: its size
+        self.assertEqual(todo[name('main/main_table.o')][1:], (50, 50, 0, None))
         self.assertEqual(todo[name('runtime/x.o')].default, build_game.DEFAULT_NEED_C)
         self.assertEqual(todo[name('runtime/ui/y.o')].default, build_game.DEFAULT_NEED_CXX)
-        self.assertNotIn(name('runtime/nx2saria.o'), todo)   # windres, not the gate
-        # objects reused from the main build are not compiled
+        self.assertNotIn(name('runtime/nx2saria.o'), todo)
         self.assertEqual(build_game.gate_compiles(self.gen, self.out, mods, True, []), {})
 
     def test_needs_and_state(self):
@@ -175,9 +160,9 @@ class LearnTest(Tmp):
         peaks = [{'name': f'o{i}', 'peak': (100 + i) * MIB, 'seconds': 2.0 + i, 'held': 0.0, 'rc': 0} for i in range(6)]
         peaks[2]['held'] = 4.5
         peaks[4]['held'] = 1.5
-        peaks += [{'name': 'o6', 'peak': 900 * MIB, 'seconds': 1.0, 'held': 0.0, 'rc': 1},   # failed: not learned
+        peaks += [{'name': 'o6', 'peak': 900 * MIB, 'seconds': 1.0, 'held': 0.0, 'rc': 1},
                   {'name': 'unknown.o', 'peak': 50 * MIB, 'seconds': 1.0, 'held': 0.0, 'rc': 0},
-                  {'name': 'o0', 'peak': 0, 'seconds': 1.0, 'held': 0.0, 'rc': 0}]   # no reading
+                  {'name': 'o0', 'peak': 0, 'seconds': 1.0, 'held': 0.0, 'rc': 0}]
         measured = build_game.learn_peaks(est, todo, peaks)
         self.assertEqual([m[0] for m in measured], [f'o{i}' for i in range(6)])
         self.assertEqual(est.objects['o5']['peak'], 105 * MIB)
@@ -194,7 +179,6 @@ class LearnTest(Tmp):
         self.assertTrue(lines[3].startswith('largest compiles: o5 0.10 GiB 7 s, o4 '))
         self.assertEqual(lines[3].count(' GiB '), build_game.LARGEST_SHOWN)
         self.assertTrue(lines[4].startswith('estimates against the measured peaks: median '))
-        # gate off: no held line
         off = build_game.gate_summary_lines(peaks[:1], [], est, None, False)
         self.assertEqual(off[0], 'memory gate: 1 compiles ran')
         self.assertFalse(any('held' in line for line in off))
@@ -213,16 +197,13 @@ class LearnTest(Tmp):
         self.assertEqual((s.peak, s.peak_at, s.lowest_avail), (3 * GIB, 2.0, 4 * GIB))
         broken = build_game.TreeSampler(rss=lambda pid: 1 // 0, avail=lambda: GIB, poll=3600)
         broken.start(1)
-        broken.sample(1)   # a failed reading loses that sample only
+        broken.sample(1)
         broken.stop()
         self.assertIsNone(broken.peak_at)
 
 
 @unittest.skipUnless(shutil.which('ninja') and shutil.which('clang'), 'needs ninja and clang on PATH')
 class EndToEndTest(Tmp):
-    """Three tiny C files compiled by Ninja through the wrapper, as build.ninja's cc_gen rule does: in a temporary
-    folder (absolute $out), and in one below build/ (relative $out, as a real build's)."""
-
     def test_three_compiles(self):
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop('SCCACHE', None)
@@ -254,7 +235,7 @@ class EndToEndTest(Tmp):
                                                          'enabled': True}, needs)
         objs = [self.out / 'obj' / 'main' / f'c{i}.o' for i in range(3)]
         text = '\n'.join([
-            f'builddir = {build_game.ninja_path(self.out)}',   # the Ninja log there, not in the repository
+            f'builddir = {build_game.ninja_path(self.out)}',
             f'cc = {shutil.which("clang")}',
             'rule cc_gen',
             f'  command = {build_game.gate_command(self.out)} $cc -O1 -MD -MF $out.d -c $in -o $out',
@@ -272,7 +253,7 @@ class EndToEndTest(Tmp):
         self.assertGreater(peak_one, 0)
         self.assertTrue(all(o.is_file() for o in objs))
         peaks = memgate.read_peaks(self.out / 'memgate')
-        self.assertEqual(sorted(p['name'] for p in peaks), sorted(todo))   # $out is the name needs.json files it under
+        self.assertEqual(sorted(p['name'] for p in peaks), sorted(todo))
         measured = build_game.learn_peaks(est, todo, peaks)
         self.assertEqual(len(measured), 3)
         self.assertTrue(all(peak > 0 for _, peak, _ in measured))

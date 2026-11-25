@@ -10,7 +10,7 @@ from .paths import Layout
 from .settings import Settings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from private_paths import describe, shorten  # noqa: E402
+from private_paths import describe, on as short_paths_on, shorten, shorten_always  # noqa: E402
 
 LOG_LIMIT = 4 << 20
 

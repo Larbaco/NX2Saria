@@ -1,19 +1,11 @@
-"""Critical path of each frame from a NX2SARIA_CRIT recording (runtime/hle/kernel.c crit_frame).
-
-Walks back from every present on the presenting thread to the previous one. While the thread runs, waits for a
-virtual core, sits in a host call or sleeps, the time goes to that thread and state. When it waits on a guest object,
-the wake that ended the wait names the waker: the time from that signal to the end of the wait is wake latency, and
-the walk goes on on the waker at the moment it signalled. A wait no guest thread ended (a timeout, a host signal)
-counts whole. The sums per frame add up to the frame interval.
-
-Usage: crit_path.py <crit.bin> [--top N]
-"""
 import argparse
 import bisect
 import struct
 from collections import Counter, defaultdict
 
 import numpy as np
+
+DESCRIPTION = 'Critical path of each frame from a NX2SARIA_CRIT recording (runtime/hle/kernel.c crit_frame).'
 
 STATES = ['off', 'run', 'core', 'host', 'sleep', 'sync', 'cv', 'lock', 'addr']
 S_RUN, S_CORE, S_HOST, S_SLEEP = 1, 2, 3, 4
@@ -41,13 +33,13 @@ def label(h, threads):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('crit')
     ap.add_argument('--top', type=int, default=30)
     a = ap.parse_args()
     threads, ev = load(a.crit)
-    seg = defaultdict(lambda: ([], [], []))   # per thread: starts, states, wakers at the start
-    wakes = defaultdict(lambda: ([], []))     # per thread: signal times, wakers
+    seg = defaultdict(lambda: ([], [], []))
+    wakes = defaultdict(lambda: ([], []))
     frames = []
     for e in ev:
         k = int(e['kind'])
@@ -83,7 +75,6 @@ def main():
                 acc[(x, 'off')] += t - lo
                 t = lo
                 continue
-            # a wait from starts[i] to the next state change: the last signal for x inside it ended it
             end = starts[i + 1] if i + 1 < len(starts) else t
             ws, wk = wakes[x]
             j = bisect.bisect_right(ws, end) - 1
