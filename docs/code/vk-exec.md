@@ -1485,18 +1485,21 @@ nothing. Each lets go of the limit when given 0 (a movie plays).
 Vulkan instance, physical device choice, logical device, VMA, timeline semaphore and the validation messenger. The VMA
 implementation is `runtime/vk/vk_vma.cpp` (VMA is `C++` only).
 
-- `vk_dpa`: The loader's `vkGetDeviceProcAddr` until Streamline is on the device (see `runtime/vk/vk.h`).
-- `g_gfx_queues`: queues the graphics family offers (`pick_device`).
-- `g_nqfam`: the device's queue families (`pick_device`): their flags and queue counts.
-- `lost_fence`: The fence `vk_device_lost_poll` asks about. Nothing submits with it, so its status is "not ready" for as
-  long as the device lives.
-- `MESA_CACHE_SIZE`: Mesa's drivers (RADV on Linux and the Steam Deck) keep a shader cache of their own beside our
-  pipeline cache, by default in ~/.cache and up to 1 GB: about 35 MB in a minute of the title screen. A Deck's /home is
-  small and the game usually sits on the SD card, so unless `MESA_SHADER_CACHE_DIR` names a folder, it goes to
-  mesa-cache beside the exe. That folder is ours alone, so its limit is raised to `MESA_CACHE_SIZE` unless
-  `MESA_SHADER_CACHE_MAX_SIZE` is set: the stage libraries the library warm builds in play live only in the driver's
-  cache (`runtime/vk/vk_pipeline.c`, "the play cache"), and a preparation of every shader variant does not fit in 1 GB,
-  so the rest would be compiled again in play.
+`vk_dpa` is the loader's `vkGetDeviceProcAddr` until Streamline is on the device (`runtime/vk/vk.h`). `pick_device()`
+notes how many queues the graphics family offers (`g_gfx_queues`) and the device's queue families with their flags and
+queue counts (`g_nqfam`, at most `QFAM_MAX`), for the queues `create_device()` asks for.
+
+### `mesa_cache_beside_exe()`
+
+Mesa's drivers (RADV on Linux and the Steam Deck) keep a shader cache of their own beside the game's pipeline cache, by
+default in ~/.cache and up to 1 GB: about 35 MB in a minute of the title screen. A Deck's /home is small and the game
+usually sits on the SD card, so unless `MESA_SHADER_CACHE_DIR` names a folder, it goes to mesa-cache beside the exe.
+That folder is the game's alone, so its limit is raised to `MESA_CACHE_SIZE` (8G) unless `MESA_SHADER_CACHE_MAX_SIZE`
+is set: the stage libraries the library warm builds in play live only in the driver's cache (`runtime/vk/vk_pipeline.c`,
+"the play cache"), and a preparation of every shader variant does not fit in 1 GB, so the rest would be compiled again
+in play.
+
+### NVIDIA's shader cache beside the exe
 
 NVIDIA's driver keeps the pipelines it compiles in a disk cache of its own, by default one folder shared with every
 program (Linux ~/.cache/nvidia, Windows `%LOCALAPPDATA%\NVIDIA\GLCache`). On Linux one process adds at most
@@ -1509,32 +1512,27 @@ opens it or with what limit. So unless the environment sets them, the cache goes
 (`runtime/vk/nvidia_cache.h`), which nothing else writes, with a limit of 8 GiB, and on Windows with the cleanup off.
 The driver makes GLCache inside that folder but not the folder, so it is made here; pointed at a folder that is missing
 or not writable it caches nothing at all, so when that folder cannot be made or written no variable is set and the
-driver keeps its own folder and limit. Without NVIDIA's driver (Linux: no /proc/driver/nvidia/version, the test the
-AppImage's build makes for DLSS; Windows: no nvapi64.dll in System32) the variables do nothing and the folder would stay
-empty, so nothing is done. `nvidia_cache_dir` = 0 leaves all of it to the driver. Every call of `vk_driver_cache_env`
-happens before a driver can load, in the game, the preparations and the probes alike, so a start from the launcher, from
-Steam or from the exe itself sets the same.
+driver keeps its own folder and limit. Without NVIDIA's driver (`nvidia_driver_present()`; Linux: no
+/proc/driver/nvidia/version, the test the AppImage's build makes for DLSS; Windows: no nvapi64.dll in System32) the
+variables do nothing and the folder would stay empty, so nothing is done. `nvidia_cache_dir` = 0 leaves all of it to
+the driver. Every call of `vk_driver_cache_env` happens before a driver can load, in the game, the preparations and the
+probes alike, so a start from the launcher, from Steam or from the exe itself sets the same.
 
 ### `folder_error()`
 
 0 when dir takes a new file, else the system's error code. Linux asks the access rights, as it always has; Windows makes
 and deletes a file named after the process, since a directory's attributes say nothing of the rights on it and the
-launcher's preparation and a game may start together.
-
-- `snprintf(probe, sizeof probe, "%s\\.write-test-%u", dir, (unsigned)plat_process_id())`: another start may be here
-  too.
-- `plat_fs_unlink(probe)`: one an earlier start with this process id left.
+launcher's preparation and a game may start together: the process id in the name keeps another start's test file apart,
+and one an earlier start with this process id left is deleted first.
 
 ### `nvidia_cache_beside_exe()`
 
-- A restart inherits what this game set; those variables are the game's, not the player's (`runtime/vk/nvidia_cache.h`).
-- `int stale = nvc_stale(&plan, ours)`: set by this game before a restart and not wanted now.
-- `int refused = 0`: the variables the environment did not take.
-- `if (plan.set & ~refused) plat_setenv(NVC_MARK_VAR, mark)`: a restart will know these are the game's.
+A restart inherits what this game set; those variables are the game's, not the player's (`runtime/vk/nvidia_cache.h`).
+So the variables the mark (`NVC_MARK_VAR`) says this game set count as unset, and the ones set before a restart and not
+wanted now are removed (`nvc_stale`). Of the variables it sets, those the environment did not take are refused and
+logged; the mark then names only the ones that were set, so a restart knows these are the game's.
 
 ### `mesa_submit_thread()`
-
-- `submit_thread_why`: `create_device` logs it on a Mesa driver.
 
 Mesa's Vulkan drivers on Linux (RADV, ANV, NVK) keep timeline semaphores as kernel sync objects, which cannot wait for a
 value not submitted yet. Their queues therefore submit on the calling thread and use a thread of the queue's own only
@@ -1544,7 +1542,7 @@ ioctl, runs on the replaying thread, once for every part the replay hands to the
 in Kokiri Forest on an RX 6800 XT (Mesa 26.2) the replay took 13.9 ms a frame with it and 15.0 ms without.
 `NX2SARIA_SUBMIT_THREAD` (default 1 on Linux, 0 on Windows) sets it unless the environment already sets it; 0 leaves the
 driver's own choice. Drivers that do not read the variable ignore it. `vk_driver_cache_env` calls this before any thread
-can load the driver.
+can load the driver. The choice (`submit_thread_why`) is logged by `create_device` on a Mesa driver.
 
 ### `vk_driver_cache_env()`
 
@@ -1560,9 +1558,10 @@ starts, and `create_instance` calls it for the other modes. Every call happens b
 ### `create_instance()`
 
 - `vk_dlssg_early()`: DLSS Frame Generation: Streamline before any Vulkan call of the process (its slInit asks so).
-- DLSS Frame Generation: Streamline's plugins call its naming functions even when they say it is off.
-- Armed, not wanted: the menu switches HDR on during the run (`runtime/vk/vk_hdr.c`), and the extensions are fixed here.
-- `if (vk_hdr_armed() && instance_ext_present(VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME))`: HDR10 surface formats.
+- `VK_EXT_debug_utils` also when DLSS Frame Generation is wanted: Streamline's plugins call its naming functions even
+  when they say it is off.
+- The swapchain colour space extension (HDR10 surface formats) when HDR is armed, not wanted: the menu switches HDR on
+  during the run (`runtime/vk/vk_hdr.c`), and the extensions are fixed here.
 
 ### `missing_required()`
 
@@ -1579,16 +1578,10 @@ Graphics+compute family that can present to the window.
 
 ### `vk_card_prepare_text()`
 
-- `GPUC_OTHER`: `runtime/vk/gpu_choice.h` has no Vulkan header: its `GPUC_*` kinds are VkPhysicalDeviceType's values,
-  which `pick_device`, the preset's probe (`runtime/cfg/hw_detect.c`) and the menu's row (ui/menu.cpp) copy into
-  `GpucCard.type` unchanged.
-- `g_gpu_choice_note`: The fatal error's note on how the card was chosen
-  (`runtime/vk/gpu_choice.h` `gpuc_choice_line()`), empty when it was not or the choice gives no cause to say so.
-  Written once, by `pick_device`, before the game runs.
-- `g_prepare_text`: The card the device was made on and how it was chosen
-  (`runtime/vk/gpu_choice.h` `gpuc_prepare_line()`), for the lines the preparation modes print
-  (`runtime/vk/vk_pipeline.c`): the preparation builds the driver's cache of this card, and the launcher's log is where
-  a player's report of a slow update is read. Written once, by `pick_device`, before anything reads it.
+The card the device was made on and how it was chosen (`g_prepare_text`, from `runtime/vk/gpu_choice.h`
+`gpuc_prepare_line()`), for the lines the preparation modes print (`runtime/vk/vk_pipeline.c`): the preparation builds
+the driver's cache of this card, and the launcher's log is where a player's report of a slow update is read. Written
+once, by `pick_device`, before anything reads it.
 
 ### `cards_usable()`
 
@@ -1604,31 +1597,34 @@ that lists a card without the name is dropped and the name decides; a `gpu_index
 discrete one while a discrete one the game can use is listed counts as Auto. The shader preparation modes get their
 device here too, from the same settings, so they build the cache of the card the game takes.
 
-- `const char *e = cfg_get("NX2SARIA_GPU_INDEX")`: no fixed default: the best device when unset.
-- `uint32_t best_driver = 0`: the driver version of the best one so far.
-- The cards in the order the loader lists them now: the list for the log, and the names that tell whether a `gpu_index`
-  still lists the card it was written for.
-- `const int asked = want`: `gpu_index` as the settings give it: the lines below name it.
-- `const int from_env = cfg_from_env("NX2SARIA_GPU_INDEX")`: set for this run, on purpose (`runtime/vk/gpu_choice.h`).
-- A position alone that lists a card that is not a discrete one gives way to a discrete card the game can use
-  (`runtime/vk/gpu_choice.h` `gpuc_legacy_alt()`), so which of them the game can use is asked here, and only then.
-- `gpuc_setting_line(cards, (int)n, want, name, from_env, line, sizeof line)`: what the settings hold.
-- A chosen card of another vendor while DLSS Frame Generation is on: the interposer cannot make its device
-  (`vk_dlssg_create_device`), and the settings ask for what only an NVIDIA card runs. Not usable, so the best usable one
-  is taken below, as for a card that is gone; where no NVIDIA card is usable either, the pass without a choice takes
-  what there is and the device is made without frame generation.
-- The same GPU listed again by another installed driver (a laptop with the vendor's processor graphics and its card has
-  both drivers list the card): the newer driver's listing. The older one, there to serve the processor graphics, was
-  reported to crash in its shader compiler with the card.
-- A chosen GPU that is not usable or no longer there (the menu's GPU row, an unplugged card, a driver that lists the
-  devices in another order): the best usable one instead, so the game still starts and the choice can be changed.
-- A card a `gpu_index` alone chose that is not a discrete one, while a discrete one the game can use is listed: the game
-  may be on the wrong card (`runtime/vk/gpu_choice.h`). The line follows "using gpu" below, the short form goes to a
-  fatal error's report.
-- `if (cards[best].type != GPUC_DISCRETE && want >= 0 && !(name && *name))`: a `gpu_index` alone (`gpuc_choice_line`).
-- `for (uint32_t i = 0; i < nq; i++)`: a family that does transfer only (async DMA engine).
-- `vk_caps_driver(g_vk.phys)`: before `vk_mem_class_log`, which chooses the pools' storage by driver.
-- And by whether the device imports dma-bufs (`runtime/vk/vk_memory.c` "dma-buf imports").
+`runtime/vk/gpu_choice.h` has no Vulkan header: its `GPUC_*` kinds are VkPhysicalDeviceType's values (a static assert
+says so), which `pick_device`, the preset's probe (`runtime/cfg/hw_detect.c`) and the menu's row (`runtime/ui/menu.cpp`)
+copy into `GpucCard.type` unchanged.
+
+1. `NX2SARIA_GPU_INDEX` has no fixed default: unset, the best device. The cards are listed in the order the loader
+   lists them now: the list for the log, and the names that tell whether a `gpu_index` still lists the card it was
+   written for. `asked` keeps `gpu_index` as the settings give it, for the lines that name it; `from_env` says it was
+   set for this run, on purpose.
+2. A position alone that lists a card that is not a discrete one gives way to a discrete card the game can use
+   (`runtime/vk/gpu_choice.h` `gpuc_legacy_alt()`), so which of them the game can use is asked here, and only then.
+   The line of what the settings hold is logged, then the choice is resolved.
+3. Each card is tested. A chosen card of another vendor while DLSS Frame Generation is on is skipped: the interposer
+   cannot make its device (`vk_dlssg_create_device`), and the settings ask for what only an NVIDIA card runs. Not
+   usable, so the best usable one is taken below, as for a card that is gone; where no NVIDIA card is usable either,
+   the pass without a choice takes what there is and the device is made without frame generation.
+4. The same GPU listed again by another installed driver (a laptop with the vendor's processor graphics and its card
+   has both drivers list the card): the newer driver's listing (`best_driver`, the driver version of the best one so
+   far). The older one, there to serve the processor graphics, was reported to crash in its shader compiler with the
+   card.
+5. A chosen GPU that is not usable or no longer there (the menu's GPU row, an unplugged card, a driver that lists the
+   devices in another order): the best usable one instead, so the game still starts and the choice can be changed.
+6. A card a `gpu_index` alone chose that is not a discrete one, while a discrete one the game can use is listed: the
+   game may be on the wrong card (`runtime/vk/gpu_choice.h` `gpuc_choice_line()`). The line follows "using gpu", the
+   short form (`g_gpu_choice_note`) goes to a fatal error's report; it stays empty when the card was not chosen so or
+   the choice gives no cause to say so, and is written once, before the game runs.
+7. The transfer queue is a family that does transfer only (async DMA engine), else the graphics family.
+8. `vk_caps_driver()` runs before `vk_mem_class_log`, which chooses the pools' storage by driver, and by whether the
+   device imports dma-bufs (`runtime/vk/vk_memory.c` "dma-buf imports"), which is noted just before it.
 
 ### `vram_heap_limits()`
 
@@ -1638,21 +1634,19 @@ the first heap whatever its budget, and a save load put 5.6 GiB there while the 
 failed with `VK_ERROR_OUT_OF_DEVICE_MEMORY`. With a limit VMA counts a heap full at it and places what follows in the
 next memory type that allows it (the other device-local heap first), for every allocation: textures, render targets,
 VRAM mirrors, pools. The limit is each device-local heap's budget when the device is made (`VK_EXT_memory_budget`, what
-other programs leave) less a margin for memory VMA does not see (swapchain, FidelityFX): a tenth, at least 256 MiB.
-`NX2SARIA_VRAM_HEAP_LIMIT`: auto, 0 (no limits, the default) or a number of MiB for the largest device-local heap. The
-low-end GPU mode set auto up to 0.10.1.
-
-- `long mb = !e || !*e ? 0 : strcmp(e, "auto") ? atol(e) : -1`: unset: no limits.
-- `if (mb < 0 && (nlocal < 2 || !g_vk.has_memory_budget)) return 0`: auto: only where another heap can take the rest.
-- `if (budget <= margin * 2) continue`: too small to limit.
+other programs leave) less a margin for memory VMA does not see (swapchain, FidelityFX): a tenth, at least 256 MiB; a
+heap too small for that (budget at most twice the margin) is not limited. `NX2SARIA_VRAM_HEAP_LIMIT`: auto, 0 (no
+limits, the default, also when unset) or a number of MiB for the largest device-local heap. Auto limits only where
+another device-local heap can take the rest and the budget is known. The low-end GPU mode set auto up to 0.10.1.
 
 ### `fatal_note()`
 
 One line for a fatal error's report (`runtime/dispatch.h` `rt_fatal_note_add()`): the card, its driver, and the settings
 in effect that change how the game's memory behaves. A report often arrives as the end of a log alone, or as a picture
-of it, and the lines that say these things are at its start. No lock is taken: the failing thread may hold any. How the
-game's task and mesh programs are drawn (`create_device` decides it): natively, through the mesh fallback, the mesh
-emulation, or not at all. Every RX 6000 loss whose marks named a pass was in one that starts with a mesh draw.
+of it, and the lines that say these things are at its start. No lock is taken: the failing thread may hold any. It also
+says how the game's task and mesh programs are drawn (`g_mesh_path`, which `create_device` decides): natively, through
+the mesh fallback, the mesh emulation, or not at all. Every RX 6000 loss whose marks named a pass was in one that starts
+with a mesh draw.
 
 ### `timed_alloc()`
 
@@ -1666,24 +1660,28 @@ number of allocations made.
 
 ### `create_device()`
 
+The extensions and features it asks for beside the required ones, and why:
+
 - Pageable video memory (`NX2SARIA_VRAM_PAGEABLE`): past the budget Windows pages device memory out by the priority of
   each allocation, textures (0.3) before render targets, VRAM mirrors and physical pools (1.0):
   `runtime/vk/vk_texture.c` `image_alloc()`, `runtime/vk/vk_memory.c` `mirror_create()` and `alloc_physical()`. VMA
-  passes the priority with its flag (below). Without it the texture residency (`runtime/vk/vk_texture.c` "residency")
-  could not bring the use down to the budget.
-- The translator's SPIR-V declares fragment shader interlock whenever the host reports it
+  passes the priority with its flag. Without it the texture residency (`runtime/vk/vk_texture.c` "residency") could not
+  bring the use down to the budget.
+- Fragment shader interlock: the translator's SPIR-V declares it whenever the host reports it
   (`runtime/vk/vk_pipeline.c` `spirv_fixup()`).
-- NVN2 task and mesh programs (gameplay geometry) draw through `VK_EXT_mesh_shader`
+- `VK_EXT_mesh_shader`: NVN2 task and mesh programs (gameplay geometry) draw through it
   (`runtime/vk/vk_exec_draw.c` `op_draw_mesh()`).
-- The foliage's far shadow cascades shade one fragment per 2x2 pixels
-  (`runtime/vk/vk_exec_draw.c` `mesh_shading_rate()`).
-- Guest shaders that use warp-wide operations after divergent code run with their threads reconverged
-  (`runtime/vk/vk_pipeline.c` `spirv_reconverge()`).
+- Fragment shading rate: the foliage's far shadow cascades shade one fragment per 2x2 pixels
+  (`runtime/vk/vk_exec_draw.c` `mesh_shading_rate()`). The rate is set per draw; no rate attachment and no
+  per-primitive rates.
+- Maximal reconvergence: guest shaders that use warp-wide operations after divergent code run with their threads
+  reconverged (`runtime/vk/vk_pipeline.c` `spirv_reconverge()`).
 - Compiled pipelines kept under the runtime's own keys (`runtime/vk/vk_pipeline.c` `pipe_create()`):
   `VK_KHR_pipeline_binary`, which needs `VK_KHR_maintenance5` (core only from Vulkan 1.4; the instance asks for 1.3).
   `NX2SARIA_PIPE_BINARIES=0` leaves both off.
 - Feedback loops (`runtime/vk/vk.h` `VkCtx.feedback`): the layout, and barriers inside dynamic rendering.
-- `vk_dlaa_device_exts(ep, ne, ext, &n_ext, 40)`: NGX's; the eight slots after it stay for the eight below.
+- NGX's extensions (`vk_dlaa_device_exts()`, up to 40 of the 64 slots); the eight slots after them stay for the eight
+  extensions asked for without a bound check below.
 - FSR 3.1 (`runtime/vk/vk_ffx.cpp`): its Vulkan back end looks vkGetBufferMemoryRequirements2KHR up by that name, which
   resolves only with the extension enabled (the core function has no suffix); without it the back end called address 0.
   Always asked for: FSR 3.1 can be switched on in the menu during a run.
@@ -1691,8 +1689,9 @@ number of allocations made.
   up by their suffixed names too, which resolve only with the extension itself enabled.
 - GPU timestamps on the CPU clock (`runtime/vk/vk_sync.c`): the perf line splits GPU idle time into waiting for a
   submission or not.
-- `if (vk_hdr_armed() && has_ext(ep, ne, VK_EXT_HDR_METADATA_EXTENSION_NAME))`: the display's peak (`vk_hdr_metadata`).
-- GPU breadcrumbs for a lost device (`runtime/vk/vk_crumbs.c`): AMD's drivers and RADV report it.
+- HDR metadata, when HDR is armed: the display's peak (`vk_hdr_metadata`).
+- GPU breadcrumbs for a lost device (`runtime/vk/vk_crumbs.c`, `VK_AMD_buffer_marker`): AMD's drivers and RADV report
+  it.
 - Pass marks on NVIDIA (`runtime/vk/vk_crumbs.c`): checkpoints only with `NX2SARIA_PASS_CRUMBS=1`, since NVIDIA
   documents a cost for the extension. NVIDIA's drivers report it, AMD's do not.
 - Guest memory imported as dma-bufs (`runtime/vk/vk_memory.c` "dma-buf imports"; `pick_device` checked the extensions).
@@ -1704,51 +1703,50 @@ number of allocations made.
   existed, and a driver that lists one of the two is only remembered (`lists_low_latency`), so the menu can say that
   turning the setting on takes a restart.
 - Graphics pipeline library: chained last so it can be dropped again when `vk_caps_gpl` declines it.
-- The driver fills the chain with what it supports; the same chain then enables all of it (robustBufferAccess stays on:
-  guest shaders index constant buffers freely and out-of-range reads must stay harmless).
-- `if (g_vk.has_vrs)`: the rate is set per draw; no rate attachment and no per-primitive rates.
-- These two need features that are not enabled (multiview, primitive fragment shading rate).
-- Mesh queries for two diagnoses: `NX2SARIA_GPU_PASSES` (`runtime/vk/vk_crumbs.c`) and the dump's primitive counts
-  (`runtime/vk/vk_dump.c` `vk_dump_mesh_begin()`), which also need pipeline statistics and host query reset.
-- vkGetDeviceFaultInfoEXT needs the feature, not just the extension.
-- `mesh_fallback`: auto, 1 (on every device) or 0 (`runtime/vk/vk_mesh_path.h` says when auto takes it, and why on AMD's
-  driver for RDNA 1 and 2 and on Intel's; the RADV releases it takes it on, and the `vk: mesh path:` lines this function
-  writes for them, are on [vk-pipeline.md](vk-pipeline.md)). Without mesh shaders the mesh emulation
-  (`mesh_emulation` = 1) draws them
-  instead. `has_mesh_shader` keeps saying what the hardware has: the recorder thread (`runtime/vk/vk_rec.c`) goes by it,
-  not by how mesh programs are drawn.
-- Says `NX2SARIA_MESH_FALLBACK_BATCH`'s value and whether it is active here (`runtime/vk/vk_exec_draw.c`); `vk_ctx()` is
-  not ready yet, so the path and the device's default go as arguments.
+
+The driver fills the chain with what it supports; the same chain then enables all of it (robustBufferAccess stays on:
+guest shaders index constant buffers freely and out-of-range reads must stay harmless). Then:
+
+- Two mesh shader features are turned off, as they need features that are not enabled (multiview, primitive fragment
+  shading rate). Mesh queries serve two diagnoses: `NX2SARIA_GPU_PASSES` (`runtime/vk/vk_crumbs.c`) and the dump's
+  primitive counts (`runtime/vk/vk_dump.c` `vk_dump_mesh_begin()`), which also need pipeline statistics and host query
+  reset.
+- The device fault extension counts only with its feature: vkGetDeviceFaultInfoEXT needs the feature, not just the
+  extension.
+- `mesh_fallback`: auto, 1 (on every device) or 0 (`runtime/vk/vk_mesh_path.h` says when auto takes it, and why on
+  AMD's driver for RDNA 1 and 2 and on Intel's; the RADV releases it takes it on, and the `vk: mesh path:` lines this
+  function writes for them, are on [vk-pipeline.md](vk-pipeline.md)). Without mesh shaders the mesh emulation
+  (`mesh_emulation` = 1) draws them instead. `has_mesh_shader` keeps saying what the hardware has: the recorder thread
+  (`runtime/vk/vk_rec.c`) goes by it, not by how mesh programs are drawn. `vk_exec_mfb_batch_start()` says
+  `NX2SARIA_MESH_FALLBACK_BATCH`'s value and whether it is active here (`runtime/vk/vk_exec_draw.c`); `vk_ctx()` is not
+  ready yet, so the path and the device's default go as arguments.
 - The chain enables what the driver reported: a present carries a frame's number only with `presentId`, and
   vkAntiLagUpdateAMD may be called only with `antiLag` (the extension alone stays enabled and unused without it).
-- Frame generation (`runtime/vk/vk_fg.cpp`) presents on a second queue of the graphics family and acquires on a third.
-  AMD's swapchain needs a present queue nothing else submits to (FidelityFX: the engine must not use it, or it can
-  deadlock); the image acquire queue needs no capability. Where the graphics family has one queue (AMD's Windows driver,
-  an RX 580), both come from another family: a queue of a family that can present for the present, and a second queue of
-  it, or of any other family, for the acquire (the present queue itself when there is none). Without them
-  `vk_fg_create_swapchain` gave up without a word: frame generation set in the menu did nothing.
-- `for (int pass = 0; pass < 2 && fg_pf == UINT32_MAX; pass++)`: compute families first, then the others.
-- `if (vk_dlssg_dpa())`: Streamline's, so its plugins hook every entry point the replay fetches.
-- `vk_mem_dmabuf_probe(g_vk.device, &g_vk.mem_props, vk_gpa_wanted_ctx(&g_vk))`: may turn shadow storage on.
-- `vk_mem_lazy_decide()`: the driver is known: the lazy write-back's default depends on it.
-- `static const VmaVulkanFunctions vf = {.vkAllocateMemory = timed_alloc}`: the rest from VMA's static table.
+
+The queues. Frame generation (`runtime/vk/vk_fg.cpp`) presents on a second queue of the graphics family and acquires on
+a third. AMD's swapchain needs a present queue nothing else submits to (FidelityFX: the engine must not use it, or it
+can deadlock); the image acquire queue needs no capability. Where the graphics family has one queue (AMD's Windows
+driver, an RX 580), both come from another family (compute families first, then the others): a queue of a family that
+can present for the present, and a second queue of it, or of any other family, for the acquire (the present queue
+itself when there is none). Without them `vk_fg_create_swapchain` gave up without a word: frame generation set in the
+menu did nothing.
+
+After the device: with DLSS Frame Generation the device's entry points come from Streamline's `vk_dpa`, so its plugins
+hook every entry point the replay fetches. `vk_mem_dmabuf_probe()` may turn shadow storage on, and
+`vk_mem_lazy_decide()` runs once the driver is known, as the lazy write-back's default depends on it. VMA gets
+`timed_alloc()` for its allocations and the rest from its static table.
 
 ### `destroy_all()`
 
-- `g_errors_total`: outlives the device so the probe can print it after `vk_shutdown`.
-
-- `if (g_vk.device) vk_dlaa_release()`: the DLSS features and NGX: the allocator and the device still live.
-- `if (g_vk.device) vk_fsr3_release()`: FSR 3.1's own passes and contexts, where they were made.
-- `if (g_vk.device) vk_lowlat_release()`: the sleep's semaphore: the device still lives.
-- `if (lost_fence) vkDestroyFence(g_vk.device, lost_fence, NULL)`: `vk_device_lost_poll`.
+The DLSS features and NGX, FSR 3.1's own passes and contexts (where they were made) and the low-latency sleep's
+semaphore are released while the allocator and the device still live; then the fence of `vk_device_lost_poll()`.
+`g_errors_total` outlives the device, so the probe can print the validation errors after `vk_shutdown`.
 
 ### `device_fault_report()`
 
 The report of a lost device: the breadcrumbs, the pass marks, the video memory and the driver's fault information. Once
-per process, on the thread that saw the loss first (`vk_device_lost_check`).
-
-- `n.vendorBinarySize = 0`: the vendor binary is not fetched; its size alone is logged.
-- The faulting access lies in the precision-aligned range around the reported address.
+per process, on the thread that saw the loss first (`vk_device_lost_check`). The vendor binary is not fetched; its size
+alone is logged. The faulting access lies in the precision-aligned range around each reported address.
 
 ### The end of a run whose device is lost (`runtime/vk/vk.h` `vk_device_lost_check()`)
 
@@ -1765,23 +1763,27 @@ the watchdog not have started.
 
 ### `lost_wait_exit()`
 
-- `rt_log_ending()`: its line reaches the log file past its cap (`runtime/main.c` `log_sink()`).
-- `rt_log_sync()`: the queue's locks only tried (bounded): their holder may be the thread that hangs.
+The watchdog's line reaches the log file past its cap (`rt_log_ending()`, `runtime/main.c` `log_sink()`), and
+`rt_log_sync()` only tries the queue's locks (bounded): their holder may be the thread that hangs.
 
 ### `vk_device_lost_check()`
 
-- `if (plat_xchg32(&vk_lost, 1)) lost_wait_exit(NULL)`: another thread is ending the run: this one stops here.
-- `char at[16]`: when the loss was seen, before the report that follows takes its time.
+When another thread is already ending the run, this one stops here. The local time of the loss is taken before the
+report that follows takes its time.
+
+### `vk_device_lost_poll()`
+
+`lost_fence` is the fence it asks about. Nothing submits with it, so its status is "not ready" for as long as the
+device lives.
 
 ### `vk_selftest()`
 
-- `vk_sync_signal_note(1)`: a host signal of the timeline is noted first (`runtime/vk/vk_sync.c` `timeline_beyond()`).
-
-### Probe-vkdevice (`runtime/host.h`)
+The host signal of the timeline is noted first (`vk_sync_signal_note()`, `runtime/vk/vk_sync.c` `timeline_beyond()`).
 
 ### `probe_vkdevice()`
 
-- `fatal_note()`: the line a fatal error or a crash would add to the log, to read it without one.
+`--probe-vkdevice` (`runtime/host.h`). It prints `fatal_note()`'s line, the line a fatal error or a crash would add to
+the log, to read it without one.
 
 ### `vk_mesh_shader_native()`
 
