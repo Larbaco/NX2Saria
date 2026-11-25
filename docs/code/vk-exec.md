@@ -7585,7 +7585,7 @@ search: most scene draws are unowned, and scanning every player binding for each
 
 The device address table: GPU address pages to Vulkan buffer device addresses, for the global memory accesses the
 translator finds no storage buffer for (translator patch 0030: GlobalToStorage TryKeepDeviceAddressAccess, and the
-SPIR-V back end's GetDeviceAddressPointer, which reads this layout). Ocarina's foliage, instance and light data reach
+SPIR-V back end's GetDeviceAddressPointer, which reads this layout). The game's foliage, instance and light data reach
 their buffers through pointers the shaders read from other buffers at an index (a phi of constant-buffer pointers and
 loaded ones, a pointer spilled to local memory and loaded again); those accesses read 0 before, which drew interiors and
 shadowed areas black and dropped instanced foliage.
@@ -7596,9 +7596,11 @@ One storage buffer of 32-bit words, bound whole to every shader that declares it
 - Word 2: the word index of the records (`REC_WORD`).
 - Words 3-4: the device address of a 4 KiB scratch buffer, where a twin write goes when its page has no twin.
 - Words 16..: L1: 65536 entries, one per 16 MiB of the 40-bit GPU address space, the index of its L2 block (0: none).
-- Word 65552: L2 blocks of 4096 entries, one per 4 KiB page: the record of the buffer that holds the page (0: none).
-- `REC_WORD`: records of four words: the buffer's device address minus the GPU address of its byte 0, then the same for
-  the page's twin (low words first).
+- Words 65552..: `BLOCKS` (1024) L2 blocks of `L2_N` (4096) entries, one per 4 KiB page, so a block is 16 MiB and the
+  blocks together 16 GiB of mapped GPU address space: the record of the buffer that holds the page (0: none). Block 0
+  stays zero.
+- From `REC_WORD` on: `RECS` (65536) records of four words (`REC_WORDS`): the buffer's device address minus the GPU
+  address of its byte 0, then the same for the page's twin (low words first). Record 0 means none.
 
 The twin: a pool with a VRAM mirror (`runtime/vk/vk_memory.c` `mirror_create()`) has the mirror in its record's first
 address and its imported buffer, guest memory, in the second; any other record has the same buffer in both. Shaders read
@@ -7609,17 +7611,17 @@ way, and a record overwritten so drew a tree stretched into a column reaching th
 Mountain). A record a page entry names is never written by the CPU: a new mapping takes a new record, and a record goes
 back to the free list only once the GPU finished every submission issued while a page could still name it
 (`vk_completion_add`). The one write to a record in use is the GPU's own, in queue order, when a pool's new mirror takes
-its record over (`vk_gpa_flip_cmd`): what was queued before it reads the old addresses, what comes after it the new
+its record over (`vk_gpa_flip_cmd()`): what was queued before it reads the old addresses, what comes after it the new
 ones. Page and L1 entries are single 32-bit stores, so a shader that reads the table while it changes sees the old
 mapping or the new one, never half of each. The CPU keeps a copy (shadow) for its reads: the GPU copy is often device
 memory behind the PCIe BAR, slow to read back.
 
-An L2 block whose last page is unmapped leaves its L1 entry at once (`blocks_release`) and serves another 16 MiB range
+An L2 block whose last page is unmapped leaves its L1 entry at once (`blocks_release()`) and serves another 16 MiB range
 once the GPU finished every submission issued while a shader could still have read the old L1 entry: until then it holds
 only zeros, which read as unmapped. The game's allocator hands out pool addresses that climb through the 64 GiB alias
 region, so blocks kept for good ran out after 16 GiB of ranges ever mapped (39 minutes of play, six areas), and every
 pool created after that stayed out of the table: its pointers read zeros, as before the table existed. A range mapped
-again while its block still waits takes that block back (`block_take`), so a pool freed and made again at its address
+again while its block still waits takes that block back (`block_take()`), so a pool freed and made again at its address
 within a frame holds no second block.
 
 `NX2SARIA_GPA=0` turns the table off: the translator is told the host has no device addresses (those accesses read 0).
@@ -7629,52 +7631,41 @@ are copies of guest memory, which a guest submission that binds the table (`runt
 brings up to date with the pages the CPU wrote, once, before the part is submitted
 (`runtime/vk/vk_memory.c` `vk_mem_shadow_sync()`). There the twin of a mirrored pool is its shadow copy, not guest
 memory, and what a shader stores through the table is not noted as a GPU write: it does not come back to guest memory,
-and the next whole copy-in of its page overwrites it. `runtime/vk/vk_memory.c` "Pages a shader stores into through the
-device address table" has the sequence, what was measured, and the switch that keeps the stores
+and the next whole copy-in of its page overwrites it. The notes of `runtime/vk/vk_memory.c` on the pages a shader stores
+into through the device address table have the sequence, what was measured, and the switch that keeps the stores
 (`NX2SARIA_SHADOW_TABLE_STORES`).
 
-- `L2_N`: pages per block: 16 MiB.
-- `BLOCKS`: L2 blocks: 16 GiB of mapped GPU address space; block 0 stays zero.
-- `RECS`: record 0 means none.
-- `REC_WORDS`: words per record.
-- `G`:
-  - `int state`: 0 untried, 1 on, -1 off.
-  - `volatile uint32_t *gpu`: the mapped table.
-  - `uint32_t *cpu`: its shadow.
-  - `uint32_t nblocks`: L2 blocks ever handed out (block 0 is the zero block).
-  - `uint16_t blk_pages[BLOCKS]`: pages each block maps.
-  - `uint16_t blk_l1[BLOCKS]`: the L1 entry that names it, or named it while it waits.
-  - `uint8_t blk_wait[BLOCKS]`: off L1, waiting for the GPU (`blocks_release`).
-  - `uint32_t blk_gen[BLOCKS]`: releases so far: a block taken back and released again has two callbacks.
-  - `uint16_t free_blks[BLOCKS]`: empty blocks whose fence completed.
-  - `uint64_t blk_returned`: blocks taken off L1 so far.
-  - `uint32_t nrec`: records handed out, free ones aside.
-  - `uint32_t *free_recs, nfree`: records whose fence completed.
+The state, `G`:
+
+- `state`: 0 untried, 1 on, -1 off. `gpu` is the mapped table, `cpu` its shadow.
+- `nblocks`: L2 blocks ever handed out (block 0 is the zero block). `blk_pages`: the pages each block maps. `blk_l1`:
+  the L1 entry that names a block, or named it while it waits. `blk_wait`: off L1, waiting for the GPU
+  (`blocks_release()`). `blk_gen`: a block's releases so far, as a block taken back and released again has two
+  callbacks. `free_blks`: empty blocks whose fence completed. `blk_returned`: blocks taken off L1 so far.
+- `nrec`: records handed out, free ones aside. `free_recs`: records whose fence completed.
 
 ### `create()`
 
-- `.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT`: `vk_gpa_flip_cmd`.
+The table is a transfer destination as well as a storage buffer, for the store `vk_gpa_flip_cmd()` records.
 
 ### `block_take()`
 
-A block for L1 entry l1, 0 when none is left: the one the entry gave up and that still waits for the GPU (it maps
-nothing, and a shader that read the old entry finds the new pages in it), else a free one, else one never used.
-
-- `if (blk) G.blk_wait[blk] = 0, G.blk_waiting--`: its callback finds it in use (`blk_free_cb`).
+A block for L1 entry `l1`, 0 when none is left: the one the entry gave up and that still waits for the GPU (it maps
+nothing, and a shader that read the old entry finds the new pages in it), else a free one, else one never used. A block
+taken back is no longer marked as waiting, so its callback finds it in use (`blk_free_cb()`).
 
 ### `page_word()`
 
-The L2 entry word of a page; 0 when its block does not exist and alloc is 0 or no block is left.
-
-- `uint64_t l1 = page >> 12`: 4096 pages of 4 KiB per 16 MiB.
+The L2 entry word of a page; 0 when its block does not exist and `alloc` is 0 or no block is left. The L1 index is the
+page number shifted by 12: 4096 pages of 4 KiB per 16 MiB.
 
 ### `page_put()`
 
-Stores record r (0: none) in the L2 entry word w and keeps the page counts of its block and of the table.
+Stores record `r` (0: none) in the L2 entry word `w` and keeps the page counts of its block and of the table.
 
 ### `blk_free_cb()`
 
-- `if (G.state > 0 && G.blk_wait[blk] && G.blk_gen[blk] == gen)`: not taken back since (`block_take`).
+Frees the block only when it still waits and its generation is the callback's: not taken back since (`block_take()`).
 
 ### `blocks_release()`
 
@@ -7687,18 +7678,19 @@ once the GPU finished the submissions issued until now and the one being recorde
 
 ### `rec_alloc()`
 
-- The record before any page names it: the page store below is ordered after these by the release fence.
+The record is written before any page names it: the caller's page stores are ordered after the record's words by the
+release fence at the end.
 
 ### `vk_gpa_map()`
 
-- `static int empty = -1`: `NX2SARIA_GPA_EMPTY=1`: nothing is mapped, every access reads the zero buffer (diagnosis).
-- Pages the buffer holds whole: [lo, hi) rounded inwards (imports are aligned outwards, so this is all of them).
-- `p |= L2_N - 1`: the rest of this 16 MiB has no block either; the next range may have one.
+Maps the pages the buffer holds whole: [lo, hi) rounded inwards (imports are aligned outwards, so this is all of them).
+With `NX2SARIA_GPA_EMPTY=1` nothing is mapped and every access reads the zero buffer (diagnosis). A page that finds no
+block skips the rest of its 16 MiB, which has no block either; the next range may have one.
 
 ### `vk_gpa_unmap()`
 
-- Pages another live buffer also holds whole (overlapping imports of the same guest memory) get its record back.
-- `blocks_release(p0, p1)`: after the cover: a block another buffer's pages went back into stays.
+Pages another live buffer also holds whole (overlapping imports of the same guest memory) get that buffer's record back
+through `cover`. The blocks are released after the cover, so that a block another buffer's pages went back into stays.
 
 ### `twins_on()`
 
@@ -7706,16 +7698,16 @@ once the GPU finished the submissions issued until now and the one being recorde
 
 ### `rec_first()`
 
-`gpa_lock` held: the first address of record rec (the buffer its pages read).
+`gpa_lock` held: the first address of record `rec` (the buffer its pages read).
 
 ### `pages_move()`
 
-`gpa_lock` held: the pages of [p0, p1) that name `old_rec` (or none) name r from here on.
+`gpa_lock` held: the pages of [p0, p1) that name `old_rec` (or none) name `r` from here on.
 
 ### `remap()`
 
-- The twin: the buffer the pages named before (the pool's imported buffer), so writes reach guest memory too.
-- `if (!r)`: no record left: the pages keep the old one, and the caller its number.
+With `keep_twin` and twins on, the new record's twin is the buffer the pages named before (the pool's imported buffer),
+so writes reach guest memory too. When no record is left, the pages keep the old one, and the caller its number.
 
 ### `vk_gpa_flip_cmd()`
 
@@ -7727,43 +7719,39 @@ where the command stands, after that copy (`runtime/vk/vk_memory.c` `vk_mem_mirr
 barriers around it. No new record is taken, so there is none to run out of. The shadow takes the new words now: the CPU
 never reads a record's addresses back for a record handed over this way. 0 when nothing was recorded.
 
-### Probe-vkmem
+### `vk_gpa_probe()`
 
-What the table's own memory, as the GPU has it, resolves addr to: the device address a shader reads there and the one it
-writes as well. 0 when no page maps addr. Slow (the table may be device memory), and only meaningful with no submission
-in flight.
+For `--probe-vkmem`. What the table's own memory, as the GPU has it, resolves addr to: the device address a shader reads
+there and the one it writes as well. 0 when no page maps addr. Slow (the table may be device memory), and only
+meaningful with no submission in flight.
 
 ### `vk_gpa_sizes()`
 
-`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): device address table records and L2 blocks in use (those
-waiting for a fence included), against their fixed sizes (when they run out, shaders read zeros).
+`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): device address table records and L2 blocks in use, against
+their fixed sizes (when they run out, shaders read zeros). A record that waits for its fence still counts as in use; a
+block that waits for the GPU does not.
 
 ## `runtime/vk/vk_gpa.h`
 
 The device address table (`runtime/vk/vk_gpa.c`): GPU address pages to buffer device addresses for shaders' global
 memory accesses.
 
-- `VK_GPA_CB_SLOT`: res.json `cb_slot` of the table (translator ResourceManager.DeviceAddressTableCbSlot).
-- `vk_gpa_wanted()`: the device has buffer device addresses and `NX2SARIA_GPA` is not 0.
-- `vk_gpa_wanted_ctx()`: the same during device creation, before `vk_ctx()` returns it.
-- `vk_gpa_on()`: the table exists (created on first use).
-- `vk_gpa_info()`: the whole table, for a storage descriptor.
-- `vk_gpa_map()`: Maps the pages [lo, hi) holds whole to buf, whose byte 0 is GPU address `buf_lo`. Returns the record
-  (0: not mapped).
-- `vk_gpa_unmap()`: Unmaps the pages of [lo, hi) that name rec; cover (may be NULL) gives the record of another live
-  buffer that holds a page whole, or 0. rec is reused once the GPU finished the submissions issued until now.
-- `vk_gpa_clear()`: Unmaps every page of [lo, hi), whatever record it names (pages of a virtual pool whose physical
+`VK_GPA_CB_SLOT` is res.json's `cb_slot` of the table (the translator's ResourceManager.DeviceAddressTableCbSlot).
+
+- `vk_gpa_wanted()`: the device has buffer device addresses and `NX2SARIA_GPA` is not 0. `vk_gpa_wanted_ctx()`: the
+  same during device creation, before `vk_ctx()` returns the context.
+- `vk_gpa_on()`: the table exists (created on first use). `vk_gpa_info()`: the whole table, for a storage descriptor.
+- `vk_gpa_map()`: maps the pages [lo, hi) holds whole to `buf`, whose byte 0 is GPU address `buf_lo`. Returns the
+  record (0: not mapped).
+- `vk_gpa_unmap()`: unmaps the pages of [lo, hi) that name `rec`; `cover` (may be NULL) gives the record of another
+  live buffer that holds a page whole, or 0. `rec` is reused once the GPU finished the submissions issued until now.
+- `vk_gpa_clear()`: unmaps every page of [lo, hi), whatever record it names (pages of a virtual pool whose physical
   memory goes away).
-- `vk_gpa_remap()`: Moves the pages of [lo, hi) that name `old_rec` (or none) to buf (a pool's VRAM mirror), with
-  `old_rec`'s buffer as their twin, which shaders write too; returns the new record.
-- `vk_gpa_remap_plain()`: The same without the twin: the pages name buf alone (a pool whose VRAM mirror is evicted goes
-  back to its imported buffer).
-- `vk_gpa_flip_cmd()`: Records into cb the store that hands record rec over to buf (a pool's new VRAM mirror) in queue
-  order: what is queued after it reads buf through rec's pages, with the buffer they read before as the twin
-  (`keep_twin`) or buf again; what was queued before it sees no change. 0 when nothing was recorded (no record, no
-  table).
-- `vk_gpa_probe()`: --probe-vkmem: the device addresses the table, read from its own memory, gives a shader for addr:
-  the one it reads and the one it writes as well. 0 when no page maps addr.
+- `vk_gpa_remap()`: moves the pages of [lo, hi) that name `old_rec` (or none) to `buf` (a pool's VRAM mirror), with
+  the buffer of `old_rec` as their twin, which shaders write too; returns the new record. `vk_gpa_remap_plain()`: the
+  same without the twin: the pages name `buf` alone (a pool whose VRAM mirror is evicted goes back to its imported
+  buffer).
+- `vk_gpa_flip_cmd()` and `vk_gpa_probe()`: under `runtime/vk/vk_gpa.c` above.
 
 ## `runtime/vk/vk_dump.c`
 
