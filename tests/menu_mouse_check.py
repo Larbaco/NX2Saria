@@ -1,11 +1,4 @@
 # needs: clang
-"""Build and run tests/menu_mouse_check.c: the arithmetic of the mouse in Ocarina of Time 1.1.1's menus
-(runtime/ui/menu_mouse_geom.h): a button's box from its pane, the pointer in layout units on 16:9 and ultrawide pictures
-(the UI squeezed into the middle 16:9, NX2SARIA_WIDE_MENUS = full or center), and the box under the pointer. No game
-files.
-
-Usage: python tests/menu_mouse_check.py [--cc <clang>]
-"""
 import argparse
 import os
 import subprocess
@@ -14,12 +7,20 @@ import tempfile
 from pathlib import Path
 import runtime_include
 
+DESCRIPTION = """Build and run tests/menu_mouse_check.c: the arithmetic of the mouse in Ocarina of Time 1.1.1's menus
+(runtime/ui/menu_mouse_geom.h): a button's box from its pane, the pointer in layout units on 16:9 and ultrawide pictures
+(the UI squeezed into the middle 16:9, NX2SARIA_WIDE_MENUS = full or center), and the box under the pointer. No game
+files.
+
+Usage: python tests/menu_mouse_check.py [--cc <clang>]
+"""
+
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

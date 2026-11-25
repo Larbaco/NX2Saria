@@ -1,17 +1,18 @@
 # needs: clang
-"""Build and run the mesh pipeline key reporting guard without a GPU or game data."""
 import argparse
 import os
 import shutil
 import subprocess
 from pathlib import Path
 
+DESCRIPTION = """Build and run the mesh pipeline key reporting guard without a GPU or game data."""
+
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--work', type=Path, default=ROOT / 'build' / 'test' / 'mesh-pipeline-check')
     a = ap.parse_args()
     a.work = a.work.resolve()

@@ -1,5 +1,12 @@
 # needs: clang
-"""A gamepad axis counts only once it has been seen at rest (runtime/input/input.c pad_axis): builds pad_axis, cut from
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+DESCRIPTION = """A gamepad axis counts only once it has been seen at rest (runtime/input/input.c pad_axis): builds pad_axis, cut from
 input.c by its text, with stand-ins for the SDL calls it makes, and checks that
 
   - an axis held from the start (a trigger mapped onto a stick, a virtual pad that reports a held axis) reads 0, and
@@ -9,12 +16,6 @@ input.c by its text, with stand-ins for the SDL calls it makes, and checks that
 
 No game files, no SDL. Usage: python tests/pad_rest_check.py [--cc <clang>]
 """
-import argparse
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -69,7 +70,7 @@ def cut(text, start, end_marker):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'
