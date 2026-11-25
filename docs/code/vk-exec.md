@@ -1847,11 +1847,11 @@ XT the game ended with code 71 at every enemy killed, from 0.5 on, and no longer
 same ending (issue `#418`). Where in the driver it faults is not established: a kill draws its effects for the first
 time, which asks for a burst of new pipelines linked from stage libraries, and building them whole avoids it. The price
 there: with libraries off a pipeline the game needs for the first time is built whole by a worker while its draw is left
-out (`runtime/vk/vk_exec_draw.c`, the skip reason "pipeline still building"), so new things appear some frames late, and the start waits
-for every recorded pipeline instead of 20 s at most (`runtime/vk/vk_pipeline.c` `prewarm_run()`). The same driver had
-libraries off before, for device losses at boot (issue `#5`), whose cause was GPU writes past 3D BC images
-(the section "3D BC render targets" of `runtime/vk/vk_exec.c`); it boots with them since that was fixed, so gpl = 1 is there to try on
-a newer driver. RDNA 4 under RADV is reported to hang the GPU at the title screen with GPL.
+out (`runtime/vk/vk_exec_draw.c`, the skip reason "pipeline still building"), so new things appear some frames late, and
+the start waits for every recorded pipeline instead of 20 s at most (`runtime/vk/vk_pipeline.c` `prewarm_run()`). The
+same driver had libraries off before, for device losses at boot (issue `#5`), whose cause was GPU writes past 3D BC
+images (the section "3D BC render targets" of `runtime/vk/vk_exec.c`); it boots with them since that was fixed, so gpl =
+1 is there to try on a newer driver. RDNA 4 under RADV is reported to hang the GPU at the title screen with GPL.
 
 ### `vk_caps_init()`
 
@@ -1877,8 +1877,8 @@ The session summary's video memory is the largest device-local heap: the card's 
 
 The graphics card the settings choose (`gpu_index`, `gpu_name`) and what the log says about the choice:
 `runtime/vk/vk_device.c` `pick_device()` and `fatal_note()`, `runtime/cfg/hw_detect.c` `probe_gpu()`,
-`runtime/ui/menu.cpp` `row_gpu()`. Header only, and plain enough for C and `C++`, so that `tests/gpu_choice_check.c` checks the rule and every
-line without a device.
+`runtime/ui/menu.cpp` `row_gpu()`. Header only, and plain enough for C and `C++`, so that `tests/gpu_choice_check.c`
+checks the rule and every line without a device.
 
 The order the cards are listed in is not fixed. Vulkan says nothing of it, and on Windows the loader follows the order
 of the system's graphics adapters, which the system's graphics settings for the program, a display on one card and the
@@ -6306,44 +6306,40 @@ that starts there, before and after the empty pool's Finalize.
 
 ## `runtime/vk/vk_rec.c`
 
-The recorder thread: see `runtime/vk/vk_rec.h`. One producer (the submitting thread, between `rec_begin` and `rec_end`)
-and one consumer (the recorder) share a ring of 64-bit words. A packet is a header word (op, length in words) and the
-call's arguments; its pointers point into the packet itself, so the recorder passes the payload to the driver as it is.
-A packet never wraps: one that does not fit before the end is preceded by a pad. The producer publishes head after each
-packet; the recorder makes the calls and advances tail, which the producer waits on when the ring is full and in
-`rec_drain`. While a part is recorded the recorder spins on head; idle, it sleeps on an event, and a sleep that ends
-with nothing new goes on without spinning first. The producer wakes a sleeping recorder once: it takes the sleeping flag
-back itself, so the packets it makes while the recorder is still waking cost no further system call. head, tail and the
-producer's own words sit on cache lines of their own: the producer writes head and its counters per packet while the
-recorder reads head in its spin, and the recorder writes tail.
+The recorder thread; what it is for is under `runtime/vk/vk_rec.h` below. One producer (the submitting thread, between
+`rec_begin()` and `rec_end()`) and one consumer (the recorder) share a ring of 64-bit words. A packet is a header word
+(op, length in words) and the call's arguments; its pointers point into the packet itself, so the recorder passes the
+payload to the driver as it is. A packet never wraps: one that does not fit before the end is preceded by a pad. The
+producer publishes head after each packet; the recorder makes the calls and advances tail, which the producer waits on
+when the ring is full and in `rec_drain`. While a part is recorded the recorder spins on head; idle, it sleeps on an
+event, and a sleep that ends with nothing new goes on without spinning first. The producer wakes a sleeping recorder
+once: it takes the sleeping flag back itself, so the packets it makes while the recorder is still waking cost no further
+system call. head, tail and the producer's own words sit on cache lines of their own: the producer writes head and its
+counters per packet while the recorder reads head in its spin, and the recorder writes tail.
 
-- `RING_WORDS`: 16 MiB: a part of a submission is ~1-2 MiB of packets in the town.
-- `static _Alignas(64) volatile uint64_t head`: words published by the producer.
-- `static _Alignas(64) volatile uint64_t tail`: words consumed by the recorder.
-- `sleeping`: the recorder waits for `wake_ev`.
-- `wake_ev`: auto-reset.
-- `static _Alignas(64) uint64_t put_h`: producer: words written (published up to head).
-- `tail_seen`: producer: tail as it last read it (`wait_space`); tail only grows.
-- `rec_cb`: the part being recorded (set while the recorder is idle).
-- `rec_live`: producer: `rec_begin` started the recorder for `rec_cb`.
+The ring is `RING_WORDS` words, 16 MiB: a part of a submission is about 1 to 2 MiB of packets in the town. The state
+around it:
+
+- `head`: words published by the producer; `tail`: words consumed by the recorder.
+- `sleeping`: the recorder waits for `wake_ev`, an auto-reset event.
+- `put_h`: the producer's count of words written (published up to `head`); `tail_seen`: `tail` as the producer last
+  read it in `wait_space()`, which is enough because `tail` only grows.
+- `rec_cb`: the part being recorded, set while the recorder is idle; `rec_live`: `rec_begin()` started the recorder for
+  `rec_cb`.
 - `rec_prio`: the submitting thread's priority, which the recorder takes.
-- `rec_chk`: `NX2SARIA_REC_CHECK` (`rec_check_handle`).
-- `rec_delay_ns`: `NX2SARIA_REC_DELAY_US` (`rec_main`).
-- `part_h0`: `put_h` at `rec_begin`: where the packets of the part being recorded start.
-- `part_fence`: the value of the part being recorded (`rec_begin`).
-- `RS_`: Producer statistics, logged by `rec_stats_log`.
-- `full_ns_all`: since the start, for `rec_wait_totals` (never reset).
-
-### Consumer
+- `part_h0`: `put_h` at `rec_begin()`, where the packets of the part being recorded start; `part_fence`: that part's
+  value.
+- `RS_`: the producer's statistics, logged and reset by `rec_stats_log()`; `full_ns_all` and `drain_ns_all` run since
+  the start for `rec_wait_totals()` and are never reset.
 
 ### `rec_main()`
 
-- `int slept = 0`: the last thing it did was sleep: nothing new then means still idle, so no spin before the next sleep.
-- `if (t == h) plat_event_wait_ns(&wake_ev, 2000000)`: a missed wake costs at most 2 ms.
-- `NX2SARIA_REC_DELAY_US` (debug): the recorder falls this far behind each batch it finds, as on a slow machine, so
-  objects the replay lets go of meet packets it has not made yet (`NX2SARIA_REC_CHECK`).
+The consumer. After a sleep (`slept`) nothing new means still idle, so it does not spin again before the next sleep.
+The sleep has a 2 ms timeout, which is what a missed wake costs at most. `tail` is published every 64 packets and at the
+end of each batch.
 
-### Producer
+`NX2SARIA_REC_DELAY_US` (debug): the recorder falls this far behind each batch it finds, as on a slow machine, so
+objects the replay lets go of meet packets it has not made yet (`NX2SARIA_REC_CHECK`).
 
 ### `wake_if_sleeping()`
 
@@ -6352,29 +6348,32 @@ the event for a recorder that has not reached its wait yet makes that wait retur
 
 ### `wait_space()`
 
-- `if (put_h + need - tail_seen <= RING_WORDS) return`: room even by the older tail.
+The first test uses `tail_seen`: when there is room even by the older tail, the producer does not read `tail`, the
+recorder's cache line.
 
 ### `put()`
 
-Room for a packet of bytes of arguments; the caller fills it and calls `pub()`.
+Room for a packet of `bytes` of arguments; the caller fills it and calls `pub()`.
 
-- Packers reserve room for optional arrays they may leave unwritten (`BeginRendering`'s depth and stencil); with
-  `NX2SARIA_REC_CHECK` those words would still hold handles from the ring's previous lap.
+With `NX2SARIA_REC_CHECK` the room is zeroed: packers reserve room for optional arrays they may leave unwritten
+(`BeginRendering`'s depth and stencil), and those words would still hold handles from the ring's previous lap.
 
 ### `rec_begin()`
 
-- Default off on AMD GPUs. With the recorder those drivers lost the device or hung the GPU at startup on RDNA 2, 3 and
-  4, under AMD's Windows driver and under RADV (issues `#5`, `#40`, `#277` and `#283`: a black screen, or
-  `VK_ERROR_DEVICE_LOST` with a breadcrumb naming a part of a replay submission, and `vk_recorder` = 0 gets past it).
-  Keeping objects until their submission completed and ending a part from the recorder (`rec_end_cb`) fixed the white
-  scene on an RX 6700 XT, but not this: 0.2.8 turned the recorder on for every GPU and the AMD reports came back the
-  same day. `NX2SARIA_VK_RECORDER=1` turns it on for an A/B run. Up to 0.10.1 the low-end GPU mode turned it on for AMD
-  GPUs without mesh shaders (GCN: RX 400/500, Vega; RDNA 1): every report above is from an RDNA 2-4 card, and those all
-  have mesh shaders. An RX 580 ran with it and `NX2SARIA_REC_CHECK` (no hazards), the replay's part of the game's wait
-  after a frame's first submission 6.9 ms instead of 12. The mode is gone (`runtime/cfg/cfg.c` `lowend_set()`):
-  `vk_recorder` = 1 turns it on there as anywhere.
-- `rec_chk = rt_knob("REC_CHECK", "0")`: debug switches, read before the recorder starts.
-- `rec_cb = cb`: the recorder is idle: `rec_end` drained it.
+The first call decides whether there is a recorder (`NX2SARIA_VK_RECORDER`) and starts its thread; the debug switches
+(`NX2SARIA_REC_CHECK`, `NX2SARIA_REC_DELAY_US`) are read before the thread starts. `rec_cb` is written without a lock
+because the recorder is idle then: `rec_end()` drained it.
+
+Default off on AMD GPUs. With the recorder those drivers lost the device or hung the GPU at startup on RDNA 2, 3 and 4,
+under AMD's Windows driver and under RADV (issues `#5`, `#40`, `#277` and `#283`: a black screen, or
+`VK_ERROR_DEVICE_LOST` with a breadcrumb naming a part of a replay submission, and `vk_recorder` = 0 gets past it).
+Keeping objects until their submission completed and ending a part from the recorder (`rec_end_cb()`) fixed the white
+scene on an RX 6700 XT, but not this: 0.2.8 turned the recorder on for every GPU and the AMD reports came back the same
+day. `NX2SARIA_VK_RECORDER=1` turns it on for an A/B run. Up to 0.10.1 the low-end GPU mode turned it on for AMD GPUs
+without mesh shaders (GCN: RX 400/500, Vega; RDNA 1): every report above is from an RDNA 2-4 card, and those all have
+mesh shaders. An RX 580 ran with it and `NX2SARIA_REC_CHECK` (no hazards), the replay's part of the game's wait after a
+frame's first submission 6.9 ms instead of 12. The mode is gone (`runtime/cfg/cfg.c` `lowend_set()`): `vk_recorder` = 1
+turns it on there as anywhere.
 
 ### `rec_end_cb()`
 
@@ -6382,14 +6381,12 @@ Room for a packet of bytes of arguments; the caller fills it and calls `pub()`.
 none) that `runtime/vk/vk_sync.c` writes at the end of a submission. On an RX 6700 XT (driver 26.10.1, issue `#5`) parts
 the recorder recorded and the submitting thread ended broke when a submission was split
 (`runtime/vk/vk_sync.c` `vk_sync_split()`): the GPU hung or the scene turned green, then white. The handoff in
-`rec_drain` orders the two threads, so Vulkan allows the old split; the driver did not cope with it.
+`rec_drain()` orders the two threads, so Vulkan allows the old split; the driver did not cope with it.
 `NX2SARIA_REC_END=0` brings the old split back. The line is written only when a part was recorded by the recorder: with
 the recorder off (the default on AMD) the switch changes nothing, and reports read an unconditional line as proof that
 the recorder was running (`#315`).
 
 ### `rec_check_handle()`
-
-- `chk_seen`: `[destroy][made][kind][op]`.
 
 `NX2SARIA_REC_CHECK=1` (debug, recorder on): the packets of the part being recorded are searched word by word for an
 object `runtime/vk/vk_memory.c` lets go of. `put()` zeroes each packet's room, so only words a packer wrote can match. A
@@ -6402,71 +6399,88 @@ hit is a hazard.
   command buffer not yet submitted.
 
 "Made" means before the tail the recorder published, which trails it by up to 64 packets. Hazards are logged (the
-first 64) and counted by kind, packet and case for `rec_check_log`; named deferrals that wait long enough are only
-counted. Reads race the producer only in words below head, which stay put until the ring wraps (16 MiB later).
+first 64) and counted in `chk_hz`, indexed `[destroy][made][kind][op]`, for `rec_check_log()`; named deferrals that wait
+long enough are only counted (`chk_named`). Reads race the producer only in words below head, which stay put until the
+ring wraps (16 MiB later).
 
-- `if (p > h || h - p > RING_WORDS / 2) return`: a part this large is not searched.
-- `if (!n) return`: overwritten meanwhile.
+A part of more than half the ring is not searched, and the search stops at a header word that reads as length 0: the
+producer overwrote it meanwhile.
 
-### `tail_copy()`
+### The packers
 
-- `FALLBACK()`: A call the ring takes no packet for: everything queued first, then the call here.
+Each `rc_vkCmd*` wrapper makes the real call at once when the command buffer is not the part being recorded (`OWNED`),
+and otherwise packs the call's arguments.
 
-Copies n elements of arr after the fixed part at `*at` and returns where they went (NULL for none).
-
-### Fixed-size commands: the arguments after cb, as a struct
-
-### Commands with arrays
-
-A struct with the call's arguments, the arrays after it, pointers into the packet.
-
-- `A_Xfer`: buffer or image handles.
-
-### Extension commands through function pointers
+- **Fixed-size commands** (`FIXED`): the arguments after `cb`, as a struct.
+- **Commands with arrays**: a struct with the call's arguments and the arrays after it, with pointers into the packet.
+  `tail_copy()` copies the elements of an array after the fixed part at `*at` and returns where they went (NULL for
+  none). The copies between buffers and images share one struct, `A_Xfer`, whose two handles are buffers or images.
+- **A call the ring takes no packet for** (`FALLBACK`, a structure with a `pNext` chain): everything queued is made
+  first (`rec_drain()`), then the call on the calling thread.
+- **Extension commands** called through device function pointers have `rec_*` packers that carry the pointer.
 
 ### `rec_vertex_input()`
 
-- `a->b = tail_copy(&at, b, sizeof *b * nb), a->v = tail_copy(&at, v, sizeof *v * na)`: `pNext`: always NULL there.
+The binding and attribute descriptions are copied as they are, with their `pNext`: it is always NULL there, so this
+packer has no fallback.
 
-### The recorder's side
+### `exec_packet()`
+
+The recorder's side: one case per packet, which makes the call with the payload as its arguments. `R_EndCb` writes the
+breadcrumb, when the packet has one, and ends the command buffer.
 
 ## `runtime/vk/vk_rec.h`
 
 The recorder thread (`runtime/vk/vk_rec.c`): the Vulkan calls the replay makes into its command buffer are made by a
-thread of their own. `runtime/vk/vk_sync.c` brackets each part of a submission with `rec_begin` (after
-`vkBeginCommandBuffer`) and `rec_end` (before `vkEndCommandBuffer`). In between, every `vkCmd*` on that command buffer
+thread of their own. `runtime/vk/vk_sync.c` brackets each part of a submission with `rec_begin()` (after
+`vkBeginCommandBuffer`) and `rec_end()` (before `vkEndCommandBuffer`). In between, every `vkCmd*` on that command buffer
 copies its arguments into a packet of a ring, in call order, and the recorder makes the real call in that order; calls
 into any other command buffer (uploads, the window, probes) are made at once. A call the ring has no packet for (a
 structure with a `pNext` chain) waits for the recorder to empty the ring and is then made at once on the calling thread.
-`rec_end` returns once the recorder made every call. `runtime/vk/vk_sync.c` ends a part through `rec_end_cb`: the
+`rec_end()` returns once the recorder made every call. `runtime/vk/vk_sync.c` ends a part through `rec_end_cb()`: the
 recorder makes the last calls into a part it recorded, `vkEndCommandBuffer` included; submitting and the command pool
 stay on the submitting thread.
 
-Every `vkCmd*` the runtime calls through `runtime/vk/vk.h` goes through the `rc_*` wrappers below (the macros at the
-end); the extension commands called through function pointers have `rec_*` wrappers of their own.
-`NX2SARIA_VK_RECORDER=0` makes every call at once (the same calls in the same order), `=ab` switches it with the A/B
-blocks (`rt_ab`), per submission part.
+Every `vkCmd*` the runtime calls through `runtime/vk/vk.h` goes through the `rc_*` wrappers of `REC_CMDS` (the macros at
+the header's end rename the calls, except in `runtime/vk/vk_rec.c` itself, which defines `VK_REC_IMPL`); the extension
+commands called through function pointers have `rec_*` wrappers of their own. `NX2SARIA_VK_RECORDER=0` makes every call
+at once (the same calls in the same order), `=ab` switches it with the A/B blocks (`rt_ab`), per submission part.
 
-A recorder thread makes the Vulkan calls: the driver's work behind the commands depends on nothing the replay decides
-next.
+A recorder thread can make the Vulkan calls because the driver's work behind the commands depends on nothing the replay
+decides next.
 
-- `rec_begin()`: the submitting thread, `sub_lock` held; fence: the part's value.
-- `rec_end()`: waits for the recorder; no-op when `rec_begin` did not start it.
-- `rec_end_cb()`: The end of part cb: the breadcrumb crumb (0: none, `runtime/vk/vk_crumbs.c`), then
-  `vkEndCommandBuffer`, both made by the recorder when it records cb, and the wait for it (1); otherwise `rec_end` and
-  the breadcrumb, and the caller ends cb (0).
-- `rec_drain()`: waits until the recorder made every call queued so far.
-- `rec_wait_totals()`: producer time spent on a full ring and in drains.
-- `rec_stats_log()`: `NX2SARIA_TRACE=perf`: packets, bytes, drains and waits since the last call.
-- `enum { REC_IMAGE, ... }`: `NX2SARIA_REC_CHECK=1` (debug, recorder on): `runtime/vk/vk_memory.c` reports each object
-  it defers (destroy 0, stamped tl) or destroys (destroy 1) with the value the GPU reached (gpu); a packet of the part
-  being recorded that still names it is logged as a hazard when the object can go before the part ran. `rec_check_log`:
-  the counts by kind and packet, at exit.
-- `rec_push_tpl()`: Extension commands called through device function pointers.
-  - `VkPipelineLayout layout, uint32_t set, const void *data, uint32_t bytes)`: data: bytes read by tpl.
-- `rec_bool()`: also alpha to coverage.
-- `rec_shading_rate()`: size x size pixels per fragment.
-- `rec_pass_mark()`: A pass mark (`runtime/vk/vk_crumbs.c` `vk_pass_mark_cmd()`: a buffer marker and a checkpoint), in
+### `rec_begin()`, `rec_end()`, `rec_drain()`
+
+`rec_begin()` is called by the submitting thread with the submission lock held; `fence` is the part's value.
+`rec_end()` waits for the recorder, and does nothing when `rec_begin()` did not start it. `rec_drain()` waits until the
+recorder made every call queued so far.
+
+### `rec_end_cb()`
+
+The end of part `cb`: the breadcrumb `crumb` (0: none, `runtime/vk/vk_crumbs.c`), then `vkEndCommandBuffer`. When the
+recorder records `cb`, it makes both, and the function waits for it and returns 1; otherwise it does what `rec_end()`
+does, writes the breadcrumb, and returns 0 for the caller to end `cb`.
+
+### `rec_wait_totals()`, `rec_stats_log()`
+
+`rec_wait_totals()`: the producer's time spent on a full ring and in drains. `rec_stats_log()`
+(`NX2SARIA_TRACE=perf`): packets, bytes, drains and waits since the last call.
+
+### `rec_check_handle()`, `rec_check_log()`
+
+`NX2SARIA_REC_CHECK=1` (debug, recorder on): `runtime/vk/vk_memory.c` reports each object (`REC_IMAGE`, `REC_VIEW`,
+`REC_BUFFER`) it defers (`destroy` 0, stamped `tl`) or destroys (`destroy` 1) with the value the GPU reached (`gpu`); a
+packet of the part being recorded that still names it is logged as a hazard when the object can go before the part ran.
+`rec_check_log()` writes the counts by kind and packet, at exit.
+
+### The extension commands
+
+Called through device function pointers, which the packet carries.
+
+- `rec_push_tpl()`: `data` is the `bytes` bytes the template reads.
+- `rec_bool()`: declared with depth clamp's type; alpha to coverage goes through it too.
+- `rec_shading_rate()`: `size` x `size` pixels per fragment.
+- `rec_pass_mark()`: a pass mark (`runtime/vk/vk_crumbs.c` `vk_pass_mark_cmd()`: a buffer marker and a checkpoint), in
   order with the commands around it.
 
 ## `runtime/vk/vk_sync.c`
@@ -7360,16 +7374,18 @@ For the present thread, before it uses a presented frame (its blit): when the fr
 ## `runtime/vk/vk_evo_peek.h`
 
 A copy of the first held submission's wait of each event-ordered queue (the section "Event order across the game's
-queues" of `runtime/vk/vk_exec.c`), for the readers that do not hold the submission lock. Header only, so that `tests/evo_peek_check.c` checks it without a device.
+queues" of `runtime/vk/vk_exec.c`), for the readers that do not hold the submission lock. Header only, so that
+`tests/evo_peek_check.c` checks it without a device.
 
 `runtime/vk/vk_backend.c` `held_resume()` and `submit_sync()` ask `runtime/vk/vk_exec.c` `vk_exec_held_ready()` whether
-held work can go on, without the submission lock. Following the queue's first continuation (the `Cont` of `runtime/vk/vk_exec.c`)
-there read memory another submitting thread may free meanwhile (`runtime/vk/vk_exec.c` `evo_resume()`, `cont_free()`): a
-continuation's wait lies in its private copy of the recording, and an event's address read from a reused block points
-anywhere. So the holder of the lock publishes what the decision needs (whether work is held, the wait it stopped at, by
-value, and when it stopped) each time a queue's first continuation or its stop changes, and the readers take a copy from
-one publish (a sequence lock). A reader never waits for the writer: after `EVO_PEEK_TRIES` attempts that overlap a
-publish it answers "not ready", which is what losing the race to the writer answered before.
+held work can go on, without the submission lock. Following the queue's first continuation (the `Cont` of
+`runtime/vk/vk_exec.c`) there read memory another submitting thread may free meanwhile (`runtime/vk/vk_exec.c`
+`evo_resume()`, `cont_free()`): a continuation's wait lies in its private copy of the recording, and an event's address
+read from a reused block points anywhere. So the holder of the lock publishes what the decision needs (whether work is
+held, the wait it stopped at, by value, and when it stopped) each time a queue's first continuation or its stop changes,
+and the readers take a copy from one publish (a sequence lock). A reader never waits for the writer: after
+`EVO_PEEK_TRIES` attempts that overlap a publish it answers "not ready", which is what losing the race to the writer
+answered before.
 
 `EvoWait` has the layout of `p_wait_event` (`runtime/nvn/nvn_api.h`; a static assertion in `runtime/vk/vk_exec.c`
 checks that the two agree), so it is passed to the event test as its payload. `EvoPeekCopy` is what one publish says:
