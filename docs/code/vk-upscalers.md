@@ -79,12 +79,13 @@ load no `amd_fidelityfx_vk.dll` (all but Windows).
 - `vk_fsr3_upscale()`: the contract of `runtime/vk/vk_ffx.h` `vk_ffx_upscale()`; every image also carries a view
   (`VkFfxImage.view`). sharpness 0..1, RCAS after the upscale when sharpen is set. Returns 0 when it recorded nothing.
 - `vk_fsr3_release()`: before the device goes away (the GPU idle): everything, the contexts let go of too.
-- `vk_fsr3_holds()`: the upscaler is off (`vk_ffx_release_idle()`): whether a context is made, and lets them all go (the
-  caller's `vk_upscaler_let_go()` frees them once the GPU is past them); the next upscale makes one again. The pipelines
-  stay.
-- `vk_fsr3_dead_take()`: the contexts let go of, the part of `runtime/vk/vk_ffx.cpp` `vk_ffx_dead_take()` and
-  `vk_ffx_dead_fence()` outside Windows: those whose last upscale's submission is at most done are destroyed (their
-  count); the highest such submission among those left (0: none).
+- `vk_fsr3_holds()`, `vk_fsr3_release_idle()`: for when the upscaler is off (`runtime/vk/vk_ffx.cpp`
+  `vk_ffx_release_idle()`). The first says whether a context is made; the second lets them all go (the caller's
+  `vk_upscaler_let_go()` frees them once the GPU is past them); the next upscale makes one again. The pipelines stay.
+- `vk_fsr3_dead_take()`, `vk_fsr3_dead_fence()`: the contexts let go of, the part of `runtime/vk/vk_ffx.cpp`
+  `vk_ffx_dead_take()` and `vk_ffx_dead_fence()` outside Windows. The first destroys those whose last upscale's
+  submission is at most `done` and returns their count; the second returns the highest such submission among those left
+  (0: none).
 - `vk_fsr3_contexts_made()`: contexts made so far (the probe: what a change of render size makes).
 
 ## `runtime/vk/vk_fsr3.c`
@@ -276,7 +277,7 @@ The slot's new fence is the submission being recorded (`vk_sync_issued()` + 1).
 - Every call: the reconstructed nearest depth (to the far value, as bits of 1.0f), the SPD mips and their counter.
 - The constants: this call's slot of the ring.
 - SPD over the render size (the luma and shading change pyramids).
-- The SPD mip count is floor(log2(max(w, h))).
+- The SPD mip count is floor(log2(max(w, h))), at most 12.
 - RCAS: the slider's 0..1 as stops of sharpness reduction (0 = most), packed as the pass reads it.
 - The second RCAS word is the same as a pair of halves, for a 16-bit build of the pass.
 - Auto exposure: the frame info image is the exposure the passes sample.
@@ -338,8 +339,10 @@ through AMD's library (`runtime/vk/vk_fg.cpp`).
 - `gpu_ms_of`, `gpu_ms_fi`: average GPU time of the optical flow and of the interpolation (0: not measured).
 - `gpu_samples`: frames those averages are over.
 - `vram`: bytes of the context's images.
-- `vk_fsr3fg_pass_ms()`: `NX2SARIA_FSR3FG_PASS_TIMES=1` (diagnosis, the probe): pass i's name, average GPU time a
-  dispatch (from the time the dispatch before it ended) and dispatches timed; 0 past the last pass.
+
+`vk_fsr3fg_stats()` fills it. `vk_fsr3fg_pass_ms()`: `NX2SARIA_FSR3FG_PASS_TIMES=1` (diagnosis, the probe): pass i's
+name, average GPU time a dispatch (from the time the dispatch before it ended) and dispatches timed; 0 past the last
+pass.
 
 ## `runtime/vk/vk_fsr3fg.c`
 
@@ -366,13 +369,14 @@ One call (`vk_fsr3fg_record()`), at the end of a present's command buffer, recor
 A global compute barrier separates the passes. The interpolation is at the middle, so one generated frame per rendered
 frame (2x). After a reset the passes run as AMD's do, priming the histories, and no frame is shown.
 
-The context (the images) is made for the swapchain's size and format and for render sizes up to the larger of that size
-and the game's picture (`runtime/patches/widescreen.c` `wide_picture()`), as `runtime/vk/vk_fg.cpp` makes AMD's; another
-size or format makes it again after a wait for the device. A context that cannot be made, or passes that cannot be made,
+The context (the images) is made for the swapchain's size and format and for render sizes up to the largest of that
+size, the game's picture (`runtime/patches/widescreen.c` `wide_picture()`) and the frame's own depth and motion, as
+`runtime/vk/vk_fg.cpp` makes AMD's; another size or format, or a frame with a larger render size, makes it again after a
+wait for the device. A context that cannot be made, or passes that cannot be made,
 turn frame generation off for the run (`vk_fsr3fg_failed()`), with a line in the log; the frames then go out the plain
 way.
 
-The constants live in a host-visible ring of `RING` slots, one per call: a call's slot is read by the present it was
+The constants live in a host-visible ring of `RING` (8) slots, one per call: a call's slot is read by the present it was
 recorded into, and `runtime/gfx/gfx_present.c` waits for the present `FRAMES` (2) back before it records, so a slot
 `RING` calls old is done. The same ring index picks the call's timestamp queries, read back when the slot comes round
 again.
@@ -412,8 +416,8 @@ SPD's.
 
 `TS_PER` (3) timestamps per call: start, after the optical flow, end.
 
-`PT_MAX`: `NX2SARIA_FSR3FG_PASS_TIMES=1` (diagnosis): a timestamp after every dispatch too, summed by pass
-(`vk_fsr3fg_pass_ms()`).
+`PT_MAX` (40 dispatches a call): `NX2SARIA_FSR3FG_PASS_TIMES=1` (diagnosis): a timestamp after every dispatch too,
+summed by pass (`vk_fsr3fg_pass_ms()`). It needs the GPU timestamps of `make_global()`.
 
 `Ctx`:
 
@@ -429,13 +433,14 @@ SPD's.
 
 - `state`: -1: not tried; 0: off; 1: ready.
 - `block`: one constant block (the uniform buffer offset alignment).
-- `made_ns`: when the last generated frame was recorded (`vk_fsr3fg_generating()`).
+- `made_ns`: when the last generated frame was recorded (`vk_fsr3fg_generating()`: 1 for 250 ms after it).
 - `pt`: the per-dispatch timestamps (`NX2SARIA_FSR3FG_PASS_TIMES`).
 - `pt_pass`: the pass of each dispatch of a slot's call.
 - `pt_n`: its dispatches (0: nothing to read).
 - `NX2SARIA_FSR3FG_DUMP=<dir>` (diagnosis): every `NX2SARIA_FSR3FG_DUMP_EVERY` seconds (10) the picture before
   (without the HUD), the generated frame and the picture after (with it) are copied into dump, and written as PPM images
-  once the slot comes round again (the GPU is done with it then); at most 20 dumps a run.
+  once the slot comes round again (the GPU is done with it then); at most 20 dumps a run, never less than 0.5 s apart
+  and never of a frame that started a history.
 
 ### `unsupported()`
 
@@ -457,7 +462,8 @@ What the device lacks for the passes, or NULL.
 
 ### `ctx_for()`
 
-The context for this display size and format, with render sizes up to the larger of rw x rh and the picture's.
+The context for this display size and format, with render sizes up to the largest of rw x rh, the picture's and the
+display size.
 
 - Another size: what a present in flight records into goes first (a wait for the device).
 - `NX2SARIA_FSR3FG_TEST_FAIL=1` (test, live): the images are not made, as when video memory runs out.
@@ -538,8 +544,8 @@ The timestamps of the call RING calls ago in this slot, if the GPU wrote them: t
 ## `runtime/vk/fsr3_probe.c`
 
 `--probe-fsr3` (`tests/fsr3_check.py` runs it): AMD FSR 3.1 upscaling with the runtime's passes (`runtime/vk/vk_fsr3.c`)
-on a synthetic scene, no game files. The scene is a zone plate (rings whose frequency rises with the radius, up to the
-render size's limit at its edge) with thin bars and a bright HDR patch, panning at a constant speed; each frame renders
+on a synthetic scene, no game files. The scene is a zone plate (rings whose frequency rises with the radius, up to a
+ring every 4 render pixels at its edge, half the render size's limit) with thin bars and a bright HDR patch, panning at a constant speed; each frame renders
 it on the CPU at the render size with the frame's jitter (Halton 2, 3 over FSR's phase count), with a flat depth and the
 motion vectors of the pan, and the passes upscale it, 960x540 to 1920x1080.
 
@@ -554,8 +560,8 @@ current frame to the previous one); the pan sharpened; the scene still, plain an
 (`NX2SARIA_DYN_RES`) on the context made for 960x540.
 
 Checks: no NaN or infinity; on the rings FSR 3.1 beats bilinear by 0.5 `dB` panning, sharpened FSR 3.1 by 0.5 `dB` still
-and plain FSR 3.1 is within 0.5 `dB` of it still (at both render sizes); the reversed jitter does worse and the reversed
-motion much worse; the second render size makes a context of its own, and none with dynamic resolution, where its
+and plain FSR 3.1 is within 0.5 `dB` of it still (at both render sizes); the reversed jitter does worse (by 0.5 `dB`) and the
+reversed motion much worse (by 5 `dB`); the second render size makes a context of its own, and none with dynamic resolution, where its
 picture is within 3 of 255 of the one of its own context; no validation error from the passes (run with
 `NX2SARIA_VK_VALIDATION=1`).
 
@@ -577,10 +583,11 @@ The scene is in render pixels of the 960x540 render; S is how many output pixels
 
 ### `scene()`
 
-- The zone plate is centred at (480, 270) with k = pi / 2400: at r = 600 the rings reach 1 per pixel, and beyond it is a
-  flat field of 0.5.
+- The zone plate is 0.5 + 0.4 cos(k r^2), centred at (480, 270) with k = pi / 2400: the phase advances by 2 k r a
+  pixel, so at r = 600, where the plate ends, by pi / 2 (a ring every 4 render pixels, 2 output pixels of the 960x540
+  run's reference per half ring); beyond it is a flat field of 0.5.
 - Thin dark bars, 0.6 px wide, every 37 pixels across and every 53 down.
-- A bright patch of HDR values around (140, 120).
+- A bright patch of HDR values (4.0), 40 x 25 pixels from (140, 120).
 
 ### `record()`
 
@@ -596,7 +603,7 @@ sign as handed to the passes, -1 reversed); motion from this frame to the previo
 
 The 8-bit level of a picture's value in the PPM images (and in the comparison of two pictures, `other_size()`).
 
-- A soft roll-off (v / (1 + v) * 2) so the HDR patch stays visible.
+- A soft roll-off (v / (1 + v) * 2) so the HDR patch stays visible, then a 1 / 2.2 gamma.
 
 ### `psnr()`
 
@@ -656,8 +663,9 @@ the motion vectors (R16G16F, render pixels, current to previous) are at half the
 the background. Each frame is uploaded and generated as `runtime/gfx/gfx_present.c`'s presenter records it; after 12
 frames the generated frame (between the last two) is read back.
 
-Checks: the first frame and a reset show no generated frame and every other does; the square's centre in the generated
-frame is within 2 pixels of halfway between the two frames' (not at either end); the HUD bar is the picture with the
+Checks: the first frame and a reset (at frame 6) show no generated frame and every other does; the square's centre in
+the generated frame is within 2 pixels of halfway between the two frames' (not at either end) and the square keeps at
+least half its pixels; with the scene still the square stays within 1 pixel of where it is; the HUD bar is the picture with the
 HUD's to within 2 of 255; the black bars stay black; no validation error from the passes (with
 `NX2SARIA_VK_VALIDATION=1`). The same run with the motion vectors' sign reversed is reported (the optical flow alone may
 still place the square). Then the GPU time of one generated frame at 2560x1080 from 1920x810 (the 21:9 1080p of the
