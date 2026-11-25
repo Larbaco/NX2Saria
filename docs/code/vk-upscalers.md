@@ -1976,11 +1976,11 @@ them:
   quarter pixel, `OBJ_MIN`): the camera's, the final ones and variants of the object part (final - camera) scaled by k =
   -1, 0.5, 1.5, 2 or with one axis negated. The variant with the lowest error names the correction the object vectors
   need, if any ("best").
-- Flow: on up to `FLOW_MAX` object pixels with some texture, the offset whose 5x5 luminance patch of the frame before
+- Flow: on up to `FLOW_MAX` (20,000) object pixels with some texture, the offset whose 5x5 luminance patch of the frame before
   matches best, searched over a window around both the camera and the final vector and refined to a sub-pixel by a
   parabola: the measured motion. The end-point error of the camera and final vectors (+ d) against it, median in render
   pixels, and how often the final vector is the nearer.
-- Output (DLSS's picture, which the vectors are for): on about `OUT_SAMPLES` pixels picked independently of the vectors,
+- Output (DLSS's picture, which the vectors are for): on about `OUT_SAMPLES` (4000) pixels picked independently of the vectors,
   the picture's own motion is measured with a wide search (12 px around the camera vector); where it differs from the
   camera's by over 1.5 px the pixel moves on its own. At each sample, DLSS's output (at the same unjittered place)
   against this frame's input, as a relative luminance difference: on the moving samples it grows where DLSS drags old
@@ -2023,7 +2023,8 @@ Offset of the minimum of three samples at -1, 0, 1.
 ### `flow()`
 
 The object pixels' measured motion (sub-pixel), searched over the box around both vectors with a margin of 3; 0 when the
-patch is flat or the match is not clearly better than the box's average.
+patch is flat (a deviation under 5 % of its mean), the box is over 40 px on a side, or the match is not clearly better
+than the box's average (over half of it).
 
 ### Totals over every check
 
@@ -2080,8 +2081,9 @@ frame does not write still holds last frame's when the frame is submitted, so th
   frame's;
 - none: neither: a new object, no motion of its own.
 
-The pick is checked against what was snapshotted of that block last frame (intact: the same first `CHECK` bytes), and a
-summary goes to the log every `SUMMARY` frames:
+With `NX2SARIA_MVPREV_CHECK=1` the pick is checked against what was snapshotted of that block last frame (intact: the
+same first `CHECK` (128) bytes), and a summary goes to the log every `SUMMARY` (600) frames; without the check nothing
+is counted and no summary line is written:
 
 ```
 mv_prev: c<n>: <blocks> blocks: self a %, side b %, nearer c %, none d %; intact e %; moved: still f %, under one unit g %, more h %
@@ -2089,13 +2091,14 @@ mv_prev: c<n>: <blocks> blocks: self a %, side b %, nearer c %, none d %; intact
 
 `BONES` (2), `PLACE` (4) and `CLOCK` (11) are NVN binding indices: banks c5, c7 and c14; `BANKS` (14) covers c3..c16.
 
-`Seen` is 16 bytes, so a table of `TABLE` entries stays in the cache: every scene draw probes it (the bytes of
+`Seen` is 16 bytes, so a table of `TABLE` (1 << 14) entries stays in the cache: every scene draw probes it (the bytes of
 `NX2SARIA_MVPREV_CHECK` live in a table of their own, by entry index, allocated only for the check). An `addr` of 0 is
 an empty entry.
 
 The state, `P`:
 
-- `on`: 1 with the knob on and DLAA on this frame.
+- `on`: 1 with the knob on and DLAA (or frame generation alone) on this frame; -1 after it went off, 0 before the
+  first frame.
 - `knob`: -1 not read.
 - `t`: this frame's bound blocks, last frame's.
 - `bytes`: `NX2SARIA_MVPREV_CHECK`: the first `CHECK` bytes of each entry of `t[k]`, NULL without the check.
@@ -2169,7 +2172,7 @@ at right angles, finite), counted over the whole block as of the submit:
 
 - mats 0 / 1 / 2-7 / 8+: blocks by that count (one: an object's place, `gsys_shape`; many: bones, `gsys_skeleton`).
 
-Every `SURVEY_FRAMES` frames the log gets two lines per bank with the window's totals:
+Every `SURVEY_FRAMES` (300) frames the log gets two lines per bank with the window's totals:
 
 ```
 mv_survey: c<n>: <draws> draws, <blocks> blocks (<per frame>), sizes <top three>; repeat1 a %, repeat2 b %; same c %, near d %, far e %
