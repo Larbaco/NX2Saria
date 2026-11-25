@@ -1,34 +1,3 @@
-// DLSS Frame Generation (NX2SARIA_FRAMEGEN = dlss; applies after a restart) through nx2navi_dlssg.dll
-// (runtime/dlssg/nx2_sl.cpp), which drives NVIDIA Streamline. Like AMD's frame generation (vk_fg.cpp) it takes the
-// depth, motion vectors and camera vk_dlaa.c makes for DLSS or FSR 3.1 upscaling, or without an upscaler for frame
-// generation alone (vk_dlaa.c fg_only_frame: the same pass at the scene's size, no jitter); it needs an RTX 40 or 50 GPU.
-//
-// The DLL and Streamline (sl.interposer.dll and its plugins, nvngx_dlssg.dll) sit next to the game. The instance and
-// device are created through Streamline's proxies (vk_device.c), so it can add the extensions, features and queues
-// DLSS-G needs; the present path calls Streamline's swapchain functions (gfx_present.c), and every present records the
-// frame's constants and tags first (vk_dlssg_frame). Generation pauses while the menu is open.
-//
-// Multi frame generation: NX2SARIA_FRAMEGEN_MULTIPLIER (2, 3 or 4, live) is how many frames the display gets per
-// rendered frame, so one, two or three generated ones. Streamline says how many this GPU and driver can generate
-// (numFramesToGenerateMax: one where only 2x runs, three on an RTX 50); a higher setting is clamped to it with a log
-// line. The frame limit counts the frames the game draws and the generated ones come on top (frame_rate.c
-// limit_game_hz): 60 at 4x is 60 drawn and 240 shown. Only a limit of display is divided by the multiplier in effect
-// (vk_dlssg_multiplier), since a frame past the monitor's refresh is never seen.
-//
-// DLSS-G needs Reflex, whose low-latency mode paces the game (NX2SARIA_REFLEX, default 1; 0 off, 2 on with boost): the
-// game's frame sleeps in Reflex where it starts (its acquire of a window image), and each frame carries the latency
-// markers from that start to the host present, all with the frame's number, the count of the game's presents up to it.
-// The mode is the swapchain's, so it is set again after each one (vk_dlssg_create_swapchain).
-//
-// One limiter. Reflex's sleep also holds the frame limit (its frame limit, the driver's minimum interval), and the
-// game's own pacer then keeps only the game's ceiling (vk_dlssg_pace, nvn_api_obj.c nvnQueuePresentTexture): the pacer's
-// wait came after the picture was drawn, so the pad was read up to a period before the picture left, and Reflex's sleep
-// at the frame's start already waited for the GPU. The pacer keeps the limit while a movie plays, before the first host
-// present, while none went out for DLSSG_HOLD_IDLE_NS, with NX2SARIA_REFLEX_LIMIT=0 (live), a DLL older than
-// nx2sl_reflex2 or a limit Streamline refused, and for the rest of the run once the frames show Reflex does not hold it
-// (dlssg_pace.h). The guest thread that presents decides and the present thread hands the limit to Streamline before
-// its present (vk_dlssg_frame, under the present lock, which keeps Streamline's options calls on one thread at a time);
-// the pacer stands aside only once Streamline took that limit.
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -48,37 +17,33 @@
 
 static struct {
     int wanted, loaded, active;
-    int fail;            // DLSSG_NO_FILES or DLSSG_UNAVAILABLE when it was wanted and does not run (vk_dlssg_status)
-    int mode, pending;   // generation as the driver has it, and the frames since the host asked for the other state
-    int shown_mult;      // vk_dlssg_multiplier: the frames per game frame as last handed to the DLL (1 while off)
-    PFN_nx2sl_frames_max frames_max;   // NULL with an older DLL, which generates one frame
+    int fail;
+    int mode, pending;
+    int shown_mult;
+    PFN_nx2sl_frames_max frames_max;
     PFN_nx2sl_init init;
     PFN_nx2sl_instance_proc gipa;
     PFN_nx2sl_device_proc gdpa;
     PFN_nx2sl_available available;
     PFN_nx2sl_log_unavailable log_unavailable;
-    PFN_nx2sl_support support;   // NULL with an older DLL: the reason DLSS-G is unavailable is not known here
-    int no_gpu;                  // the card in use has no DLSS-G: another vendor's, or Streamline's check says so
-    const char *sl_why;          // else Streamline's support result, when it gave one (vk_dlssg_why)
+    PFN_nx2sl_support support;
+    int no_gpu;
+    const char *sl_why;
     PFN_nx2sl_frame frame;
     PFN_nx2sl_present_marker marker;
     PFN_nx2sl_sleep sleep;
     PFN_nx2sl_submit_end submit_end;
     PFN_nx2sl_shown shown;
     PFN_nx2sl_reflex reflex;
-    PFN_nx2sl_reflex2 reflex2;   // NULL with an older DLL: Reflex holds no frame limit, the pacer keeps it
-    uint32_t game;   // the game's presents (vk_dlssg_game_present)
-    uint32_t cur;    // the frame the present thread blits and presents next (vk_dlssg_present_frame)
-    uint32_t started;      // the last frame vk_dlssg_frame_start started
-    uint64_t hosted_ns;    // kern_now_ns after the last host present
-    // Reflex's frame limit, in microseconds (0 none). want: what vk_dlssg_pace asks for (the presenting guest thread
-    // writes it); set: what Streamline last took (written under the present lock, reflex_apply); refused: Streamline
-    // refused a limit, so the pacer keeps it for the run. Atomics.
+    PFN_nx2sl_reflex2 reflex2;
+    uint32_t game;
+    uint32_t cur;
+    uint32_t started;
+    uint64_t hosted_ns;
     uint32_t limit_want, limit_set;
     int limit_refused;
-    DlssgPace pace;              // the presenting guest thread's (vk_dlssg_pace)
-    int pace_said;               // who held the limit as last logged: 1 Reflex, 0 the pacer, -1 not yet
-    // the frame starts Reflex's sleep held, and their time, since the last statistics line (stats); atomics
+    DlssgPace pace;
+    int pace_said;
     uint64_t n_hold, hold_ns, n_unheld;
     PFN_nx2sl_shutdown shutdown;
     PFN_vkCreateSwapchainKHR create_sc;
@@ -100,9 +65,6 @@ static int reflex_mode(void) {
     return m;
 }
 
-// Reflex's mode and frame limit to Streamline: under the present lock (vk_dlssg_frame, vk_dlssg_create_swapchain), or
-// once at the device's creation before any present. Streamline's slReflexSetOptions is not thread safe, and every
-// caller is one of these. A limit Streamline refuses leaves the limit to the pacer for the run.
 static void reflex_apply(uint32_t us) {
     if (!S.reflex2) {
         S.reflex(reflex_mode());
@@ -119,9 +81,6 @@ static void reflex_apply(uint32_t us) {
     __atomic_store_n(&S.limit_set, ok ? us : 0, __ATOMIC_RELEASE);
 }
 
-// Reflex may hold the frame limit: NX2SARIA_REFLEX_LIMIT (default 1, live; 0 leaves the limit to the game's own limiter,
-// as before Reflex's frame limit was used), and a DLL with nx2sl_reflex2 whose limit Streamline did not refuse. The
-// setting is parsed again when a setting changed (cfg_version). Only the presenting guest thread calls it.
 static int limit_allowed(void) {
     static unsigned seen;
     static int read, on;
@@ -130,8 +89,6 @@ static int limit_allowed(void) {
     return on && S.reflex2 && !__atomic_load_n(&S.limit_refused, __ATOMIC_ACQUIRE);
 }
 
-// With any upscaler or none: vk_dlaa.c makes the inputs either way (vk_dlaa_frame says which, at the start and at each
-// change).
 int vk_dlssg_wanted(void) {
     if (S.wanted < 0) S.wanted = !strcmp(cfg_value("NX2SARIA_FRAMEGEN"), "dlss");
     return S.wanted;
@@ -158,7 +115,7 @@ int vk_dlssg_early(void) {
     S.gdpa = (PFN_nx2sl_device_proc)(void *)GetProcAddress(m, "nx2sl_device_proc");
     S.available = (PFN_nx2sl_available)(void *)GetProcAddress(m, "nx2sl_available");
     S.log_unavailable = (PFN_nx2sl_log_unavailable)(void *)GetProcAddress(m, "nx2sl_log_unavailable");
-    S.support = (PFN_nx2sl_support)(void *)GetProcAddress(m, "nx2sl_support");   // optional
+    S.support = (PFN_nx2sl_support)(void *)GetProcAddress(m, "nx2sl_support");
     S.frame = (PFN_nx2sl_frame)(void *)GetProcAddress(m, "nx2sl_frame");
     S.marker = (PFN_nx2sl_present_marker)(void *)GetProcAddress(m, "nx2sl_present_marker");
     S.sleep = (PFN_nx2sl_sleep)(void *)GetProcAddress(m, "nx2sl_sleep");
@@ -166,9 +123,9 @@ int vk_dlssg_early(void) {
     S.shown = (PFN_nx2sl_shown)(void *)GetProcAddress(m, "nx2sl_shown");
     S.shutdown = (PFN_nx2sl_shutdown)(void *)GetProcAddress(m, "nx2sl_shutdown");
     S.reflex = (PFN_nx2sl_reflex)(void *)GetProcAddress(m, "nx2sl_reflex");
-    S.frames_max = (PFN_nx2sl_frames_max)(void *)GetProcAddress(m, "nx2sl_frames_max");   // optional: 2x only without
+    S.frames_max = (PFN_nx2sl_frames_max)(void *)GetProcAddress(m, "nx2sl_frames_max");
     if (!S.frames_max) rt_log("dlssg: nx2navi_dlssg.dll is older than multi frame generation: 2x at most");
-    S.reflex2 = (PFN_nx2sl_reflex2)(void *)GetProcAddress(m, "nx2sl_reflex2");   // optional: the pacer keeps the limit
+    S.reflex2 = (PFN_nx2sl_reflex2)(void *)GetProcAddress(m, "nx2sl_reflex2");
     if (!S.reflex2) rt_log("dlssg: nx2navi_dlssg.dll is older than Reflex's frame limit: the game's own limiter keeps it");
     if (!ver || ver() != NX2SL_VERSION || !S.init || !S.gipa || !S.gdpa || !S.available || !S.frame || !S.marker ||
         !S.sleep || !S.submit_end || !S.shown || !S.reflex) {
@@ -188,16 +145,10 @@ VkResult vk_dlssg_create_instance(const VkInstanceCreateInfo *ci, VkInstance *ou
     return f ? f(ci, NULL, out) : vkCreateInstance(ci, NULL, out);
 }
 
-// An instance function through the interposer while Streamline is loaded, else NULL (the caller takes the loader's).
-// The window surface goes through it: Streamline learns the window a swapchain shows from vkCreateWin32SurfaceKHR, and
-// without that its swapchain hook found "no window corresponding to this application" and generated no frames.
 PFN_vkVoidFunction vk_dlssg_instance_proc(VkInstance inst, const char *name) {
     return S.loaded > 0 ? S.gipa()(inst, name) : NULL;
 }
 
-// The interposer's vkCreateDevice finds the device's instance in a map its own vkEnumeratePhysicalDevices fills; a
-// physical device enumerated through the loader alone left it a null instance, so the plugins got an empty instance
-// table and sl.common called a null GetPhysicalDeviceMemoryProperties while it set up. Enumerate through it as well.
 VkResult vk_dlssg_enumerate(VkInstance inst, uint32_t *n, VkPhysicalDevice *pd) {
     PFN_vkEnumeratePhysicalDevices f =
         S.loaded > 0 ? (PFN_vkEnumeratePhysicalDevices)S.gipa()(inst, "vkEnumeratePhysicalDevices") : NULL;
@@ -206,19 +157,11 @@ VkResult vk_dlssg_enumerate(VkInstance inst, uint32_t *n, VkPhysicalDevice *pd) 
 
 int vk_dlssg_interposed(void) { return S.loaded > 0; }
 
-// Frame generation is off for the run from here on: every later call goes to the loader alone, as when Streamline's
-// files are missing, and the settings menu says it is unavailable (vk_dlssg_status).
 static void give_up(const char *why) {
     S.loaded = -1, S.fail = DLSSG_UNAVAILABLE;
     rt_log("dlssg: DLSS Frame Generation is off in this run: %s", why);
 }
 
-// The interposer's vkCreateDevice asks the device for NVIDIA's extensions (VK_NV_low_latency2 among them) and fails
-// without them (VK_ERROR_EXTENSION_NOT_PRESENT). On a laptop with an NVIDIA card and Intel graphics, frame generation
-// set to DLSS and the Graphics card setting on the Intel one, that ended every start with "no usable Vulkan device"
-// (exit code 70) until nx2navi.ini was edited by hand: four reports on 0.10.1. A device of another vendor is now made
-// by the loader, without frame generation, and so is one the interposer refuses for any other reason.
-// The order of the attempts is vk_dlssg_device.h's dlssg_device_create (tests/dlssg_device_check.c).
 typedef struct { PFN_vkCreateDevice f; VkPhysicalDevice pd; const VkDeviceCreateInfo *ci; VkDevice *out; } DevCreate;
 static int create_interposed(void *u) {
     const DevCreate *d = u;
@@ -265,7 +208,7 @@ void vk_dlssg_device_ready(VkPhysicalDevice physical, VkDevice dev) {
     S.present = (PFN_vkQueuePresentKHR)g(dev, "vkQueuePresentKHR");
     S.active = S.create_sc && S.destroy_sc && S.images && S.acquire && S.present;
     rt_log("dlssg: %s", S.active ? "DLSS Frame Generation on the swapchain" : "the swapchain hooks are missing: off");
-    if (S.active) reflex_apply(0);   // no swapchain and no present yet: the mode alone
+    if (S.active) reflex_apply(0);
 }
 
 int vk_dlssg_active(void) { return S.active; }
@@ -280,11 +223,9 @@ int vk_dlssg_why(const char **sl_why) {
     return S.no_gpu;
 }
 
-// NVIDIA numbers its PCI device IDs by architecture: Ada (the RTX 40 series, the first with DLSS Frame Generation)
-// starts at 0x2600, and every earlier one is below it (the RTX 3050 Laptop is 0x25ac); Blackwell is above.
 int vk_dlssg_gpu_may(void) {
     const VkCtx *c = vk_ctx();
-    return !c || (c->props.vendorID == 0x10de && c->props.deviceID >= 0x2600);   // not known yet: it may
+    return !c || (c->props.vendorID == 0x10de && c->props.deviceID >= 0x2600);
 }
 
 int vk_dlssg_multiplier_of(const char *value, int max, const char **why) {
@@ -302,8 +243,6 @@ int vk_dlssg_multiplier_of(const char *value, int max, const char **why) {
     return (int)n;
 }
 
-// Streamline's limit as a multiplier: 2 to 4, or 0 while it has reported none (the first frames). An older DLL
-// generates one frame: 2.
 static int gpu_multiplier_max(int *old_dll) {
     if (old_dll) *old_dll = !S.frames_max;
     if (!S.frames_max) return 2;
@@ -318,9 +257,6 @@ int vk_dlssg_multiplier_max(int *old_dll) {
 
 int vk_dlssg_multiplier(void) { return S.active ? __atomic_load_n(&S.shown_mult, __ATOMIC_RELAXED) : 1; }
 
-// The multiplier the setting gives here (present thread), clamped to the GPU's limit; one log line each time the value
-// or the limit changes and the value is not taken as it is. Until Streamline reports its limit, one generated frame,
-// and no log line about the GPU yet.
 static int multiplier_wanted(void) {
     static char last[24];
     static int last_max = -1, m = 2;
@@ -336,14 +272,8 @@ static int multiplier_wanted(void) {
     return m;
 }
 
-// vk_device.c: while Streamline is loaded, every device entry point the runtime fetches goes through its interposer, so
-// its plugins see the calls they hook (Reflex's frame timing and DLSS-G's presents). NULL keeps the loader's.
 PFN_vkGetDeviceProcAddr vk_dlssg_dpa(void) { return S.loaded > 0 && S.gdpa ? S.gdpa() : NULL; }
 
-// gfx_present.c create_swapchain, under the present and queue locks: the new swapchain has neither the mode nor the
-// limit, so both go to Streamline again, the limit as the presenting guest thread last asked for it. One line for each
-// of the first 16 swapchains says the limit sent and the one Streamline took: nx2_sl.cpp nx2sl_reflex2 logs only its
-// first calls, and the start (the device, the first swapchain, the first hand-over, a movie) uses them up.
 VkResult vk_dlssg_create_swapchain(VkDevice d, const VkSwapchainCreateInfoKHR *ci, VkSwapchainKHR *sc) {
     VkResult r = S.create_sc(d, ci, NULL, sc);
     if (r == VK_SUCCESS) {
@@ -362,9 +292,6 @@ VkResult vk_dlssg_acquire(VkDevice d, VkSwapchainKHR sc, uint64_t t, VkSemaphore
     return S.acquire(d, sc, t, sem, VK_NULL_HANDLE, idx);
 }
 
-// One line after the first 600 blits of a game frame and every 3600 after that (600 with NX2SARIA_TRACE=perf), on the
-// present thread outside the queue lock (vk_dlssg_frame): who holds the frame limit, and how many frame starts Reflex's
-// sleep held and for how long.
 static void stats(void) {
     static uint64_t shown, next = 600;
     if (++shown < next) return;
@@ -389,29 +316,14 @@ VkResult vk_dlssg_present(VkQueue q, const VkPresentInfoKHR *pi) {
     return r;
 }
 
-// Turning generation on or off is an slDLSSGSetOptions call and Streamline's own rebuild, and it can be seen: around a
-// menu, a fade or a swapchain change the depth and motion-vector views come and go for a frame or two. Following them
-// frame by frame switched generation off and on dozens of times a second (a run logged 32 changes, in pairs, a frame
-// apart), so a change waits until the new state has held for FG_SETTLE_FRAMES frames.
 #define FG_SETTLE_FRAMES 12
 
-// Reflex holds the frame's start until the time the driver computes from the measured render and queue times, and no
-// sooner than its frame limit after the frame before (vk_dlssg_pace), so the game's CPU work ends about when the GPU is
-// free for it; then the frame's first markers. Once a frame: the game may acquire again before it presents. No hold
-// while no host present went out for DLSSG_HOLD_IDLE_NS (the window minimized: gfx_present.c skips the host presents
-// while the game runs on): the driver then has no present to time the frame by, and the sleep would wait out
-// Streamline's half-second timeout each frame. The guest thread gave its core up for the acquire (NVN_BLOCKING). The
-// sleep counts as the pacer's wait (PERF_PACE) only while Reflex holds a frame limit (limit_set), whose place it then
-// takes, on whichever guest thread acquires (perf_end_any), as the acquire's own waits do. Without one (reflex_limit 0,
-// an older DLL, a movie, a refused limit, frames that showed Reflex does not hold it) the sleep is only the driver's
-// wait for the GPU while the pacer waits as well, so it stays out of PERF_PACE, as before Reflex held a frame limit:
-// counted there, GPU-bound frames read as paced in the perf windows.
 void vk_dlssg_frame_start(void) {
     if (!S.active) return;
     uint32_t f = __atomic_load_n(&S.game, __ATOMIC_RELAXED) + 1;
     if (f == S.started) return;
     S.started = f;
-    uint64_t hosted = __atomic_load_n(&S.hosted_ns, __ATOMIC_ACQUIRE), t0 = kern_now_ns();   // in this order: t0 >= hosted
+    uint64_t hosted = __atomic_load_n(&S.hosted_ns, __ATOMIC_ACQUIRE), t0 = kern_now_ns();
     int hold = hosted && t0 - hosted < DLSSG_HOLD_IDLE_NS;
     int paced = hold && __atomic_load_n(&S.limit_set, __ATOMIC_ACQUIRE) != 0;
     uint64_t p0 = paced ? perf_begin() : 0;
@@ -425,7 +337,6 @@ void vk_dlssg_frame_start(void) {
     __atomic_add_fetch(&S.n_hold, 1, __ATOMIC_RELAXED);
 }
 
-// Who holds the frame limit, as a log line when it changes (the first 40). why: the reason the pacer holds it.
 static void pace_say(int reflex, uint32_t us, const char *why) {
     static int lines;
     if (S.pace_said == reflex || lines >= 40) return;
@@ -442,7 +353,7 @@ int vk_dlssg_pace(uint64_t period_ns) {
     int allowed = limit_allowed(), mult = vk_dlssg_multiplier(), found;
     uint32_t applied = __atomic_load_n(&S.limit_set, __ATOMIC_ACQUIRE), want;
     int held = dlssg_pace_step(&S.pace, now, period_ns, mult, hosted, allowed, applied, &want, &found);
-    __atomic_store_n(&S.limit_want, want, __ATOMIC_RELEASE);   // the present thread hands it over (vk_dlssg_frame)
+    __atomic_store_n(&S.limit_want, want, __ATOMIC_RELEASE);
     double ms = (double)period_ns / 1e6;
     if (found == DLSSG_PACE_FAST)
         rt_log("dlssg: Reflex does not hold the frame limit (over half of %d frames came sooner than three quarters of "
@@ -455,7 +366,7 @@ int vk_dlssg_pace(uint64_t period_ns) {
         rt_log("dlssg: the frames still came about %d times %.2f ms apart: the game's own limiter holds the limit for the "
                "rest of the run", mult, ms);
     if (held) pace_say(1, want, NULL);
-    else if (!want)   // (a limit Streamline has yet to take is no change: the present thread hands it over next)
+    else if (!want)
         pace_say(0, 0, !allowed     ? (!S.reflex2 ? "nx2navi_dlssg.dll is older than Reflex's frame limit"
                                        : __atomic_load_n(&S.limit_refused, __ATOMIC_ACQUIRE) ? "Streamline refused the limit"
                                                                                              : "NX2SARIA_REFLEX_LIMIT=0")
@@ -487,10 +398,9 @@ void vk_dlssg_frame(VkCommandBuffer cb, VkExtent2D ext) {
     int want = have && !menu_is_open();
     if (want == S.mode) S.pending = 0;
     else if (++S.pending >= FG_SETTLE_FRAMES) { S.mode = want; S.pending = 0; }
-    else want = S.mode;   // hold the state it has until the new one stays
+    else want = S.mode;
     int on = want, mult = multiplier_wanted();
-    __atomic_store_n(&S.shown_mult, on ? mult : 1, __ATOMIC_RELAXED);   // the pacer's divisor (frame_rate.c)
-    // Reflex's frame limit as the presenting guest thread last asked for it (vk_dlssg_pace), before this present
+    __atomic_store_n(&S.shown_mult, on ? mult : 1, __ATOMIC_RELAXED);
     uint32_t limit = __atomic_load_n(&S.limit_want, __ATOMIC_ACQUIRE);
     if (S.reflex2 && limit != __atomic_load_n(&S.limit_set, __ATOMIC_ACQUIRE)) reflex_apply(limit);
     stats();
@@ -504,23 +414,18 @@ void vk_dlssg_frame(VkCommandBuffer cb, VkExtent2D ext) {
         memcpy(k.view_to_clip, c.view_to_clip, 64), memcpy(k.clip_to_view, c.clip_to_view, 64);
         memcpy(k.clip_to_prev_clip, c.clip_to_prev_clip, 64), memcpy(k.prev_clip_to_clip, c.prev_clip_to_clip, 64);
         memcpy(k.pos, c.pos, 12), memcpy(k.up, c.up, 12), memcpy(k.right, c.right, 12), memcpy(k.fwd, c.fwd, 12);
-        // the frame's own near and far planes (vk_dlaa.c proj_planes); nx2navi_dlssg.dll tells Streamline the depth is
-        // not inverted, which holds for every projection the game has shown (0 near, 1 far)
         k.znear = c.znear, k.zfar = c.zfar, k.fov_y = c.fov_y, k.aspect = c.aspect;
         static int told;
         if (c.inverted && !told++) rt_log("dlssg: the scene's depth is inverted, which Streamline is not told");
         k.jitter[0] = jx, k.jitter[1] = jy;
-        // render pixels: the scene's size, which is the output's or smaller (an upscaling mode, or the game's own scale
-        // without an upscaler); Streamline takes the depth and the vectors at their own size and the output at ext
         k.mv_scale[0] = 1.0f / (float)d.width, k.mv_scale[1] = 1.0f / (float)d.height;
         k.reset = reset;
     }
-    // the frames to generate between two rendered ones: the multiplier less the rendered one, 0 off
     S.frame(cb, have ? &zd : NULL, have ? &zm : NULL, NULL, have ? &k : NULL, ext.width, ext.height, on ? mult - 1 : 0, S.cur);
 }
 
 void vk_dlssg_release(void) {
     if (S.loaded > 0 && S.shutdown) S.shutdown();
     S.active = 0;
-    __atomic_store_n(&S.limit_set, 0, __ATOMIC_RELEASE);   // a device made again starts without a limit
+    __atomic_store_n(&S.limit_set, 0, __ATOMIC_RELEASE);
 }
