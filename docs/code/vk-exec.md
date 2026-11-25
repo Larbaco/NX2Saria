@@ -3156,115 +3156,112 @@ pipeline's first miss and nothing after.
 
 ### Resources of one command buffer, freed by its completion callback
 
-- `Range`: back: written into a VRAM mirror (`vk_mem_mirrored`).
-- `SPARE_POOLS`: Descriptor pools and full-size transient chunks go back to these lists when their command buffer
-  completes, instead of being destroyed and created again for the next one: each creation is a driver memory allocation
-  (on Windows an allocation, a map and a paging-fence wait on the CPU), about ten of them per frame inside the replay.
-- `npools_live`: the replay's descriptor pools in existence, spare ones included (`vk_exec_desc_mem`).
-- `REPLAY_POOL_SETS`: sets in each of them (`alloc_set`).
-- `CbState`: State of the command buffer being recorded that the Vulkan command buffer itself holds (DrawCtx.B).
-  - `VkPipeline pipe[2]`: bound per bind point: 0 graphics, 1 compute.
-  - `VkPipeState st`: the state `vk_pipeline_set_dynamic` last recorded.
-  - `VkDynShadow dyn`: the dynamic state values the command buffer holds (`prepare_draw_ex`).
-  - `VkBuffer vb[17]`: vertex buffers last bound.
-  - `int vcls[17]`: their pool class and pool record, for the census.
-  - `NVNbufferRange vin[16]`: the ranges they were resolved from, under `vk_mem_gen` vgen.
-  - `VkBuffer ib`: index buffer last bound, with its offset and index type (`bind_index_buffer`).
-  - `uint8_t support[SUPPORT_BYTES]`: last support buffer and where it lives.
-  - `float sup_in[3]`: the `support_fill` arguments it was filled from.
-  - `uint8_t c0[5][VK_C0_BYTES]`: last c0 bank per stage (vertex, fragment, compute, task, mesh) and where it lives.
-  - `struct { p_bind_buf ssbo[16], ubo[16]; uint32_t dim[3], binst; uint8_t push[1024]; } c0_in[5]`: what `vk_c0_fill`
-    read for `c0[k]`.
-  - `VkPipelineLayout ds_layout`: graphics layout the sets below were last pushed or bound with.
-  - `VkDescriptorSet ds_bound[2]`: allocated set bound per set number (0: none or pushed since).
-  - `VkDescriptorSet ds_last[2]`: last allocated and written set per set number, contents in DS.
-  - `int ds_pushed[2]`: set number holds the push of DS.psig under `ds_layout`.
-  - `int res_valid`: the graphics sets bound hold what the inputs in RS give (`bind_resources`).
-- `DS_SIG_BYTES`: Contents of `B.ds_last` (`DrawCtx.DS`): the set's packed descriptors (`VkDescSlot`), which with its
-  layout determine every write. A draw whose allocated set would hold the same reuses the set instead of allocating and
-  writing one (a per-draw cost). psig: the same for the last push per set number; a push equal to it under the same
-  layout is not recorded again (the descriptors stay bound across pipeline binds of that layout).
-- `BS`: `NX2SARIA_BIND_STATS` counters (`bind_stats`).
-- `RS_BYTES`: The inputs of the last graphics `bind_resources` (`bind_sig`, `DrawCtx.RS`) and what its build counted for
-  the traffic census, which a skipped build counts again. `RS_BYTES` bounds the bound-slot bytes a pipeline reads
-  (`RsList`): per binding at most one c0 storage table, otherwise one bound range or handle per descriptor.
-- `RsState`:
-  - `uint32_t hn`: words of h the last signature filled; 0: none.
-  - `uint64_t h[24]`: generations, feedback images, support inputs, base instance.
-  - `const VkPipeInfo *info`: the pipeline whose `RsList` ranges body holds, as of bind op generation gen.
-  - `int rec`: a graphics build is running: `count_use` records, scratch copies mark volatile.
-  - `int volatile_`: the build copied guest bytes into transient memory: a rebuild differs.
-  - `int cmds`: check mode: pushes, binds and set writes the build recorded.
-  - `uint32_t ckn`: check mode: the last build's packed descriptors (bytes in ck).
-- `rs_on`: `NX2SARIA_BIND_SKIP`: 1 skip (default), 2 check, 0 off.
-- `RS_PTRS`: The bound-slot bytes of `VkExec` a pipeline's descriptors read, as ranges merged where they touch, built
-  once per pipeline info: c0's storage table, the uniform and storage ranges of the bound slots and the texture and
-  image handles. sup and c0: the support inputs and the base instance count too. p: storage buffers whose address the
-  shader loads from a user uniform block; the address read from the block counts too. ok 0: never skipped (too many
-  descriptors or such buffers).
-- `rs_lists`: `VkPipeInfo` pointer -> `RsList`, until shutdown.
-- `STAGEM_N`: Types of the context's caches and memos; each is described where it is used.
+A `CbRes` holds one submission's transient chunks, descriptor pools and the ranges the GPU may write (`Range`; its
+`back` says the range was written into a VRAM mirror, `vk_mem_mirrored`). Descriptor pools and full-size transient
+chunks go back to the spare lists (`spare_pool`, up to `SPARE_POOLS` = 64; `spare_chunk`, up to `SPARE_CHUNKS` = 16)
+when their command buffer completes, instead of being destroyed and created again for the next one: each creation is a
+driver memory allocation (on Windows an allocation, a map and a paging-fence wait on the CPU), about ten of them per
+frame inside the replay. `npools_live` counts the replay's descriptor pools in existence, spare ones included
+(`vk_exec_desc_mem()`); each holds `REPLAY_POOL_SETS` (256) sets (`alloc_set()`).
 
-  `find_stage`.
-- `SLOTM_N`: `slot_mask_of`.
-- `PB_N`: per-binding descriptor reuse (`pb_take`).
-- `PbEntry`:
-  - `uint8_t ok[PB_DESC]`: descriptor j holds a result that may be reused.
-  - `uint64_t in[PB_DESC][4]`: the values it was resolved from (`pb_key`).
-  - `PbCount cnt[PB_DESC]`: what its resolution counted for the census.
+`CbState` (`DrawCtx.B`) is the state of the command buffer being recorded that the Vulkan command buffer itself holds:
+
+- `pipe[2]`: the pipeline bound per bind point: 0 graphics, 1 compute.
+- `st`: the state `vk_pipeline_set_dynamic` last recorded.
+- `dyn`: the dynamic state values the command buffer holds (`prepare_draw_ex()`).
+- `vb[17]`: the vertex buffers last bound; `vcls` and `vpool` are their pool class and pool record, for the census;
+  `vin[16]` the ranges they were resolved from, under `vk_mem_gen` `vgen`.
+- `ib`: the index buffer last bound, with its offset and index type (`bind_index_buffer()`).
+- `support`: the last support buffer and where it lives (`sup_buf`, `sup_off`); `sup_in[3]` are the `support_fill()`
+  arguments it was filled from.
+- `c0[5]`: the last c0 bank per stage (vertex, fragment, compute, task, mesh) and where it lives; `c0_in[k]` is what
+  `vk_c0_fill` read for `c0[k]`.
+- `ds_layout`: the graphics layout the sets were last pushed or bound with. `ds_bound[2]`: the allocated set bound per
+  set number (0: none, or pushed since). `ds_last[2]`: the last allocated and written set per set number, its contents
+  in `DS`. `ds_pushed[2]`: the set number holds the push of `DS.psig` under `ds_layout`.
+- `res_valid`: the graphics sets bound hold what the inputs in `RS` give (`bind_resources()`).
+
+`DsSig` (`DrawCtx.DS`) holds the contents of `B.ds_last`: the set's packed descriptors (`VkDescSlot`), which with its
+layout determine every write. A draw whose allocated set would hold the same reuses the set instead of allocating and
+writing one (a per-draw cost). `psig` is the same for the last push per set number; a push equal to it under the same
+layout is not recorded again (the descriptors stay bound across pipeline binds of that layout).
+
+`BS` holds the `NX2SARIA_BIND_STATS` counters (`bind_stats()`).
+
+`RsState` (`DrawCtx.RS`) holds the inputs of the last graphics `bind_resources()` (`bind_sig()`) and what its build
+counted for the traffic census, which a skipped build counts again. `RS_BYTES` bounds the bound-slot bytes a pipeline
+reads (`RsList`): per binding at most one c0 storage table, otherwise one bound range or handle per descriptor. Its
+fields:
+
+- `hn`: the words of `h` the last signature filled; 0: none. `h[24]`: generations, feedback images, support inputs,
+  base instance.
+- `info`: the pipeline whose `RsList` ranges `body` holds, as of bind op generation `gen`.
+- `rec`: a graphics build is running: `count_use()` records, scratch copies mark volatile.
+- `volatile_`: the build copied guest bytes into transient memory: a rebuild differs.
+- `cmds`: check mode: the pushes, binds and set writes the build recorded. `ckn`: check mode: the last build's packed
+  descriptors (bytes in `ck`).
+
+`rs_on` is `NX2SARIA_BIND_SKIP`: 1 skip (default), 2 check, 0 off.
+
+An `RsList` is the bound-slot bytes of `VkExec` a pipeline's descriptors read, as ranges merged where they touch, built
+once per pipeline info: c0's storage table, the uniform and storage ranges of the bound slots and the texture and image
+handles. `sup` and `c0`: the support inputs and the base instance count too. `p` (at most `RS_PTRS` = 32): storage
+buffers whose address the shader loads from a user uniform block; the address read from the block counts too. `ok` 0:
+never skipped (too many descriptors or such buffers). `rs_lists` maps a `VkPipeInfo` pointer to its `RsList`, until
+shutdown.
+
+The types of the context's caches and memos are each described where they are used: `StageMemo` (`STAGEM_N` = 512,
+`find_stage()`), `SlotMask` (`SLOTM_N` = 4096, `slot_mask_of()`), `AcSlots` (`answers_for()`), `MemoKey`
+(`shader_memo_on()`) and `PbEntry` (`PB_N` = 8, per-binding descriptor reuse, `pb_take()`). In a `PbEntry`, `ok[j]`
+says descriptor j holds a result that may be reused, `in[j]` holds the values it was resolved from (`pb_key()`) and
+`cnt[j]` what its resolution counted for the census.
 
 ### The recording context
 
-`bind_resources`: the sampled-texture descriptors this context resolved, each with the generations and slot token it was
-resolved under: while its slot, the submission and the samplers are as they were (`slot_still`, as the texture
-descriptor memo TD checks, without the lock) it holds what TD would give, and a hit takes no texture lock. The replay
-workers' chunks waited for that lock at nearly every draw: 6.1 s of waits a minute in `bind_resources` alone (Hyrule
-Field, 3 workers, `NX2SARIA_LOCK_TIME`, 2026-11-12).
+A `DrawCtx` is what the draws, binds and dispatches keep from one call to the next while they record a command buffer:
+the state the command buffer holds (`B`), the signatures that let a draw skip its descriptor build or push (`DS`, `RS`,
+`PB`), the previous draw's shaders and pipeline (`SM`, `PM`), the shader lookup's caches (`AC`, `stagem`, `slotm`) and
+the submission's transient resources (`res`). A thread reaches the one it records with through `dc`; every thread starts
+with `dc_main`, the replay's, which is the only one while the replay records on a single thread. Shared tables (image
+views, shaders, descriptor lists, the texture pool sets, the stand-ins) stay file statics. Its other fields:
 
-- `DrawCtx`: What the draws, binds and dispatches keep from one call to the next while they record a command buffer: the
-  state the command buffer holds (B), the signatures that let a draw skip its descriptor build or push (DS, RS, PB), the
-  previous draw's shaders and pipeline (SM, PM), the shader lookup's caches (AC, stagem, slotm) and the submission's
-  transient resources (res). A thread reaches the one it records with through dc; every thread starts with `dc_main`,
-  the replay's, which is the only one while the replay records on a single thread. Shared tables (image views, shaders,
-  descriptor lists, the texture pool sets, the stand-ins) stay file statics.
-  - `CbRes *res`: transient resources of the submission being recorded (`cb_res`).
-  - `uint64_t res_fence`: the submission they belong to.
-  - `const VkPipeInfo *rs_last`: `rs_list`'s last lookup.
-  - `uint32_t c0_dim[3], c0_binst`: the dispatch size and base instance of the draw or dispatch being bound.
-  - `uint64_t bind_gen`: bumped by every bind op that writes `ex->prog`, ubo, ssbo, tex or img.
-  - `AcSlots AC[8]`: `answers_for`: texture and image types per stage.
-  - `StageMemo stagem[STAGEM_N]`: `find_stage`: the shader serving each NVN stage, per program serial.
-  - `SlotMask slotm[SLOTM_N]`: `slot_mask_of`: the slots a (program, stage) translation reads.
-  - `int sf_mvprev`: `shader_for` asks for the vertex shader's previous-frame variant (motion).
-  - `int mfb_stage`: the mesh fallback binds this NVN stage's resources (`nvn_stage_of`).
-  - `const GfxShader *mfb_cur_vs`: the mesh fallback's vertex stage (`prepare_draw_ex`).
-  - `uint64_t mfb_list`: the address of its draw's indirect record, 0: none or not held (`mfb_hold_role`).
-  - `PbCount *pb_cap`: per-binding reuse: where the resolving descriptor's census count goes.
-  - `int pb_spoiled`: ... and it may not be kept.
-  - `PbEntry *pb_e`: the build running, NULL when it keeps nothing.
-  - `uint64_t pb_key_cur[4]`: `pb_take` to `pb_keep`: the descriptor's values.
-  - `int pb_key_ok`: ... and whether it may be kept at all.
-  - `int mo_ovr_on`: per-object motion: `mo_ovr` replaces uniform bindings (`ubo_info`).
-  - `VkDescriptorBufferInfo mo_ovr[2][32]`: [vertex, `fragment][slot`]; buffer 0: not replaced.
-  - `struct { int valid, has_fs; MemoKey k; const GfxShader *vs, *fs; } SM`: the shader memo (`shader_memo_on`).
-  - `struct { int valid; VkPipeState s; const VkPipeInfo *info; } PM`: the pipeline memo (`pipe_memo_on`).
-  - `void *fm`: `feedback_scan`'s memo per texture handle (`FmEnt[FM_N]`), made at first use.
-  - `void *mo_vm`: `mvobj_pick`'s memo of the motion variant per vertex shader, made at first use.
-  - `struct { const void *d; uint64_t ind; VkDeviceSize at; } ma[64]`: `mesh_ring_entry`: entries filled ahead.
-  - `int ma_n, ma_i`: ... how many, and the next one a draw takes.
-  - `uint32_t ma_brk`: ... `vk_exec_brk_now` when they were filled.
-  - `TexMemo TM[TM_N]`: `bind_resources`: sampled-texture descriptors (`tm_take`).
-  - `VkWriteDescriptorSet bind_w[MAX_BINDINGS]`: `bind_resources`: write structs, packed descriptors, texel views.
-- `shader_lock`: Tables the chunks of a parallel group (`runtime/vk/vk_exec.c` "replay workers") share, locked only
-  while a chunk records: outside groups the submitting thread alone replays, and these lookups run per draw.
+- `res`: the transient resources of the submission being recorded (`cb_res()`); `res_fence`: the submission they
+  belong to.
+- `rs_last`: `rs_list()`'s last lookup.
+- `c0_dim[3]`, `c0_binst`: the dispatch size and base instance of the draw or dispatch being bound.
+- `bind_gen`: bumped by every bind op that writes `ex->prog`, `ubo`, `ssbo`, `tex` or `img`.
+- `AC[8]`: `answers_for()`: texture and image types per stage. `stagem`: `find_stage()`: the shader serving each NVN
+  stage, per program serial. `slotm`: `slot_mask_of()`: the slots a (program, stage) translation reads.
+- `sf_mvprev`: `shader_for()` asks for the vertex shader's previous-frame variant (motion).
+- `mfb_stage`: the mesh fallback binds this NVN stage's resources (`nvn_stage_of()`). `mfb_cur_vs`: the mesh
+  fallback's vertex stage (`prepare_draw_ex()`). `mfb_list`: the address of its draw's indirect record, 0: none or not
+  held (`mfb_hold_role()`).
+- `pb_cap`: per-binding reuse: where the resolving descriptor's census count goes; `pb_spoiled`: it may not be kept.
+  `pb_e`: the build running, NULL when it keeps nothing. `pb_key_cur[4]`: from `pb_take()` to `pb_keep()`, the
+  descriptor's values; `pb_key_ok`: whether it may be kept at all.
+- `mo_ovr_on`: per-object motion: `mo_ovr` replaces uniform bindings (`ubo_info()`). `mo_ovr[2][32]` is indexed
+  [vertex, fragment][slot]; buffer 0: not replaced.
+- `SM`: the shader memo (`shader_memo_on()`). `PM`: the pipeline memo (`pipe_memo_on()`).
+- `fm`: `feedback_scan()`'s memo per texture handle (`FmEnt[FM_N]`), made at first use. `mo_vm`: `mvobj_pick()`'s memo
+  of the motion variant per vertex shader, made at first use.
+- `ma[64]`: `mesh_ring_entry()`: the entries filled ahead; `ma_n` and `ma_i`: how many, and the next one a draw takes;
+  `ma_brk`: `vk_exec_brk_now` when they were filled.
+- `TM[TM_N]`: `bind_resources()`: sampled-texture descriptors (below).
+- `bind_w`, `bind_d`, `bind_bv`: `bind_resources()`: the write structs, packed descriptors and texel views.
 
-  `shader_tab`.
-- `rs_lock`: `rs_lists`.
-- `pool_mt`: `pool_sync` from a chunk.
+`TexMemo` (`DrawCtx.TM`, `TM_N` = 512): the sampled-texture descriptors this context resolved in `bind_resources()`,
+each with the generations and slot token it was resolved under: while its slot, the submission and the samplers are as
+they were (`slot_still()`, as the texture descriptor memo TD checks, without the lock) it holds what TD would give, and
+a hit takes no texture lock. The replay workers' chunks waited for that lock at nearly every draw: 6.1 s of waits a
+minute in `bind_resources()` alone (Hyrule Field, 3 workers, `NX2SARIA_LOCK_TIME`, 2026-11-12).
+
+Three locks guard tables the chunks of a parallel group (`runtime/vk/vk_exec.c`, "replay workers") share, and are taken
+only while a chunk records: outside groups the submitting thread alone replays, and these lookups run per draw.
+`shader_lock` guards `shader_tab`, `rs_lock` guards `rs_lists`, and `pool_mt` guards `pool_sync()` from a chunk.
 
 ### `cb_done()`
 
-Completion thread.
+Runs on the completion thread.
 
 ### `dispatch_mark()`
 
@@ -3272,18 +3269,16 @@ Marks a dispatch about to be recorded (`runtime/vk/vk.h` `vk_pass_mark_begin()`)
 
 ### `scratch()`
 
-- `HOST_COHERENT`: the CPU fills these chunks and never flushes them. Intel's integrated GPUs (ANV, Meteor Lake) offer
-  host-cached memory only without coherence, which VMA picks for random host access: the GPU then read what an earlier
-  submission left in the chunk (an UpdateUniformBuffer payload of another draw: a lighting shader's step count of
-  0x3f800000 instead of 128, and a loop of a billion steps).
-- `if (res == VK_ERROR_OUT_OF_DEVICE_MEMORY || res == VK_ERROR_OUT_OF_HOST_MEMORY)`: once more after a give-back.
+The chunks are required `HOST_COHERENT`: the CPU fills them and never flushes them. Intel's integrated GPUs (ANV, Meteor
+Lake) offer host-cached memory only without coherence, which VMA picks for random host access: the GPU then read what an
+earlier submission left in the chunk (an UpdateUniformBuffer payload of another draw: a lighting shader's step count of
+0x3f800000 instead of 128, and a loop of a billion steps). A creation refused for lack of memory is tried once more
+after a give-back (`vk_mem_give_back`).
 
 ### Stand-ins for what a binding names but the game did not bind
 
-(zeros, a 1x1 image, the default sampler).
-
-- `Z`:
-  - `VkBuffer sink`: `ssbo_info`: an unresolved storage buffer a shader writes (zbuf stays zero).
+Zeros (`Z.zbuf`), a 1x1 image per view type (`Z.img`) and the default samplers. `Z.sink` is what `ssbo_info()` gives an
+unresolved storage buffer a shader writes, so `zbuf` stays zero.
 
 ### `make_dummy()`
 
@@ -3295,25 +3290,25 @@ slot with no texture yet) could see roughness near 0: on Kakariko's distant clif
 
 ### `storage_dummy()`
 
-- `DUMMY_SAMPLED`: Sampled stand-ins read as mid grey, opaque: a missing roughness or metalness map gives a middling
-  value, a missing two-channel normal map a flat normal, a missing colour map grey. Storage stand-ins (any format,
-  written by shaders that have no image) start at zero.
-- `tex_format`: Storage image stand-ins in the format a shader declares (`GfxShaderRes.format`: the translator's
-  TextureFormat order); Vulkan wants the view format to match the declaration. Created on first use.
+Storage image stand-ins in the format a shader declares (`GfxShaderRes.format`, an index into `tex_format`, which is in
+the translator's TextureFormat order); Vulkan wants the view format to match the declaration. Created on first use, up
+to 48 (`SD`); `R8G8B8A8_UNORM` and multisampled ones use `Z.img`.
+
+Sampled stand-ins read as mid grey, opaque (`DUMMY_SAMPLED`): a missing roughness or metalness map gives a middling
+value, a missing two-channel normal map a flat normal, a missing colour map grey. Storage stand-ins (any format, written
+by shaders that have no image) start at zero (`DUMMY_STORAGE`).
 
 ### `dummies_init()`
 
-- `.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}`: the memset below is
-  not flushed.
-- The samplers every other one falls back to (`tex_info_full`, `pool_sync_entries`): without them there is none.
+The zero buffer is required `HOST_COHERENT` because its memset is not flushed. The two samplers made here are the ones
+every other one falls back to (`tex_info_full()`, `pool_sync_entries()`): without them there is none, so the run stops.
 
 ### `vk_exec_draw_shutdown()`
 
-- `mesh_ring_release()`: Releases the stand-ins and the depth twins. The device must be idle; the game path leaves them
-  to process exit like the pipelines.
-
-- `if (vk_ctx()) mesh_ring_release(vk_ctx()), pool_marks_release(vk_ctx())`: made without the stand-ins below too.
-- `dc_main.rs_last = NULL, dc_main.rs_last_l = NULL`: the replay's context: no other records now.
+Releases the stand-ins and the depth twins. The device must be idle; the game path leaves them to process exit like the
+pipelines. The mesh ring and the pool marks go first, before the test for the stand-ins, because they are made without
+the stand-ins too. `dc_main`'s `rs_last` is cleared with `rs_lists`: it is the replay's context, and no other records
+now.
 
 ### Resource types
 
@@ -3326,18 +3321,19 @@ slot with no texture yet) could see roughness near 0: on Kakariko's distant clif
 A view in STENCIL mode samples the stencil plane (TextureViewSetDepthStencilMode); otherwise depth wins. The translator
 declares every sampled image float and the shader takes the raw bits, as for integer formats.
 
-### `int_view_format()`
+### The image view tables
 
-- `ViewNode`: Image views of registered textures, kept for their image's lifetime: made per command buffer they were
-  created again every frame (`vkCreateImageView` took about 8% of the fight replay on the 7900X). Used under the texture
-  lock, as `vk_exec_image_gone` is (`destroy_tex`), which hands the views of a destroyed image to the deferred release
-  with it.
-- `view_of`: `ViewKey` -> `VkImageView`.
-- `views_by_image`: `VkImage` -> its first `ViewNode`.
+Image views of registered textures are kept for their image's lifetime (`ViewNode`): made per command buffer they were
+created again every frame (`vkCreateImageView` took about 8% of the fight replay on the 7900X). `view_of` maps a
+`ViewKey` to its `VkImageView` and `views_by_image` a `VkImage` to its first `ViewNode`. Both are used under the texture
+lock, as `vk_exec_image_gone()` is (`runtime/vk/vk_texture.c` `destroy_tex()`), which hands the views of a destroyed
+image to the deferred release with it.
+
+### `int_view_format()`
 
 Integer formats a texture view may give an image (`nvnTextureViewSetFormat`): the Vulkan format and the translator's
 TextureFormat code (`runtime/gfx/gfx_shader.c` `fmt_names`) the translator declares a storage image with. A shader that
-packs texels itself writes raw words through such a view (Ocarina's last post-process pass stores R11G11B10 bits through
+packs texels itself writes raw words through such a view (the game's last post-process pass stores R11G11B10 bits through
 an R32UI view of an R11G11B10F target); through a view of the texture's own format the store converted them (a black
 picture with red blobs). 0: not an integer format.
 
@@ -3348,8 +3344,8 @@ ones they alias); 0 unknown.
 
 ### `raw_note()`
 
-Images written this frame through an integer storage view (`storage_view_format`), in the order of their writes (seq):
-Ocarina's last post-process pass stores shared-exponent RGB9E5 texels that way into its R11G11B10F scene target, raw
+`RAW` (8 entries): images written this frame through an integer storage view (`storage_view_format()`), in the order of
+their writes (`seq`): the game's last post-process pass stores shared-exponent RGB9E5 texels that way into its R11G11B10F scene target, raw
 words the upscaler that reads them (tensor-core, untranslatable) decodes itself, and the fallback blit must too
 (`raw_9e5`). Now and then (1 of 529 frames sampled in a field) the same pass writes them into the RGB9E5 image at that
 address instead, as native texels (`raw_native_9e5`); the R11G11B10F image there then holds an older picture.
@@ -3379,54 +3375,54 @@ is `MUTABLE_FORMAT`, `runtime/vk/vk_texture.c`), else the image's own.
 An image view of a registered texture for a shader resource of type `rtype` (`GfxShaderRes.type`); `VK_NULL_HANDLE` when
 the image cannot serve it (the caller binds a stand-in). Texture lock held.
 
-- `if (!ok && !storage && !ms && img->type == VK_IMAGE_TYPE_2D)`: a flat texture under a 3D sample: its 3D copy.
+- A flat (2D) texture under a 3D sample is served by its 3D copy (`vk_texture_flat3d_locked`).
 - Texture detail (`runtime/vk/vk_texture.c`): the image was made without the game's top `img->skip` levels, so the
   view's levels [l0, end) of the game are the image's [l0 - skip, end - skip). A view that names only levels the image
   lacks shows the first one it has: the nearest content, where a stand-in would show none.
-- `if (!storage)`: view selectors replace the texture's, then the format remap.
-- `if (img->block_views) ci.pNext = &use`: the image's `COLOR_ATTACHMENT` usage is its block views'
-  (`runtime/vk/vk_texture.c`).
+- For a sampled view the view's selectors replace the texture's, then the format's remap applies (`alpha_one`, `chan`);
+  a storage view keeps the identity.
+- A view of an image with `block_views` is made with `SAMPLED` usage only: the image's `COLOR_ATTACHMENT` usage is its
+  block views' (`runtime/vk/vk_texture.c`).
 
 ### `vk_exec_target_view()`
 
 An attachment view of a registered texture, kept with its sampled views for the image's lifetime: made per command
 buffer, every render target's views were created again each frame (`vkCreateImageView` under `vk_exec_pass_begin`, 2% of
 the fight replay on the 7900X). Attachment keys carry a swizzle word no sampled key has (those hold four NVN selectors,
-each below 8). The texture lock guards the tables, as for `get_view`; `vk_exec_pass_begin` may already hold it.
+each below 8). The texture lock guards the tables, as for `get_view()`; `vk_exec_pass_begin` may already hold it, and
+`runtime/vk/vk_texture.c` `destroy_tex()` sets `gone` and purges the image's views with it held.
 
-- `vk_texture_lock()`: `destroy_tex` sets gone and purges the image's views with it held.
-- A texture destroyed while a command buffer or DLSS still held it (`img->gone`): its image lives on until the GPU is
-  past the submission being recorded (`vk_defer_image`), so a view for this use is made, and goes the same way. Cached,
-  it outlived the image: Vulkan hands the handle to a later image, which then got the view of the dead image's memory
-  and the GPU faulted reading it at the start of a pass ("read invalid", a 128x128 scene capture, `#177`).
-- `if (blocks) ci.pNext = &use`: not the BC image's sampling and transfer usages.
+A texture destroyed while a command buffer or DLSS still held it (`img->gone`): its image lives on until the GPU is past
+the submission being recorded (`vk_defer_image`), so a view for this use is made, and goes the same way
+(`vk_defer_view`). Cached, it outlived the image: Vulkan hands the handle to a later image, which then got the view of
+the dead image's memory and the GPU faulted reading it at the start of a pass ("read invalid", a 128x128 scene capture,
+`#177`).
+
+A view of a BC image's blocks (`blocks`) is made with `COLOR_ATTACHMENT` usage only, not the BC image's sampling and
+transfer usages.
 
 ### `vk_exec_image_gone()`
 
-- `vk_tonemap_forget(image)`: the stand-in's views of a game image it read as it is.
+Besides the views kept here, it has the BC stand-in dropped (`vk_exec_bc_gone`), the tonemap stand-in's views of a game
+image it read as it is (`vk_tonemap_forget`) and HDR's (`vk_hdr_image_gone`).
 
 ### Program to shaders
 
-- `SHADER_SETS`: (program, stage, answers) -> shader, 4-way set-associative, most recently used first. A miss costs a
-  SHA-256 of the whole shader code (`runtime/gfx/gfx_shader.c` `req_init()`), slow on CPUs without SHA instructions: a
-  field frame looks up ~3000 and the 2048-slot direct-mapped table this replaced missed 3% of them on conflicts.
+`shader_tab` maps (program, stage, answers) to a shader: `SHADER_SETS` (2048) sets, 4-way set-associative
+(`SHADER_WAYS`), most recently used first. A miss costs a SHA-256 of the whole shader code (`runtime/gfx/gfx_shader.c`
+`req_init()`), slow on CPUs without SHA instructions: a field frame looks up ~3000 and the 2048-slot direct-mapped table
+this replaced missed 3% of them on conflicts.
 
-### `ctl_nvn2()`
+### `ctl_nvn2()`, `ctl_stage_len()`, `ctl_c1()`, `ctl_local()`
 
 Stage and code length of a control section. NVN1 (0x880 bytes): stage at +0x714, length at +0x704, c1 offset at +0x700,
 workgroup size at +0x748. NVN2 (Switch 2, 0xe0 bytes, magic 0x98761234 at +0): stage in bits 16+ of +0x54, length at
 +0x38, workgroup size at +0x58, no c1 part (`runtime/gfx/gfx_shader.c`, "NVN2").
 
-### `ctl_stage_len()`
-
-- NVN2: the c1 constants (BRX jump tables) follow the code from +0x40 to +0x44, in the same storage; the length covers
-  them so `runtime/gfx/gfx_shader.c` `req_init()` sends them (with the code length alone it never could).
-
-### `ctl_c1()`
-
-Offset of the c1 constants (len: none).
-
-- `else memcpy(&c1, c + 0x40, 4)`: NVN2: after the code and its padding, up to +0x44.
+On NVN2 the c1 constants (BRX jump tables) follow the code from +0x40 to +0x44, in the same storage; the length
+`ctl_stage_len()` gives covers them so `runtime/gfx/gfx_shader.c` `req_init()` sends them (with the code length alone it
+never could). `ctl_c1()` is the offset of the c1 constants (`len`: none); on NVN2 they start after the code and its
+padding, at the offset in +0x40, and run up to the one in +0x44.
 
 ### `find_stage()`
 
@@ -3436,10 +3432,6 @@ several times a draw. Direct-mapped (`DrawCtx.stagem`); a collision only scans a
 
 ### `token_of()`
 
-Texture and image types of a stage's first 32 slots, each kept with the handle and the generation and slot token it was
-looked up under: a slot is looked up again, a hash probe, only when the handle changed or its slot may resolve otherwise
-(`slot_still`). `DrawCtx.AC`, per stage.
-
 `vk_texture_slot_token` of the slot a texture or image handle names; an empty handle always resolves to nothing.
 
 ### `slot_still()`
@@ -3448,11 +3440,11 @@ Whether what handle h resolved to under the global generation `*egen` and its sl
 lookup) still holds at global generation gen: nothing at all changed since, or not its slot (the token, read only when
 the global generation moved, about every 16 draws). A token hit moves `*egen` to gen.
 
-### `slotm_idx()`
+### `slotm_idx()`, `slot_mask_of()`, `slot_mask_learn()`
 
 The slots of (program, stage) whose types its translation reads (`gfx_shader_slot_mask`), learned from its first shader;
-~0u while unknown. The types of other slots select the same shader, so `answers_for` leaves them zero instead of looking
-up all 64 handles. Direct-mapped by serial and stage (`DrawCtx.slotm`); a collision only relearns.
+~0u while unknown. The types of other slots select the same shader, so `answers_for()` leaves them zero instead of
+looking up all 64 handles. Direct-mapped by serial and stage (`DrawCtx.slotm`); a collision only relearns.
 
 ### `type_of_handle()`
 
@@ -3460,35 +3452,37 @@ Texture lock held.
 
 ### `format_of_handle()`
 
-The `img_format` answer of an image handle: the integer format its view gives it (`int_view_format`, as `get_view` binds
-it), else 0 (the translator's default, a float format). Texture lock held.
+The `img_format` answer of an image handle: the integer format its view gives it (`int_view_format()`, as `get_view()`
+binds it), else 0 (the translator's default, a float format). Texture lock held.
 
 ### `answers_for()`
 
-The answers of stage st for the slots in mask; the types of other slots stay zero.
+The answers of stage `st` for the slots in `mask`; the types of other slots stay zero.
 
-- The generation and tokens are read before the lookups (one that creates an entry changes them) and unlocked: a
-  registration racing with them is ordered after this draw, and a slot stored under older ones is only looked up again.
-- `if (check && (type_of_handle(h) != c->tt[slot] || type_of_handle(hi) != c->it[slot]))`: `NX2SARIA_SHADER_MEMO=check`.
+`DrawCtx.AC`, per stage, keeps the texture and image types of a stage's first 32 slots, each with the handle and the
+generation and slot token it was looked up under: a slot is looked up again, a hash probe, only when the handle changed
+or its slot may resolve otherwise (`slot_still()`). The generation and tokens are read before the lookups (one that
+creates an entry changes them) and unlocked: a registration racing with them is ordered after this draw, and a slot
+stored under older ones is only looked up again. With `NX2SARIA_SHADER_MEMO=check` every kept type is compared with a
+lookup, and a difference stops the run.
 
 ### `vk_exec_probe_shader()`
 
-`*present`: the program has this stage. Returns NULL when it has not or the translation failed. pending (graphics
-stages, `vk_pipeline_async_on`): a shader not translated yet is queued and NULL returned with `*pending` = 1.
-`await_ms`: a shader queued earlier is waited for instead, that long at most (`gfx_shader_await`; `UINT32_MAX`: until it
-is done), and `*pending` = 1 says the wait ended first. `DrawCtx.sf_mvprev`: `shader_for` asks for the vertex shader's
-last-frame variant (per-object motion).
-
-- `probe_sh`: Probes only (`runtime/gfx/mesh_fb_probe.c`): the shader of the program stage whose control section is ctl,
-  in place of a translation. The probes build their programs from modules made here, which no translator has an input
-  for.
+Probes only (`runtime/gfx/mesh_fb_probe.c`): the shader of the program stage whose control section is `ctl`, in place of
+a translation (`probe_sh`, 16 at most). The probes build their programs from modules made here, which no translator has
+an input for.
 
 ### `shader_for()`
 
-- `uint64_t h = (serial * 0x9E3779B97F4A7C15ull ^ (uint64_t)st) ^ nvn_hm_hash(&a, sizeof a)`: a is zero-padded.
-- `int lk = vk_exec_shared()`: only while a parallel group records do several threads look up at once.
-- `if (w)`: to the front.
-- `else if (set)`: in front, the least recently used way drops out.
+`*present`: the program has this stage. Returns NULL when it has not or the translation failed. `pending` (graphics
+stages, `vk_pipeline_async_on`): a shader not translated yet is queued and NULL returned with `*pending` = 1.
+`await_ms`: a shader queued earlier is waited for instead, that long at most (`gfx_shader_await`; `UINT32_MAX`: until it
+is done), and `*pending` = 1 says the wait ended first. With `DrawCtx.sf_mvprev` set it asks for the vertex shader's
+last-frame variant (per-object motion).
+
+The table's key hashes the answers as bytes, which is sound because they are zero-padded (`answers_for()` clears them
+first). `shader_lock` is taken only while a parallel group records (`vk_exec_shared`): only then do several threads look
+up at once. A hit moves to the front of its set; a new shader goes in front and the least recently used way drops out.
 
 ### Descriptors
 
@@ -6389,45 +6383,43 @@ effects ran, so a guest woken by `fence_wait` sees them.
 One timeline value per submission, signalled at `ALL_COMMANDS`; waits use `vkWaitSemaphores`, and a failed wait is
 treated as a lost device.
 
-- `CmdSlot`: reusable once the timeline reached fence.
-- `sub_lock`: Submissions: one at a time, so timeline values are signalled in the order they are handed out.
-- `cur_slot`: the slot `vk_sync_submit` records into now (an index: `take_slot` may move slots).
-- `cur_fence`: the value of the submission being recorded.
-- `PART_CBS`: The command buffers of the part being recorded that come before `slots[cur_slot]` (`vk_sync_append`):
-  earlier pieces of the replay's own and those the replay workers recorded, in queue order.
-- `st_lock`: Shared with the completion thread (`st_lock`).
-- `cv_work`: a submission, a callback or stop.
-- `cv_done`: done advanced.
-- `issued`: newest submitted value; newest value whose side effects ran.
-- `reserved`: asynchronous replay: newest value handed out before its submission (>= issued).
-- `LIVE_RING`: Staged mirror uploads (`runtime/vk/vk_memory.c` "staged mirror uploads"): per submission value, whether
-  its GPU still reads guest memory itself (value << 1 | live), under `st_lock`. A value not found counts as live.
-- `live_last_of`: Per submission value: the newest submission up to it whose GPU reads guest memory itself (`live_of`),
+The submitting side, under `sub_lock`: submissions are recorded one at a time, so timeline values are signalled in the
+order they are handed out. A `CmdSlot` is a command buffer and the value it was claimed for, reusable once the timeline
+reached that value. `cur_slot` is the slot `vk_sync_submit` records into now (an index: `claim_slot()` may move
+`slots[]`) and `cur_fence` the value of the submission being recorded. `part_cbs` (`PART_CBS`, 254) holds the command
+buffers of the part being recorded that come before `slots[cur_slot]` (`vk_sync_append_later()`): earlier pieces of the
+replay's own and those the replay workers recorded, in queue order.
+
+Shared with the completion thread, under `st_lock`:
+
+- `cv_work` wakes the completion thread (a submission, a callback or stop); `cv_done` says `done` advanced.
+- `issued` is the newest submitted value and `done` the newest value whose side effects ran; `reserved`, with the
+  asynchronous replay, the newest value handed out before its submission (>= `issued`).
+- `live_of` (a ring of `LIVE_RING` values, like the ones below): staged mirror uploads (`runtime/vk/vk_memory.c` "staged
+  mirror uploads"): per submission value, whether its GPU still reads guest memory itself (value << 1 | live). A value
+  not found counts as live.
+- `live_last_of`: per submission value, the newest submission up to it whose GPU reads guest memory itself (`live_of`),
   0 none. The submit wait is for the frame's first submission, but the game's writes after it race with every submission
   before it that still reads guest memory: those of the frame before (the instances of its grass and moss, read through
   the device address table) were often still on the GPU when the wait ended at the first one's hand-over, and the game
   wrote the next frame's instances under them (flicker and sliding foliage, RX 580, 2026-11-11). The wait goes on until
-  that one is done.
-- `res_of`: Per value (index & `LIVE_RING` - 1): the newest value up to it whose completion hands results to the CPU
-  (`vk_exec_take_results`).
-- `res_kinds`: per value: its `VK_RES_*` kinds.
-- `early_of`: The early tail (`runtime/vk/vk_exec.c` "the early tail"), per value under `st_lock`: `early_of` holds the
-  value when its part with the write-backs signalled the executed timeline before its tail; `empty_of` when the
-  submission handed the GPU nothing and the CPU no results (a submission held at its first event wait: Ocarina's first
-  of a frame in the field).
-- `tail_cb`: `sub_lock`: the tail's command buffer between hold and release.
-- `tail_early`: `sub_lock`: this submission's tail went behind its write-backs; the parts of it handed over before the
-  last.
-- `tail_ns`: about how long the GPU takes for a tail (a moving average).
-- `tail_t0`: the first early return for `tail_val`, for `tail_ns`.
-- `tail_n`: since the last `vk_sync_tail_stats`: early tails; waits they ended.
-- `res_mask`: `NX2SARIA_SUBMIT_FINISH_KINDS`: the kinds the wait counts.
-- `queue`: side effects in the order they were added.
-- `rqueue`: The side effects the game's CPU reads (`vk_completion_add_result`: occlusion counts, counter reports, event
-  values), in a queue of their own: the wait after a frame's first submission runs those that are due itself
-  (`results_run`, "the executed timeline" below). One runner at a time, in the order they were added.
-- `res_lock`: the runner; taken before `st_lock`.
-- `fqueue`: `vk_completion_add_first`: run before the callbacks of their value (merge lists).
+  that one is done (`vk_sync_recorded_wait()`).
+- `res_of`: per value, the newest value up to it whose completion hands results to the CPU (`vk_exec_take_results`) of
+  a kind the wait counts (`res_mask`, `NX2SARIA_SUBMIT_FINISH_KINDS`); `res_kinds` per value its `VK_RES_*` kinds.
+- The early tail (`runtime/vk/vk_exec.c` "The early tail"), per value: `early_of` holds the value when its part with
+  the write-backs signalled the executed timeline before its tail; `empty_of` when the submission handed the GPU nothing
+  and the CPU no results (a submission held at its first event wait: the game's first of a frame in the field).
+- `queue` holds the side effects in the order they were added. `rqueue` holds the side effects the game's CPU reads
+  (`vk_completion_add_result`: occlusion counts, counter reports, event values), in a queue of their own: the wait after
+  a frame's first submission runs those that are due itself (`results_run()`, "The executed timeline"). One runner at a
+  time, in the order they were added: `res_lock` is the runner's, taken before `st_lock`. `fqueue`
+  (`vk_completion_add_first`) holds what runs before the callbacks of its value (the merge lists).
+
+The early tail's other state: under `sub_lock`, `tail_cb` is the tail's command buffer between hold and release,
+`tail_early` says this submission's tail went behind its write-backs and `sub_parts` counts the parts of it handed over
+before the last. `tail_ns` is about how long the GPU takes for a tail (a moving average), `tail_t0` the first early
+return for `tail_val`, from which `tail_ns` is measured, and `tail_n` and `tail_waits`, since the last
+`vk_sync_tail_stats`, the early tails and the waits they ended.
 
 ### Submit batching
 
