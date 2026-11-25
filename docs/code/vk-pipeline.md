@@ -1931,6 +1931,9 @@ runs. A draw that meets one of them before it is built gets a pipeline linked fr
 boot waits for all of them and for the rest of the warm (`bf_decide()`). Without the library a draw would have to wait
 for a whole build, so the boot waits for all; so it does with `NX2SARIA_PREWARM_FULL=1.`.
 
+When it ends, the session header is written again with the prewarm's numbers (`runtime/session_summary.c`
+`session_summary_header()`): a crash after this point gets them in its summary.
+
 ### Mesh pipelines' stage libraries ahead of their draws
 
 The shader preparation and the boot build the stage libraries of single shaders (`lb_library()`): one vertex or one

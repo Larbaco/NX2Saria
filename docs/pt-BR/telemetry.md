@@ -65,7 +65,7 @@ O jogo o grava em `logs/session-summary.json` na pasta do jogo quando termina, p
 
 Os nomes são cortados em 64 caracteres (o do sistema, o do processador, o da placa de vídeo e o do driver), os caracteres de controle são descartados, e `version` é a versão lançada, sem o sufixo da compilação.
 
-Um campo que o jogo não conhece é `null`. Quando o jogo travou de forma tão grave que não conseguiu gravar o relatório, o launcher monta um a partir da linha de erro no log: só `version`, `game_version`, `os.family`, `session.end` (`crash`) e `fatal`, com todos os outros campos `null`.
+Um campo que o jogo não conhece é `null`. Quando o jogo travou de forma tão grave que não conseguiu gravar o relatório, o launcher monta um a partir da linha de erro no log, com `session.end` `crash`. O sistema, o processador, a memória, a placa de vídeo, a tela, as configurações, os tempos de início, os patches e os mods que ele leva são os da execução que caiu: o jogo os grava em `logs/session-start.json` enquanto inicia, e de novo quando você aplica configurações. Esse arquivo só tem campos do relatório acima, nada além, e nunca é enviado ele mesmo. A duração da sessão, o número de quadros e os tempos de quadro ficam `null`, assim como o que o jogo ainda não sabia quando caiu (a placa de vídeo, numa queda antes de ela ser preparada).
 
 Nada mais é coletado. Em particular, o servidor não guarda o país de onde um relatório veio.
 

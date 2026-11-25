@@ -1250,7 +1250,9 @@ them (`runtime/ui/menu.cpp` asks when the menu is about to close).
   (`runtime/ui/option_rows.cpp` `is_staged()`).
 
 Nothing is written to the settings file before Apply (`opt_draft_apply()`). A change back to the original value leaves
-the draft. Rows read their setting through `opt_value()` and its siblings so a staged change shows; anything else
+the draft. After Apply has saved the file it writes the session header again (`runtime/session_summary.c`
+`session_summary_header()`), so a hard crash's summary carries the settings in use then; once per Apply, never per
+frame. Rows read their setting through `opt_value()` and its siblings so a staged change shows; anything else
 reads `cfg_value`.
 
 `opt_value()`: the draft's value of a staged key, else `cfg_value`. `opt_get()`: as `opt_value()`, else `cfg_get`
