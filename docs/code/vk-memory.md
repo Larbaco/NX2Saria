@@ -2,10 +2,10 @@
 
 The memory side of the Vulkan back end: the game's memory pools as Vulkan buffers (host memory imports, shadow storage,
 VRAM mirrors and the write-back of what the GPU wrote), the page write generations that decide what is uploaded again,
-the upload batch and the memory report (`vk_memory.c`); the allocator and where its allocations land
-(`vk_vma.cpp`, `vk_vma_budget.c`, `vk_headroom.c`); and three small rules kept in headers so that a test checks them
-without a device (`vk_mem_heap.h`, `vk_scratch_lru.h`, `vk_up_defer.h`).
-[README.md](README.md#the-pages-of-runtimevk) lists the pages of `runtime/vk/`.
+the upload batch and the memory report (`vk_memory.c`); the allocator and where its allocations land (`vk_vma.cpp`,
+`vk_vma_budget.c`, `vk_headroom.c`); and three small rules kept in headers so that a test checks them without a device
+(`vk_mem_heap.h`, `vk_scratch_lru.h`, `vk_up_defer.h`). [README.md](README.md#the-pages-of-runtimevk) lists the pages of
+`runtime/vk/`.
 
 What the Switch's GPU and NVN do with memory pools that a port must reproduce: [maxwell.md](../maxwell.md). Where the
 area sits in the host: "4. Graphics" in [architecture.md](../architecture.md). The lines the memory report writes:
@@ -304,10 +304,10 @@ lookup and stops on a difference.
 
 ### `mem_resolve()`
 
-`touch`: the GPU may read the pool's buffer in the submission being recorded, so its shadow goes on the
-touched list (shadow storage). A lookup (`vk_mem_lookup()`) leaves it off: the caller reads guest memory itself or only
-asks what backs the address. Shaders that reach a pool through the device address table resolve nothing: the part they
-run in brings every pool of the table up to date (`vk_mem_shadow_sync()`).
+`touch`: the GPU may read the pool's buffer in the submission being recorded, so its shadow goes on the touched list
+(shadow storage). A lookup (`vk_mem_lookup()`) leaves it off: the caller reads guest memory itself or only asks what
+backs the address. Shaders that reach a pool through the device address table resolve nothing: the part they run in
+brings every pool of the table up to date (`vk_mem_shadow_sync()`).
 
 - `resolve_off`: `resolve_locked()` met a pool whose import was given back (`tex_pool_back()`).
 
@@ -445,15 +445,14 @@ frames: a session of 2026-11-13 used the 200 lines up by frame 36,387, and its l
 
 ### Frozen regions
 
-A 2 MiB region whose pages nothing wrote for `freeze_idle` submissions is made read-only
-(`runtime/memory.c` `mem_freeze()`), and write-watch queries skip it until a write or a file read thaws it. Most of the
-pool memory the mirror and the texture checks cover is static (meshes, textures), and a query costs about 1 us per MiB
-(4-5 on an 8th-gen i7), so this keeps the queries to the regions the CPU writes. The region need not lie wholly in
-pools: NVN pools are small and not 2 MiB aligned, so most regions also hold other guest memory, and a rule that refused
-those left 340 of 436 queried MiB a frame unfrozen in town although nothing had written them for 300 submissions. The
-other memory is safe to freeze for the same reason pools are: the only kernel writes into guest memory are file reads,
-which thaw their buffer first (`runtime/hle/fs_host.c`, `runtime/hle/romfs.c`), and every user-mode write faults and
-thaws.
+A 2 MiB region whose pages nothing wrote for `freeze_idle` submissions is made read-only (`runtime/memory.c`
+`mem_freeze()`), and write-watch queries skip it until a write or a file read thaws it. Most of the pool memory the
+mirror and the texture checks cover is static (meshes, textures), and a query costs about 1 us per MiB (4-5 on an
+8th-gen i7), so this keeps the queries to the regions the CPU writes. The region need not lie wholly in pools: NVN pools
+are small and not 2 MiB aligned, so most regions also hold other guest memory, and a rule that refused those left 340 of
+436 queried MiB a frame unfrozen in town although nothing had written them for 300 submissions. The other memory is safe
+to freeze for the same reason pools are: the only kernel writes into guest memory are file reads, which thaw their
+buffer first (`runtime/hle/fs_host.c`, `runtime/hle/romfs.c`), and every user-mode write faults and thaws.
 
 - `static int freeze_idle`: 0: off.
 - `static uint32_t ww_ep = 1`: `gen_lock`: the submission being recorded (`vk_mem_mirror_begin()`).
@@ -482,11 +481,11 @@ without `gen_lock`.
 
 ### Write-watch snapshots per submission
 
-The guest address space in 2 MiB regions, each queried at most once per epoch (a
-guest submission), at the first check that covers it. A query costs about 1.3 us plus 0.55 us per MiB, so one per region
-instead of one per texture. The snapshot only adds observations to the generation table: a page written before it
-carries a generation newer than any check before it, and a page written after it keeps its OS bit until the next query
-over it (at the latest the next epoch's snapshot).
+The guest address space in 2 MiB regions, each queried at most once per epoch (a guest submission), at the first check
+that covers it. A query costs about 1.3 us plus 0.55 us per MiB, so one per region instead of one per texture. The
+snapshot only adds observations to the generation table: a page written before it carries a generation newer than any
+check before it, and a page written after it keeps its OS bit until the next query over it (at the latest the next
+epoch's snapshot).
 
 - `static uint32_t snap_at[SNAP_REGIONS]`: epoch of the region's last snapshot; 0 never.
 
@@ -525,14 +524,14 @@ R0..r1 widened inside the import pool that holds [lo, hi); `pool_lock` taken her
 
 ### The snapshot of many ranges at once
 
-For the texture pool's freshness check (`runtime/vk/vk_texture.c`
-`vk_texture_pool_fresh_locked()`): `vk_mem_snap_note_locked()` notes the regions of a range that have no snapshot in
-epoch yet, and `vk_mem_snap_noted_locked()` queries what was noted, one query per run of adjacent regions. Asked range
-by range (`vk_mem_snap_range_locked()`), every such region got a query of its own, because a texture rarely spans two
-regions and the list is in no address order. While the player runs through a town the game writes about 32 textures into
-new storage every four or five frames, a region the CPU wrote is not frozen again for `freeze_idle` submissions, and so
-100 to 500 regions of the texture pools were queried one by one at every check, 2.7 checks a frame: the check took 0.5
-to 1.5 ms against 0.11 ms standing still (5 to 10 queries), about 3 us a query (five sessions of one player, RTX 5090,
+For the texture pool's freshness check (`runtime/vk/vk_texture.c` `vk_texture_pool_fresh_locked()`):
+`vk_mem_snap_note_locked()` notes the regions of a range that have no snapshot in epoch yet, and
+`vk_mem_snap_noted_locked()` queries what was noted, one query per run of adjacent regions. Asked range by range
+(`vk_mem_snap_range_locked()`), every such region got a query of its own, because a texture rarely spans two regions and
+the list is in no address order. While the player runs through a town the game writes about 32 textures into new storage
+every four or five frames, a region the CPU wrote is not frozen again for `freeze_idle` submissions, and so 100 to 500
+regions of the texture pools were queried one by one at every check, 2.7 checks a frame: the check took 0.5 to 1.5 ms
+against 0.11 ms standing still (5 to 10 queries), about 3 us a query (five sessions of one player, RTX 5090,
 2026-11-12). About half of a 2 MiB query is the call itself: in a process of its own, 400 of them took 727 us and one
 query over the same 800 MiB 360 us, with 0, 8 or 64 pages written. The regions queried and the pages stamped are the
 same, and every one is stamped before any entry of the list is looked at, as before: each entry's regions were queried
@@ -618,25 +617,24 @@ CPU-visible pool gets a host-visible buffer of its own instead, at the offsets t
   - B, the CPU has written Y again between the two snapshots: B's sync copies P in whole and uploads it, X is guest
     memory's stale word again in both copies, and the draws read that.
 
-  An import does not have the
-  fault: its twin is guest memory, and a page copied up from there holds the store. Measured (`NX2SARIA_SHADOW_CHECK`, a
-  standing run outdoors, RTX 5090 with `NX2SARIA_SHADOW=1`, 2026-11-10): the stores go into one page each of ten pools
-  of 20 and 44 KiB, and whole copy-ins overwrite one exactly four times a frame (240 in every 60 frames): A's case, the
-  copy that precedes the frame's stores, which does no harm. B's second case would add to the four and was not seen in
-  1,800 frames; nothing proves it cannot happen where the frame's timing differs. (Counted when every part that used the
-  table synced; a guest submission syncs once now, from the same write-watch snapshots, and the counts were not taken
-  again.) `NX2SARIA_SHADOW_TABLE_STORES=1` keeps the stores. The pages are found by their content: each whole copy-in
-  leaves a hash of the page it wrote (smark), and the next one hashes the shadow page first. A different hash means
-  something stored into the shadow in between, and with no base copy on the page that was a store through the table.
-  That copy-in still overwrites the store (nothing tells its bytes from the CPU's), and from then on the page keeps a
-  base copy: copy-ins take the CPU's bytes only, and the fence of every submission whose record bound the table writes
-  the stored bytes of all such pages back to guest memory (`table_wb_cb()`), as the fence of a noted write does. Guest
-  memory needs them: a word the CPU resets each frame to the value it had before the stores would otherwise never differ
-  from its base, and the reset would never reach the GPU. It is off by default, for three reasons. The fault it removes
-  was not seen. Its hashes cost 1.8 ms a frame of the replay there (`copy_marked()`). And it puts these pages under the
-  rule of the bullet above: a count the CPU resets before that write-back has landed keeps counting from its old value,
-  where the whole copy-in of today resets it every time; whether the game resets any of these words from the CPU is not
-  known.
+  An import does not have the fault: its twin is guest memory, and a page copied up from there holds the store. Measured
+  (`NX2SARIA_SHADOW_CHECK`, a standing run outdoors, RTX 5090 with `NX2SARIA_SHADOW=1`, 2026-11-10): the stores go into
+  one page each of ten pools of 20 and 44 KiB, and whole copy-ins overwrite one exactly four times a frame (240 in every
+  60 frames): A's case, the copy that precedes the frame's stores, which does no harm. B's second case would add to the
+  four and was not seen in 1,800 frames; nothing proves it cannot happen where the frame's timing differs. (Counted when
+  every part that used the table synced; a guest submission syncs once now, from the same write-watch snapshots, and the
+  counts were not taken again.) `NX2SARIA_SHADOW_TABLE_STORES=1` keeps the stores. The pages are found by their content:
+  each whole copy-in leaves a hash of the page it wrote (smark), and the next one hashes the shadow page first. A
+  different hash means something stored into the shadow in between, and with no base copy on the page that was a store
+  through the table. That copy-in still overwrites the store (nothing tells its bytes from the CPU's), and from then on
+  the page keeps a base copy: copy-ins take the CPU's bytes only, and the fence of every submission whose record bound
+  the table writes the stored bytes of all such pages back to guest memory (`table_wb_cb()`), as the fence of a noted
+  write does. Guest memory needs them: a word the CPU resets each frame to the value it had before the stores would
+  otherwise never differ from its base, and the reset would never reach the GPU. It is off by default, for three
+  reasons. The fault it removes was not seen. Its hashes cost 1.8 ms a frame of the replay there (`copy_marked()`). And
+  it puts these pages under the rule of the bullet above: a count the CPU resets before that write-back has landed keeps
+  counting from its old value, where the whole copy-in of today resets it every time; whether the game resets any of
+  these words from the CPU is not known.
 
 `NX2SARIA_SHADOW_CHECK=1` counts, with the shadow line and at its rate every 60 frames (`shadow_table_log()`): the whole
 copy-ins that overwrote a store through the table, per pool; the write-backs that moved bytes into a page the CPU had
@@ -654,10 +652,9 @@ Linux, where imports ran about twice as fast on 0.7.1 (`mirror_mode()`).
 - `static uint64_t s_wb_seen, s_wb_ticks`: `shadow_lock`: bytes the fence write-backs compared, their time.
 - `static uint64_t s_q_ticks`: `shadow_lock`: the copy-ins' write-watch queries.
 
-The pages a shader stores into through the device address table. The two switches are read in `mirror_mode()`.
-`s_learn` (`NX2SARIA_SHADOW_TABLE_STORES`: such pages get a base copy and a write-back) and `s_check`
-(`NX2SARIA_SHADOW_CHECK`: the counts below marked "check") are defined with `vk_mem_dmabuf_probe()`, which may turn
-shadow storage on late.
+The pages a shader stores into through the device address table. The two switches are read in `mirror_mode()`. `s_learn`
+(`NX2SARIA_SHADOW_TABLE_STORES`: such pages get a base copy and a write-back) and `s_check` (`NX2SARIA_SHADOW_CHECK`:
+the counts below marked "check") are defined with `vk_mem_dmabuf_probe()`, which may turn shadow storage on late.
 
 - `static PoolRec **tpools`: `shadow_lock`: the pools that have such pages.
 - `static uint64_t s_tab_pages`: `shadow_lock`: such pages, all pools.
@@ -1039,9 +1036,9 @@ the GPU is past the submission and the destroy shows in VMA's figures.
 
 ### `evict_unlocked()`
 
-`NX2SARIA_WB_LAZY_UNLOCKED` (`runtime/memory.c` "Ranges in flight"), read once on the replay
-thread, where `mirror_evict()` and `hot_check()` run: 1, the armed ranges of the mirrors they take away are fetched
-before `pool_lock` is taken for the eviction; 0, under `pool_lock`, as in 0.10.1.
+`NX2SARIA_WB_LAZY_UNLOCKED` (`runtime/memory.c` "Ranges in flight"), read once on the replay thread, where
+`mirror_evict()` and `hot_check()` run: 1, the armed ranges of the mirrors they take away are fetched before `pool_lock`
+is taken for the eviction; 0, under `pool_lock`, as in 0.10.1.
 
 ### `mirror_evict()`
 
@@ -1141,8 +1138,8 @@ Replay thread: the pool's mirror on its first buffer use.
 - The pool's buffers and vertices, read by every frame: the last video memory Windows moves out (memory priority).
 - The device address table names the mirror: the GPU's writes go there, and the sync copies the CPU's. With a twin they
   also go to the imported buffer; without one (`twin_wanted()`) the record names the mirror twice. The table takes the
-  mirror up in queue order, after its first copy (`gpa_late()`). Both are decided before `pool_lock` is taken:
-  each may read its setting and log once.
+  mirror up in queue order, after its first copy (`gpa_late()`). Both are decided before `pool_lock` is taken: each may
+  read its setting and log once.
 - The pool may have been finalized on another thread since the check above, without a mirror to forget (its state said
   refused meanwhile): on the list, the mirror would outlive its record and be freed twice, or never. Its buffer goes
   once the GPU is past the submission being recorded, which nothing of it has reached.
@@ -1387,9 +1384,9 @@ A submission whose merge ranges come to `merge_bytes` goes through a list (decid
 
 ### The statistics and the jobs of `NX2SARIA_MERGE_CPU`
 
-The statistics (any thread): lists stored, their words, the CPU time; the replay thread's
-waits for a list ([0] a write-back, [1] a prologue's copies, [2] the executed wait) and their time; words past the room,
-without a range, different from the GPU's (`NX2SARIA_MERGE_CPU_CHECK`).
+The statistics (any thread): lists stored, their words, the CPU time; the replay thread's waits for a list ([0] a
+write-back, [1] a prologue's copies, [2] the executed wait) and their time; words past the room, without a range,
+different from the GPU's (`NX2SARIA_MERGE_CPU_CHECK`).
 
 - `typedef struct { uint32_t first, words; uint64_t host; } MergeSpan`: list places [first, first + words): from host.
 
@@ -1584,8 +1581,8 @@ read yet. No lock: the pages are inaccessible, so nothing stamps them meanwhile;
 
 ### `vk_mem_lazy_decide()`
 
-Whether the lazy write-back is wanted on this device, decided and logged once, when the driver is
-known (`runtime/vk/vk_device.c` `create_device()`, after `vk_caps_init`): the player's setting, else the default of the
+Whether the lazy write-back is wanted on this device, decided and logged once, when the driver is known
+(`runtime/vk/vk_device.c` `create_device()`, after `vk_caps_init`): the player's setting, else the default of the
 platform and driver (`runtime/wb_lazy_choice.h`). Never in import mode, where no pool has a mirror; with shadow storage,
 where a fetch would copy the mirror into the pool's buffer, which is guest memory only when the pool is imported (a
 shadow's bytes reach guest memory in the submission's `shadow_wb_cb()`); or with the write-back probe, which watches the
@@ -1654,8 +1651,8 @@ nearest merge, so a full list copies the fewest bytes that were not flushed; cap
 
 ### `freeze_pass()`
 
-`gen_lock` exclusive: freezes up to `FREEZE_PER_SUB` candidate regions still idle. The query after
-the protection collects the writes made before it took effect.
+`gen_lock` exclusive: freezes up to `FREEZE_PER_SUB` candidate regions still idle. The query after the protection
+collects the writes made before it took effect.
 
 A freeze is a VirtualQuery and a VirtualProtect of 2 MiB, some microseconds as a rule; in the second after an area load,
 while the loaders write and the driver imports and locks new memory, each took 8 to 17 ms. The newly loaded regions all
@@ -1837,9 +1834,9 @@ One summary line: with `NX2SARIA_TRACE=perf` every 60 frames, else at frames 600
 
 ### The heaps and the address-space census
 
-After `vram_log()`: every heap's usage as the driver reports it (`VK_EXT_memory_budget`) beside VMA's share
-of it, VMA by memory type, and the process's private commit with its write-combined part (host-visible memory the driver
-maps uncached), to tell which memory a long session grows. When the write-combined total (VMA's blocks where that is not
+After `vram_log()`: every heap's usage as the driver reports it (`VK_EXT_memory_budget`) beside VMA's share of it, VMA
+by memory type, and the process's private commit with its write-combined part (host-visible memory the driver maps
+uncached), to tell which memory a long session grows. When the write-combined total (VMA's blocks where that is not
 known) grew by 2 GiB since the last look, VMA's detailed map goes to vma-frame<N>.json beside the log, 4 at most. The
 process's part walks the whole address space (`plat_mem_census`), 100-240 ms in a long session, so it runs on a thread
 of its own (`census_main()`) and logs a line of its own; a look while the last walk still runs goes without it.
@@ -2025,15 +2022,14 @@ Batches complete in submission order (one queue): retire from the front while th
 
 ### The finalize of a used pool
 
-(`pool_fini()`.) The finalize returned only once
-the queue was idle and every upload batch was through (`vkQueueWaitIdle`), since the guest gets the storage back when it
-returns. During an area load the queue also holds the load's texture uploads, which name no pool's storage: entering
-Kokiri Forest, one finalize waited 418 ms for them, the frame took 462 ms. The game finalizes a pool once its own work
-with it is done, as on the console, so the finalize now waits for the submissions issued so far (the game's work, the
-mirror copies and write-backs in it) and returns. The pool's buffer and memory, which images cut from it
-(`vk_texture_range_gone`) and the upload batches open or in flight may still name, go later: once those batches and the
-submission being recorded are through (`pool_wait_collect()`, from the upload collector). `NX2SARIA_POOL_FINI_IDLE=1`
-waits for the idle queue as before.
+(`pool_fini()`.) The finalize returned only once the queue was idle and every upload batch was through
+(`vkQueueWaitIdle`), since the guest gets the storage back when it returns. During an area load the queue also holds the
+load's texture uploads, which name no pool's storage: entering Kokiri Forest, one finalize waited 418 ms for them, the
+frame took 462 ms. The game finalizes a pool once its own work with it is done, as on the console, so the finalize now
+waits for the submissions issued so far (the game's work, the mirror copies and write-backs in it) and returns. The
+pool's buffer and memory, which images cut from it (`vk_texture_range_gone`) and the upload batches open or in flight
+may still name, go later: once those batches and the submission being recorded are through (`pool_wait_collect()`, from
+the upload collector). `NX2SARIA_POOL_FINI_IDLE=1` waits for the idle queue as before.
 
 - `static PoolWait *pwait`: `retire_lock`.
 - `static uint64_t pf_n, pf_ns, pf_max_ns, pf_logged`: narrowed finalizes, their waits (any thread; statistics only).

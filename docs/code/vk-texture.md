@@ -1,9 +1,9 @@
 # runtime/vk: images, formats and texture decoding
 
-The texture side of the Vulkan back end: the cache of images made for the game's textures, their uploads from the
-game's memory, the descriptor and sampler slots, the write-back of what the GPU drew, and what gives way when memory
-runs short (`vk_texture.c`); the format table (`vk_formats.c`); the ASTC decoder on the GPU (`vk_astc.c`); the colour
-adjustment on the present (`vk_color.c`); and three rules kept in headers so that a test checks them without a device
+The texture side of the Vulkan back end: the cache of images made for the game's textures, their uploads from the game's
+memory, the descriptor and sampler slots, the write-back of what the GPU drew, and what gives way when memory runs short
+(`vk_texture.c`); the format table (`vk_formats.c`); the ASTC decoder on the GPU (`vk_astc.c`); the colour adjustment on
+the present (`vk_color.c`); and three rules kept in headers so that a test checks them without a device
 (`vk_tex_compact.h`, `vk_tex_detail.h`, `vk_tex_release.h`). [README.md](README.md#the-pages-of-runtimevk) lists the
 pages of `runtime/vk/`.
 
@@ -277,17 +277,17 @@ the lookup-made change `in_lookup` deals with.
 
 ### Slot groups
 
-The GPU-written slots of one address bucket that share a descriptor hash (`TexSlot.khash`)
-resolve alike under the same address and entry generations, as the texture pool's memo has it
-(`runtime/vk/vk_exec_draw.c` `pool_fill()`). The game keeps up to ~400 descriptors of each transient render target
-registered over its storage, and the fullest bucket, 1,281 slots, moves 8 times a submission in Kokiri Forest: 12,800 of
-the 17,600 slots a submission's dirty walks refilled held their views already. The dirty walk can hand each group to the
-pool whole (`vk_texture_dirty_slots_locked()`'s gfn), which leaves its members alone when their resolution did not
-change (`NX2SARIA_POOL_GROUP`). A slot is in its bucket's own list (khash 0: a CPU-written texture) or in its group's
-member list, through the same links. A slot that joins a group goes to its tail and leaves the group's stamp as it was:
-its registration put it on the dirty ring, so the walk that follows refills it on its own, and the head, whose state the
-pool tests, is a member from before. (The game's 118 registrations a submission cleared the stamps of the groups they
-joined, and the walk at a submission's start went member by member as before: 11,300 of 11,550 slots.)
+The GPU-written slots of one address bucket that share a descriptor hash (`TexSlot.khash`) resolve alike under the same
+address and entry generations, as the texture pool's memo has it (`runtime/vk/vk_exec_draw.c` `pool_fill()`). The game
+keeps up to ~400 descriptors of each transient render target registered over its storage, and the fullest bucket, 1,281
+slots, moves 8 times a submission in Kokiri Forest: 12,800 of the 17,600 slots a submission's dirty walks refilled held
+their views already. The dirty walk can hand each group to the pool whole (`vk_texture_dirty_slots_locked()`'s gfn),
+which leaves its members alone when their resolution did not change (`NX2SARIA_POOL_GROUP`). A slot is in its bucket's
+own list (khash 0: a CPU-written texture) or in its group's member list, through the same links. A slot that joins a
+group goes to its tail and leaves the group's stamp as it was: its registration put it on the dirty ring, so the walk
+that follows refills it on its own, and the head, whose state the pool tests, is a member from before. (The game's 118
+registrations a submission cleared the stamps of the groups they joined, and the walk at a submission's start went
+member by member as before: 11,300 of 11,550 slots.)
 
 - `static uint64_t n_grouped`: slots in groups.
 - `static int32_t bucket_ghead[AGEN_N]`: per bucket: its first group (-1: none; set with the lists).
@@ -374,16 +374,16 @@ frames earlier, never during the current submission's replay, whose later parts 
 
 ### Moved render targets
 
-The game keeps about a thousand texture objects for its per-frame render targets and lays the
-targets out anew every frame with a linear allocator in one GPU-only pool. A target early in that layout changes its
-size with an effect on screen (811x811, then 778x778 a frame later in Kakariko Village), and every target after it then
-lies about 100 KB further on: eleven targets, 55 MiB of images, at new addresses in each frame the size changes, each a
-new entry with an image of its own, as few of them can lie in the pool memory itself (`pool_fits()`). The game finalizes
-an old texture object only when it needs the object again, 90 to 300 frames later, and a descriptor in the texture pool
-goes on naming it, so the entries were neither released nor idle: after 6,000 frames of walking through the village
-1,043 of them held 6.1 GiB of device memory, against 233 MiB in the targets still drawn, and once released they waited
-`GPU_STALE_FRAMES` more. A driver that charges device memory to the system's commit kept the commit low from then on,
-and the idle textures of the area went and came back (`commit_evict()`).
+The game keeps about a thousand texture objects for its per-frame render targets and lays the targets out anew every
+frame with a linear allocator in one GPU-only pool. A target early in that layout changes its size with an effect on
+screen (811x811, then 778x778 a frame later in Kakariko Village), and every target after it then lies about 100 KB
+further on: eleven targets, 55 MiB of images, at new addresses in each frame the size changes, each a new entry with an
+image of its own, as few of them can lie in the pool memory itself (`pool_fits()`). The game finalizes an old texture
+object only when it needs the object again, 90 to 300 frames later, and a descriptor in the texture pool goes on naming
+it, so the entries were neither released nor idle: after 6,000 frames of walking through the village 1,043 of them held
+6.1 GiB of device memory, against 233 MiB in the targets still drawn, and once released they waited `GPU_STALE_FRAMES`
+more. A driver that charges device memory to the system's commit kept the commit low from then on, and the idle textures
+of the area went and came back (`commit_evict()`).
 
 On the console those targets are views of one pool's memory: when another target is drawn over a target's bytes, its
 content is gone. `overwrite_others()` says so here. When the GPU writes a texture in the GPU-only address window
@@ -518,9 +518,9 @@ game's moving render targets mostly miss the device's alignment, and making the 
 
 ### `res_dedicated()`
 
-With the texture residency on ("Residency" below) a texture the CPU provides gets memory of its own
-from this size: moved to system memory it gives its memory back whole, where in one of VMA's blocks it left a hole the
-driver goes on counting (no block in Hyrule Field held only cold textures).
+With the texture residency on ("Residency" below) a texture the CPU provides gets memory of its own from this size:
+moved to system memory it gives its memory back whole, where in one of VMA's blocks it left a hole the driver goes on
+counting (no block in Hyrule Field held only cold textures).
 
 ### `block_views_ok()`
 
@@ -539,8 +539,8 @@ allocation. The format properties call it supported, so only the size shows it.
 
 ### `init_image()`
 
-UNDEFINED -> GENERAL; new depth / stencil images start cleared (the game copies depth without stencil,
-and the stencil of those images must not be whatever the memory held).
+UNDEFINED -> GENERAL; new depth / stencil images start cleared (the game copies depth without stencil, and the stencil
+of those images must not be whatever the memory held).
 
 A reused image (`create_tex()`) was another texture's: the transition waits for every earlier command, which may still
 read or write it.
@@ -617,10 +617,9 @@ the CPU untiles first (not `astc_bl_regions()`) are checked in the storage befor
 `NX2SARIA_TEXTURE_DETAIL` = auto | full | reduced | low, `texture_detail` in `nx2saria.ini` or an existing
 `nx2navi.ini`; read at the first texture, so a change waits for a restart.
 
-The material textures of a loaded area are what fills a small card,
-and three quarters of a mipmapped texture is its largest level. Over the budget Windows moves device memory into system
-memory and the frame rate falls to a fraction (a tester's RTX 3060 Laptop, 6 GiB with a budget of 4,730 MiB, ran the
-world at 5 to 15 fps).
+The material textures of a loaded area are what fills a small card, and three quarters of a mipmapped texture is its
+largest level. Over the budget Windows moves device memory into system memory and the frame rate falls to a fraction (a
+tester's RTX 3060 Laptop, 6 GiB with a budget of 4,730 MiB, ran the world at 5 to 15 fps).
 
 Measured on an RTX 5090 with the budget taken as those 4,730 MiB (`NX2SARIA_VRAM_BUDGET_MB`), a walk through Castle Town
 at 1440p with DLSS Balanced, device memory in use at its peak and the textures in it:
@@ -631,9 +630,9 @@ at 1440p with DLSS Balanced, device memory in use at its peak and the textures i
 | reduced | 5,472 MiB | 2,357 MiB | 908 MiB | 826 M |
 | low | 4,987 MiB | 1,997 MiB | 548 MiB | 503 M |
 
-About 1.1 GiB of each is outside the textures and
-buffers (DLSS alone reports 0.7 GiB). What a level does not touch stays: about 0.8 GiB of BC4, BC5 and BC7 textures the
-game ships in those formats, 0.65 GiB of render targets and 0.9 GiB of buffer mirrors.
+About 1.1 GiB of each is outside the textures and buffers (DLSS alone reports 0.7 GiB). What a level does not touch
+stays: about 0.8 GiB of BC4, BC5 and BC7 textures the game ships in those formats, 0.65 GiB of render targets and 0.9
+GiB of buffer mirrors.
 
 Reduced makes such a texture without its largest level, low without its two largest when it is 1024x1024 or more
 (`detail_skip()` decides). The image then holds the game's levels from `VkTexImage.skip` on: image level i is the game's
@@ -651,10 +650,10 @@ textures, the small and unmipped ones (interface art, glyph atlases, lookup tabl
 as texture copies of a decoded ASTC texture are not replayed at all. Two more are left whole:
 
 - A texture made over a live one that holds GPU-written content, which `start_at()` copies in texel for texel;
-- A texture a shader reads by texel position or whose size it asks for (`exact`): a fetch at a level the image
-  lacks, or coordinates worked out from the size of another texture, would read the wrong texels. The translated shaders
-  do that only through fixed bindings (`runtime/gfx/gfx_shader.c` `reflect_exact()`; none of 44,081 prepared shaders of
-  game 1.1.1 does it through the texture pool), so the replay sees the texture at the binding and asks for it whole
+- A texture a shader reads by texel position or whose size it asks for (`exact`): a fetch at a level the image lacks, or
+  coordinates worked out from the size of another texture, would read the wrong texels. The translated shaders do that
+  only through fixed bindings (`runtime/gfx/gfx_shader.c` `reflect_exact()`; none of 44,081 prepared shaders of game
+  1.1.1 does it through the texture pool), so the replay sees the texture at the binding and asks for it whole
   (`vk_texture_exact_by_id_locked()`). The key then stays whole for the session.
 
 The size of a 2D array is also asked for by the layer clamp the translator puts before array samples; that reads the
@@ -712,15 +711,15 @@ be whole.
 
 ### Where texture images go when video memory runs short
 
-Where texture images go when video memory runs short. An RX 580 (8 GiB, AMD 23.10) shows its memory as a 6
-GiB device-local heap and a 2 GiB device-local, host-visible one. Asked for device-local memory without a budget, VMA
-took the first heap every time: a save load put 5.6 GiB into it against a budget of 5.1 GiB while the other heap held 69
-MiB, and the next submit failed with `VK_ERROR_OUT_OF_DEVICE_MEMORY`. Each step below allocates within the heaps'
-budgets (`VK_EXT_memory_budget`): device-local memory of any heap; the second allocates as before, past the budget,
-where the driver keeps it in video memory or moves it out itself. System memory is never asked for: on a GPU with one
-device-local heap (an RTX 3050 Laptop, 4 GiB) a step for any memory within the budget put every texture past the budget
-in system memory, 4096 and more images, which the process's commit then held: with 16 GiB of RAM the system's commit ran
-out, host memory imports failed, and the GPU wrote through the address of a pool left without a buffer (device lost).
+Where texture images go when video memory runs short. An RX 580 (8 GiB, AMD 23.10) shows its memory as a 6 GiB
+device-local heap and a 2 GiB device-local, host-visible one. Asked for device-local memory without a budget, VMA took
+the first heap every time: a save load put 5.6 GiB into it against a budget of 5.1 GiB while the other heap held 69 MiB,
+and the next submit failed with `VK_ERROR_OUT_OF_DEVICE_MEMORY`. Each step below allocates within the heaps' budgets
+(`VK_EXT_memory_budget`): device-local memory of any heap; the second allocates as before, past the budget, where the
+driver keeps it in video memory or moves it out itself. System memory is never asked for: on a GPU with one device-local
+heap (an RTX 3050 Laptop, 4 GiB) a step for any memory within the budget put every texture past the budget in system
+memory, 4096 and more images, which the process's commit then held: with 16 GiB of RAM the system's commit ran out, host
+memory imports failed, and the GPU wrote through the address of a pool left without a buffer (device lost).
 
 ### `note_placement()`
 
@@ -810,8 +809,8 @@ another layout whose storage overlaps it no longer hold theirs.
 - Feedback loops (`runtime/vk/vk.h` `VkCtx.feedback`): every attachable image may be sampled by a draw of a pass that
   renders it, so it gets the usage now; adding it when a loop shows up would mean recreating the image (that lost the
   grass tile maps once).
-- Storage in a physical or virtual pool: alias the pool memory, unless an image of another layout
-  overwrote it there before it was read (`private_keys`).
+- Storage in a physical or virtual pool: alias the pool memory, unless an image of another layout overwrote it there
+  before it was read (`private_keys`).
 - `if (q && !pool_fits(c, e, q, L.size, &sp))`: it would not bind there (`img_reqs`).
 - An entry split fill is to fill gets a new image: `start_at()` uploads into it in the upload batch ("Split fill"
   above).
@@ -873,13 +872,13 @@ pass made (`NX2SARIA_POOL_PRESNAP`).
 
 ### The entries the pool's slots hold
 
-`PRef`: for each, how many slots' last fill resolved to it (`runtime/vk/vk_exec_draw.c`
-`pool_hold()`; a fill that shared another slot's lookup counts for the entry that lookup found). The walk over every
-slot looked each slot up in each submission, which left its entry's use stamp (touch): the idle clock reads it, and
-`start_at()`'s alias rule reads the frame of an entry with GPU content. The check by list is no lookup, so it leaves the
-stamps from these counts (`pool_touch()`): in each submission for the GPU-owned entries, in turn for the others, each
-once in `POOL_TOUCH_DIV` submissions (`IDLE_ROUNDS` is 240 of them). An entry keeps its place until it is destroyed and
-no slot holds it any more: a destroyed one is refilled out of its slots by the bump of its bucket.
+`PRef`: for each, how many slots' last fill resolved to it (`runtime/vk/vk_exec_draw.c` `pool_hold()`; a fill that
+shared another slot's lookup counts for the entry that lookup found). The walk over every slot looked each slot up in
+each submission, which left its entry's use stamp (touch): the idle clock reads it, and `start_at()`'s alias rule reads
+the frame of an entry with GPU content. The check by list is no lookup, so it leaves the stamps from these counts
+(`pool_touch()`): in each submission for the GPU-owned entries, in turn for the others, each once in `POOL_TOUCH_DIV`
+submissions (`IDLE_ROUNDS` is 240 of them). An entry keeps its place until it is destroyed and no slot holds it any
+more: a destroyed one is refilled out of its slots by the bump of its bucket.
 
 - `typedef struct { Tex *e; uint32_t refs; int next; uint8_t gown; } PRef`: e NULL: destroyed, or free (refs 0, next).
 - `static int npref, cpref, pref_free`: `pref_free`: 1 + the first free place.
@@ -979,17 +978,17 @@ FNV-1a; `make_key()` zeroes the key's padding.
 
 ### Drops for a low commit that come back
 
-`tex_lock` held throughout. A texture dropped because the system's commit ran
-low frees its memory only for as long as the game does not ask for it again; when it does, it is made and uploaded again
-and holds the same memory as before. With other programs holding 49 of an 84 GB limit, the commit sat at the low line
-for whole sessions: 340 to 590 released textures a second went, most were made again within seconds (178 re-uploads a
-second against 21 without the drops), and the uploads inside the draws held the texture lock and the game's threads
-behind it, a 35-45 ms frame several times a second, while the commit stayed where it was. So each drop under the commit
-rule notes its texture (by its key, `CB_SLOTS` slots, the newest wins), and a texture made again within `CB_WITHIN`
-presents counts as come back. Over each `CB_PERIOD`, when at least `CB_MIN_DROPS` went and half or more came back, the
-commit drops (released entries and idle live ones) pause for `CB_HOLD_MIN` presents, doubled at each such period up to
-`CB_HOLD_MAX`; a period in which fewer came back ends the doubling. Below half the low line (`commit_critical`) nothing
-pauses: there the commit running out ends the game.
+`tex_lock` held throughout. A texture dropped because the system's commit ran low frees its memory only for as long as
+the game does not ask for it again; when it does, it is made and uploaded again and holds the same memory as before.
+With other programs holding 49 of an 84 GB limit, the commit sat at the low line for whole sessions: 340 to 590 released
+textures a second went, most were made again within seconds (178 re-uploads a second against 21 without the drops), and
+the uploads inside the draws held the texture lock and the game's threads behind it, a 35-45 ms frame several times a
+second, while the commit stayed where it was. So each drop under the commit rule notes its texture (by its key,
+`CB_SLOTS` slots, the newest wins), and a texture made again within `CB_WITHIN` presents counts as come back. Over each
+`CB_PERIOD`, when at least `CB_MIN_DROPS` went and half or more came back, the commit drops (released entries and idle
+live ones) pause for `CB_HOLD_MIN` presents, doubled at each such period up to `CB_HOLD_MAX`; a period in which fewer
+came back ends the doubling. Below half the low line (`commit_critical`) nothing pauses: there the commit running out
+ends the game.
 
 - `static uint64_t n_commit_back, n_commit_held`: since the last perf line.
 
@@ -1200,10 +1199,10 @@ read their pools over PCIe brought the game to 11-20 fps, while no texture had b
 When a lookup last reached an entry: `entry_of()` (every texture get and slot resolution) and the per-submit check of a
 slot lookup (`vk_texture_by_id_locked()`). The texture pool refresh looks every registered slot up once in each
 submission that draws through the pool (`runtime/vk/vk_exec_draw.c` `pool_sync_entries()`), so an entry no lookup
-reached for `IDLE_ROUNDS` such submissions and `STALE_FRAMES` presents has no live descriptor naming it: the
-game keeps the texture object, nothing samples it. The clock is `look_round`, which only a submission whose slot checks
-reached half of the registered pool slots moves on (`vk_texture_new_submit()`): counted in submissions, a pause screen
-or a fade that draws nothing through the pool made the whole world's textures idle within seconds.
+reached for `IDLE_ROUNDS` such submissions and `STALE_FRAMES` presents has no live descriptor naming it: the game keeps
+the texture object, nothing samples it. The clock is `look_round`, which only a submission whose slot checks reached
+half of the registered pool slots moves on (`vk_texture_new_submit()`): counted in submissions, a pause screen or a fade
+that draws nothing through the pool made the whole world's textures idle within seconds.
 
 With `NX2SARIA_POOL_FAST` the refresh checks the entries by list instead (`vk_texture_pool_fresh_locked()`), which is no
 lookup. Such a submission counts for the clock all the same, and the entries the pool's slots hold get their stamp from
@@ -1437,10 +1436,10 @@ mirror request with nothing idle, every eighth submission walked every texture a
 marks".
 
 The game keeps the textures of the areas it has loaded registered in the pool, and the pool refresh looks every
-registered slot up, so `idle()` never holds for them, and their memory, which the driver charges to the system's
-commit, only grew. Marked shaders tell which slots they sample: `vk_pool_marks_read()` sets `samp_frame` of the texture
-of each marked slot. Where `evict_idle()` frees too little, `evict_disused()` takes live textures that come back intact
-and that nothing sampled for `DISUSE_FRAMES` presents, least recently sampled first, in two steps:
+registered slot up, so `idle()` never holds for them, and their memory, which the driver charges to the system's commit,
+only grew. Marked shaders tell which slots they sample: `vk_pool_marks_read()` sets `samp_frame` of the texture of each
+marked slot. Where `evict_idle()` frees too little, `evict_disused()` takes live textures that come back intact and that
+nothing sampled for `DISUSE_FRAMES` presents, least recently sampled first, in two steps:
 
 - Retired (retire): the entry stays whole, but the pool refresh no longer resolves a slot to it (`slot_resolve()`), so
   every slot that names it gets the kind's stand-in. Any use in the meantime takes it back as it is (`retire_cancel()`):
@@ -1472,10 +1471,10 @@ was missed and two have arrived.
 
 ### The marks' state and the disuse counts
 
-Whether the scene is being drawn, from the marks: `marks_peak` is the most slots one read marked lately
-(in 1/256, halving in about a minute of reads), `marks_live` the reads in a row that marked at least a quarter of it. A
-pause screen, a menu or a fade draws next to nothing through the pool for longer than `DISUSE_SECONDS`: every texture of
-the scene behind it then counted as unsampled, went under memory pressure, and the scene came back as stand-ins.
+Whether the scene is being drawn, from the marks: `marks_peak` is the most slots one read marked lately (in 1/256,
+halving in about a minute of reads), `marks_live` the reads in a row that marked at least a quarter of it. A pause
+screen, a menu or a fade draws next to nothing through the pool for longer than `DISUSE_SECONDS`: every texture of the
+scene behind it then counted as unsampled, went under memory pressure, and the scene came back as stand-ins.
 `evict_disused()` waits for two such reads in a row: the first one after a pause is what notes the scene's textures as
 sampled again.
 
@@ -1561,11 +1560,10 @@ format and flags; up to 8 ids of each.
 
 ### `marks_check()`
 
-`NX2SARIA_TRACE=perf`, from `vk_pool_marks_read()`: a shader sampled slot id, and nothing has ever put
-content into e, the entry the slot shows or one credited with the mark (`no_content()`): the picture drawn through it is
-an empty or undefined image, which nothing else reports. One line per entry and up to `MARK_LINES` per address
-(`said_at()`); the marked slots that met such an entry are counted in the texture origins line whether or not a line was
-written.
+`NX2SARIA_TRACE=perf`, from `vk_pool_marks_read()`: a shader sampled slot id, and nothing has ever put content into e,
+the entry the slot shows or one credited with the mark (`no_content()`): the picture drawn through it is an empty or
+undefined image, which nothing else reports. One line per entry and up to `MARK_LINES` per address (`said_at()`); the
+marked slots that met such an entry are counted in the texture origins line whether or not a line was written.
 
 - `static uint64_t n_mark_empty, n_mark_none`: since the last perf line: marked slots that met such an entry; that show
   none.
@@ -1931,13 +1929,13 @@ bytes before they are read. 0 when no replay is recording (e is then not initial
 
 ### Descriptors whose image creation failed
 
-After a failure (VRAM exhausted, an unsupported format) a descriptor is not tried again for 2 s, so a draw that
-names one every frame does not repeat a failing allocation on every use. Texture lock held.
+After a failure (VRAM exhausted, an unsupported format) a descriptor is not tried again for 2 s, so a draw that names
+one every frame does not repeat a failing allocation on every use. Texture lock held.
 
 ### `start_line()`
 
-`NX2SARIA_TRACE=perf`: a line for each event of the two kinds that can leave a descriptor showing an
-image without content, up to `START_LINES` per address and kind (`said_at()`).
+`NX2SARIA_TRACE=perf`: a line for each event of the two kinds that can leave a descriptor showing an image without
+content, up to `START_LINES` per address and kind (`said_at()`).
 
 - over: e, which the CPU writes, was made over the live entry `over` and is filled from its storage. `over` stays as it
   is, and a slot that names its descriptor goes on showing it, whatever it holds.
@@ -2049,8 +2047,8 @@ An entry the GPU drew into since its last write-back holds texels its storage la
 the storage to the game (a budget, a commit or video memory squeeze, its release, a replacement at its address), a
 texture the game makes again from that storage (the drawn-once maps the fence write-back is for, moved or remade) would
 start from what the storage held before the GPU drew. Such an entry goes back first when the fence write-back would take
-it (`wb_wanted()`) and the CPU has not rewritten its storage since; the commit drop pause counts it the same
-either way. Not an entry another target drew over (`DROP_OVERWRITTEN`: the storage is the newer one's), nor at shutdown.
+it (`wb_wanted()`) and the CPU has not rewritten its storage since; the commit drop pause counts it the same either way.
+Not an entry another target drew over (`DROP_OVERWRITTEN`: the storage is the newer one's), nor at shutdown.
 
 ### `wb_wanted()`
 
@@ -2405,8 +2403,8 @@ speckled fringe (the inventory's character preview). The game's own wrap modes d
 
 ### DLSS upscaling
 
-`dlss_bias` (`vk_sampler_dlss_bias()`): the scene's material textures, the filtered mipmapped ones that
-repeat, are sampled for the output's resolution; clamped ones (post effects, LUTs, the UI) keep the game's bias.
+`dlss_bias` (`vk_sampler_dlss_bias()`): the scene's material textures, the filtered mipmapped ones that repeat, are
+sampled for the output's resolution; clamped ones (post effects, LUTs, the UI) keep the game's bias.
 
 ### `vk_sampler_dlss_bias()`
 
@@ -3330,10 +3328,10 @@ lately (the caller then takes the one sampled longest ago).
 
 ### The wall clock of the presents
 
-The cache stamps its textures with present counts (`gfx_counters.frames`), and the
-presents per second change with the scene and the menus: a hold counted in presents would be shorter in wall time after
-a fast stretch. The clock notes the present count once a second or so (tick) and answers how many seconds ago a present
-was, rounded down to the tick after it: a texture is taken as at most that old, never older.
+The cache stamps its textures with present counts (`gfx_counters.frames`), and the presents per second change with the
+scene and the menus: a hold counted in presents would be shorter in wall time after a fast stretch. The clock notes the
+present count once a second or so (tick) and answers how many seconds ago a present was, rounded down to the tick after
+it: a texture is taken as at most that old, never older.
 
 - `#define TRL_CLOCK_N 2048`: ticks kept: at least 2048 s, more than twice `TRL_HOLD_MAX_S`.
 
@@ -3352,14 +3350,14 @@ one before the oldest tick kept is as old as that tick, at least `TRL_CLOCK_N` -
 
 ### The rate the short waits go by
 
-`runtime/vk/vk_texture.c` counts them in presents (PRESENTS(n): n presents at 60 a
-second: how long after its release a texture may go, how long without a sample makes one idle) and scales them by the
-presents a second, kept as a multiple of 60 in 1/256. Above 60 they always were scaled. Below 60 they were not: the rate
-stopped at 60, so "120 presents" was 4 s at 30 presents a second and 5.7 s at 21, and every texture the game let go of
-stayed out of the VRAM pressure's reach that much longer. The game lets go by the second, as the player moves, so what
-the window holds grows with its length: in a tester's log (RTX 4070 SUPER at 2560x1440, 2026-11-14) it held 442 MiB at
-60 presents a second and 2,105 MiB at 21, on a card then 600 MiB over its budget. The rate follows the presents down to
-`TRL_RATE_MIN` now (low 1; 0: stops at 60, as before).
+`runtime/vk/vk_texture.c` counts them in presents (PRESENTS(n): n presents at 60 a second: how long after its release a
+texture may go, how long without a sample makes one idle) and scales them by the presents a second, kept as a multiple
+of 60 in 1/256. Above 60 they always were scaled. Below 60 they were not: the rate stopped at 60, so "120 presents" was
+4 s at 30 presents a second and 5.7 s at 21, and every texture the game let go of stayed out of the VRAM pressure's
+reach that much longer. The game lets go by the second, as the player moves, so what the window holds grows with its
+length: in a tester's log (RTX 4070 SUPER at 2560x1440, 2026-11-14) it held 442 MiB at 60 presents a second and 2,105
+MiB at 21, on a card then 600 MiB over its budget. The rate follows the presents down to `TRL_RATE_MIN` now (low 1; 0:
+stops at 60, as before).
 
 - `#define TRL_RATE_MIN 64u`: 15 presents a second: fewer count as 15.
 - `#define TRL_RATE_MAX 2048u`: 480 presents a second.
