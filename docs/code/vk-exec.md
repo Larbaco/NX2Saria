@@ -1952,6 +1952,1221 @@ not (`gpuc_setting_line`), and the shader preparation says which card it builds 
   Returns -1 and empties both when there is nothing to say: Auto, a `gpu_name` set, a discrete card picked, or no
   discrete card to use.
 
+## `runtime/vk/vk_exec.c`
+
+The op-stream replay core of the Vulkan back end: walks the command handles of one submission into its command buffer,
+keeps render targets and fixed-function state, opens and closes dynamic rendering passes and records clears and
+barriers. Draws, binds and dispatches go to `vk_exec_op_draw` (`runtime/vk/vk_exec_draw.c`); copies, counters, events
+and conditional rendering to `vk_exec_op_xfer` (`runtime/vk/vk_exec_xfer.c`). Images stay in `VK_IMAGE_LAYOUT_GENERAL`
+(`runtime/vk/vk_texture.c`); full memory barriers order passes, clears and whatever those two record between them.
+
+The op loop handles END / BEGIN / JUMP / CALL and the pure-state ops, applies the state defaults, keeps render targets
+until they change and skips clears while rendering is disabled. A pass has GENERAL-layout attachments, LOAD/STORE and a
+render area from the smallest attachment, with a full barrier before it.
+
+- `x_cur`: The replay state this thread records with now (inside `vk_exec_record`, or a test's `vk_exec_probe_inline`),
+  NULL when it records none: `vk_exec_inline_begin` hands out its command buffer.
+
+### Parallel groups
+
+(`NX2SARIA_REPLAY_WORKERS`; "replay workers" below). A chunk: a part of a group's ops that one thread records into a
+command buffer of its own, from the replay state the front pass left at its first op.
+
+- `GROUP_CHUNKS`: chunks a group is cut into at most: `RW_MAX` workers and the submitting thread.
+- `LIVE_GROUPS`: groups handed out whose command buffers are not in their part yet, at most.
+- `Chunk`:
+  - `VkExec ex`: the state at its first op, then the state it records with.
+  - `const op_hdr *h`: its first op.
+  - `uint32_t nops`: the ops it records (JUMPs not counted).
+  - `uint32_t cond0, ncond`: its render conditions' decisions in its group's cond.
+  - `uint64_t oq`: the occlusion counting at its first op (`vk_exec_xfer_chunk_state`).
+  - `uint32_t slot0, nslots`: its block of occlusion query slots (`vk_exec_xfer_slots`).
+  - `uint32_t brk`: its ops that are not state or a draw (`vk_exec_brk_now`).
+  - `int idx`: in its group: 0 runs the group's pass hooks.
+  - `Group *g`: its group.
+- `Group`:
+  - `uint8_t *cond`: the decisions of the group's render conditions, in stream order.
+  - `volatile int32_t hooks`: chunk 0 began its first pass (or ended): the others may start.
+  - `volatile int32_t ndone`: its chunks done.
+  - `volatile uint64_t seq`: its number: Q.out when it was handed out (`vk_exec_stream_pos`).
+  - `uint32_t upd`: the submission's inline uniform updates before it (`vk_exec_upd_top`).
+  - `int at`: its chunks' places in the part's list (`vk_sync_append_later`).
+  - `uint64_t out_ns`: when it was handed out.
+- `GQ`: Group number s is `GQ[s % LIVE_GROUPS]`. Its chunks wait in Q in the order of the stream once it is handed out;
+  the workers (and the submitting thread, while it waits) take them in that order.
+- `Q`:
+  - `Chunk *q[QN]`: chunk number i of those handed out is `q[i % QN]`.
+  - `volatile uint64_t put, take`: chunks handed out, taken.
+  - `volatile uint64_t done`: every group up to this number has all its chunks done.
+  - `uint64_t out, drained`: the submitting thread: groups handed out, and put into their parts.
+- `done_lock`: Q.done moves on (`groups_done_advance`).
+- `rw_chunk`: the chunk the calling thread records, NULL outside one.
+- `replay_counts`: A chunk is written only by the thread recording it. The submitting thread's other work is local until
+  the submission ends. Publishing whole batches avoids contention per draw; a concurrent present can report a completed
+  batch in a later frame instead of the frame in which the worker counted it.
+
+### `vk_exec_usnap_hit()`
+
+- `else vk_usnap_hits_add(1)`: a probe or an out-of-replay diagnostic has no submission to flush.
+
+- `rw_behind`: The submitting thread records on past groups whose chunks may not all be done yet
+  (`NX2SARIA_REPLAY_PIPE`).
+- `enum { PW_NEXT, ... }`: Why it waited for them (`RW.pw_*`): room for the next group, an op chunks never record, a
+  pass's hooks, an effect that waits for its turn (`vk_exec_turn`), a texture entry, a part split, the submission's end;
+  and the waits that found every group done already.
+- `rw_op`: in a chunk: the op it records (`vk_exec_mesh_run` reads on from it).
+- `rw_ordered`: every earlier chunk of its group is done.
+- `tfr_lock`: target frames (`runtime/vk/vk_target_frames.h`) noted by several chunks at once.
+
+### `NX2SARIA_TRACE=gfx` frame counters
+
+- `fw`: textures written this frame.
+
+### Draw runs
+
+(`NX2SARIA_REPLAY_RUNS=1`, diagnostics for recording a submission on several threads) How the draws of a frame fall into
+runs that a recording thread of their own could take: a run is the draws between two ops that have to stay in the
+replay's order on one thread (dispatches, copies, texture and buffer clears, events, the game's barriers, a held
+submission going on, the end of a submission). The ops a run carries that a serial front pass would have to settle in
+order before the threads record (counter reports and resets, render conditions, inline uniform updates, render target
+changes, attachment clears) are counted apart. Every 600 presented frames one line: the draws per frame, the share of
+them in runs of at least 16, 64 and 256 draws, the runs, and the breaks by kind.
+
+- `RR`:
+  - `uint32_t draws`: of the run open now.
+
+### `vk_exec_frame_log()`
+
+- A frame boundary in replay order: `runtime/vk/vk_backend.c` `present_image()` runs it under the submission lock, or
+  the next submission does (`runtime/vk/vk_frame_owed.h`).
+- `vk_exec_phases_frame(frame)`: `NX2SARIA_REPLAY_PHASES` (`runtime/vk/vk_exec_draw.c`).
+
+### `state_reset()`
+
+NVN defaults of the replay state (`nvn_mtl.m`).
+
+### Render targets
+
+### `view_format()`
+
+A view format other than the texture's is used when both map directly and have the same texel size (the image is created
+`MUTABLE_FORMAT` for colour formats). blocks: t is a BC texture with `block_views`, and the view an uncompressed format
+whose texel is one of its blocks.
+
+### 3D BC render targets
+
+A 3D BC texture has no block views (`runtime/vk/vk_texture.c` `create_tex()`, `NX2SARIA_BLOCK_VIEWS_3D`): on RDNA2 cards
+such an image made `BLOCK_TEXEL_VIEW_COMPATIBLE` and `2D_ARRAY_COMPATIBLE` took GPU writes past the end of its memory
+(issue `#5`). Draws into it through an uncompressed view of its blocks (agl's BC4 encoder fills 32x32x32 and 64x64x64
+volumes and their levels at the logo) go to a stand-in: a 2D array of the blocks of one level in the view's format, one
+layer per depth plane. It starts with the level's content, so a pass that writes part of a plane keeps the rest, and
+each pass end copies the planes it drew into the level (a copy between a compressed and a size-compatible uncompressed
+format).
+
+- `BC_STANDINS`: one per level drawn: 6 volumes of up to 7 levels at the logo.
+- `bcs_lock`: the replay adds and reads; `destroy_tex` (any thread) removes.
+
+### `bc_standin()`
+
+The stand-in of level level of a 3D BC image for draws through view format fmt, made on first use; 0 when none can be
+made (logged). Replay thread.
+
+- In the upload batch, which goes to the queue before this part: GENERAL, then the texture's blocks.
+- `.extent = {lw, lh, s.d}}`: texels of the compressed source.
+
+### `vk_exec_bc_gone()`
+
+`runtime/vk/vk_exec_draw.c` `vk_exec_image_gone()`: the stand-in of a BC image that goes, freed once the GPU is done
+with it.
+
+### `bc_copy_back()`
+
+At a pass end: the planes the pass drew into a stand-in go to its texture.
+
+- `.extent = {bcs[i].w, bcs[i].h, t->layers}}`: texels of the uncompressed source.
+
+### `bc_target()`
+
+A draw into a 3D BC image without block views through an uncompressed view of its blocks: the target is the image's
+stand-in (`bc_standin`). 1 when o is filled (target or left out), 0 for any other target.
+
+- `o->image = s.img`: not `img->image`: `view_of` makes this command buffer's view of the stand-in.
+
+### `resolve_target()`
+
+- `if (img && !depth_slot && bc_target(t, v, has_v, img, o)) return`: a 3D BC image: its stand-in.
+- `int is3d = img && img->type == VK_IMAGE_TYPE_3D && !depth_slot`: slices drawn through 2D views
+  (`2D_ARRAY_COMPATIBLE`).
+- A replay worker's lookup that needs its turn returns no image (`vk_texture_deferred`), and the op is replayed again in
+  turn (`resolve_rt`'s callers): not a target left out, so not logged as one. Logged, the first such lookup read as if
+  the game drew into depth or cube targets the replay could not render.
+- A 3D level's depth planes take the place of layers (Vulkan views them as the array layers of a 2D array view).
+- `if (blocks)`: a BC texture takes draws only through an uncompressed view of its blocks.
+- `if (layers > 1)`: an uncompressed view of a BC image has one layer (no maintenance6 here).
+- `if (blocks) o->width = (o->width + 3) / 4, o->height = (o->height + 3) / 4`: the view's extent: 4x4 blocks.
+
+### `vk_exec_noatt_dims()`
+
+The size of a pass without attachments: the far corner of viewport 0, else of the scissor, 1..16384.
+
+- NX2Saria draws a fragment shader that only writes a storage buffer into a 1x1.
+- viewport; a pass sized by the viewport's width alone puts an offset viewport outside the scissor, and the cave rock.
+- Loses its ambient light.
+
+### `resolve_rt()`
+
+Resolves `ex->rt` to this command buffer's images and derives the pass parameters and the pipeline's target formats.
+
+### `view_of()`
+
+The attachment view of a target. A registered texture's view lives as long as its image (`vk_exec_target_view`); any
+other image's view, and that of a texture destroyed since the target was resolved (gone: its record is freed only after
+this submission, `vk_defer_free`), is made for this command buffer and freed at its fence.
+
+- `if (t->blocks) ci.pNext = &use`: not the BC image's sampling and transfer usages.
+
+### `free_views()`
+
+Completion thread, once the submission that used them is done.
+
+### Target history
+
+(`runtime/vk/vk_target_frames.h`: the table, what recent and steady mean, and the pass verdict).
+
+- `vk_exec_steady_passes`: lookups a steady target alone made per-frame (`vk_exec_targets_recent`).
+
+### `vk_exec_targets_recent()`
+
+`tfr_pass_recent` for the current pass; `vk_exec_steady_passes` counts the lookups that only a steady target made
+per-frame.
+
+### `vk_exec_targets_describe()`
+
+One line naming each target of the current pass: format, extent, layer and the two frames it was last rendered in
+(`prepare_draw`'s pipeline wait log).
+
+### Passes and barriers
+
+### `barrier_game()`
+
+Full barrier. The images in the feedback layout become `want[]` (pass begin) or none (every other barrier): the others
+go back to GENERAL and the new ones leave it, in the same command. `NX2SARIA_BARRIER_GAME` (1; 0: every pass begin and
+dispatch a full barrier; ab: in the B blocks): the game's own barriers order its work, as on the Switch. A pass that
+samples what an earlier one drew, a dispatch that reads what another dispatch wrote, an indirect draw whose arguments a
+dispatch wrote: on the Switch each needs `nvnCommandBufferBarrier` (`ORDER_*` and `INVALIDATE_*` bits) in the game's
+command stream, which the replay keeps as a full barrier (`OP_BARRIER`). What the GPU orders by itself there is kept: a
+switch between graphics and compute work drains the one before (the 3D and compute classes share the engine). With every
+pass begin and every dispatch a full barrier, 2.3 ms of a 9.7 ms GPU frame in Kokiri Forest was barriers. With the
+switch:
+
+- A pass begin after an earlier pass and no dispatch since the last full barrier gets an attachment barrier (colour and
+  depth/stencil output before the next pass's loads and writes: Vulkan orders attachment access only inside one pass
+  instance), after neither nothing;
+- A dispatch after other dispatches only gets none;
+- A pass after a dispatch, and a dispatch after a pass, get a full barrier, the drain of the switch;
+- Either gets a full barrier as before after one the replay itself asked for (`vk_exec_barrier`: its copies, clears,
+  fills, uniform updates and stand-in copies call it before their commands, which sets `bar_dirty`), and when
+  feedback-loop targets change layout.
+
+Copies, clears and the game's barriers keep their full barriers.
+
+The default is 1 on NVIDIA GPUs and 0 on every other. The game placed its barriers for an NVIDIA GPU, and what it left
+out is what such a GPU orders by itself; Vulkan asks for a barrier wherever a pass samples what an earlier pass drew or
+a dispatch reads what an earlier one wrote, whether the game recorded one or not. On an RTX 5090 the picture was the
+same with the switch on and off (34 screenshots across A/B blocks in Kokiri Forest) and the GPU time fell by 0.5 to 0.6
+ms of 5.4 a frame; no other vendor's driver has run it, so there the setting has to be turned on by hand.
+
+### `barrier_to()`
+
+`NX2SARIA_TRACE=perf`: barriers per frame by kind (`vk_exec_barrier_log`).
+
+### `barrier_to_why()`
+
+- `if (why == BR_OTHER) ex->bar_dirty = 1`: also when it falls together with the last one: its commands follow.
+- `if (why != BR_OTHER) ex->bar_dirty = 0`: after `BR_OTHER` the replay's own commands follow: the next pass or.
+- `ex->bar_passes = ex->bar_dispatches = 0`: dispatch orders after them.
+
+### `vk_exec_pass_begin()`
+
+- `if (vk_texture_deferred()) return`: a chunk's lookup waits for its turn (`chunk_record`): the op is replayed again.
+- A parallel group's targets do not change: its pass hooks, which follow the frame pass by pass, run in its first chunk,
+  which the others start after (`chunk_record`), and at that chunk's first pass alone: a pass it begins again later may
+  come after the hooks of passes further on in the stream (`runtime/vk/vk_pass_hooks.h`).
+- The submitting thread past a group: the hooks read what its first chunk's left, and wait for the whole group where
+  they change what its draws read (`vk_exec_hook_turn`).
+- `vk_dlaa_pass(ex)`: DLAA runs before the bloom chain's first pass (`runtime/vk/vk_dlaa.c`).
+- `vk_dlaa_retarget(ex)`: after DLSS ran before the bloom: the passes it moves to the picture's size
+  (`runtime/vk/vk_dlaa.c`).
+- Learned targets (`VkTexImage.fb_learned`) are attached in the feedback layout.
+- `barrier_to_why(ex, want, wasp, nwant, BR_PASS)`: passes, clears, copies and dispatches see each other's results.
+- The start mark goes between the barrier and `vkCmdBeginRendering`, its end right after `vkCmdEndRendering`
+  (`vk_exec_pass_end`): outside the pass, and without breaking it.
+- `VkPassMark *m = ex->mark = rw_chunk ? NULL : vk_pass_mark_begin(ex->cb, VK_MARK_PASS, ex->fence)`: one ring.
+- The shaders bound now are the first draw's when it repeats the pipeline state; when it does not,
+  `runtime/vk/vk_exec_draw.c` `prepare_draw()` replaces them as it records the new state.
+
+### `vk_exec_pass_end()`
+
+- `vk_exec_frame_log` resets the frame counters at a present (`NX2SARIA_TRACE=gfx`): then only the draws since it count.
+- `for (int i = 0; i < ex->pass_ncolor && i < 8; i++)`: stand-ins of 3D BC targets go to their textures.
+- The targets are marked written outside `tfr_lock`: `vk_texture_gpu_written` takes the texture lock, and a chunk that
+  holds the texture lock can end its pass here (a lookup's alias copy, `vk_exec_inline_begin`) and then wait for
+  `tfr_lock`. Taken the other way round, a chunk holding `tfr_lock` and waiting for the texture lock deadlocked with it,
+  the other chunks spinning in their turns (the loading screen after Continue, 3 replay workers). `tfr_lock` guards only
+  the target history and takes no other lock inside.
+- `vk_dlaa_pass_end(ex)`: a jittered pass left its targets' outer rows or columns undrawn.
+
+### `vk_exec_inline_begin()`
+
+- `vk_exec_barrier(ex)`: ends the pass; feedback-layout targets go back to GENERAL.
+
+### `vk_exec_inline_end()`
+
+- `VkExec *ex = x_cur`: set: the caller's `vk_exec_inline_begin` handed out its command buffer.
+
+### `free_inline_buf()`
+
+Completion thread.
+
+### `vk_exec_inline_buffer()`
+
+- `vk_completion_add(x_cur->fence, free_inline_buf, t)`: inside `vk_exec_inline_begin` and `_end`.
+
+### `vk_exec_scissor()`
+
+- `if (vk_dlaa_target_scale(ex, &sx, &sy))`: a pass DLSS moved to the picture's size
+  (`runtime/vk/vk_dlaa.c` `vk_dlaa_retarget()`).
+
+### Clears
+
+### `whole_target()`
+
+Outside a pass, a clear of a whole target (no narrower scissor, the target as large as the render area) clears the image
+directly instead of opening a pass for it.
+
+- `vkCmdClear*Image` addresses a 3D level whole, not one depth plane: slices of a 3D target clear in a pass; it cannot
+  clear a compressed image: views of BC blocks clear in a pass too.
+
+### `clear_attachment()`
+
+- `vk_exec_feedback_war(ex, bit)`: a draw of this pass sampled it: its reads finish before the clear writes.
+
+### `clear_cond_log()`
+
+`NX2SARIA_LOG_RCOND=1`: clears issued under a render condition (the first 400), run or skipped, with their target.
+
+- `if (on == 2 && index < 0 && ex->has_render_cond && ex->depth.width >= 1600)`: full-size depth clears, all of them.
+
+### `clear_color()`
+
+- `if (mask != 0xf)`: `vkCmdClearAttachments` ignores write masks; a masked clear needs a draw
+  (`runtime/vk/vk_exec_draw.c`).
+- `memcpy(cv.float32, c->rgba, sizeof cv.float32)`: integer targets: the payload's bits as the front end stored them.
+
+### The op loop
+
+### `set_rt()`
+
+- `if (!memcmp(&ex->rt, r, sizeof *r)) return`: the same targets again: the pass goes on.
+
+### Command buffer parts
+
+NVN starts the GPU as soon as commands are submitted; one Vulkan command buffer per submission starts it only after the
+whole replay. Between passes, once `NX2SARIA_SPLIT_DRAWS` (64; 0 off) draws and dispatches were recorded since the last
+part, the part goes to the queue (`vk_sync_split`) and the replay continues in a new command buffer. Only command-buffer
+state is lost there (bindings and dynamic state: `vk_exec_draw_new_cb`, `ex->dirty`); barriers, layouts and queries are
+not: a barrier's first scope is everything earlier in submission order, image layouts belong to the image, and occlusion
+queries end with their pass. Fences, completion callbacks and reports stay per submission: only the last part signals
+the value. The texture pool set a part binds is sealed when the part goes (`vk_exec_pool_split`): later parts write and
+bind another, and a part is not split off while no other set is free of this submission. A part also spans at least
+`NX2SARIA_SPLIT_US` (1000) of replay time: a split costs about 40 us of the render thread (`vkQueueSubmit2`, a command
+buffer, the mirror prologue), and a fight frame of 2,000 draws made 15 parts on the 7900X; a millisecond of recording is
+a fraction of a millisecond of GPU work, so the GPU still starts early. With `NX2SARIA_SPLIT_IDLE=1`, neither limit
+holds the first part of a submission back while the GPU has run everything submitted: it goes at the first pass boundary
+after a draw or dispatch. Each frame the game's thread waits for the GPU to run the frame's first submission
+(`runtime/nvn/nvn_api_core.c` `nvnQueueSubmitCommands`, `NX2SARIA_SUBMIT_FINISH`), so the GPU is idle when the next one
+replays, and waited for the first 64 draws and 1 ms of it in Kokiri Forest (2026-11-09). Off by default: with it the
+foliage of Kokiri Forest flickered (RTX 5090, 2026-11-09), and the parts it cuts that early are the one thing it
+changes; why they matter is not known yet. Both limits also split inside a pass (`NX2SARIA_SPLIT_IN_PASS`, on): the pass
+ends there and the next draw begins it again in the new part, as after a barrier (attachments load and store; occlusion
+queries continue in a new segment). Kokiri Forest's two scene passes of ~500 draws take 2-4 ms each to replay and most
+of the frame's GPU time; split only between passes, the GPU waited for each whole pass, idle up to 3.6 ms a frame
+(2026-11-09). After the time limit held a part back, the clock is read again only 8 draws later (`split_at`): read after
+every command, it was 4% of the replay in Kokiri Forest.
+
+### The early tail
+
+(`NX2SARIA_TAIL_EARLY`, default 1 since 0.10.0; 0 turns it off) Standing in Hyrule Field with FSR 4 (RX 7900 XT,
+2026-11-13) a frame's main submission ends with one part of 4.7 ms of GPU time, the temporal upscaler and the interface
+drawn after it, and one of 1.4 ms, the write-backs of what the shaders wrote into VRAM mirrors. The game waits for all
+of it before it writes the next frame's data (the wait after a frame's first submission, `runtime/nvn/nvn_api_core.c`,
+and its own fence waits), about 7 ms in which the replay thread has nothing to record. What the game reads of the
+submission is done before the upscaler runs: the occlusion and counter reports, the event values, and the write-backs'
+bytes, which only came last. After it the stream holds two timestamp reports, and inline uniform updates for the
+interface's draws (64 bytes into one mirrored block, some thirty times), and nothing else the CPU sees. So from the
+upscaler on (`runtime/vk/vk_dlaa.c` evaluate) the replay records the tail into a command buffer of its own
+(`vk_sync_cut`), without splits or parallel groups. An inline uniform update of a mirrored block in it takes no
+write-back: the GPU copies the bytes into the mirror in stream order as ever, and guest memory gets them from the CPU
+with the submission's results (`runtime/vk/vk_exec_draw.c` `op_update_ub()`,
+`runtime/vk/vk_exec_xfer.c` `vk_exec_tail_ub()`). At the submission's end, when the tail turned out to hand the CPU
+nothing but timestamps (`vk_exec_tail_results`), to write no other pool memory (`vk_mem_gpu_wrote_count`) and to bind no
+memory the GPU reads from the game's own pages (`vk_mem_live_swap`: a pool without a mirror, a device address table),
+the write-backs are recorded into a command buffer that goes to the queue before the tail's, with the executed
+timeline's signal (`vk_sync_tail_hold`, `vk_sync_tail_release`): the GPU runs the same commands, the write-backs before
+the tail. The mirror copies the tail's first uses queued go with that part too, so they read the game's pages before the
+signal. The game's waits then end at that signal and the results the game reads
+(`runtime/vk/vk_sync.c` `vk_sync_exec_wait()`, `vk_sync_game_wait()`), and the GPU runs the tail while the game and the
+replay are at the next frame. A timestamp reported in the tail is written then with the time the tail is expected to end
+at (`runtime/vk/vk_exec_xfer.c` `counter_cb()`), as the game measures the frame's GPU time with it. A tail that fails a
+test goes as before, the write-backs after it. Measured there, 150 s runs, each pair in one batch: 63.5 against 49.4 fps
+with three replay workers; without them 50.7 against 42.5 standing and 56.0 against 45.9 along the field route, and with
+FSR 3.1, whose tail the GPU runs for 1.2 ms where FSR 4's takes 3.5, 51.8 against 47.8 and 54.9 against 52.3. All but a
+few of the tails passed the tests there; in area loads and some places a tail hands the CPU results and goes as before.
+The pictures matched those without it standing, along the route and through warps to five areas. With the lazy
+write-back (NVIDIA's and Intel's Windows default) every tail was refused there until now: its uniform updates were noted
+as writes, since their write-backs would run before the copies that make the bytes. They go the early way now too
+(`runtime/vk/vk_exec_draw.c` `op_update_ub()`): the bytes reach guest memory at the fence instead of by write-back, and
+a range the lazy fetch path has armed stays refused as before. Not yet measured on those cards. Not with shadow storage,
+emulated mesh shaders, the mesh fallback (`runtime/vk/vk_mesh_path.h`: never measured with the early tail), a frame dump
+or a pass capture, nor inside a chunk or a continuation.
+
+- `TL`:
+  - `int on`: the submission's tail is being recorded.
+  - `int live0`: `vk_mem_live_swap`'s note from before it.
+  - `uint64_t wrote0`: `vk_mem_gpu_wrote_count` when it began.
+  - `uint64_t n, early, why[4]`: since the last perf line: tails; those that went early; those refused by results,
+    writes, late reads, other.
+- `vk_exec_tail_results()`: `runtime/vk/vk_exec_xfer.c`.
+- `vk_mesh_shader_native()`: `runtime/vk/vk_device.c`.
+
+### `vk_exec_split_now()`
+
+- `VkCommandBuffer cb = vk_sync_cut()`: not handed to the queue: the texture pool set stays (`vk_exec_pool_split`).
+
+### `split_wanted()`
+
+- The first part only: later parts of the submission run on the GPU, while done and issued stay as they were.
+
+### `maybe_split()`
+
+- `if (!split_n || TL.on) return`: the tail stays one command buffer (the early tail).
+- `if (Q.drained < Q.out)`: groups the submitting thread went on past go into the part first, once done.
+- `if (__atomic_load_n(&Q.done, __ATOMIC_ACQUIRE) < Q.out) return`: `split_draws` stays: a later op asks again.
+- The first part while the GPU is idle: at a pass boundary only, where a split costs no pass restart.
+- `if (split_ns && kern_now_ns() - part_t0 < split_ns)`: `split_draws` stays: a later draw asks again.
+- `if (ex->in_pass) vk_exec_pass_end(ex), n_pass_splits++`: the next draw begins the pass again, in the new part.
+
+### Event order across the game's queues
+
+Ocarina runs work on a second queue that hands results back and forth with the main one by events: each frame the worker
+submits first, its command buffer waits (WaitEvent) for a signal the main queue gives in its submission a few submits
+later, does a step, signals, waits for the next point of the main queue's frame, and so on, while the main queue waits
+for the worker's signals before it uses the results (Kokiri Forest: about 13 waits a frame, 7 of them reached before
+their signal in submission order). On one Vulkan queue in submission order the worker's steps would run before the work
+they wait for and read the previous frame's results: Link and the other characters were drawn much too dark, at any time
+of day. So a top-level wait whose condition does not hold in replay order (`vk_exec_wait_event`: memory, or the signals
+replayed so far) stops its submission there: the rest becomes a continuation of that queue (Cont), and later submissions
+of the queue line up behind it. After every replayed signal the continuations whose wait now holds go on, inside the
+command buffer being recorded: the open pass ends, a full barrier orders them after what came before (the event's memory
+dependency), the queue's own state replaces the running one while they run, and another barrier and the running state
+come back after. One that would still wait after `CONT_MAX` submissions goes on regardless, as it did before (counted,
+logged). Only with the replay on the submitting thread: the recording copies a continuation reads stay alive there until
+the game recycles them, which it does only after the work ran on the console. `NX2SARIA_EVENT_ORDER=0`: every submission
+in the order it came.
+
+- `Cont`:
+  - `struct Cont *next`: the next submission of the same queue.
+  - `uint64_t *h`: private copies of the recordings it has still to walk (`cont_new`), the one being walked.
+  - `const op_hdr *at`: the wait it stopped at in `h[i]` (NULL: not started).
+  - `uint64_t since`: `vk_exec_submit_seq` when it stopped.
+  - `int has_st`: st holds the queue's state (else the running state carries over, as for any submission).
+- `evq_peek`: What `vk_exec_held_ready` needs of each queue's first continuation, as a copy
+  (`runtime/vk/vk_evo_peek.h`): it runs without the submission lock (`runtime/vk/vk_sync.c` `sub_lock`) while another
+  thread may free that continuation (`evo_resume`). Published under that lock by `peek_publish` wherever `evq[s].head`,
+  or the head's at or since, changes.
+- `evo_on`: knob; inside a continuation.
+- `evo_queue`: queue of the stream being walked (0: it cannot stop at a wait).
+- `evo_pending`: Continuations held: written under the submission lock (`cont_push`, `evo_resume`), read by any thread
+  (`vk_exec_held`).
+- `evo_held`: since the last perf line.
+
+### Event order trace (`NX2SARIA_EVO_TRACE=1`, diagnostics)
+
+The order in which a frame's submissions, waits, signals and held parts were replayed, as a string of tokens:
+`|<queue>.<n>` a submission of n command buffers on that queue; p it lines up behind held work of its queue; `m<e>` a
+wait on event e that holds; `u<e>` one that does not; h the submission stops there; `s<e>=<v>` a replayed signal;
+`r<queue>` held work of that queue goes on; w it stops at a wait again; d it is through; F it went on without its
+signal; `c<e>=<v>` the CPU signals an event (`nvnEventSignal`, on whatever thread, where the call came between the
+others); `L<e>` a wait that holds only by a CPU signal that came after the submission took its copies
+(`runtime/vk/vk_exec_xfer.c` "events the CPU signals"). Events and queues are numbered in the order they first appear; a
+value of 16 or more is written n, as a counter would make every frame's string its own. Every distinct string is logged
+once with its number, and the numbers of the frames are logged sixty to a line, so the frames that were replayed in
+another order than usual can be set against the pictures of the flight recorder.
+
+### `cont_new()`
+
+Holds `h[from..n`), stopped at `at` in `h[from]` (NULL: from its start). The recordings are copied: the game records a
+command buffer again once the fence it took after the submission is done, and that fence does not wait for a held part
+(it signals with the submission that held it).
+
+### `peek_publish()`
+
+Publishes queue s's first continuation for `vk_exec_held_ready` (`evq_peek`): whether one is held, the wait it stopped
+at, copied out of its private recording, and when it stopped.
+
+### `cont_push()`
+
+- `__atomic_store_n(&evo_pending, evo_pending + 1, __ATOMIC_RELAXED)`: the only writer: under the submission lock.
+
+### `st_swap()`
+
+Swaps the queue state in ex with buf (`ST_HI` - `ST_LO` bytes); what the swapped-in state names is bound again.
+
+### The gate
+
+A submission that begins with a wait for the CPU's signal (`NX2SARIA_GATE_WAIT_MS`, default 10; 0 off) Ocarina's main
+queue begins with a wait for an event the game signals from the CPU once it has written what the frame reads
+(`runtime/vk/vk_exec_xfer.c` "events the CPU signals"). The render thread submits that queue without waiting for the
+signal, and polls the event afterwards, a millisecond at a time, before it presents. In Hyrule Field the signal came 1
+to 2 ms after the submit call in about every other frame: the main thread first waits for the previous frame's fence and
+reads back what it needs. The submission then took its copies (the mirror sync and the uniform snapshot, 1.1 to 1.7 ms),
+met the wait unmet and was held; the render thread polled, presented, and the present replayed the frame
+(`runtime/vk/vk_backend.c` `held_resume()`) under a value the game's fence does not stand for, so the game's next wait
+for that fence returned with the GPU still at work and the frame after was replayed inside its submit call again: frames
+of 23 and 15 ms in turn where each takes 17. So when a submission would stop at such a wait before it has recorded
+anything, the submit call waits for the signal here, before the copies are taken, as the console's GPU waits at the wait
+itself: the copies are then taken after the game has finished writing, and the frame is replayed in the call the game's
+fence stands for. Only state may precede the wait in the command buffer, and the event must be one the CPU has signalled
+before; the wait ends after `NX2SARIA_GATE_WAIT_MS` at the latest, and the submission is then held as before. Since the
+last perf line: waits, their time, waits that ran out. `vk_exec_gate_wait` runs on the submitting thread before the
+submission lock, so several threads add at once: atomics, and the thread whose add ends the window logs it.
+
+### `gate_first_wait()`
+
+- State the walk only stores: nothing is recorded and nothing reaches the CPU before the wait.
+- `default: return NULL`: a draw, a copy, a signal, a call: the walk decides, as before.
+
+### `vk_exec_gate_wait()`
+
+- `if (__atomic_add_fetch(&GW.n, 1, __ATOMIC_RELAXED) == 600)`: one thread takes the window; adds after it count in.
+
+### `vk_exec_held_ready()`
+
+Reads only the published copies (`evq_peek`): `runtime/vk/vk_backend.c` `held_resume()` and `submit_sync()` call this
+without the submission lock. A copy that overlapped a publish on every try counts as not ready, as losing that race did
+before. The wait is tested on the event's value now (`vk_exec_event_met_now`), not at the copy point of a submission
+another thread may be recording: the question is whether held work can go on in a submission of its own, which takes its
+copies later. `vk_exec_record`, the one caller under the lock, asks right after its own copy point, where the two agree.
+
+### `held_sync()`
+
+Held work that goes on in a submission without commands of its own (the present thread's empty one after its blit,
+`runtime/vk/vk_backend.c` `present_main()`, or the one a waiting present makes, `present_held`) gets what any
+submission's recording gets: the VRAM mirror sync before and the write-back after (`vk_mem_mirror_begin/end`), and a
+uniform copy (`vk_usnap`). Without them its draws read mirrors that missed the CPU's writes since the last submission,
+and its GPU writes never went back to guest memory: the next `vk_mem_mirror_begin` dropped the write-back list.
+`NX2SARIA_HELD_SYNC=0`: as before.
+
+### `cont_walk()`
+
+Walks the continuation from where it stopped; 1 when it stopped at another wait (`c->i`, `c->at` updated), 0 when done.
+
+### `evo_resume()`
+
+Runs the held continuations whose wait holds now, in the command buffer being recorded, until none can go on.
+
+- `if (cont_walk(ex, c))`: waits again: the queue's state stays with it.
+- `evq[s].head = c->next`: done: the queue's next submission starts with the state this one left.
+- `peek_publish(s)`: the next one, or none; the copy names nothing inside c.
+- `memcpy((uint8_t *)ex + ST_LO, mine, ST_HI - ST_LO)`: the running stream's state back.
+
+### Looking ahead for pipelines (`NX2SARIA_PIPE_AHEAD`, default 1; 0 off)
+
+A draw whose pipeline is not there yet waits for its fast link or is skipped until a worker has built it, and the next
+draw with a new pipeline is only found when the replay reaches it: an area's first frame, or a turn that brings a dozen
+new materials into view, paid for them one after another (each wait a few milliseconds with the stage libraries in the
+driver's cache, 100 ms and more without), or showed frames with those draws missing while the workers that could have
+built them all at once sat idle. The submission is recorded before it is replayed, so what comes after the draw is
+known. The first draw of a submission that finds a shader or pipeline missing has the rest read here (`vk_exec_ahead`),
+from the op after it to the end of the submission's last command buffer: the scan applies the binds that decide a draw's
+shaders and its shader libraries (program, state objects, vertex attributes, textures and images, render targets, depth
+clamp) to a copy of the replay state and, at each draw, looks its shaders up as the draw will and names the state to
+`vk_pipeline_hint`, which queues the libraries not built yet. Nothing is recorded and no Vulkan object is touched; a
+shader not in memory is queued for its disk read or translation by the lookup itself. The draws then find their
+libraries built, or building on several workers at once. What the scan does not follow: the op stream past a wait for
+another queue's signal (what follows may be held), a change of the texture pool, mesh draws where their pipelines have
+no stage libraries (`vk_pipeline_mesh_libs`), and whatever would take it past `AHEAD_NS`. Render targets are read from
+their descriptors (format, view format, sample count), which is what the replay resolves them to unless a target is left
+out; a guess that misses costs two libraries at most.
+
+- `AH`:
+  - `int on, live`: on: -1 until read; live: `vk_exec_record` walks `handles[i]` now.
+  - `const op_hdr *at[CALL_DEPTH + 1]`: the op being replayed at each call depth.
+  - `uint64_t seq`: the submission scanned last.
+
+### `vk_exec_ahead()`
+
+- `if (!AH.on || !AH.live || evo_in || rw_chunk || AH.seq == vk_exec_submit_seq) return`: not in a chunk.
+- `static VkExec sx`: a copy of the replay state: too large for the stack.
+- `if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_) break`: the replay reports it when it gets there.
+- `if (depth > 0) h = ret[--depth]`: back in the caller: on from the op after its call, below.
+
+### `op_linear()`
+
+Ops that only store state or draw: nothing they record runs outside a pass, and the walk goes on with the op after them.
+Counter reports and resets are among them: they close and open an occlusion query inside the pass, and the value reaches
+guest memory from the completion thread once the submission's fence has passed
+(`runtime/vk/vk_exec_xfer.c` `oq_cb()`, `counter_cb()`), never from the GPU inside the run; so are the render
+conditions, which the replay decides on the CPU. Ocarina reports a counter after most of its indirect mesh draws. Any
+other op the walk replays bumps `vk_exec_brk`, and so does a held submission that goes on in between (`evo_resume`):
+what was prepared for the draws of a run of such ops (`runtime/vk/vk_exec_draw.c`, the indirect mesh draws' records)
+holds only while it stays the same.
+
+### `vk_exec_mesh_run_stops()`
+
+- `mesh_run_stop`: the op each run of `vk_exec_mesh_run` ended at, since the start.
+
+For the perf log: the ops the runs ended at most often.
+
+### `vk_exec_brk_now()`
+
+The indirect mesh draws that follow the op being replayed (cur: its payload) with only ops of `op_linear` between them,
+`MESH_RUN_OPS` at most: their payloads into out, at most max. 0 when the walk is not at cur.
+
+### `vk_exec_mesh_run()`
+
+- `const op_hdr *h = rw_chunk ? rw_op : AH.at[AH.depth]`: a chunk reads on from its own op (into the next ones).
+
+### `op_one()`
+
+One op of the stream other than those that steer the walk (END, JUMP, CALL and `WAIT_EVENT`: walk); timed by its code
+with `NX2SARIA_REPLAY_PHASES` (`vk_exec_phase_op`).
+
+- `static int timed = -1`: read once: off, an op costs one more load and branch.
+
+### Replay workers
+
+(`NX2SARIA_REPLAY_WORKERS`, default auto: as many as the CPU's cores make worth it, `vk_exec_replay_workers_auto`; 0:
+the replay records every op on the submitting thread; the Game tab's CPU helper threads row sets it) 3 workers: on an RX
+7900 XT with a Ryzen 7 5800X3D, Hyrule Field standing went from 41.2 to 50.4 fps (2026-11-12, one batch), with the same
+pictures there and in Kokiri Forest, Kakariko, Goron City, a graveyard house and Gerudo Valley; 5 or 7 workers measured
+the same as 3. Players' games crashed with 3 on by default (0.9.1, 0.9.2): an RX 6700 XT lost its device after about
+18,000 frames, its last mark the game's own compute dispatch (`op_dispatch`: 20x1x1 groups of cs d7566eb1, a depth
+probe) and nothing after it marked, since the group of draws that followed was recorded by the workers, whose passes
+have no marks; an occlusion query slot was found unavailable after its fence just before. An RX 6600 lost it the same
+way twice (0.9.2). The cause is not known; auto gives that driver no workers (`vk_exec_replay_workers_auto`), and auto
+is the default again since 0.11.0. A submission's draws come in runs between ops that have to stay in the replay's order
+on its own thread (dispatches, copies, texture and buffer clears, events, the game's barriers, calls). Hyrule Field,
+standing (`NX2SARIA_REPLAY_RUNS`, 2026-11-11): about 3,500 draws a frame in 82 runs, 96% of them in runs of 16 draws or
+more and 67% in runs of 256 or more, with a timestamp report beside nearly every draw and a render condition beside
+every second one. A run is cut into groups: a group ends where the render targets change after its first draw or clear,
+and before an inline uniform update (and a mesh draw with the mesh fallback or while `NX2SARIA_GPU_PASSES` copies their
+counts), which the submitting thread replays itself in the order of the stream like everything outside groups. A group
+of 2 * `CHUNK_DRAWS` draws or more is recorded by several threads at once:
+
+- The front pass, on the submitting thread, walks the group in the order of the stream before anything of it is
+  recorded: it applies the state and binds, settles the CPU side of counter reports and decides the render conditions
+  (`vk_exec_xfer_front`), and copies the replay state at the first op of each chunk;
+- The chunks are taken in order by the workers and the submitting thread, each recording into a command buffer of its
+  own pool with a draw context of its own, from its copy of the state, behind the full barrier that ended the replay's
+  command buffer before the group, and ending behind a full barrier of its own. `vk_sync_append` puts them after the
+  replay's command buffer in the same part, in the order of the stream, and the replay goes on in a new one.
+
+The frame's pass hooks (`vk_contact_pass_begin`, `vk_dlaa_pass`) follow the frame pass by pass: they run in chunk 0,
+which reaches the group's pass first, and the others start after that pass began; groups follow one another. What still
+depends on the order between chunks waits for its turn (`vk_exec_turn`: every earlier chunk of the group done): a
+texture lookup that would make or take back an entry (`runtime/vk/vk_texture.c` `entry_of()`) returns nothing and the
+chunk replays the op again once in turn, and so do the contact shadows' pass and the HDR pass's source. Per-object
+motion lists its draws under a lock (`runtime/vk/vk_exec_draw.c` `mvobj_draw()`), and the occlusion queries' slots and
+segments follow the stream (`runtime/vk/vk_exec_xfer.c` `vk_exec_xfer_slots()`, `vk_exec_xfer_group_merge()`).
+`NX2SARIA_REPLAY_PIPE=N` (1-4, default 0): the submitting thread hands the group to the workers, takes chunks of it as
+they do until none is left to take, and goes on with the ops after it, in a new command buffer after the chunks' places
+in the part (`vk_sync_append_later`), while the last chunks are recorded; also into the front pass of the next group: up
+to N (at most `LIVE_GROUPS`) groups are handed out and not in their part yet, their chunks taken from one queue in the
+order of the stream (Q). Hyrule Field, 3 workers (2026-11-12): the frame's groups took 6.8 ms of the submitting thread
+and the ops between them 4.6. A group's chunk 0 runs its pass hooks after the group before began its pass, once (a pass
+it begins again later would run them after those of passes further on, `runtime/vk/vk_pass_hooks.h`), and waits for
+every earlier group where a hook acts; a turn (`vk_exec_turn`) waits for every earlier chunk, of earlier groups too. The
+submitting thread waits for the groups (`group_wait`), and puts their command buffers and query slots in place
+(`group_drain`, oldest first: `groups_put_done`), only where the order needs it:
+
+- For room when N groups are out, before a part is split off or submitted (a part due before a group goes to the GPU
+  first: its work would otherwise wait for the group's last chunk too), and before an op that chunks never record
+  (`pipe_op`: copies, clears of textures and buffers);
+- Where a pass's hook acts: DLAA's run (`runtime/vk/vk_dlaa.c`: the jitter and its end, and the per-object motion lists
+  it takes) and the contact shadows' targets (`runtime/vk/vk_contact.c`) change what earlier draws read
+  (`vk_exec_hook_turn`);
+- When a lookup would make a texture entry or take back a retired one: the op returns early and goes again once the
+  groups are done (`op_again`), as a chunk's does in turn (`runtime/vk/vk_texture.c` `lookup_quiet()`: what changes
+  nothing, or takes back a released render target that kept its image, needs no turn);
+- Uniform snapshot drops count from where they are in the stream (`vk_exec_epoch`: a group's chunks do not see the drops
+  of ops after the group), the texture pool set syncs under the lock the chunks take, a chunk reads only the inline
+  uniform updates before its group (`vk_exec_upd_top`), the HDR present's source goes by stream position
+  (`vk_exec_stream_pos`), and the queries after a group's last report go into the next segment made after its front pass
+  (`runtime/vk/vk_exec_xfer.c` GS).
+
+Locks a chunk takes, the submitting thread takes too while it is behind (`vk_exec_shared`). The chunks it records, at
+the hand-out or while it waits between two ops, use a draw context of its own (`RW.help_dc`). Off by default: Hyrule
+Field, 3 workers, standing (2026-11-12), it shortens the replay (10.9-11.5 against 11.7-12.1 ms a frame) but not the
+frame: with 1, 2 or 4 groups out the fps stayed within one of the 50 the stage 2 mode makes, over three batches. A frame
+there is the replay (about 11.5 ms) and then the GPU's work after it (about 6.6 ms: the temporal upscaler about 4, the
+write-back copies 1.5), which the next frame waits for (`runtime/nvn/nvn_api_core.c` `nvnQueueSubmitCommands`,
+`NX2SARIA_SUBMIT_FINISH`; without that wait the game waits as long itself, 52.4 fps); during the replay the GPU keeps up
+with what is submitted. Sending the part's command buffers up to the first chunk place still being recorded while later
+groups record (tried) did so for at most 0.2 parts per submission and gained nothing.
+
+- `CHUNK_DRAWS`: draws a chunk takes at least.
+- `GROUP_PEEK`: ops read ahead for a group, at most.
+
+### `run_op()`
+
+The ops a run may hold; JUMP is followed.
+
+### `ser_kind()`
+
+- `RwWorker`:
+  - `int idx`: also its command pool (`vk_sync_worker_begin`); the submitting thread's is RW.n.
+  - `void *dc`: its draw context (`vk_exec_draw_ctx_new`).
+  - `volatile int32_t sleeping`: waits for wake rather than spinning.
+- `RW`:
+  - `int n`: workers; 0 off, -1 not read yet.
+  - `int pipe`: `NX2SARIA_REPLAY_PIPE`: the groups out at once at most, 0 none.
+  - `int small`: `NX2SARIA_REPLAY_SMALL`: the fewest draws of a group one worker takes whole.
+  - `uint64_t small_groups, small_draws`: such groups and their draws since the last perf line.
+  - `void *help_dc`: the submitting thread's draw context for chunks it takes while it waits.
+  - `const op_hdr *skip_to[CALL_DEPTH + 1]`: per call depth: the walk read ahead to this op, a group too small.
+  - `uint64_t groups, group_draws, chunks, serial_draws, wait_ns`: since the last perf line.
+  - `uint64_t end_draws[5]`: draws of groups by what ended them (`group_peek`'s `GE_*`), since the last perf line.
+  - `uint64_t small_end[5]`: ... of those too small to split.
+  - `uint64_t run_end[OP_COUNT_]`: draws of groups that an op outside groups ended, by that op.
+  - `uint64_t ser_n[4], ser_ns[4], front_ns, own_ns, spin_ns`: the submitting thread, since the last perf line: ops
+    outside groups by kind (`SER_*`), and in groups the front pass, its own chunks and the wait for the others'.
+  - `uint64_t pw_n[PW_N], pw_ns[PW_N], behind_ns, pd_op[OP_COUNT_]`: `NX2SARIA_REPLAY_PIPE`, since the last perf line:
+    waits by why (`PW_*`), the time from a group's hand-out to the end of the wait for it, and the ops that waited
+    (`PW_OP`).
+  - `volatile uint64_t turns, turn_ns, redos, chunk_ns`: `chunk_ns`: the chunks' recording, every thread's.
+
+### Side work
+
+(`vk_exec_par`): the replay thread hands the workers a loop over n items while they have no chunk to record, at a
+submission's start (`runtime/vk/vk_usnap.c` `copy_regions()`). One job at a time, in a static slot: seq is odd while it
+runs. A worker counts itself in (PJ.in) and checks seq again before it reads the job, and the caller, once every slice
+is done, makes seq even and waits until no worker is in, so none reads a job that has ended.
+
+### `vk_exec_par()`
+
+- `__atomic_add_fetch(&PJ.seq, 1, __ATOMIC_SEQ_CST)`: odd: running.
+- `__atomic_add_fetch(&PJ.seq, 1, __ATOMIC_SEQ_CST)`: even: ended.
+
+### `rw_main()`
+
+- `plat_thread_priority(PLAT_PRIO_HIGHEST)`: as the recording thread (`rec_claim`).
+- `perf_lock_timing_here()`: `NX2SARIA_LOCK_TIME`, as on the recording thread.
+- `vk_exec_phase_worker()`: `NX2SARIA_REPLAY_PHASES` counts this thread's ops as a worker's.
+- Spins about 100 us after a chunk (the next group of the frame is usually closer), then sleeps.
+
+### `vk_exec_replay_workers_auto()`
+
+`NX2SARIA_REPLAY_WORKERS` = auto: the workers this PC gets. The game's own threads, the submitting thread, the present
+thread and the pipeline builders already keep about half of the cores busy, and on the 8-core CPU above 3 workers gave
+all there was (5 and 7 measured the same), so the count is half the physical cores less one: 2 on 6 cores, 3 on 8, 5 on
+12, at most 6. Four cores or fewer get none: a worker would take a core from the game's threads. AMD's Windows driver
+for RX 6000 and older (`vk_caps.amd_sc`) gets none either, as that is where a player's device was lost with workers on
+and the cause is not known; a number set in nx2navi.ini or the menu still applies there, with a warning in the log
+(`rw_init`). Physical cores of the process's affinity (`plat_cpu_cores`), or half the usable logical processors where
+that is unknown.
+
+### `rw_init()`
+
+- `} else if (RW.n && vk_caps.amd_sc)`: the player's number stays (`vk_exec_replay_workers_auto`).
+- `int pipe = cfg_int("NX2SARIA_REPLAY_PIPE")`: the groups out at once.
+- `if (RW.small >= 2 * CHUNK_DRAWS)`: a group that large is cut into chunks (`group_start`): no group would match.
+
+### `groups_before_done()`
+
+Every group before g has all its chunks done.
+
+### `chunk_in_turn()`
+
+Every chunk before c in the stream is done: those of earlier groups, and its group's earlier ones.
+
+### `vk_exec_stream_pos()`
+
+A chunk of a group comes after the ops before the group and after its group's earlier chunks; the submitting thread
+after every chunk of the groups it handed out.
+
+### `vk_exec_epoch()`
+
+Uniform snapshot drops (`runtime/vk/vk_usnap.c`): a chunk's are its group's; the submitting thread's come after every
+group it handed out. A chunk sees the drops of epochs up to its group's, the submitting thread every one.
+
+### `vk_exec_upd_top()`
+
+The inline uniform updates of the submission a draw may read (`runtime/vk/vk_exec_draw.c` `upd_read()`): a chunk only
+those before its group.
+
+### `vk_exec_hooks_wait()`
+
+- `const Group *g = &GQ[Q.out % LIVE_GROUPS]`: the last handed out, whose first chunk ran after the others'.
+
+### `vk_exec_hook_turn()`
+
+- A group's hooks run in its first chunk, after its group's earlier chunks; the earlier groups' draws read what the hook
+  changes.
+
+### `vk_exec_turn()`
+
+- `if (!c)`: the submitting thread: after every chunk of the groups it went on past.
+
+### `views_release()`
+
+The image views a command buffer made for its targets go when its submission is done.
+
+### `group_peek()`
+
+- `enum { GE_RUN, ... }`: What ended a group (`RW.end_draws`): the end of the run, a render target change, an inline
+  uniform update, a mesh draw, the read-ahead limit.
+- `vk_gpu_passes_capturing()`: `runtime/vk/vk_crumbs.c`: `NX2SARIA_GPU_PASSES` is copying this frame's counts.
+
+The draws of the group that starts at h (it ends at `*end`, for the reason `*why`), reading at most `GROUP_PEEK` ops.
+
+- Mesh draws stay on the submitting thread with the mesh fallback (its buffers are shared), with the mesh emulation (no
+  `VK_EXT_mesh_shader`: its arena, queue and the part's pre-pass command buffer are the submitting thread's) and while
+  `NX2SARIA_GPU_PASSES` copies their workgroup counts (one list).
+- `if (h->size < sizeof *h || (h->size & 7) || h->op >= OP_COUNT_) { *why = GE_RUN; break; }`: the walk reports it.
+- `if (begun) { *why = GE_TARGET; break; }`: another pass: the next group.
+
+### `groups_done_advance()`
+
+The groups whose every chunk is done, in order (Q.done), once a group's last chunk is.
+
+### `chunk_record()`
+
+Records chunk c with the command pool `pool` (a worker's index; the submitting thread's is RW.n).
+
+- `else if (!groups_before_done(g))`: the pass hooks follow the frame pass by pass: after the group before's.
+- `const Group *p = &GQ[(g->seq - 1) % LIVE_GROUPS]`: not done, so not put in its part yet: still its slot.
+- The submitting thread records with its own (the state's), or one of its own past the group (RW.pipe).
+- The replay's command buffer before the group ended behind a full barrier, with every image in GENERAL.
+- `if (vk_texture_deferred_take())`: a lookup would have made or taken back a texture entry: in turn, again.
+- `if (!c->idx) __atomic_store_n(&g->hooks, 1, __ATOMIC_RELEASE)`: a chunk 0 that began no pass.
+- `vk_exec_barrier(ex)`: the next command buffer starts after it, every image back in GENERAL.
+
+### `group_wait()`
+
+The submitting thread past groups it handed out (RW.pipe): until every chunk of them is done. With `help` (only between
+two ops) it records the chunks no worker took yet itself. Then nothing of them runs beside it any more.
+
+### `group_put()`
+
+A done group's command buffers into their places in the part, its closed query slots into their segments.
+
+- `if (ex->barrier_at == ex->recorded) ex->barrier_at += rec`: nothing since the chunks' closing barrier.
+
+### `groups_put_done()`
+
+The done groups not in their parts yet, oldest first; when every one handed out is, the submitting thread is no longer
+behind.
+
+### `group_room()`
+
+Before the front pass of a new group: its slot holds a group put in its part (the oldest goes in first).
+
+### `pipe_op()`
+
+The ops the submitting thread replays past a group it handed out; before any other it waits for the group. The ops a
+chunk records, the game's barriers, dispatches, and events (a wait reads memory, a signal's value goes there from the
+completion thread): their lookups go again once the group is done (`op_again`), and they leave what the chunks read as
+it was (`vk_exec_shared`, `vk_exec_epoch`, `vk_exec_upd_top`).
+
+### `op_again()`
+
+A lookup of op h would have made or taken back a texture entry before the group it went on past was done (the submitting
+thread's `vk_texture_deferred`): once it is, h goes again, as a chunk's op does in turn.
+
+### `group_start()`
+
+The submitting thread, at op h of the walk: when a group large enough to split starts here, it is recorded by the
+workers and this thread, and the walk goes on with the op that ended it, which is returned; otherwise h (the walk
+replays the group itself, without reading ahead again before its end).
+
+- `if (end == h) return h`: an op the submitting thread replays itself.
+- `NX2SARIA_REPLAY_SMALL=N` (default 0, with `NX2SARIA_REPLAY_PIPE`): a group of N draws or more that is too small to
+  cut goes whole to one worker, and the submitting thread goes on with what follows it without taking the chunk itself.
+  Kokiri Forest standing, 5 workers, 4 groups out, the early tail on (2026-11-13): about 700 draws a frame were in such
+  groups, 3.6 ms of the submitting thread; with 16 the replay took 10.2 instead of 11.0 ms a frame (63.2 against 62.2
+  fps: the game then waits longer for the GPU, which is busy 83% of the frame there).
+- A part due goes to the GPU before the group, with the groups still recording in it: its GPU work would otherwise wait
+  for this group's chunks too.
+- `vk_exec_barrier(ex)`: the command buffer so far ends behind a full barrier, every image back in GENERAL.
+- The chunks' passes get no marks (`vk_exec_pass_begin`): a lost device's report names the group between the marks.
+  After the barrier, whose end of an open pass ends that pass's mark and empties the note.
+- The front pass.
+- `if (vk_exec_xfer_counting() && !ex->render_disabled) c->nslots++`: at most one query each.
+- `case OP_CLEAR_COLOR: case OP_CLEAR_DS: break`: recorded by the chunk.
+- `default: op_one(ex, o); break`: state, binds, render targets.
+- `vk_exec_xfer_group(-1)`: the segments stay listed for the workers until the group is put in its part.
+- `for (int i = 0; i < nc; i++) g->c[i].slot0 = vk_exec_xfer_slots(g->c[i].nslots)`: in the order of the stream.
+- Handed out: the workers (and without RW.pipe this thread) take the chunks in order.
+- The replay's command buffer so far goes into the part, then the chunks' places, and the replay goes on in a new one at
+  once.
+- `ex->barrier_at = ex->recorded`: the chunks end with a full barrier.
+- The submitting thread takes chunks too, as the workers wake up, and goes on once none is left to take: the GPU waits
+  for the group's part until its last chunk is done.
+- `if (small) RW.small_groups++, RW.small_draws += draws`: a worker takes it: this thread goes on at once.
+- `vk_exec_draw_new_cb()`: the submitting thread's own chunks used its draw context.
+
+### `walk()`
+
+- `if (RW.skip_to[depth] == h) RW.skip_to[depth] = NULL`: the small group read ahead is behind.
+- `AH.at[depth] = h, AH.depth = depth`: where `vk_exec_ahead` reads on from.
+- `if (RW.n > 0)`: the perf line's split of the replay outside groups.
+- Timed only for the perf line: two clock reads for each of the ~1,700 ops a submission replays here were 4 % of the
+  submitting thread's replay in Hyrule Field.
+- `if (vk_exec_signalled && depth == 0 && !evo_in) evo_resume(ex)`: their ops go through this walk's checks.
+
+### `rec_claim()`
+
+- `rec_spent_ns`: time this thread has spent in `vk_exec_record`.
+
+The replay records on the thread the game submitted from, and the kernel schedules that like any other guest thread: a
+preemption in the middle of a part leaves the submission late for the frame it belongs to (Kokiri Forest: 274 of 2,737
+frames had a late submit). The recording thread therefore keeps the highest priority so the scheduler prefers it over
+the guest's other cores (`NX2SARIA_RECORDER_PRIO=0` leaves the guest's priorities alone) and gets a core of its own
+(`plat_cpu_reserve`): every other thread of the process, the guest's cores, the audio, the shader and pipeline workers,
+is kept off it, so nothing of this process preempts the recording. That core is then lost to the rest, so
+`NX2SARIA_RECORDER_CORE=auto` reserves it only with 12 or more logical processors, and not while the process runs on the
+die with the largest L3 alone (`runtime/diag/perf.c` `cpu_placement()`): on a two-die X3D part the game's threads
+already have that die to themselves, and a core taken from them cost frames; 1 always, 0 never. Linux reserves none with
+fewer than four fast cores. 0 is the default: on an i9-14900KF (8 performance and 16 efficiency cores, 32 logical
+processors) with the replay on its own thread, the reserved core (logical processors 14 and 15) left the woken replay
+thread unscheduled for about 200 ms roughly once a second while the game stood in Kakariko: its queue held 40 to 50
+items, its lock was free, the wakes had been sent and it used no CPU time, while the game waited on a fence of the work
+in that queue (27 frames a minute with a 150 ms or longer frame). With no core reserved the same minute had none. The
+recording thread is not the first to call `vk_exec_record`: the game's main thread submits first and goes on submitting
+a little at a time, while another guest thread does the work (Kokiri Forest: that thread spent 21.9 of the 22.5 s the
+replay took in a minute and a half, the first one 0.5 s). The first thread to have spent `REC_CLAIM_NS` in
+`vk_exec_record` is the one that keeps both.
+
+### `vk_exec_tail_begin()`
+
+The tail begins here (the early tail): what was recorded so far waits in the chain, the tail gets a command buffer of
+its own. Not in a chunk or a continuation, nor with groups still out: the cut needs every piece of the part.
+
+- `if (Q.drained != Q.out) group_drain(ex, PW_OP)`: the cut needs every piece of the part.
+- `vk_exec_barrier(ex)`: the command buffer so far ends behind a full barrier, every image back in GENERAL.
+
+### `vk_exec_record()`
+
+- `if (vk_device_is_lost()) return 0`: the run is ending (`runtime/vk/vk_device.c` `vk_device_lost_check()`): nothing is
+  recorded.
+- `const int ph = vk_exec_phases_on()`: `NX2SARIA_REPLAY_PHASES`: the call's parts (`vk_exec_phase_seg`).
+- `perf_lock_timing_here()`: `NX2SARIA_LOCK_TIME`.
+- `if (prof_replay_tid != plat_thread_id()) perf_replay_thread()`: the profiler follows the thread replaying now.
+- `const tex_t *keep[9]`: the render targets carry over to this submission (`set_rt` compares them by pointer).
+- `ex->rt_resolved = 0`: images may have changed since the last command buffer.
+- `ex->nfbl = 0`: the previous command buffer ended with a full barrier: every image is in GENERAL.
+- `__atomic_store_n(&vk_exec_submit_seq, vk_exec_submit_seq + 1, __ATOMIC_RELAXED)`: read without the lock too.
+- `split_at = split_n < 0 ? 0 : split_n ? split_n : INT_MAX`: 0 until `maybe_split` reads the settings.
+- `vk_exec_event_sync(1)`: before the mirror sync and the uniform copy: a CPU signal after this point came after them.
+- `int synced = n || (evo_pending && held_sync() && vk_exec_held_ready())`: `held_sync`.
+- `if (evo_pending)`: the uniform snapshot covers what held submissions bind too: they may go on here.
+- `if (evo_pending) evo_resume(ex)`: signals the CPU gave since, and holds past `CONT_MAX`.
+- `if (evo && evq[slot].head)`: the queue waits: this submission lines up behind it.
+- `cont_push(slot, cont_new(handles, n, i, stop))`: the rest of this submission waits for its signal.
+- `if (ex->recorded) vk_exec_barrier(ex), vk_exec_pool_marks(ex)`: later submissions see this one's writes.
+- `NX2SARIA_WB_SPLIT`: the write-backs in a part of their own, after one that signals the executed timeline
+  (`runtime/vk/vk_sync.c` `exec_tl`): the wait after a frame's first submission then ends when the submission's passes
+  are through, not its write-backs. Off by default: `runtime/vk/vk_sync.c` says what else that wait then leaves out.
+- `int tail = 0`: the early tail: the write-backs go before the tail, with the executed timeline's signal.
+- `vk_mem_live_swap(live | TL.live0)`: the submission's own note, as it would have been.
+- `if (synced) ex->recorded += vk_mem_mirror_end(ex->cb, fence), vk_usnap_end(fence)`: VRAM mirror bytes the GPU wrote
+  go back to guest memory.
+- `part_start = ex->recorded`: the last command buffer holds nothing: the tail is in the chain before it.
+- `if (xw)`: `NX2SARIA_WB_SPLIT`: what the wait on the executed timeline left behind.
+- `for (int k = 0; k < 6; k++)`: the ops outside groups that ended the most, by their groups' draws.
+- `for (int k = 0; k < 5; k++)`: the ops that waited the most often.
+- `return ex->recorded - part_start`: what the last part holds.
+
+## `runtime/vk/vk_exec.h`
+
+The op-stream replay of the Vulkan back end. `runtime/vk/vk_exec.c` walks the command handles of a submission, keeps
+render targets, passes, clears and fixed-function state; draws, binds and dispatches (`runtime/vk/vk_exec_draw.c`) and
+copies, counters, events and conditional rendering (`runtime/vk/vk_exec_xfer.c`) plug in through the two hooks at the
+bottom. Runs on the submitting thread under `vk_sync_submit`'s lock: no locking inside.
+
+- `enum { VK_EXEC_DIRTY_VIEWPORT, ... }`: Dynamic state the next draw must record (`VkExec.dirty`). `vk_exec_record`
+  sets them all at the start of each command buffer; the state ops set theirs; `runtime/vk/vk_exec_draw.c` clears what
+  it recorded.
+  - `VK_EXEC_DIRTY_VIEWPORT = 1 << 0`: viewports or depth range.
+  - `VK_EXEC_DIRTY_DEPTH_BIAS = 1 << 2`: polygon offset.
+  - `VK_EXEC_DIRTY_STENCIL = 1 << 4`: compare and write masks, references.
+- `VkExecTarget`: One render target of `OP_SET_RT`, resolved to its `runtime/vk/vk_texture.c` image for the current
+  command buffer.
+  - `const tex_t *tex`: texture pin of `ex->rt` (`nvn_pins_sweep` keeps it); NULL: no target in this slot.
+  - `VkImage image`: `VK_NULL_HANDLE`: no target or not renderable (logged once).
+  - `VkFormat format`: view format: the view's when it reinterprets a same-size format.
+  - `VkImageViewType view_type`: 2D, or `2D_ARRAY` for more than one layer.
+  - `uint32_t level, base_layer, layers`: subresource of the view; of a 3D image: depth planes.
+  - `uint8_t is3d`: a 3D image (colour only), viewed through 2D views of its slices.
+  - `uint8_t blocks`: a BC image viewed as one texel per block (`VkTexImage.block_views`).
+  - `uint32_t width, height, samples`: extent of that level; with blocks, in blocks.
+  - `int32_t nvn_format`: `NVNformat` of the view (`VkPipeState.color_fmt` / `depth_fmt`).
+  - `const VkTexImage *img`: the image (`fb_usage`, `fb_learned`).
+  - `uint8_t scale`: `VkTexImage.scale`.
+- `vk_exec_cond_frame_end()`: `runtime/vk/vk_exec_xfer.c`: a present, in replay order (`NX2SARIA_LOG_RCOND`).
+- `vk_exec_cond_why()`: `NX2SARIA_LOG_RCOND=ab`.
+- `VkExec`: The replay state. One instance lives for the run: NVN state is queue state and carries over from one
+  submission to the next. The "per command buffer" fields are reset by `vk_exec_record`.
+  - Below, per command buffer:
+  - `struct DrawCtx *dc`: `runtime/vk/vk_exec_draw.c`: the draw context this state records with (NULL until a draw op
+    names it: the calling thread's, `vk_exec_draw_ctx_use`).
+  - `VkCommandBuffer cb`: being recorded.
+  - `uint64_t fence`: timeline value the submission signals (`vk_completion_add`).
+  - `int recorded`: Vulkan commands recorded so far; every handler adds the ones it records.
+  - `int in_pass`: inside `vkCmdBeginRendering`.
+  - `uint32_t dirty`: `VK_EXEC_DIRTY_*`.
+  - `VkPassMark *mark`: Pass marks (`runtime/vk/vk.h` `vk_pass_mark_begin()`): the open pass's record (NULL: none or
+    marks off), `vk_exec_frame.draws` when it began, and the passes and dispatches this submission marked so far.
+  - Below, render targets (`OP_SET_RT`) and the current pass:
+  - `p_set_rt rt`: last `OP_SET_RT` payload (a change ends the open pass); rt.n 0, no depth: none.
+  - `int rt_resolved`: `color[]` and depth hold this command buffer's images for rt.
+  - `VkExecTarget color[8], depth`: resolved targets.
+  - `uint32_t pass_w, pass_h, pass_layers`: render area and layer count of the open (or next) pass.
+  - `uint32_t pass_scale`: its targets' `VkTexImage.scale`: game viewports and scissors are multiplied by it.
+  - `int pass_noatt`: the pass has no attachment: its size follows the draws (`vk_exec_noatt_dims`).
+  - `VkFormat pass_color[8], pass_depth, pass_stencil`: attachment formats of the pass
+    (`VkPipelineRenderingCreateInfo`); `VK_FORMAT_UNDEFINED`: none.
+  - `uint32_t pass_ncolor, pass_samples`: `colorAttachmentCount` and rasterization samples of the pass.
+  - Below, fixed-function state (`runtime/vk/vk_exec.c` keeps it; `runtime/vk/vk_exec_draw.c` records it before draws):
+  - `float vp[16][6]`: `OP_VIEWPORTS`: x, y, w, h, near, far.
+  - `int has_vp`: a viewport was set; else the render area.
+  - `int vp_jittered`: the viewport recorded last took the DLAA jitter (`runtime/vk/vk_dlaa.c` `vk_dlaa_viewport()`).
+  - `int pass_jit`: a viewport of the pass open now took it: its targets' edges are filled at its end
+    (`vk_dlaa_pass_end`).
+  - `p_scissor scissor`: `OP_SCISSOR` (scissor 0).
+  - `int has_scissor`: a scissor was set; else unbounded.
+  - `float depth_range[2]`: `OP_DEPTH_RANGE`: overrides the viewports' near and far.
+  - `uint32_t st_vmask[2], st_wmask[2], st_ref[2]`: `OP_STENCIL` per face (0 front, 1 back): compare mask, write mask,
+    ref.
+  - `float point_size`: `OP_BIND_STATE` kind 6: NVN point size for the support buffer; 0 = never set = 1.
+  - `float line_width`: `OP_BIND_STATE` kind 7: NVN line width in pixels; 0 = never set = 1.
+  - `p_poly_offset poly_offset`: `OP_POLY_OFFSET`: depth bias factor, units, clamp.
+  - `p_prim_restart prim_restart`: `OP_PRIM_RESTART`: applied to indexed strip and fan draws (`op_draw_idx`).
+  - `float blend_color[4]`: `OP_BLEND_COLOR`.
+  - `int64_t copy_stride`: `OP_COPY_STRIDE`: row stride of buffer <-> texture copies (`runtime/vk/vk_exec_xfer.c`).
+  - `const dpool_t *tex_pool, *samp_pool`: `OP_SET_TEX_POOL`, `OP_SET_SAMP_POOL`.
+  - `VkPipeState pipe`: Pipeline inputs. `runtime/vk/vk_exec.c` writes `depth_clamp` (`OP_DEPTH_CLAMP`),
+    `raster_discard` (`OP_RASTER_DISCARD`) and, at pass begin, `color_fmt`, `depth_fmt` and samples;
+    `runtime/vk/vk_exec_draw.c` owns every other field (shaders, prim, `y_flip`, state objects, vertex input).
+  - Below, `runtime/vk/vk_exec_draw.c` slots (draws, binds, dispatch): left empty by `runtime/vk/vk_exec.c`:
+  - `const prog_t *prog`: `OP_BIND_PROGRAM`.
+  - `NVNbufferRange vbuf[16]`: `OP_BIND_VBUF`.
+  - `p_bind_buf ubo[8][18], ssbo[8][16]`: `OP_BIND_UBO` / `OP_BIND_SSBO` per NVN stage (6 task, 7 mesh) and index.
+  - `uint8_t cs_push[1024]`: `OP_PUSH_CC`: NVN2 compute push constants (c0 from 0x10).
+  - `uint64_t tex[8][128], samp[8][128], img[8][32]`: `OP_BIND_TEX` / `OP_BIND_SAMP` / `OP_BIND_IMG` handles per stage.
+  - Below, `runtime/vk/vk_exec_xfer.c` slots (render enable, conditional rendering): left empty by
+    `runtime/vk/vk_exec.c`:
+  - `int render_disabled`: `OP_RENDER_ENABLE` false or a failed `OP_RENDER_COND`: clears and draws skip.
+  - `p_render_cond render_cond`: last `OP_RENDER_COND`.
+  - Below, internal to `runtime/vk/vk_exec.c`:
+  - `void *views`: image views created for this command buffer (freed at its fence).
+  - `int barrier_at`: recorded right after the last full barrier (-1: none yet).
+  - `int bar_dirty, bar_passes, bar_dispatches`: `NX2SARIA_BARRIER_GAME` (`runtime/vk/vk_exec.c` `barrier_to_why()`):
+    the last full barrier was one the replay itself needed (a copy, clear or fill of its own follows it), so the next
+    pass or dispatch gets a full one too; passes and dispatches begun since the last full barrier.
+  - `VkImage fbl_img[9]`: Feedback loops (`runtime/vk/vk.h` `VkCtx.feedback`,
+    `runtime/vk/vk_exec_draw.c` `feedback_prepare()`). Learned targets are attached in
+    `ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT`; they stay in it across consecutive passes and go back to GENERAL at the next
+    full barrier that is not a pass begin.
+  - `VkImage fbl_img[9]`: images in the feedback layout now.
+  - `uint32_t fbl_mask`: attachments of the open pass in that layout: bit i colour i, bit 8 depth.
+  - `uint32_t fb_dirty`: attachments of the open pass written by a draw or clear since the pass began or the last
+    in-pass barrier.
+  - `uint32_t fb_read`: attachments of the open pass a draw sampled (feedback layout) since the pass began or the last
+    in-pass read-to-write barrier (`feedback_war`).
+  - `const void *fb_fs`: `feedback_scan`'s memo: fragment shader, texture bind serial, pass serial.
+  - `uint32_t tex_serial, pass_serial`: bumped by every texture or image bind and pass begin.
+  - `uint32_t pre_pass`: the pass (`pass_serial`) the part's pre-pass command buffer serves (`vk_sync_pre`;
+    `runtime/vk/vk_exec_draw.c` mesh emulation); a pass begins after it with another serial.
+- `vk_exec_pass_begin()`: Begins dynamic rendering with the current targets unless a pass is open (a full memory barrier
+  precedes it). Call before a draw or an attachment clear.
+- `vk_exec_pass_end()`: Ends the open pass (no-op without one) and marks its targets GPU-written. Call before copies and
+  dispatches.
+- `vk_exec_barrier()`: Full memory barrier (all commands, all memory); ends the open pass first. Copies and dispatches
+  order themselves with it. Skipped when nothing was recorded since the last one.
+- `vk_exec_barrier_dispatch()`: The barrier before a game dispatch: a full one, or with `NX2SARIA_BARRIER_GAME` none
+  unless the replay's own commands came since the last full barrier (`runtime/vk/vk_exec.c` `barrier_to_why()`). Ends
+  the open pass.
+- `vk_exec_barrier_log()`: `NX2SARIA_TRACE=perf`, every 600 frames: the barriers per frame by kind.
+- `vk_exec_split_now()`: Ends the open pass and the part without handing it to the queue (`vk_sync_cut`): the next draw
+  begins the pass again at the start of a new command buffer, which the part's pre-pass command buffer precedes. 0 when
+  no more can wait.
+- `vk_exec_inline_begin()`: `runtime/vk/vk_texture.c` (`NX2SARIA_TEX_ALIAS`): commands that must run at the replay's
+  current position. `vk_exec_inline_begin` returns the command buffer being recorded after a full barrier (an open pass
+  is ended; `*reopen` says so), or `VK_NULL_HANDLE` when this thread is not recording a replay. `vk_exec_inline_end`
+  begins the pass again when it was open. `vk_exec_inline_buffer`: a device buffer for transfers, destroyed when the
+  submission completes.
+- `vk_exec_probe_inline()`: A test's hook (`runtime/gfx/tex_probe.c`): between a call with cb and one with
+  `VK_NULL_HANDLE`, the calling thread counts as recording a replay into cb for submission `fence`, so
+  `vk_exec_inline_begin` hands cb out. Called from the record callback of `vk_sync_submit_own`, where a replay would be
+  recorded.
+- `vk_exec_draw_ctx_new()`: `runtime/vk/vk_exec_draw.c`, the replay workers: a draw context of their own (what draws
+  keep from one to the next while they record: `runtime/vk/vk_exec_draw.c` `DrawCtx`), and the one the calling thread
+  records with from now on (NULL: the replay's).
+- `vk_exec_draw_group_begin()`: `runtime/vk/vk_exec_draw.c`, before the chunks of a parallel group are recorded
+  (submitting thread): the stand-ins are made and the texture pool set this submission took is brought up to date, which
+  the chunks then only bind. Returns the inline uniform updates of the submission so far (`vk_exec_upd_top`).
+- `vk_exec_upd_top()`: `runtime/vk/vk_exec.c`: of the submission's inline uniform updates (all), those a draw on the
+  calling thread may read.
+- `vk_exec_xfer_group()`: `runtime/vk/vk_exec_xfer.c`, parallel groups: `vk_exec_xfer_group` turns the front pass of the
+  group in slot `group` on (it lists the group's occlusion segments) or off (-1); `vk_exec_xfer_front` replays a counter
+  report or reset, render enable or render condition in the front pass (returns the condition's decision, 1 renders);
+  `vk_exec_xfer_chunk_state` is the occlusion counting at a chunk's first op, which `vk_exec_xfer_worker` hands to the
+  worker side with the chunk's decisions and its group's slot (on), or turns it off.
+- `vk_exec_xfer_group_merge()`: After every chunk of the group in slot `group` is done (submitting thread, groups oldest
+  first): the slots the chunks closed go into their segments, in the order of the chunks.
+- `vk_exec_xfer_counting()`: The front pass: whether a draw here counts samples (a query slot), and n slots of the ring
+  in the order of the stream for one chunk (the first is returned; `vk_exec_xfer_worker` hands them to the chunk's
+  worker).
+- `vk_exec_draw_new_cb()`: `runtime/vk/vk_exec_draw.c`: forget what the command buffer being recorded has bound
+  (pipeline, sets, dynamic state, vertex buffers): the replay continues in a new one (`vk_sync_split`).
+- `vk_exec_pool_split()`: `runtime/vk/vk_exec_draw.c`, before a part of submission fence goes to the queue
+  (`runtime/vk/vk_exec.c` `maybe_split()`): 1 when it may go. The texture pool set it binds is then sealed and the next
+  draw that needs the pools takes another; 0 when every other set is bound by this submission's earlier parts, and the
+  replay keeps recording into the same part.
+- `vk_exec_draw_shaders()`: `runtime/vk/vk_exec_draw.c`: the vertex and fragment shader of the last draw recorded into
+  this command buffer (NULL: none yet).
+- `vk_exec_pool_marks()`: `runtime/vk/vk_exec_draw.c` "pool marks": at the end of a submission that recorded work, after
+  its closing barrier. Hands the mark copies the GPU completed to `runtime/vk/vk_texture.c` and, every few such
+  submissions, copies the marks out and clears them.
+- `vk_exec_bc_gone()`: `runtime/vk/vk_exec.c`: the stand-in a 3D BC render target is drawn through goes with its image
+  (`vk_exec_image_gone`).
+- `vk_hdr_track`: `runtime/vk/vk_hdr.c`: with `NX2SARIA_HDR=1`, notes a draw into a presented window texture
+  (`vk_hdr_track`: set by the first present).
+- `vk_exec_scissor()`: Scissor 0 clipped to the render area of the open pass; extent 0: nothing to draw.
+- `vk_exec_feedback_war()`: `runtime/vk/vk_exec_draw.c`: orders the open pass's earlier sampled reads of the attachments
+  in written (bit i colour i, bit 8 depth) before a draw or clear writes them; nothing when none of them was sampled
+  since the last such barrier.
+- `vk_exec_noatt_dims()`: pass size when no attachment is set.
+- `vk_exec_targets_recent()`: 1: every target of the current pass (any 1: at least one, and not only the depth target
+  while a colour target is rendered for the first time) is one the game renders frame after frame: rendered in the last
+  few presented frames, or steady (`runtime/vk/vk_target_frames.h` `tfr_pass_recent()`); 0 otherwise, or when the pass
+  has none.
+- `vk_exec_steady_passes`: its answers of 1 that only a steady target gave (`runtime/vk/vk_target_frames.h`).
+- `vk_exec_ahead()`: Looking ahead (`runtime/vk/vk_exec.c`): called by a draw that found its shader or pipeline missing,
+  before it waits or is skipped. The rest of the submission being replayed is read once and the stage libraries of the
+  pipelines its later draws need are queued to the workers (`vk_pipeline_hint`). `vk_exec_ahead_op`
+  (`runtime/vk/vk_exec_draw.c`) applies one bind or draw op of that scan to sx, a copy of the replay state;
+  `vk_exec_ahead_begin` starts a scan there.
+- `vk_exec_ahead_draws`: draws the scans saw, and those whose shaders they looked up.
+- `vk_exec_targets_describe()`: The current pass's targets with their formats, extents and the frames they were last
+  rendered in (diagnostics).
+- `VkExecFrame`: `NX2SARIA_TRACE=gfx`: replay counters of the current frame, logged and reset at each present
+  (`vk_exec_frame_log`).
+  - `uint64_t fb_draws, fb_barriers, fb_restarts, fb_layouts`: feedback loops: draws sampling a written target of their
+    pass, in-pass barriers, pass restarts, layout transitions.
+  - `uint64_t fb_war_barriers`: in-pass barriers before a write to a target an earlier draw sampled.
+  - `uint64_t ub_updates, ub_pass_breaks`: inline uniform updates, and those that ended an open pass.
+  - `uint64_t bind_calls, bind_ns`: `bind_resources`: calls and the time spent resolving and pushing their sets.
+  - `uint64_t bind_tex_ns`: of `bind_ns`, the texture descriptors' lookups.
+  - `uint64_t bind_buf_ns`: of `bind_ns`, the uniform and storage buffer descriptors' resolution.
+  - `uint64_t bind_sig_ns`: of `bind_ns`, the per-draw binding signature.
+  - `uint64_t bind_push_ns`: of `bind_ns`, the set packing, pushes and binds after the binding loop.
+  - `uint64_t dyn_calls, dyn_left`: dynamic state calls recorded, and left out as unchanged (B.dyn).
+- `vk_exec_bind_count()`: per-chunk or per-submission descriptor reuse count.
+- `vk_exec_frame_written()`: `vk_texture_gpu_written`: t rendered or copied into.
+- `vk_exec_recording_fence()`: fence of the submission this thread records, else 0.
+- `vk_exec_pending_draws_take()`: The draws skipped since the last call because a shader or pipeline was still building
+  (`runtime/vk/vk_exec_draw.c`), and whether a frame lacking them would be held back at its present
+  (`runtime/vk/vk_backend.c` `frame_hold()`).
+- `vk_exec_pool_loading()`: 1 while the texture pool makes the textures of an area load
+  (`runtime/vk/vk_exec_draw.c` `pool_load_backlog()`): the frames drawn meanwhile show black stand-ins, and `frame_hold`
+  leaves their presents out.
+- `vk_dump_armed`: `NX2SARIA_DUMP=<frame>` (`runtime/vk/vk_dump.c`): between presents frame-1 and frame, every pass's
+  targets and every dispatch's storage images are copied out and written as PNGs to `NX2SARIA_DUMP_DIR` (default
+  "dump"), with passes.txt (targets, pipelines, textures, samplers) and images.txt (per image value statistics). The
+  hooks run only when `vk_dump_armed` is set.
+- `vk_dump_init()`: reads the environment; `vk_exec_record`'s first call.
+- `vk_dump_pass_end()`: after `vkCmdEndRendering`.
+- `vk_dump_draw()`: After a draw's binds; mesh: a mesh draw (`s->vs` is its mesh stage, `s->ts` its task stage or NULL).
+- `vk_dump_mesh_begin()`: Around a mesh draw of the dumped frame (after `vk_dump_draw`): a primitives-generated query,
+  listed in `mesh_prims.txt`. begin returns the query, or -1 when none was begun; end takes that value.
+- `vk_dump_copy()`: before a copy or texture clear is replayed.
+- `vk_dump_present()`: `vk_be_present`: waits for the dump frame's copies and closes the logs.
+- `VK_C0_BYTES`: c0, the NVN driver constant bank of one stage (`runtime/vk/vk_exec_draw.c`; `NX2SARIA_FIX_C0=0` binds
+  zeros instead): bank is `VK_C0_BYTES`, stage an NVN stage (0 vertex, 1 fragment, 5 compute), ssbo and ubo the 16 bound
+  slots of that stage.
+- `vk_exec_op_draw()`: Handler hooks. `runtime/vk/vk_exec.c` defines both WEAK: they stop with `rt_fatal` naming the op.
+  `runtime/vk/vk_exec_draw.c`: `OP_DRAW`, `OP_DRAW_IDX`, `OP_DISPATCH`, `OP_BIND_*` (program, state, vattr, vstream,
+  vbuf, ubo, ssbo, tex, samp, img), `OP_UPDATE_UB`, `OP_DRAW_IDX_IND`, `OP_DISPATCH_IND`. payload: `nvn_op_payload` of
+  the record.
+- `vk_exec_phase_worker()`: `NX2SARIA_REPLAY_PHASES` (`runtime/vk/vk_exec_draw.c`): a replay worker marks its thread
+  (`rw_main`), and each frame's end in replay order reports every 600 frames (`vk_exec_frame_end`).
+- `vk_exec_phase_op()`: `runtime/vk/vk_exec.c` `op_one()`: an op of the stream, by its code.
+- `vk_exec_phase_record()`: `runtime/vk/vk_exec.c` `vk_exec_record()`: one call's time on its thread.
+- `enum { SEG_PROLOGUE, ... }`: `runtime/vk/vk_exec.c` `vk_exec_record()`'s parts: before the walk (pins, events, the
+  mirror's and uniform snapshot's begin), the walk (ops, front passes, groups), the groups' drain to the closing
+  barrier, the mirror's and snapshot's end, the rest.
+  - `SEG_PINS, SEG_EVSYNC, SEG_MIRROR_BEGIN, SEG_USNAP_BEGIN`: of the prologue: the pins' sweep, the event sync, the
+    mirror's begin, the uniform snapshot's begin.
+  - `SEG_PEEK, SEG_GBEGIN, SEG_FRONT, SEG_HANDOUT, SEG_OWN, SEG_N }`: of the walk, `group_start`: the peek ahead, the
+    barrier and group begin, the front pass's loop, the hand-out (slots, the part, the queue, the wakes), the submitting
+    thread's own chunks.
+- `vk_exec_view_aspect()`: The aspect a sampled view of img reads (`runtime/vk/vk_exec_draw.c` `get_view()`): stencil
+  for a view in STENCIL depth-stencil mode.
+- `vk_exec_target_view()`:
+  - `uint32_t level, uint32_t base, uint32_t layers, int blocks)`: kept for the image's life.
+- `vk_exec_op_xfer()`: `runtime/vk/vk_exec_xfer.c`: `OP_COPY_B2B`, `OP_COPY_B2T`, `OP_COPY_T2B`, `OP_COPY_T2T`,
+  `OP_CLEAR_TEX`, `OP_SIGNAL_EVENT`, `OP_REPORT_COUNTER`, `OP_RESET_COUNTER`, `OP_RENDER_ENABLE`, `OP_RENDER_COND`,
+  `OP_CLEAR_BUF`.
+- `vk_exec_wait_event()`: `OP_WAIT_EVENT` (`runtime/vk/vk_exec_xfer.c` "event order check"): counts the wait; 1 when its
+  condition holds in replay order (the value in memory, or the signals replayed so far), 0 when its signal has not been
+  replayed yet.
+- `vk_exec_event_met()`: the same test without counting.
+- `vk_exec_event_met_now()`: Any thread, without the replay's lock: the wait's condition on the value in memory now or
+  the signals replayed so far, whatever submission another thread is recording (`vk_exec_held_ready`). A decision only.
+- `vk_exec_signalled`: set by every replayed SignalEvent; `runtime/vk/vk_exec.c` clears it.
+- `vk_exec_event_cpu()`: Events the CPU signals (`runtime/vk/vk_exec_xfer.c` "events the CPU signals").
+
+  any thread: `nvnEventSignal` is about to write the event's value.
+- `vk_exec_event_sync()`: `vk_exec_record`: its mirror sync and uniform copy are taken now / it ends.
+- `vk_exec_event_cpu_known()`: the CPU has signalled this event before.
+- `vk_exec_event_holds_now()`: an `OP_WAIT_EVENT`'s condition on the value in memory now.
+- `vk_exec_gate_wait()`: `runtime/vk/vk_backend.c` `submit_sync()`, before a submission is recorded: waits for the CPU's
+  signal when the submission begins with a wait for it (`runtime/vk/vk_exec.c` "the gate").
+- `vk_exec_event_at_sync()`: `NX2SARIA_EVENT_AT_SYNC`.
+- `vk_exec_event_late_take()`: waits only a CPU signal after the copies would have passed, since the last call.
+- `vk_exec_event_stats()`: Since the last call, which resets them: waits, waits reached before their signal, those of
+  them a later replayed signal met, and the sum of how many submissions later it came.
+- `vk_exec_submit_seq`: replay thread: submissions replayed so far.
+- `vk_exec_submit_seq_now()`: The same from a thread that does not hold the submission lock (`runtime/vk/vk_sync.c`
+  `sub_lock`), under which it is written.
+- `vk_exec_brk`: replay thread: bumped by every op that is not state or a draw (`runtime/vk/vk_exec.c` `op_linear()`).
+- `vk_exec_brk_now()`: `vk_exec_brk`, or in a parallel group's chunk the chunk's own count.
+- `vk_exec_evt()`: `NX2SARIA_EVO_TRACE=1` (diagnostics, `runtime/vk/vk_exec.c` "event order trace"): one token per step
+  of the replay's event order.
+- `vk_exec_evt_frame()`: the game's present call: the frame's tokens are closed and logged.
+- `VkDescMem`: The memory report's descriptor pools (`runtime/vk/vk_memory.c` `outside_log()`): the replay's pools,
+  spare ones included, the sets each holds, and the texture pool's sets (0 before it exists).
+- `vk_exec_held()`: any thread: held submissions waiting for a signal (event order).
+- `vk_exec_held_ready()`: ... and one of them can go on now (`runtime/vk/vk_backend.c` `present_held`); any thread.
+- `vk_dlaa_swap_img`: `runtime/vk/vk_dlaa.c`: once DLSS has scaled the scene this frame, passes larger than the scene's
+  light target `vk_dlaa_swap_img` sample DLSS's output `vk_dlaa_swap_view` in its place, so the game's scaling draw
+  scales DLSS's picture.
+- `enum { VK_AA_GAME, ... }`: `runtime/vk/vk_aa.c`, the anti-aliasing setting in place of the game's SMAA
+  (`runtime/vk/vk_exec_draw.c` `aa_dispatch()`). `vk_aa_mode`: this frame's replacement, `VK_AA_GAME` when the game's
+  SMAA runs as it is. `vk_aa_role`: which of the game's SMAA passes a compute program is, by the hash of its guest code.
+  `vk_aa_skip_ok`: the edge and weight passes may be left out (the last composition was replaced). `vk_aa_record`: the
+  replacement of the composition into cb, from src (the composite, sampled) into dst (the scene target's `R32_UINT`
+  storage view) of w x h; 0 when it could not. `vk_aa_composed`: what became of the composition this frame.
+- `vk_contact_pass_begin()`: `runtime/vk/vk_contact.c`: a pass about to begin (its targets resolved, no pass open), and
+  a dispatch or copy about to be recorded.
+- `vk_contact_pending()`: a contact shadows' pass waits for the next transfer outside a pass.
+- `vk_exec_oq_draw()`: `runtime/vk/vk_exec_xfer.c`, samples-passed counting: a draw about to be recorded in the open
+  pass (begins an occlusion query when counting and none is active), and the open pass about to end (ends the active
+  query).
+
 ## `runtime/vk/vk_exec_probe.c`
 
 nx2saria.exe --probe-vkexec: the Vulkan replay, through `gfx_vulkan_backend`. Sync part: empty submissions get
