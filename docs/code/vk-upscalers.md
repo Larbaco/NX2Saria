@@ -579,7 +579,12 @@ the rings, 7 `dB` below the pan of (1, 0.5).
 
 `NX2SARIA_FSR3_PROBE_PPM=<dir>` writes the outputs, the bilinear ones and the references as PPM images.
 
-The scene is in render pixels of the 960x540 render; S is how many output pixels make one of them.
+The scene is in render pixels of the run's render size (the same picture at 960x540 and at 1280x720, so the larger
+render shows more of it); `s` in `rings_mask()` and `reference()` is how many render pixels make one output pixel (0.5
+at 960x540). The depth is flat (0.9 everywhere). The sharpened runs use a sharpness of 0.5. The timing run is 40 frames
+for each of the two, the first 8 not timed. The image, buffer and upload helpers (`make_img()`, `make_buf()`,
+`general()`, `full()`, `copy_in()`, `submit_wait()`) carry no notes: each frame is one submission of its own
+(`runtime/vk/vk_sync.c` `vk_sync_submit_own()`), waited for up to 10 s.
 
 ### `scene()`
 
@@ -673,7 +678,9 @@ bench) and at 1920x1080 from 1280x720, from the passes' own timestamps, and `vk_
 `NX2SARIA_FSR3FG_PROBE_PPM=<dir>` writes the last two pictures and the generated one as PPM images.
 
 The square's side `SQ` is 64 picture pixels; black bars of `BAR_TOP` (60) pixels are above and below the picture's
-rectangle.
+rectangle. The square's depth is 0.5 and the background's 0.95; only the square has motion vectors. A bar pixel counts
+as not black when a channel is above 2. In a build where `vk_fsr3fg_build()` is 0 (Windows) the probe prints SKIP and
+returns 0, as it does without a Vulkan device or where the device cannot run the passes.
 
 ### `fill()`
 
@@ -2913,13 +2920,21 @@ constants 0 and 1), 0 for any other shader. The replacement is FMax for FClamp a
 ### `spv_literal()`
 
 Which words of an instruction are literals rather than ids, for the opcodes the tonemap library uses (word j, 1 is the
-first after the opcode word). An opcode it does not know makes the splice give up (-1).
+first after the opcode word): 1 a literal, 0 an id. Four opcodes make the splice give up (-1): OpSwitch, OpLine,
+OpNoLine and OpCopyMemory (63). Any other opcode that is not in its table is taken to hold ids only, which is right for
+arithmetic, access chains, calls, constant composites, arrays and function types, and would be wrong for an opcode with
+literals that is not listed, such as OpTypeImage.
 
-Among those it gives up on are OpSwitch, OpLine, OpNoLine and OpCopyMemory (63).
+The literal words it knows: OpFunction's function control and OpVariable's storage class (word 3); OpLoad's memory
+access (from 4) and OpStore's (from 3); the indices of OpCompositeExtract (from 4), OpCompositeInsert and
+OpVectorShuffle (from 5); OpExtInst's instruction number (4); OpSelectionMerge's control (2) and OpLoopMerge's (from 3);
+OpBranchConditional's weights (from 4); OpConstant's value (from 3); the width and signedness of OpTypeInt and
+OpTypeFloat (from 2); the count of OpTypeVector and OpTypeMatrix (3); OpTypePointer's storage class (2).
 
 ### `put_mapped()`
 
-One library instruction with its ids mapped (`map[id]`, new ones already assigned); 0 when an id has no mapping.
+One library instruction with its ids mapped (`map[id]`, new ones already assigned); 0 when an id has no mapping, when
+the instruction is longer than 64 words, or when `spv_literal()` gives up on its opcode.
 
 ### `SpvView`
 
@@ -2981,7 +2996,13 @@ with the exposure gain in them (`spv_exposure()`; x and a gain of 1 when it find
 `HDR_SETS` vec4 the support buffer gains at 1440 (`runtime/vk/vk_exec_draw.c` `support_fill()` writes them; the
 translator's SupportBuffer ends there). The library's types are matched to the game's where the same (SPIR-V allows one
 declaration of each), its constants and functions appended with new ids. Gives up (0) on any shape it does not expect,
-and the shader stays as it was.
+and the shader stays as it was. Otherwise it replaces `*spirv` with a new module and returns 1, or 2 when the exposure
+was not found (`vk_hdr_shader_swap()` logs which).
+
+What the game's module must have, or the splice gives up: an id bound between 8 and 2^22, the GLSL.std.450 import, a
+32-bit float and a 32-bit int type (a signed one is taken when there is one), the float constants 0, 1, 2.51 and 0.03, a
+variable named `support_buffer` whose struct has 11 members, the last at offset 1424, exactly one function, and at least
+three clamp sites (the first 8 are looked at).
 
 `HDR_SETS` is 5 and `HDR_PARAMS` 7: the function is `nx_tonemap(vec3 x, vec4 scene, vec4 settings[HDR_SETS])`.
 
@@ -2993,21 +3014,28 @@ The steps:
 - The support buffer is the struct whose member 10 is at 1424.
 - Where each result is defined: the globals the later checks look at, and inside the function every instruction that has
   a result (its second word; the first definition stands, so a word of an instruction without one, taken for a result
-  here, cannot replace a real one). Left out there, as instructions without a result: the stores, labels, merges and
-  branches, OpCopyMemory (63), OpImageWrite (99), OpAtomicStore (228) and OpReturnValue (254).
+  here, cannot replace a real one). Left out there, as instructions without a result: the stores, labels, merges,
+  OpBranchConditional and OpSwitch, OpCopyMemory (63), OpImageWrite (99), OpAtomicStore (228) and OpReturnValue (254).
+  Instructions of fewer than three words (OpBranch, OpReturn, OpKill) have no second operand to take.
 - The support buffer's block and a Uniform vec4 pointer are looked for among the globals.
-- The clamp sites and their x: the clamp's operand is FMul(num, rcp), and num is FMul(x, Fma(x, 2.51, 0.03)); the
-  clamp's result is stored to a variable (OpStore var, result).
-- The output stores of channels 0..2: OpStore (AccessChain out, c), value, with a load of a site's variable between. A
-  channel stored twice gives up.
-- The insertion point is the first of those stores; the span from it to the last must be one block.
+- The clamp sites and their x: the clamp's operand is FMul(num, rcp), and num is FMul(x, Fma(x, 2.51, 0.03)), with the
+  operands in that order (the Fma's first operand is not compared with x); the clamp's result is stored to a variable
+  (OpStore var, result). A clamp whose result is stored nowhere is not a site.
+- The output stores of channels 0..2: OpStore (AccessChain out, c), value, the chain with one index, a constant 0, 1 or
+  2, and with a load of a site's variable between the chain and the store. A channel stored twice gives up, and so do a
+  channel without a site and two channels of one site.
+- The insertion point is the access chain of the first of those stores. Every site's clamp and x must be defined before
+  it, and from the earliest of them to the last of the three stores there must be no label: one block.
 - The exposed values and the gain: usable at the call when defined in a block outside every selection and loop before
   it, or in the call's own. A value with nothing added is passed as it is.
 - The library: its ids mapped into the game's id space, in three outputs: the library's globals, its functions, the
   result.
-- A library type takes the game's own declaration of it (any but a struct).
-- A library variable that is neither an Input nor an Output is a global its functions could use, which gives up
-  (`lib_fail`); main's inputs and output are left behind with main.
+- The library may declare the Shader capability only and import GLSL.std.450 only, which maps to the game's import.
+- A library type (opcodes 19 to 39) takes the game's own declaration of it (any but a struct); one the game lacks is
+  appended with a new id. A library constant (41 to 46 without OpConstantSampler, 45) always gets a new id.
+- A library variable that is neither an Input (storage class 1) nor an Output is a global its functions could use,
+  which gives up (`lib_fail`); main's inputs and output are left behind with main.
+- `nx_tonemap` is found by its OpName, which starts with `nx_tonemap(`, and the library's main by its entry point.
 - Names, decorations (the inputs' locations), the entry point and the memory model stay the game's.
 - `nx_tonemap`'s function type is (vec3, vec4 x (1 + `HDR_SETS`)) with its parameters by pointer, as the compiler writes
   them; the library's vec4 must be the support buffer's.
@@ -3016,11 +3044,20 @@ The steps:
   249 too), OpKill (252), OpReturn (253), OpReturnValue (254), OpUnreachable (255) and OpFunctionEnd have none.
 - The result: the game's module with the support block grown, the library's globals before the first function, the call
   in main, the three stores changed, and the library's functions at the end. The support block gains `HDR_SETS` vec4 at
-  1440.
+  1440, members 11 to 15, 16 bytes apart, with an Offset decoration each after member 10's.
+- The call, written at the insertion point: an access chain and a load for each of the five settings (through the
+  game's Uniform vec4 pointer type, or a new one); x as a vec3 of the three sites' x; the scene as a vec4 of the three
+  exposed values (each with its added colour, by an OpFAdd, where there is one) and the gain in w; a store of each into
+  a Function variable declared after main's first label, since the parameters are pointers; the OpFunctionCall; and
+  three OpCompositeExtract whose results the three output stores then store. The module's id bound becomes the next
+  free id.
 
 ### `vk_hdr_shader_swap()`
 
-Armed, not wanted: a shader loaded while HDR is off must be ready for the menu switching it on.
+Armed, not wanted: a shader loaded while HDR is off must be ready for the menu switching it on. Nothing with the game's
+own HDR. Each shader goes through `tonemap_splice()` and then `fsr_unclamp()`; one log line for each tonemap spliced
+(with a note when its exposure was not found), one for each FSR pass unclamped, and one, once, for an FSR pass found
+with no output clamp.
 
 ### The picture the window texture is copied from
 
@@ -3034,12 +3071,16 @@ Armed, not wanted: a shader loaded while HDR is off must be ready for the menu s
 
 - An unlocked first look: most draws go elsewhere (a stale slot only costs the lock that follows).
 - The last such draw of the stream decides, as in the replay, also when replay workers record draws at once.
-- The source is the one plain 2D texture the draw samples.
+- The source is the one plain 2D texture the draw's fragment shader samples, when it is a float format (B10G11R11,
+  RGBA16F, RGBA32F), of the window texture's size and not multisampled. Any other draw into the window texture records
+  no source, and the present then reads the window texture.
 
 ### `vk_hdr_present_source()`
 
-The record is kept until the next draw into the window texture: a present again without a new copy shows the same
-picture.
+Nothing with HDR off or with the game's own HDR. The first call sets `vk_hdr_track`; a window texture seen for the first
+time gets a record (4 at most). The float source replaces `*image` and `*format` only while the swapchain is HDR10
+(`vk_hdr_active()`). The record is kept until the next draw into the window texture: a present again without a new copy
+shows the same picture.
 
 ### `vk_hdr_image_gone()`
 
@@ -3049,15 +3090,22 @@ No records exist before the first HDR present (`vk_hdr_present_source()`), so no
 
 ### `vk_hdr_surface_format()`
 
-While `NX2SARIA_HDR` is on (`vk_hdr_wanted()`), the HDR10 format among the surface's (10-bit UNORM, ST 2084): 1 with
-`*out` set, else 0 and the reason logged once.
+While `NX2SARIA_HDR` is on (`vk_hdr_wanted()`), the HDR10 format among the surface's (10-bit UNORM with the colour
+space `VK_COLOR_SPACE_HDR10_ST2084_EXT`): A2B10G10R10 when the surface has it, else A2R10G10B10. 1 with `*out` set, else
+0 and the reason logged once. The surface's whole list of formats and colour spaces is logged once too.
 
 ### `vk_hdr_metadata()`
 
 The display's peak and the picture's white for sc; again when the settings change (`runtime/gfx/gfx_present.c` calls it
 on every present to an HDR10 swapchain, with new = 1 for a new swapchain).
 
-AMD's frame generation swapchain takes it through its own call (`runtime/vk/vk_fg.cpp` `vk_fg_hdr_metadata_fn()`).
+The `VkHdrMetadataEXT` sent: Rec. 2020 primaries (red 0.708, 0.292; green 0.170, 0.797; blue 0.131, 0.046) and the D65
+white point (0.3127, 0.3290); `maxLuminance` and `maxContentLightLevel` the peak setting, in nits; `minLuminance` 0;
+`maxFrameAverageLightLevel` the picture's white. Nothing is sent without `VK_EXT_hdr_metadata` on the device
+(`has_hdr_metadata`).
+
+AMD's frame generation swapchain takes it through its own call (`runtime/vk/vk_fg.cpp` `vk_fg_hdr_metadata_fn()`),
+which is used when there is one.
 
 ### `img_ensure()`
 
@@ -3070,6 +3118,12 @@ M at w x h in fmt; another size waits for the device first (earlier presents may
 - `ui`: for `ui_fmt`.
 - `out`: PQ code values of the crop, RGBA16F.
 - `menu`: the in-game menu, RGBA8.
+- `src_view`: a view of the picture the encode reads, one per present slot (`SLOTS`, 8); a slot's old view is destroyed
+  when the slot is used again.
+
+`init()` makes the sampler (nearest), the two descriptor set layouts (push descriptors), the two pipeline layouts (32
+bytes of push constants for the encode, 16 for the menu) and the encode's compute pipeline, once; when any of it fails,
+the picture goes out unconverted for the run, with one log line.
 
 ### `vk_hdr_native_picture()`
 
@@ -3078,8 +3132,15 @@ format becomes A2R10G10B10.
 
 ### `vk_hdr_encode()`
 
+Returns the image the present reads in place of `src`, or `VK_NULL_HANDLE` when the present is to read `src` as it is.
+
 - Native HDR: the game's picture holds PQ codes already; the present scales it into the swapchain as it is.
-- An sRGB format decodes itself through the view; 8-bit UNORM holds sRGB codes the shader decodes.
+- An sRGB format decodes itself through the view; 8-bit UNORM (RGBA8 or BGRA8) holds sRGB codes the shader decodes.
+- The push constants: the crop's offset and size, then the HUD's white in nits, the peak in nits, 1 when the shader is
+  to decode sRGB codes, and the gamma as `HDR_GAMMA_22` numbers it. The picture's white is not among them: it is the
+  tonemap's.
+- `src` is read in GENERAL; the output image is taken from UNDEFINED each time (its old content dropped) and left in
+  GENERAL.
 
 ### `vk_hdr_ui_target()`
 
@@ -3092,7 +3153,8 @@ Another swapchain format: earlier presents may still use the old pipeline, so th
 
 ### `vk_hdr_ui_compose()`
 
-The menu image onto dst (a swapchain image in `COLOR_ATTACHMENT_OPTIMAL`, view `dst_view` of format fmt).
+The menu image onto dst (a swapchain image in `COLOR_ATTACHMENT_OPTIMAL`, view `dst_view` of format fmt): one
+full-screen triangle blended by the menu's alpha, with the HUD's white in nits and the gamma as push constants.
 
 ### `vk_hdr_images_release()`
 
@@ -3103,15 +3165,17 @@ them anew.
 
 ### `pq_nits()`
 
-Luminance of a PQ code (0..1023 over 1) in nits.
+Luminance in nits of a PQ signal value 0..1 (a 10-bit code over 1023): the SMPTE ST 2084 EOTF, with its constants m1 =
+0.1593017578125, m2 = 78.84375, c1 = 0.8359375, c2 = 18.8515625, c3 = 18.6875, and 10,000 nits at 1.
 
 ### `vk_hdr_to_srgb8()`
 
 10-bit PQ pixels of an HDR10 swapchain to bytes that show on a display of gamma 2.2 what the HDR display shows, the
 HUD's white at 255 (menu test shots and flight thumbnails): a dark tone the HDR display lifts looks lifted here too.
 
-- Rec. 2020 to Rec. 709 (the inverse of ITU-R BT.2087's matrix).
-- A2B10G10R10: red is the low 10 bits.
+- Each channel's nits over the HUD's white, then Rec. 2020 to Rec. 709 (the inverse of ITU-R BT.2087's matrix), a
+  clamp to 0..1 and the power 1 / 2.2.
+- A2B10G10R10: red is the low 10 bits. `a2r`: the pixels are A2R10G10B10, red and blue the other way round.
 
 ### `vk_hdr_luminance_stats()`
 
@@ -3120,7 +3184,10 @@ out = the darkest pixel's, the 0.1st, 1st, 50th and 99th percentiles, the bright
 0.01 nits. The percentiles come from a histogram of 64 bins a stop, from 2^-24 to 2^14 nits; a value is a bin's upper
 edge.
 
-- Bin 0 is exactly black.
+- `out[0]` is the darkest, `out[1]` to `out[4]` the four percentiles, `out[5]` the brightest, `out[6]` the share.
+- The luminance is 0.2627 R + 0.6780 G + 0.0593 B of the three channels' nits.
+- Bin 0 is exactly black, and a percentile that falls in it is given as 0.
+- The histogram and the code-to-nits table are static: one caller at a time.
 
 ## `runtime/vk/vk_dlaa.h`
 
