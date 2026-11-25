@@ -1,5 +1,12 @@
 # needs: clang
-"""The vsync event list reuses the slots of destroyed events (runtime/gfx/gfx_present.c gfx_vsync_bind): builds
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+DESCRIPTION = """The vsync event list reuses the slots of destroyed events (runtime/gfx/gfx_present.c gfx_vsync_bind): builds
 gfx_vsync_bind, cut from gfx_present.c by its text, with stand-ins for the lock, the log, the vsync thread start and
 kern_system_event_live, and checks that
 
@@ -9,12 +16,6 @@ kern_system_event_live, and checks that
 
 No game files. Usage: python tests/vsync_bind_check.py [--cc <clang>]
 """
-import argparse
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -75,7 +76,7 @@ def cut(text, start, end_marker):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

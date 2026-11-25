@@ -1,5 +1,12 @@
 # needs: clang
-"""Dynamic resolution's target and step hold (runtime/pacing/dynres.c): builds dynres.c, cut by its text, with stand-ins for
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+DESCRIPTION = """Dynamic resolution's target and step hold (runtime/pacing/dynres.c): builds dynres.c, cut by its text, with stand-ins for
 the settings, the GPU's busy time, the clock and the game's rate under the limit (frame_rate.c frame_step_game_hz),
 and checks that
 
@@ -24,12 +31,6 @@ and checks that
 
 No game files, no GPU. Usage: python tests/dynres_check.py [--cc <clang>]
 """
-import argparse
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -383,7 +384,7 @@ int main(void) {
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

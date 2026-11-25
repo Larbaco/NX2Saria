@@ -1,10 +1,5 @@
 # needs: exe, xlate
 # args: {exe} {xlate}
-"""Compare preparation request sharing with independent jobs using six synthetic shaders.
-
-Pass the candidate executable, the translator, and --reference-exe for a paired build.
-No game data or installed cache is used. All output stays in build/.
-"""
 import argparse
 import hashlib
 import json
@@ -15,6 +10,12 @@ import struct
 import subprocess
 import tempfile
 import time
+
+DESCRIPTION = """Compare preparation request sharing with independent jobs using six synthetic shaders.
+
+Pass the candidate executable, the translator, and --reference-exe for a paired build.
+No game data or installed cache is used. All output stays in build/.
+"""
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -61,7 +62,7 @@ def run(exe, translator, folder, keep=False):
 
 
 def main():
-    ap=argparse.ArgumentParser(description=__doc__)
+    ap=argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('game',type=Path)
     ap.add_argument('translator',type=Path)
     ap.add_argument('--reference-exe',type=Path)

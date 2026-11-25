@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Apply the verified Ocarina 1.1.1 ambient-power workaround to a Linux shader cache file.
+import argparse
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+DESCRIPTION = """Apply the verified Ocarina 1.1.1 ambient-power workaround to a Linux shader cache file.
 
 The affected shader evaluates exp2(log2(height) * exponent). A zero height
 and zero exponent produce a NaN, which then contaminates ambient lighting
@@ -8,12 +15,6 @@ This is a narrowly scoped compatibility workaround, not a claim of exact
 NVIDIA instruction equivalence. It does not address exposure or memory use.
 No game shader data is embedded in this tool.
 """
-import argparse
-from pathlib import Path
-import re
-import shutil
-import subprocess
-import tempfile
 
 ORIGINAL_HASH = 0xA806B657C39684BD
 PATCHED_HASH = 0x0A0281063D5EF5BD
@@ -49,7 +50,7 @@ def patch_text(source):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument('shader', type=Path, help='Supported .spv shader cache file')
     destination = parser.add_mutually_exclusive_group(required=True)
     destination.add_argument('--output', type=Path)
