@@ -1599,3 +1599,702 @@ A slot not free is still in use by a frame `FGT_SLOTS` ago: this frame is not ti
 
 After AMD's contexts are destroyed (`runtime/vk/vk_fg.cpp` `vk_fg_release()`), with the device idle: nothing records
 into the pool.
+
+## `runtime/vk/vk_aa.c`
+
+The anti-aliasing setting (`NX2SARIA_AA`, `aa` in `nx2navi.ini`): what runs in place of the game's own SMAA.
+
+The game anti-aliases every frame with SMAA in three compute passes right after the bloom composite: edge detection into
+4x4-pixel tiles, blending weights from the tiles (an indirect dispatch, with the game's area lookup texture), and the
+composition, which reads the composite and the weights and writes the result into the scene target that the game's
+upscaler, the HUD and the output passes then take. The composition stores each channel's square root packed as RGB9E5
+words through an integer view of that R11G11B10F target (`runtime/vk/vk_exec_draw.c` `raw_note()`).
+
+`aa = game` (the default) leaves those passes alone. `off`, `fxaa` and `smaa` leave out the edge and weight passes and
+replace the composition (`runtime/vk/vk_exec_draw.c` `aa_dispatch()`) with one of the passes here, which read the same
+composite and write the same words: off stores it as it is, fxaa smooths it first (`runtime/shaders/aa_post.comp`), smaa
+runs SMAA at its Ultra preset (`runtime/shaders/smaa_*.comp`, the reference implementation in
+`runtime/shaders/smaa.glsl` with the area and search textures of `runtime/third_party/smaa/`). `taa` is DLSS or FSR at
+the scene's own size: the menu sets the upscaler for it (`runtime/ui/menu.cpp` `row_aa()`), and the game's SMAA runs
+with it. While DLSS or FSR anti-aliases or scales the scene (dlaa = 1), game, off, fxaa and smaa still choose the pass
+above: in their native modes the upscalers run before the bloom (`runtime/vk/vk_dlaa.c`) and the pass smooths their
+picture after it, in the scaling modes the pass runs on the scene first and the upscaler scales its result. off then
+leaves the upscaler's TAA alone on the edges.
+
+The game's passes are known by a hash of their guest code (`vk_aa_role()`), which does not change with the translator or
+its settings. Everything here runs on the replay thread.
+
+`GAME_SMAA`: FNV-1a over the guest code of the game's three SMAA compute programs (`runtime/vk/vk_exec_draw.c`
+`cs_guest_hash()`), game 1.1.1, found with `NX2SARIA_AA_LOG=1`: the edges (a 4x4-pixel tile per invocation), the weights
+(an indirect dispatch over the tiles with edges) and the composition (16x16 pixels per group).
+
+### `temporal()`
+
+DLSS or FSR anti-aliases this frame's scene: dlaa = 1 and one of them runs (`runtime/vk/vk_dlaa.c`).
+
+The setting's state, `A`:
+
+- `frame_read`: atomic: the frame whose first `vk_aa_mode()` call took the setting.
+- `mode`: atomic: this frame's (`vk_aa_mode()`).
+- `said`: taa was last logged as waiting for DLSS or FSR.
+- `composed`: the last composition seen was replaced (`vk_aa_composed()`): the passes before it may go.
+- `frames_on`, `composes`: frames with a replacement asked for, compositions replaced.
+
+### `vk_aa_mode()`
+
+Every compute dispatch asks (`runtime/vk/vk_exec_draw.c` `aa_dispatch()`), on whichever thread records it, and the
+replay workers record at once: the first call of a frame claims it with a compare-and-swap, and only that one frees the
+idle work images (`work_idle()`, which two threads would have freed twice) and takes the setting. A call that finds the
+frame claimed gets the mode as it stands.
+
+- `taa` is the game's SMAA with DLSS's or FSR's TAA; without them at work, the game's SMAA alone.
+- A game version or a frame without the passes this file knows: nothing is replaced, and the log says so once.
+
+### `vk_aa_composed()`
+
+A composition that could not be replaced runs as the game's, and the edge and weight passes run again from the next
+frame on, until a composition is replaced again: the game's composition must never read weights left out.
+
+### Pipelines
+
+`P`:
+
+- `tables`: the area and search textures: 0 not made, 1 ready, -1 failed.
+- `luma`, `edges`, `weights`: at the scene's size (w, h).
+- `smaa_frame`: the last frame that recorded SMAA's passes.
+
+### `work_idle()`
+
+SMAA's work images stayed for the rest of the run once aa left smaa: three pictures of the scene's size, 109 MiB at
+5120x2142. They go `WORK_IDLE` presents after the last frame that used them, through the deferred destruction (no
+submission still names them then); smaa again makes them as a change of the scene's size does (`work_images()`), in the
+command buffer of its first frame. A minute, not less: the passes run only where the game runs its own SMAA, so a long
+pause or loading screen with smaa set also counts as unused, and the images are made again after it.
+
+### `img_make()`
+
+An image of the passes' own, in the GENERAL layout from cb on (the transition is recorded into cb).
+
+### `tables_make()`
+
+The area and search textures, uploaded once through the upload batch and waited for (the first SMAA frame only).
+
+### `work_images()`
+
+SMAA's work images at the scene's size, made again when it changes.
+
+### `pass()`
+
+One pass: its pipeline, its images (samplers: linear but for the search texture) and the push constants.
+
+The descriptors are pushed through the recorder (`runtime/vk/vk_rec.h`).
+
+## `runtime/vk/vk_contact.c`
+
+Screen-space contact shadows (`NX2SARIA_CONTACT_SHADOWS`, percent strength, 0 = off). The game fills a full-resolution
+G-buffer whose targets include a B10G11R11 scene colour, an R32F linear depth (view distance / far) and a D32F depth
+(`is_gbuffer()`), lights it in half resolution, and then composites the lighting into that scene colour in one pass
+whose only target is the scene colour, with a D16 depth that sorts pixels into material classes (`is_composite()`). When
+the pass after the composite begins, or a dispatch or copy comes first, `runtime/shaders/contact_shadow.comp` marches
+each pixel a short way toward the sun through the linear depth and darkens the scene colour where the ray passes behind
+nearby geometry: the small shadows at feet, under stones and in grass that the shadow maps are too coarse for.
+Transparent surfaces, the sky and post-processing come after, untouched.
+
+Inputs from the game, read from the fragment stage's uniform block c4 bound in the composite pass (guest memory, so it
+may be one frame newer than the replay): the projection scales `c4[7].x` and `c4[8].y`, the far plane `c4[14].y`, and
+the first sun cascade's depth row `c4[44].xyz`, whose negated direction points from a view-space position toward the sun
+(the G-buffer shaders compare `dot(c4[44].xyz, pos) + c4[44].w` with the cascade map). The scene colour images get
+STORAGE usage when the setting is on (`runtime/vk/vk_texture.c` `create_tex()`).
+
+`C`:
+
+- `scene`, `depth`: the last G-buffer's scene colour and linear depth.
+- `pending`: the composite into scene ran; the march waits for the next pass.
+
+### `init()`
+
+`NX2SARIA_CONTACT_DEBUG=1`: the frame shows the contact shadow factor in grey.
+
+### `is_gbuffer()`
+
+A G-buffer pass: a B10G11R11 scene colour, an R32F linear depth and a D32F depth, all one size, at least 640 wide.
+
+### `vk_contact_flush()`
+
+- The submitting thread past a group (`runtime/vk/vk_exec.c` `NX2SARIA_REPLAY_PIPE`): the group's first chunk may have
+  made the pass due and a later one records it where the replay would; only one still due after the group is this one's.
+- A barrier before the march: the compose passes' writes come before it reads and writes the scene colour. One after it:
+  what follows sees the darkened colour.
+- The game's bound compute pipeline and descriptors were replaced: `vk_exec_draw_new_cb()` has them bound again.
+
+### `is_composite()`
+
+The lighting composite: the remembered scene colour as the only target, with a D16 depth of its size.
+
+### `vk_contact_pass_begin()`
+
+- The camera block: c4 of the fragment stage, 0x940 bytes. The composite binds it only after its pass begins, so the
+  newest one seen at any pass start serves.
+
+## `runtime/vk/vk_tonemap.c`
+
+Decode-and-scale pass standing in for the scene upscaler (`runtime/vk/vk.h` `vk_tonemap_record()`; used by
+`runtime/vk/vk_exec_draw.c` `untranslated_dispatch_fallback()`).
+
+The game's upscaler (tensor-core, untranslatable) reads the post pass's picture, whose channels hold the square root of
+their linear value packed as RGB9E5 (prog 102), and writes the linear picture the HUD is drawn over; the frame's last
+pass encodes to sRGB. This pass (`runtime/shaders/fallback_tonemap.spvasm`) scales with linear filtering in the stored
+values and squares them into an RGBA16F image of the target's size, which the caller blits in 1:1. The game composites
+and tonemaps before the post pass, so nothing here changes exposure. (It was a tonemap once, when the input was taken
+for the raw HDR scene; the blit's sRGB decode that stood in since darkened mid-tones and lifted the darkest values.)
+
+The filter: the console's upscaler is a network that rebuilds edges, and a linear filter over a scene drawn at about
+three quarters of the picture is visibly softer than that. With `NX2SARIA_STANDIN_FILTER` = easu (the default) the pass
+that enlarges is `runtime/shaders/fsr_easu.comp` instead, the edge-adaptive filter the present scales to the window with
+(`runtime/vk/vk_fsr.c`), built here with its SQUARE constant set: it filters the same stored values, which are the
+perceptual encoding that filter is made for, and squares the result as the linear pass does, so only how the scaled
+sample is taken differs. `bilinear` keeps the linear pass. The linear pass also stays where nothing is enlarged (the
+filter only enlarges) and where the caller says another upscaler's picture replaces this one
+(`runtime/vk/vk_exec_draw.c` `untranslated_dispatch_fallback()`: DLSS or FSR 3.1, `runtime/vk/vk_dlaa.c`). A scene as
+large as the picture (`scene_share` = 1, the menu's Native: `runtime/patches/widescreen.c` `plain_share()`) is not
+scaled at all: the linear pass samples it with a nearest-texel sampler, so each output texel is its source texel
+squared, whatever the filtering hardware's sub-texel precision. The movie's frames do not come through here: the caller
+blits those (RGBA8) itself.
+
+The state, `TM`:
+
+- `pipe`: scale with linear filtering, then square (`runtime/shaders/fallback_tonemap.spvasm`).
+- `easu`: scale with the edge-adaptive filter, then square (`runtime/shaders/fsr_easu.comp`).
+- `filter_logs`: lines `tm_filter_log()` has written.
+- `filter_last`: what its last line named: 1 the linear filter, 2 the edge-adaptive one, 3 a copy 1:1.
+- `nearest`: the same with nearest-texel filtering: a source of the output's size (copy 1:1).
+- `out`: the pass's own output (RGBA16F, the target's size); the caller blits it in.
+
+### `tm_out()`
+
+The output image at w x h, made again when the size changes (the old one is left to the deferred release).
+
+### `tm_init()`
+
+The push constant range is 32 bytes: the linear pass reads 24, `tm_easu()`'s 32.
+
+### `tm_easu()`
+
+The edge-adaptive pipeline, made at the first frame that asks for it (a run that never does, with the setting at
+bilinear or DLSS on, never builds it): the present's EASU shader with specialization constant 0 (SQUARE) set, on this
+file's layout, whose two bindings are that shader's. `VK_NULL_HANDLE` when it cannot be made; the linear pass then
+stays.
+
+### `tm_filter_log()`
+
+One log line when the filter the pass scales with changes (the setting, DLSS or FSR switched on or off, a scene as large
+as the picture), 8 at most: a scene whose size changes from frame to frame can cross the picture's size often.
+
+### `vk_tonemap_forget()`
+
+Views of the images the pass samples are kept as long as the image: `vk_tonemap_forget()` drops those of an image
+`fallback_scratch` frees, and those of a game image the pass read as it is when the game's texture goes
+(`vk_exec_image_gone()`), which also gives their places back. Without the second, a game image's view stayed naming a
+destroyed image whose handle a new image could get. The texture's destroy runs on any thread, hence `tm_view_lock`.
+
+### `vk_tonemap_record()`
+
+Records the pass from src (sampled, sw x sh) into the pass's own RGBA16F image of dw x dh and returns it (the caller
+blits it into the target); `VK_NULL_HANDLE` when it cannot (the caller blits the source instead). edge: the picture is
+what the screen shows, so the edge-adaptive filter may scale it (0: another upscaler's picture replaces it).
+
+- `NX2SARIA_TM_DISPATCH=0`: everything but the dispatch; `=2`: not at all (diagnosis).
+- `NX2SARIA_STANDIN_FILTER`, read each frame (the setting is live). The edge-adaptive filter only enlarges: a target
+  smaller than the source in either direction, or of its size, keeps the linear pass.
+- The same size both ways: each output texel takes its own source texel, through the nearest-texel pipeline.
+- The descriptors are pushed through the recorder (`runtime/vk/vk_rec.h`), in order.
+- `runtime/shaders/fsr_easu.comp`'s constants: the part of the source that is the picture and the source's size (the
+  whole image both times, as the linear pass maps it), then the output's size and the picture's corner in the source.
+  Each of its groups writes a 16x16 tile.
+
+## `runtime/vk/vk_mvcheck.c`
+
+`NX2SARIA_MV_CHECK=<frames>` (test): measures how well DLSS's motion vectors explain the picture, without screenshots or
+judging by eye. Every `<frames>` DLAA frames, `runtime/vk/vk_dlaa.c` `mv_pass()` copies to host memory the scene light
+target of that frame and of the frame before (before DLSS, so jittered), and the motion image twice: after the camera
+pass (camera only) and after the per-object pass (what DLSS gets). Once the GPU is done, the completion thread compares
+them:
+
+- Warp error: the frame before, sampled bilinearly at p + mv + d, against this frame at p, as a relative luminance
+  difference |a - b| / (a + b) averaged over pixels; d = last frame's jitter minus this frame's (the vectors are between
+  unjittered positions, the pictures are jittered: content at x is drawn at x + jitter). Lower is better, and the
+  correct vectors give the lowest. Over every pixel: zero motion, the camera's and the final vectors, and the final ones
+  with d subtracted or left out (the jitter convention). Over the object pixels (final and camera differ by more than a
+  quarter pixel, `OBJ_MIN`): the camera's, the final ones and variants of the object part (final - camera) scaled by k =
+  -1, 0.5, 1.5, 2 or with one axis negated. The variant with the lowest error names the correction the object vectors
+  need, if any ("best").
+- Flow: on up to `FLOW_MAX` object pixels with some texture, the offset whose 5x5 luminance patch of the frame before
+  matches best, searched over a window around both the camera and the final vector and refined to a sub-pixel by a
+  parabola: the measured motion. The end-point error of the camera and final vectors (+ d) against it, median in render
+  pixels, and how often the final vector is the nearer.
+- Output (DLSS's picture, which the vectors are for): on about `OUT_SAMPLES` pixels picked independently of the vectors,
+  the picture's own motion is measured with a wide search (12 px around the camera vector); where it differs from the
+  camera's by over 1.5 px the pixel moves on its own. At each sample, DLSS's output (at the same unjittered place)
+  against this frame's input, as a relative luminance difference: on the moving samples it grows where DLSS drags old
+  colour along wrong vectors (ghosting, smearing), on the static ones it is the plain difference anti-aliasing and
+  upscaling make. Their ratio compares runs with the per-object pass on and off (it does not depend on the pass's own
+  vectors) and modes.
+
+One `mv_check:` line per check. Disocclusion and changing light add error to every candidate alike, so the comparison
+between candidates counts, not the absolute values. Copies and analysis cost a few ms on check frames only.
+
+The state, `K`:
+
+- `period`: 0 off, -1 not read yet.
+- `ow`, `oh`: the size of DLSS's output in `OUT`, 0 none this check.
+- `want_out`: the check frame's output is to be copied (`vk_mvcheck_output()`).
+- `masks`: the check frame's motion draws (`vk_mvobj_frame_masks()`).
+- `n`: camera-stage calls (DLAA frames with motion).
+- `prev_frame`: the frame the `PREV` colour is of, 0 none.
+- `check`: this frame is a check frame (camera stage copied `MV_CAM`).
+- `busy`: analysis pending: the buffers are not touched.
+
+### `ensure()`
+
+Host buffers of at least the size asked for; a larger size gets new ones and leaves the old (test only).
+
+### `ufloat()`
+
+Unsigned 5-bit exponent mini-float.
+
+### `sample()`
+
+Bilinear, pixel index coordinates.
+
+### `parabola()`
+
+Offset of the minimum of three samples at -1, 0, 1.
+
+- The offset is kept within half a sample: a flat curve says nothing past the neighbours.
+
+### `flow()`
+
+The object pixels' measured motion (sub-pixel), searched over the box around both vectors with a margin of 3; 0 when the
+patch is flat or the match is not clearly better than the box's average.
+
+### Totals over every check
+
+Logged every `TOTAL_EVERY` (20) checks: end-point error histograms in `HBIN` (0.05) px bins of the object samples
+(camera, final) and of the static samples (the measurement's own noise floor), and the object warp errors. `KN` (120)
+bins hold the histogram of per-sample scale ratios, -2 to 4 in steps of 0.05; `T.cal` counts the checks where k = 0.5, k
+= 1 and k = 1.5 fit the static pixels best.
+
+### `hist_add()`
+
+NaN and huge errors go in the last bin.
+
+### `hist_q()`
+
+Quantile q of histogram k, bin centre.
+
+### `mix()`
+
+A fixed pseudo-random pick of pixels, spread over the picture.
+
+### `analyse()`
+
+- The object pixels first, for the sampling rates: about `FLOW_MAX` object and `FLOW_MAX` / 4 static samples.
+- `huge` counts camera vectors over 256 px or not finite.
+- Object samples the final vector misses by more than 1.5 px where the camera's fits better: where and how.
+- Calibration: static pixels with a small camera vector (known right), at k = 0.5, 1, 1.5 of it.
+- Where the object part is over half a pixel: the scale of the object part the measured motion shows.
+- DLSS's output against this frame's input, on samples moving on their own and static ones (the picture's motion).
+- A check counts as wrong when the object pixels are over 0.5 % of the picture and the final vectors are not the best
+  fit.
+
+### `vk_mvcheck_output()`
+
+After DLSS ran on a check frame (`runtime/vk/vk_dlaa.c` `evaluate()`): its output (RGBA16F, ow x oh) for the analysis,
+which runs once the submission is done.
+
+## `runtime/vk/vk_mvprev.c`
+
+Last frame's object and bone blocks, for per-object motion vectors (`NX2SARIA_DLAA_OBJMV`, on with DLAA). The banks kept
+start as c5, c7 and c14 and grow with what the vertex shader variants read (`vk_mvprev_want()`); c7 and c5 are described
+here, the others follow the same two-copy rule.
+
+The scene's vertex shaders read an object's place from bank c7 (`gsys_shape`: one 3x4 matrix at the start of a 0x100
+block) and a skinned object's bones from c5 (`gsys_skeleton`: a run of 3x4 matrices), of this frame only. The game
+writes both into two copies that take turns, the second right after the first: an object's block is at addr in one frame
+and at addr +- step in the next, step its size rounded up to 256 bytes (`runtime/vk/vk_mvsurvey.c` measured it: every c7
+pair 0x100 apart, c5 pairs their rounded size apart, the pair's contents the same object moved a little). The copy this
+frame does not write still holds last frame's when the frame is submitted, so the uniform snapshot
+(`runtime/vk/vk_usnap.c`) also copies both neighbours of these blocks, and `vk_mvprev_find()` picks last frame's:
+
+- self: the block was bound at the same address last frame too (an object the game did not write again): itself;
+- side: one neighbour was bound in that bank last frame: that one;
+- nearer: both were (the copies of adjacent objects interleave): the one with more of its first 16 words equal to this
+  frame's;
+- none: neither: a new object, no motion of its own.
+
+The pick is checked against what was snapshotted of that block last frame (intact: the same first `CHECK` bytes), and a
+summary goes to the log every `SUMMARY` frames:
+
+```
+mv_prev: c<n>: <blocks> blocks: self a %, side b %, nearer c %, none d %; intact e %; moved: still f %, under one unit g %, more h %
+```
+
+`BONES` (2), `PLACE` (4) and `CLOCK` (11) are NVN binding indices: banks c5, c7 and c14; `BANKS` (14) covers c3..c16.
+
+`Seen` is 16 bytes, so a table of `TABLE` entries stays in the cache: every scene draw probes it (the bytes of
+`NX2SARIA_MVPREV_CHECK` live in a table of their own, by entry index, allocated only for the check). An `addr` of 0 is
+an empty entry.
+
+The state, `P`:
+
+- `on`: 1 with the knob on and DLAA on this frame.
+- `knob`: -1 not read.
+- `t`: this frame's bound blocks, last frame's.
+- `bytes`: `NX2SARIA_MVPREV_CHECK`: the first `CHECK` bytes of each entry of `t[k]`, NULL without the check.
+- `timed`: `NX2SARIA_MVOBJ_TIMES`: the summary's times.
+- `st`: per binding index.
+- `last`: the block the last scene draw bound per binding index.
+- `mask`: binding indices kept (`vk_mvprev_want()`): bones, place and clock from the start.
+- `ns_draw`, `ns_frame`: time in `vk_mvprev_draw()` and `vk_mvprev_frame()` since the last summary.
+
+### `vk_mvprev_want()`
+
+`NX2SARIA_MVPREV_GROW=0`: c5, c7 and c14 only (test). The mask grows with an atomic or: the chunks of a parallel group
+ask at once.
+
+### `moved()`
+
+Translation distance between the first matrices of two blocks (rows' fourth floats).
+
+### `vk_mvprev_find()`
+
+With both neighbours bound last frame, the copies of adjacent objects interleave: the one with more words equal to this
+frame's is taken.
+
+### `vk_mvprev_draw()`
+
+Without `NX2SARIA_MVOBJ_TIMES` the draw is not timed: the clock reads were 1 % of the render thread.
+
+### `mvprev_draw_()`
+
+`draw_lock`: the replay workers' scene draws note blocks at once, but only while a parallel group
+(`runtime/vk/vk_exec.c`) records do several threads note at once, so the lock is taken only then (`vk_exec_shared()`).
+
+### `mvprev_draw_locked()`
+
+- `NX2SARIA_MVPREV_CHECK=1`: the summary's checks (3.6 ms a frame); without it only the address is noted.
+- The draws that follow keep the block the last one bound: it is noted already.
+
+### `vk_mvprev_frame()`
+
+- Without DLSS (no NGX, no RTX GPU, dlaa = 0) and without frame generation alone (`vk_dlaa_fg_only()`) nothing reads
+  last frame's blocks: `P.on` stays 0, no tables.
+
+## `runtime/vk/vk_mvsurvey.c`
+
+Motion-vector survey (`NX2SARIA_MV_SURVEY=1`, off by default): measures whether per-object motion vectors can be made
+from the uniform blocks the scene's draws bind. Per-object vectors need each object's matrices of the previous frame;
+the game keeps none (its shaders read `gsys_shape`, `gsys_skeleton` and `gsys_projection` of this frame only), so they
+would have to be kept from the previous frame's uniform snapshot (`runtime/vk/vk_usnap.c`). That works when a block's
+guest address stands for the same object from one frame to the next, which this survey measures.
+
+For every scene draw (vertex stage, scene depth bound: D32 at least `DLAA_SCENE_MIN_W` wide, as `runtime/vk/vk_dlaa.c`
+`vk_dlaa_draw()`), each user bank (c3 + index) with a binding is noted: address, size and its first `SNAP` bytes as of
+the submit (the snapshot's copy). At each frame the bank's blocks are compared with the previous frame's and the one
+before:
+
+- repeat1 / repeat2: blocks whose address was bound in that bank one / two frames ago;
+- same / near / far: of the blocks repeated from last frame: bytes unchanged / every float within 5 % or 1.0 of last
+  frame's (the same object, moved a little) / some float further (another object, likely).
+
+The game writes its per-object blocks into two copies that take turns, so a moving object's block is at one address in
+even frames and another in odd ones. To find the rule that pairs them, a bank's blocks bound two frames ago but not last
+frame (this frame's copy) are sorted by address, and so are last frame's blocks not bound this frame (the other copy);
+with equal counts they are paired in order:
+
+- pairs, delta: the paired blocks and the commonest address differences (this frame's minus last frame's);
+- psame / pnear / pfar: the pairs' contents, as same / near / far above (near: the same object, moved);
+- unequal: frames whose two lists had different lengths (no pairing that frame).
+
+What the bank holds: each block's leading 3x4 matrices (rows of a rotation times a scale: three rows of the same length,
+at right angles, finite), counted over the whole block as of the submit:
+
+- mats 0 / 1 / 2-7 / 8+: blocks by that count (one: an object's place, `gsys_shape`; many: bones, `gsys_skeleton`).
+
+Every `SURVEY_FRAMES` frames the log gets two lines per bank with the window's totals:
+
+```
+mv_survey: c<n>: <draws> draws, <blocks> blocks (<per frame>), sizes <top three>; repeat1 a %, repeat2 b %; same c %, near d %, far e %
+mv_survey: c<n>: pairs <n> (<unequal> frames unequal), delta <top three>; psame a %, pnear b %, pfar c %; mats 0 x<n> 1 x<n> 2-7 x<n> 8+ x<n>, at most <m>
+```
+
+`TABLE` (1 << 15): blocks per frame, all banks; a town frame binds about 10,000 uniform ranges.
+
+`Block`: an `addr` of 0 is an empty slot; `have` is the bytes of `bytes` that were in the snapshot; `mats` the leading
+3x4 matrices of the whole block, 0 when it was not in the snapshot. `S.t` holds this frame, last frame and the one
+before; `S.x` and `S.y` are the pairing's lists: this frame's copy, last frame's.
+
+### `find()`
+
+A full table gives NULL: the block goes uncounted.
+
+### `note_size()`
+
+A fifth size is counted with the last.
+
+### `lead_mats()`
+
+Leading 3x4 matrices: three rows of about the same length (a uniform scale), at right angles, all finite.
+
+### `compare()`
+
+Same object moved a little: every float within 5 % or 1.0 of last frame's.
+
+## `runtime/vk/skin_pair.h`
+
+Which draw of last frame a skinned draw of this frame continues (`runtime/vk/vk_skin_motion.inc`), for the motion
+vectors of skinned characters. The player's meshes are known by ownership records (`runtime/input/motion_owner.c`);
+every other character's draws have no such record, so a draw is paired with last frame's by what it binds:
+
+- key: the mesh and the program: the vertex buffers its shader reads, the index buffer, the index count, width and base
+  vertex, and the vertex and fragment shader (the caller hashes them with `skin_mix()`);
+- number: the draw's place among this frame's draws with the same key, counted in the order of the command stream
+  (`order`), not the order the replay's threads reached them in: two characters of one model share the key.
+
+A draw is paired with last frame's draw of the same key and number, and with none when anything is in doubt, as a vector
+from another character's pose is worse than the camera's:
+
+- `SKIN_NEW`: there was no last frame's list, or the key was not in it (the character appeared);
+- `SKIN_COUNT`: the key was drawn a different number of times last frame (one appeared or left: the numbers shifted);
+- `SKIN_SIZE`: the palette had another size;
+- `SKIN_ADDRESS`: the palette is at neither of the two addresses this key and number last had. The game keeps two copies
+  of an object's block that take turns, so one object's palette is at last frame's address (not written again) or at the
+  other copy's, where it was the frame before that. A third address is another object in this place: two characters of
+  one model changed places in the draw order, or one left as another came. A new character therefore gets its first
+  vector in its third frame. The two addresses are remembered across frames without a list, so the frame after such a
+  gap pairs again.
+
+Own header so `tests/skin_pair_check.c` checks it without a GPU.
+
+`SkinEntry`:
+
+- `key`: the mesh and program.
+- `order`: place in the frame's command stream; unique within a frame.
+- `palette`: address of the palette block.
+- `bytes`: its size.
+- `tag`: the caller's (its index of the draw); the entries are sorted.
+- `nth`, `of` (set by `skin_number()`): number among the frame's draws with this key, and how many there are.
+- `before`, `prev`, `why` are set by `skin_pair()`. `before`: the last palette address of this key and number other than
+  palette; 0 not known.
+- `prev`: index of the paired entry of last frame; -1 none.
+- `why`: `SKIN_PAIRED` or why not.
+
+### `skin_number()`
+
+Sorts a frame's entries by key and stream order and numbers the draws of each key.
+
+### `skin_find()`
+
+The first entry with key in a numbered list, -1 when there is none; its `of` entries follow each other.
+
+### `skin_pair()`
+
+Pairs this frame's numbered entries with those of the last list made (numbered and paired in its own frame).
+`consecutive`: that list is of the frame right before this one; of an older one nothing is paired, and only the
+addresses are carried on.
+
+### `skin_near()`
+
+Whether a palette is last frame's a little moved: every bone's translation within limit units of its last one. The
+matrices are rows of four floats with the translation last in each row (floats 3, 7 and 11); a 4x4 may hold it in its
+fourth row instead (12 to 14), so both places are compared, and the one that is not the translation holds constants. For
+keys drawn more than once a frame: two characters of one model whose draw order alternates frame by frame pass the
+address rule of `skin_pair()`, and stand apart.
+
+The comparison is written so that a NaN is not near.
+
+## `runtime/vk/vk_skin_motion.inc`
+
+Included by `runtime/vk/vk_dlaa.c`: motion vectors for every skinned character (`NX2SARIA_SKIN_MOTION`, `skin_motion` in
+`nx2navi.ini`; game 1.1.1). The player's meshes get their own motion through ownership records
+(`runtime/input/motion_owner.c`, `runtime/vk/vk_fg_pose.inc`): a draw is the player's when a block it binds belongs to a
+model of the player's actor. People, animals and enemies have no such record, so the camera's motion was all they got,
+and DLSS and FSR 3.1 smeared them as they moved. This file gives them the same second draw, with last frame's pose and
+camera into the motion vector target, without knowing whose they are. A draw the player's path takes
+(`runtime/vk/vk_fg_pose.inc` `pose_owner()`) never comes here.
+
+A skinned scene draw (`skin_pick()`): a draw that passes the scene filter of `mvobj_pick()` (solid, one instance, into a
+scene-size depth target with the scene context at c3), whose vertex shader reads a matrix palette
+(`runtime/gfx/gfx_shader.c` `reflect_palette()` states that rule and what it matched) from one of the uniform banks c3
+to c7, and whose vertex layout feeds each joint input of that shader an unsigned integer attribute. Weights are not
+asked for: a mesh that binds each vertex to one joint carries none and moves with its skeleton all the same.
+
+Its second draw uses the vertex shader's last-frame variant (translator patch 0015), which computes the position again
+from the blocks bound at bank + 15. The variant's position may read c3 to c7 only, among them the scene context c3 and
+the palette, and no storage buffer or texture: as for the player. Each block such a draw binds is kept once a frame, by
+address (many pieces share a palette, all share the scene context): its bytes go into the frame's arena for the next
+frame, and a stretch of the submission's scratch memory is set aside where last frame's bytes of the same object are put
+once that is known (`SkinBlock`).
+
+Which draw of last frame a draw continues is decided when the motion vectors are made (`skin_resolve()`, called from
+`vk_fg_pose_prepare()`), not at the draw: the replay's threads reach the draws of one pass in any order, and the number
+that tells two characters of one model apart counts in the order of the command stream (`runtime/vk/skin_pair.h`, which
+lists the cases that leave a draw to the camera). There the frame's draws are first cut down to the scene's own view
+(the camera block and size the motion vectors are made for) and to one draw for each mesh and palette: the game draws a
+mesh into a depth pre-pass and again, against a copy of that depth, into the light target, and the draw into the depth
+image the vectors are tested against is kept, as for the player; the pre-pass draw stands in where the other could not
+be listed (its vertex shader reads storage buffers), and from the next frame on a mesh with a light-target draw has its
+pre-pass draw left out at the draw already. Then:
+
+- A key drawn more than once must also have each palette near last frame's (`runtime/vk/skin_pair.h` `skin_near()`,
+  `SKIN_NEAR_UNITS`);
+- Every bank of the paired draws must have the same size;
+- The draws that share a block must agree on which block of last frame it continues, or all of them are left out.
+
+What passes has its blocks' scratch filled with last frame's bytes and stays in the list; the rest is taken out of it
+(`MoDraw.skin`), so those pixels keep the camera's motion.
+
+The guard for parts that turn sharply (`motion_guard_degrees`) is chosen at the draw, as it picks the fragment shader: a
+draw is checked against last frame's depth (`runtime/shaders/link_motion.frag`) when a bone of its palette turned past
+the threshold against last frame's palette of any draw with its key. For a key drawn once that is the player's rule; for
+more it errs towards the check.
+
+Cost on the replay thread, for a skinned draw: the palette lookup in the shader's reflection, a hash lookup of the
+listed meshes, for each block its position reads a lookup in the uniform snapshot and one in the frame's blocks, a
+binary search in last frame's list, and for the first draw that binds a block a copy of its bytes; then what any motion
+draw costs (`mvobj_draw_()`). Nothing runs while no upscaler is active (`mvobj_draw()`, `skin_pick()`).
+
+- `SKIN_BANKS` (5): c3 to c7, as `POSE_BANKS`.
+- `SKIN_SLOTS` (4096): hash slots of a frame's blocks, listed draws and lit meshes.
+- `SKIN_FILL` (2048): entries each holds at most.
+- `SKIN_NEAR_UNITS` (1.0f): a palette of the same key more than this from last frame's is another character's.
+
+Why a skinned draw kept the camera's motion: `runtime/vk/skin_pair.h`'s, then this file's.
+
+- `SKIN_NOT_READY`: its variant, fragment shader or pipeline is still being made.
+- `SKIN_BANKS_OTHER`: the position reads a bank outside c3 to c7, or not the palette, or the palette is not in a uniform
+  bank.
+- `SKIN_STORAGE`: the variant reads a storage buffer, a texture or an image.
+- `SKIN_SNAPSHOT`: a block is not in the uniform snapshot.
+- `SKIN_TWIN`: another draw of the same mesh and palette carries the vector.
+- `SKIN_VIEW`: drawn with another camera block or size than the scene's.
+- `SKIN_SHARED`: the draws sharing one of its blocks disagree on last frame's.
+- `SKIN_FAR`: `skin_near()` said no.
+- `SKIN_FULL`: a table is full.
+- `SKIN_UNUSED`: the frame's list was not recorded (another submission made the vectors).
+`SkinPick`, the answer of `skin_pick()`: the bytes of a bone matrix (0: not a skinned draw) and the palette's bank,
+counted from c3.
+
+`SkinBlock`:
+
+- `at`: this frame's bytes in the frame's arena.
+- `was`: where last frame's bytes of the same object go; the motion draws bind it.
+- `last`: last frame's block it continues: -1 none named, -2 two draws named different ones.
+- `sharp_with`, `sharp`: `skin_sharp()`'s answer for last frame's block `sharp_with`.
+
+`SkinDraw`:
+
+- `block`: the frame's block per bank, -1 for a bank the position does not read.
+- `palette`, `stride`: the palette's bank, the bytes of a matrix.
+- `zw`, `zh`: the depth target it was drawn into.
+- `cam`: its scene context block.
+- `mesh`, `twin`: hashes: the mesh; the mesh and its palette's address.
+- `draw`: its `MoDraw`.
+
+`SkinFrame`:
+
+- `scene_depth`: once resolved: the depth image the vectors were tested against.
+- `d`: the listed draws.
+- `e`, `ne`: while listing one per draw (`tag`: its index); once resolved the kept ones, numbered (`skin_number()`),
+  `ne` of them.
+- `bytes`: the blocks' bytes.
+- `block_at`: by address and size: index + 1.
+- `seen`: listed draws by mesh, palette, camera block and depth image.
+- `lit`: once resolved: the meshes with a kept draw into `scene_depth`.
+
+`SK`:
+
+- `cur`: `f[cur]` is the list being made, `f[cur ^ 1]` the last one resolved.
+- `resolved`: the list being made was resolved (its draws carry their verdicts).
+- `pending`: its draws not counted yet.
+
+### `skin_has()`, `skin_put()`
+
+A hash set of `SKIN_SLOTS` words (0: empty). `skin_has()`: whether v is in it; `skin_put()`: adds it.
+
+### `skin_joint_format()`
+
+An unsigned integer vertex format: what joint indices are stored as.
+
+### `skin_pick()`
+
+Whether the draw being replayed is a skinned scene draw (the rule above; the caller has applied the scene filter). Reads
+the draw's own state only: the chunks of a parallel group ask at once.
+
+- Only with the setting on and an upscaler, or frame generation alone, at work.
+
+### `skin_pick_left()`
+
+`mvobj_pick()` left a draw `skin_pick()` took: counted, 0.
+
+### `skin_begin()`
+
+Starts the frame's list (`mo_begin()`): the draws of the one before it that nothing counted were never recorded.
+
+### `skin_block()`
+
+The frame's block for a uniform binding, made at its first draw: -1 when it is not in the snapshot, -2 when the table is
+full.
+
+- Asked of the snapshot for every draw: a block the submission itself writes between two draws is dropped from it there,
+  and the bytes kept for the first draw are not the second one's.
+
+### `skin_sharp()`
+
+Whether a bone of the palette block c of this frame turned sharply against the palette block l of last frame
+(`pose_matrix_sharp()`); kept for the pieces that share the palette.
+
+### `skin_try()`
+
+A skinned draw `mvobj_pick()` took, before it goes onto the frame's list (the caller holds the motion-list lock): its
+blocks, key and place in the stream into `*sd` and `*se`, and into `*guard` whether it is checked against last frame's
+depth. 0: left to the camera, counted. vs: the last-frame variant, banks: the banks its position reads.
+
+- A draw after the frame's vectors were made (`skin_resolve()` made that list last frame's, and f is not begun).
+- The mesh: the vertex buffers the shader's inputs read (a binding no input reads keeps an earlier draw's) and the
+  indices.
+- The same mesh with the same palette in the same view: a second pass over it, or the draw submitted twice.
+- The pre-pass draw (it writes depth, into another image than the vectors are tested against) of a mesh whose
+  light-target draw carried the vector last frame.
+
+### `skin_commit()`
+
+The draw `skin_try()` prepared is on the frame's list as `MQ.d[draw]`.
+
+### `skin_refuse()`
+
+Takes a listed draw out of the frame's list, counted.
+
+### `skin_twin_cmp()`
+
+By mesh and palette, the draw into the scene depth first, then by place in the stream. `skin_sort_frame` is the frame
+whose draws the entries name.
+
+### `skin_resolve()`
+
+The frame's list is complete and its motion vectors are about to be made, for the scene camera block cam, tested against
+the depth image depth of w x h (`vk_fg_pose_prepare()`, on the thread that records them; ex: its submission). Decides
+for each listed skinned draw whether it continues a draw of last frame (the steps above), fills the blocks of those that
+do with last frame's bytes, takes the others out of the list, and makes this frame's list the one the next frame is
+paired with.
+
+- Only the list of this submission: its blocks' scratch memory lives as long as the submission.
+
+### `skin_recorded()`
+
+A skinned draw `vk_mvobj_execute()` records (guarded: checked against last frame's depth).
+
+### `skin_status()`
+
+The skinned draws' part of the motion status line (`pose_status()`): since the start, every draw `skin_pick()` took, the
+ones drawn with their own motion, and the others by why they kept the camera's.
