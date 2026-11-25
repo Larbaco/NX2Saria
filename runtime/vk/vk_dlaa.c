@@ -1419,6 +1419,9 @@ static struct Snap *mask_pass(VkCommandBuffer cb, VkImageView cv, uint32_t w, ui
 }
 
 static void pb_destroy(void);
+#ifndef _WIN32
+static void sh_destroy(void);
+#endif
 static void hl_destroy(void) {
     const VkCtx *c = vk_ctx();
     if (D.hl_view) vkDestroyImageView(c->device, D.hl_view, NULL);
@@ -1485,17 +1488,18 @@ void vk_dlaa_release(void) {
     const VkCtx *c = vk_ctx();
     if (!c) return;
     upd_take_all(&dead, dead_release, (void *)1);
-    for (int i = 0; i < 5; i++)
+    for (int i = 0; i < DLSS_SIZES; i++)
         if (D.sizes[i].feat) NGX_CALL(&NL, NGX_AT_SETUP, N.release(D.sizes[i].feat)), D.sizes[i].feat = NULL;
     if (FG.feat) NGX_CALL(&NL, NGX_AT_SETUP, N.release(FG.feat));
     if (FG.p) NGX_CALL(&NL, NGX_AT_SETUP, N.destroy_params(FG.p));
     memset(&FG, 0, sizeof FG);
     if (D.params) NGX_CALL(&NL, NGX_AT_SETUP, N.destroy_params(D.params));
     if (N.caps_map) NGX_CALL(&NL, NGX_AT_SETUP, N.destroy_params(N.caps_map));
-    for (int i = 0; i < 5; i++) destroy_size(&D.sizes[i], NGX_AT_SETUP);
+    for (int i = 0; i < DLSS_SIZES; i++) destroy_size(&D.sizes[i], NGX_AT_SETUP);
     for (int i = 0; i < SNAPS; i++) destroy_snap(&R.s[i]);
     hl_destroy();
     pb_destroy();
+    sh_destroy();
     if (D.mv_pipe) vkDestroyPipeline(c->device, D.mv_pipe, NULL);
     if (D.mv_layout) vkDestroyPipelineLayout(c->device, D.mv_layout, NULL);
     if (D.mv_dsl) vkDestroyDescriptorSetLayout(c->device, D.mv_dsl, NULL);
@@ -1812,6 +1816,16 @@ static struct {
     VkPipelineLayout layout;
     VkPipeline pipe;
 } SH = {.ok = -1};
+
+#ifndef _WIN32
+static void sh_destroy(void) {
+    const VkCtx *c = vk_ctx();
+    if (SH.pipe) vkDestroyPipeline(c->device, SH.pipe, NULL);
+    if (SH.layout) vkDestroyPipelineLayout(c->device, SH.layout, NULL);
+    if (SH.dsl) vkDestroyDescriptorSetLayout(c->device, SH.dsl, NULL);
+    memset(&SH, 0, sizeof SH), SH.ok = -1;
+}
+#endif
 
 static int sharpen_init(void) {
     if (SH.ok >= 0) return SH.ok;

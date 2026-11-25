@@ -3321,8 +3321,8 @@ The setting and the upscaler:
   checks that DLSS is available.
 - `vk_dlaa_release()`: called by `runtime/vk/vk_device.c` `destroy_all()`, once the device is idle and before the
   allocator and the device go (Linux): releases the NGX features and parameters, frees every image, buffer, pipeline and
-  query pool DLAA made except FSR 3.1's second sharpening pass (`SH`, `sharpen_init()`), resets its state for a later
-  device (`SH` not) and shuts NGX down for this one. Safe when NGX never came up, when nothing was made, and more than
+  query pool DLAA made, FSR 3.1's second sharpening pass included (`sh_destroy()`), resets its state for a later device
+  and shuts NGX down for this one. Safe when NGX never came up, when nothing was made, and more than
   once. Windows: does nothing.
 - `vk_dlaa_available()`: 1 when dlaa is wanted and its upscaler came up: NGX with DLSS (after `vk_dlaa_init()`), or
   FSR 3.1 loaded. A DLSS mode's smaller scene is then scaled up by it.
@@ -4245,7 +4245,9 @@ with the SDK's public wrapper; it reports the number of devices still using NGX.
    object and the capability parameters' map: all before NGX goes.
 3. The sizes' images, the mask snapshots, the HUD-less picture, prebloom's images, the motion and mask pipelines and
    their buffers, the free camera's buffer and the timing's query pool. The reprojection blocks' buffer is mapped for
-   good: the destroy unmaps it. FSR 3.1's second sharpening pass (`SH`) is not among them (`sharpen_init()`).
+   good: the destroy unmaps it. FSR 3.1's second sharpening pass goes too (`sh_destroy()`); up to 0.26.0 it did not,
+   and its pipeline, layout and set layout outlived the device (the validation layer named them at
+   `vkDestroyDevice()`).
 4. The state (`D`, `R`, `T`, `F`, the swap image) goes back to its start values, so a new device starts clean.
 5. Without `N.device`, NGX never came up on this device (DLAA off, FSR 3.1, or its init failed), and there is nothing to
    shut down.
@@ -4431,10 +4433,13 @@ pass.
 
 ### `sharpen_init()`
 
-It needs `mv_init()`: that one's sampler serves the texel fetches. `vk_dlaa_release()` neither destroys `SH`'s pipeline,
-layout and set layout nor sets `SH.ok` back to -1: they outlive the device (the validation layer names them at
-`vkDestroyDevice()`), and a second device in the same process would bind the first one's handles. The game makes one
-device per run.
+It needs `mv_init()`: that one's sampler serves the texel fetches.
+
+### `sh_destroy()`
+
+Linux only, for `vk_dlaa_release()`: the pass's pipeline, layout and set layout, and `SH` back to its start (`ok` -1),
+so a later device makes them again instead of binding the old device's handles. The game makes one device per run; the
+validation layer names what outlives the device at `vkDestroyDevice()`.
 
 ### `vk_dlaa_fsr3_boost()`
 
