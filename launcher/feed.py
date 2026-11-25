@@ -1,17 +1,3 @@
-"""Where updates come from.
-
-Every release carries NX2Saria-update.json (tools/make_launcher.py writes it):
-
-    {"format": 1, "version": "0.3.11", "build": "0.3.11+abc1234", "notes": "...",
-     "app":     {"name": "NX2Saria-app-0.3.11.zip", "size": n, "sha256": "..."},
-     "runtime": {"id": "py3.14.9-1", "name": "NX2Saria-runtime-py3.14.9-1.zip", "size": n, "sha256": "..."},
-     "toolchain": "<lock digest>"}
-
-The feed (app/<version>/feed.json, or the player's override in settings) is either
-    {"type": "github", "repo": "owner/name"}   the newest GitHub release (or pre-release, on the preview channel)
-                                                  that has the manifest; a token reads a private repository
-    {"type": "url", "url": "https://.../NX2Saria-update.json"}   one manifest; its files sit beside it
-"""
 import json
 import re
 import sys
@@ -24,7 +10,7 @@ from . import net, versions
 MANIFEST = 'NX2Saria-update.json'
 LEGACY_MANIFEST = 'NX2navi-update.json'
 LINUX_MANIFEST = 'NX2Saria-update-linux.json'
-DEFAULT = {'type': 'github', 'repo': 'Larbaco/NX2Saria'}   # this fork's releases (Larbaco/NX2navi redirects here)
+DEFAULT = {'type': 'github', 'repo': 'Larbaco/NX2Saria'}
 GITHUB_API = 'https://api.github.com'
 
 
@@ -39,18 +25,15 @@ class Release:
         self.build = manifest.get('build', self.version)
         self.notes = (manifest.get('notes') or notes or '').strip()
         self.page = page
-        self.assets = assets or {}       # name -> url
-        self.headers = headers or {}     # extra request headers for the asset urls (a private repository's token)
+        self.assets = assets or {}
+        self.headers = headers or {}
         self.prerelease = prerelease
 
     def asset(self, key):
-        """(url, headers, size, sha256) of the manifest's 'app' or 'runtime' file."""
         entry = self.manifest.get(key)
         if not entry:
             raise FeedError(f'the {self.version} manifest has no {key} file')
         name, size, sha = entry.get('name'), entry.get('size'), entry.get('sha256')
-        # The name becomes a file in downloads/: a bare file name only. Every file is checked against its size and
-        # sha256, so a manifest without them is refused rather than downloaded unchecked.
         if (not isinstance(name, str) or not name or name in ('.', '..') or name != Path(name).name
                 or '/' in name or '\\' in name or ':' in name):
             raise FeedError(f'the {self.version} manifest names its {key} file {name!r}, not a plain file name')
@@ -83,10 +66,6 @@ def _check_manifest(m, where):
 
 
 def retry_text(headers, now=None):
-    """When GitHub takes requests again, for the message of a refused one: "after 14:32 (in 25 minutes)". From
-    X-RateLimit-Reset, the time the hourly allowance is whole again, when the response says the allowance is used
-    up (X-RateLimit-Remaining: 0), else from Retry-After, the seconds to wait. '' when the response says neither
-    or says something that cannot be right (more than a day)."""
     now = time.time() if now is None else now
     try:
         if headers.get('X-RateLimit-Remaining') == '0' and headers.get('X-RateLimit-Reset'):
@@ -99,7 +78,7 @@ def retry_text(headers, now=None):
         return ''
     if wait > 86400:
         return ''
-    if wait <= 0:   # the allowance is whole again by this PC's clock
+    if wait <= 0:
         return 'in a minute'
     minutes = int(-(-wait // 60))
     return (f'after {time.strftime("%H:%M", time.localtime(now + wait))} '
@@ -122,11 +101,10 @@ def _github(feed, channel, token, version, platform=None):
         code = getattr(e, 'code', None)
         if code == 404:
             raise FeedError(f'no releases found for {feed["repo"]} (a private repository needs a token)') from e
-        if code in (403, 429):   # GitHub answers either when the allowance of requests is used up
+        if code in (403, 429):
             when = retry_text(getattr(e, 'headers', None))
             raise FeedError(f'GitHub refused the request (rate limit); try again {when or "in an hour"}') from e
         raise FeedError(f'GitHub could not be reached: {e}') from e
-    # The API lists the newest release first: the first one the channel takes that has a manifest is the answer.
     for r in releases:
         if r.get('draft') or (r.get('prerelease') and channel != 'preview'):
             continue
@@ -134,7 +112,7 @@ def _github(feed, channel, token, version, platform=None):
         manifest_name = next((n for n in _manifest_names(platform) if n in assets), None)
         if manifest_name is None:
             continue
-        if token:   # a private repository's files come through the API with the token
+        if token:
             urls = {n: a['url'] for n, a in assets.items()}
             asset_headers = {'Accept': 'application/octet-stream', 'Authorization': f'Bearer {token}'}
         else:
@@ -168,7 +146,6 @@ def _url(feed, version, platform=None):
 
 
 def latest(feed, channel='stable', token='', version='dev', platform=None):
-    """The newest release the feed offers on the channel, or None when it has none."""
     if feed.get('type') == 'url':
         return _url(feed, version, platform)
     if feed.get('type') == 'github':
@@ -177,7 +154,6 @@ def latest(feed, channel='stable', token='', version='dev', platform=None):
 
 
 def plain_notes(text, limit=None):
-    """Release notes as short lines for the window: markdown bullets and headings without their marks."""
     import re
 
     out = []

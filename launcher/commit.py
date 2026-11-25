@@ -1,4 +1,3 @@
-"""Windows commit preflight for Play, kept independent of the launcher's window and graphics dependencies."""
 import math
 from collections import namedtuple
 import os
@@ -8,11 +7,10 @@ from . import gameini, winsys
 MemoryRequest = namedtuple('MemoryRequest', 'remaining need unbounded')
 
 
-DEFAULT_MEM_NEED_MB = 24576   # runtime/mem_need.h MEM_NEED_DEFAULT_MB
+DEFAULT_MEM_NEED_MB = 24576
 
 
 def game_commit_need(game_dir):
-    """The game's estimated commit in play, with the same settings precedence as runtime/cfg/cfg.c."""
     value = os.environ.get('NX2SARIA_MEM_NEED_MB', os.environ.get('NX2NAVI_MEM_NEED_MB'))
     if value is None:
         try:
@@ -29,12 +27,10 @@ def game_commit_need(game_dir):
 
 
 def needs_commit_warning(remaining, need):
-    """Whether current Windows commit headroom is below the game's estimated need, in MiB."""
     return need > 0 and remaining < need
 
 
 def commit_warning(remaining, need):
-    """The optional Play prompt, using current system commit headroom and the game's estimate in MiB."""
     if not needs_commit_warning(remaining, need):
         return ''
     return (f'Windows has {int(remaining)} MiB of committed memory left (RAM plus page file). '
@@ -45,7 +41,6 @@ def commit_warning(remaining, need):
 
 
 def fatal_summary(fatal):
-    """Keep the actionable Windows commit advice visible in the launcher's shortened fatal message."""
     names = {1455: 'ERROR_COMMITMENT_LIMIT', 8: 'ERROR_NOT_ENOUGH_MEMORY', 1450: 'ERROR_NO_SYSTEM_RESOURCES'}
     for code, name in names.items():
         if f'Win32 {code} ({name})' in fatal:
@@ -56,14 +51,12 @@ def fatal_summary(fatal):
 
 
 def set_warning_enabled(settings, enabled, log):
-    """Persist the launcher's warning choice and leave its value in launcher.log."""
     settings['warn_low_commit'] = bool(enabled)
     settings.save()
     log(f'launcher setting: warn_low_commit = {int(bool(enabled))}')
 
 
 def play_memory_request(game_dir, log, settings=None):
-    """Sample Windows commit and return the numbers needed for a warning, or None."""
     try:
         info = winsys.system_commit_info()
     except (AttributeError, OSError) as e:
@@ -114,7 +107,6 @@ def play_memory_response(log, play=None, error=None):
 
 
 def confirm_play_memory(game_dir, log, root=None, settings=None):
-    """Sample Windows commit just before launch. An unavailable check or dialog still allows Play."""
     request = play_memory_request(game_dir, log, settings)
     if request is None:
         return True
