@@ -1,11 +1,16 @@
-# Electron launcher development slice
+# Electron launcher development test
 
-This is an incomplete development build. It checks the standard launcher roots on startup and also lets the player select a launcher root manually; it shows a basic installation status. It can invoke the selected installed launcher’s existing Play entry point; installation, updates, complete running-game detection, controller navigation and packaging are not implemented. This integration has only been tested with fake processes, not a real game.
+This development build uses a persistent Python worker for inspection, Play and mod rebuilds. It requires an existing
+launcher installation and game. It does not install or update the launcher, send session reports or ask for consent.
+Waiting updates are shown but must be applied with the installed launcher. Crash-log offers remain a future parity item.
 
-Use Node.js and npm and a Python environment able to import the existing launcher modules. From this directory, run `npm ci` followed by `npm start`. The Electron package downloads its runtime during installation. Set `NX2SARIA_PYTHON` to the Python executable when it is not on PATH. When no standard installation is detected, select the existing launcher root containing `data/launcher.json`, not the game folder. The Play button starts the installed Python and launcher version, which may open the existing launcher window for flows it cannot handle headlessly. A job marker prevents Play, even if stale. Do not run this development build as a replacement for the existing launcher.
+On Linux, from this directory, run `npm ci` and then `npm start`. Set `NX2SARIA_PYTHON` to a Python interpreter able to
+import the launcher dependencies if the default `python3` is not suitable. Select the existing launcher root containing
+`data/launcher.json`, not the game folder. Only the owner should test with the real game.
 
-`npm test` builds TypeScript and checks the inspection boundary using a temporary folder. `python -m unittest discover -s tests -p electron_inspection_test.py` from the repository root tests the Python inspection command.
+For a manual test, check discovery and selection, Play twice, hide and restore when enabled, closing the window during a
+game, and mod rebuild or cancellation if applicable. Afterward copy `data/logs/launcher.log` and the game's log to the
+usual private log folder. The real game, platform behavior and updates still require separate owner verification.
 
-On Linux, `xvfb-run -a npm run test:ui` exercises the actual Electron window with a native-dialog stub, temporary installation and fake executable. It does not run the game.
-
-On Linux the window hides only after the game executable is observed below the delegated launcher process and the saved preference allows it; it is restored when that process ends. This has been exercised with synthetic processes only. On Windows, automatic hiding uses a read-only process snapshot and is covered by synthetic process tests, but has not yet been validated with the real game or window.
+`npm test` runs the TypeScript tests. On Linux, `xvfb-run -a npm run test:ui` opens Electron windows against temporary
+installations and synthetic executables; it never runs the real game.
