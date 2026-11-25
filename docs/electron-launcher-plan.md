@@ -113,6 +113,12 @@ swap was interrupted. Keep the Tk entry and previous runnable set until the new 
 interruption before and after each pointer change, an executable held open on Windows, and shell-only
 and combined rollback.
 
+The trial counts as the first of three successful normal starts. Count each new process once after the
+handshake and window readiness are committed. Starting Tk explicitly leaves the count unchanged. A
+failed startup resets the streak and retains the previous shell. Prune the previous shell after three
+consecutive successful starts of its replacement, once no process uses the previous digest and no
+activation is pending. Keep a runnable Tk fallback for older apps that may still be selected by app rollback.
+
 ### 3. Existing installations and the first visible launch
 
 An existing Tk install first receives an ordinary compatible app update containing the bridge logic.
@@ -125,9 +131,12 @@ app, runtime and shell; it then launches through the same entry point as an upda
 
 The player keeps using Tk while the shell is missing or pending. A missing or incompatible shell,
 early exit or failed worker handshake opens Tk and logs a bounded reason. Successful activation opens
-Electron with the existing installation selected. Keep a way to start Tk explicitly during the
-transition. Headless Steam and CLI keep their Python entry points. Keep Tk in the app until the
-replacement gate is approved.
+Electron with the existing installation selected. During the transition, a `Launcher UI` setting in
+`data/launcher-ui.json` persists `"ui": "auto"` (the default) or `"ui": "tk"`. The separate file survives
+updates and rollbacks even when an older Tk version rewrites `launcher.json`. A `--tk` flag forces Tk
+for one launch and leaves the saved setting as it was. The switch works through the Windows stub
+and Linux wrapper. Headless Steam and CLI keep their Python entry points. Keep Tk in the app until
+the replacement gate is approved.
 
 ### 4. Provenance
 
@@ -144,16 +153,33 @@ locally edited or uploaded installer, feed or release assets. See [release pins 
 The private x64 packages from commit `fcfbfc6f` are the measured baseline. Windows was 158,994,219 bytes
 to download (151.6 MiB) and 375,463,862 bytes of files unpacked (358.1 MiB). Linux was 124,576,200 bytes
 to download (118.8 MiB) and 288,132,563 bytes unpacked (274.8 MiB). Both included 1,135,513 bytes of app
-and worker files and no additional Python runtime. These totals measure the actual test bundles. The
-standalone shell archive still needs to be measured.
+and worker files and no additional Python runtime. These totals measure the actual test bundles.
 
 Ship an x64 shell per platform and reuse the installed digest across app versions. Keep the Chromium
 locales needed by the four menu languages (`en-US`, `pt-BR`, `ru`, `zh-CN`), including the English
 fallback, after checking the actual dialog and rendering paths. The remaining locale files account for
 48,085,006 unpacked bytes on Windows (11,975,506 compressed ZIP entry bytes) and 7,523,052 unpacked
-bytes on Linux. Retain a previous shell until rollback protection permits pruning and account for the
-second copy and staging space in disk preflight. Verify both the filtered artifact size and its four
-language paths in CI.
+bytes on Linux. Repacking the two private artifacts with those locales removed and the app and worker
+omitted measured these standalone shell files:
+
+- Windows x64 ZIP. **139.7 MiB** download (146,480,725 bytes), **311.1 MiB** unpacked (326,241,507 bytes).
+  Peak for this shell on first install is 450.8 MiB. Staging while keeping an active shell for rollback
+  peaks at 762.0 MiB. If a previous shell is already retained and a newer candidate arrives, the peak
+  is 1,073.1 MiB.
+- Linux x64 tar.gz. **116.2 MiB** download (121,883,208 bytes), **266.5 MiB** unpacked (279,471,924 bytes).
+  Peak for this shell on first install is 382.8 MiB. Staging while keeping an active shell for rollback
+  peaks at 649.3 MiB. With a previous shell also retained, the peak is 915.8 MiB.
+
+These are shell-only estimates for disk preflight. They add the archived candidate to the unpacked
+candidate, active shell and previous shell as applicable, using equal shell sizes for the estimate.
+They exclude the game, app, Python, caches and filesystem overhead. Use the actual component sizes when
+calculating required space. Verify the filtered artifact and its four language paths in CI.
+
+The checksum-verified Linux 0.26.0 AppImage without a seed is **97.9 MiB** (102,660,600 bytes). Appending
+the filtered Linux archive to a scratch copy of its SquashFS, keeping the same zstd compression and
+ELF prefix, measured **213.7 MiB** (224,094,712 bytes), an increase of **115.8 MiB** (121,434,112 bytes).
+The recommendation is to leave the shell seed out of the normal AppImage. The scratch image was used
+only for size measurement.
 
 ### 6. Notices
 
@@ -166,8 +192,8 @@ and [third-party notices](../THIRD_PARTY_NOTICES.md).
 ### 7. Linux sandbox and Steam
 
 Install the shell outside the mounted AppImage, beside the external app and runtime under the managed
-root. The AppImage remains the provisioner and may carry the same verified shell archive as an offline
-seed if offline Electron first start is required. The installed wrapper always opens the external
+root. The AppImage remains the provisioner. Prefer downloading the verified shell separately and keep the
+offline seed for a separately approved distribution need. The installed wrapper always opens the external
 copy. Keep renderer sandboxing and context isolation enabled. Test normal user namespaces and a distro
 that restricts them. Never add the production `--no-sandbox` flag or make a helper inside a user-writable
 tree setuid. Any distro-supported policy or root-owned `chrome-sandbox` path requires separate review
