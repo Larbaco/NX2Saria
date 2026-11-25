@@ -3323,6 +3323,12 @@ all, for each device kind and setting. No GPU, no game files, any Python.
 - A value the settings table does not list reads as auto. The reason names the driver default, and how to turn it off.
 - `mesh_fallback_batch` = auto batches where the fallback is the device's default (where `mesh_fallback` = auto would
   choose it).
+- RADV inside the releases whose task shaders lose the device takes the fallback by default, and `mesh_fallback` = 0
+  still draws natively there. The range is checked release by release: the last one before it, the first one in it,
+  each side of a series' fixed release (with a table of its own, since no series has one yet), a series with no fixed
+  release up to its last patch number, the snapshots a packager numbers 26.99.99 and the main branch's 27.0.0, and
+  another driver with the same number. A card without mesh shaders is drawn for as before, and its reason does not
+  name the regression.
 
 ## `tests/mesh_pipeline_check.c`
 

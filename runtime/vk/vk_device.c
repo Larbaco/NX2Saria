@@ -827,10 +827,27 @@ static int create_device(void) {
         // has_mesh_shader keeps saying what the hardware has: the recorder thread (vk_rec.c) goes by it, not by how
         // mesh programs are drawn.
         const char *mf = cfg_value("NX2SARIA_MESH_FALLBACK"), *me = cfg_value("NX2SARIA_MESH_EMULATION"), *why = "";
-        int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID, mf, me, &why);
+        unsigned radv_fixed = MESH_RADV_NO_FIX;
+        const uint32_t dv = g_vk.props.driverVersion;
+        int radv_bug = mesh_radv_task_regression(vk_caps.driver_id, dv, &radv_fixed);
+        int path = mesh_path_decide(g_vk.has_mesh_shader, vk_caps.amd_sc, g_vk.props.vendorID, radv_bug, mf, me, &why);
         g_vk.mesh_fallback = path == MESH_PATH_FALLBACK;
         g_vk.mesh_fallback_default = mesh_path_fallback_default(path, g_vk.has_mesh_shader, vk_caps.amd_sc,
-                                                                g_vk.props.vendorID, me);
+                                                                g_vk.props.vendorID, radv_bug, me);
+        if (vk_caps.driver_id == MESH_DRIVER_RADV && g_vk.has_mesh_shader) {
+            char until[64] = "";
+            if (radv_bug && radv_fixed == MESH_RADV_NO_FIX)
+                snprintf(until, sizeof until, "; no release of this series has the fix yet");
+            else if (radv_bug)
+                snprintf(until, sizeof until, "; this series has it from %u.%u.%u", dv >> 22, dv >> 12 & 0x3ff, radv_fixed);
+            rt_log("vk: mesh path: RADV %u.%u.%u is %s the releases whose task shaders lose the device (Mesa 26.2 and 26.3 "
+                   "before their fix%s): mesh_fallback = auto %s", dv >> 22, dv >> 12 & 0x3ff, dv & 0xfff,
+                   radv_bug ? "inside" : "outside", until,
+                   radv_bug ? "takes the mesh fallback" : "draws mesh programs natively");
+            if (radv_bug && path == MESH_PATH_NATIVE)
+                rt_log("vk: mesh path: WARNING: mesh_fallback = 0 draws mesh programs natively on this RADV release all "
+                       "the same: the device can be lost within seconds");
+        }
         g_vk.mesh_emulation = path == MESH_PATH_EMULATION;
         g_mesh_path = path == MESH_PATH_EMULATION ? "emulated (mesh_emulation)"
                     : path == MESH_PATH_FALLBACK ? (g_vk.has_mesh_shader ? "through the mesh fallback on a device with mesh "
