@@ -3130,7 +3130,8 @@ NVN2's stages.
 ### `oneshot_wait_ms()`, `oneshot_budget_on()`
 
 `prepare_draw_ex()`: how long a one-shot draw waits for its shaders and pipeline before it is skipped. Such a draw
-renders into a target that is neither recent nor steady (`runtime/vk/vk_target_frames.h`: a volume, a lookup table, an icon, a
+renders into a target that is neither recent nor steady (`runtime/vk/vk_target_frames.h`: a volume, a lookup table, an
+icon, a
 target made new at an area change); skipped, a target the game draws once stays as it was. A draw into per-frame targets
 whose shaders write memory takes the same wait (`writers_wait_on`). `NX2SARIA_ONESHOT_BUDGET` (default 1): the one-shot
 draws of a presented frame wait from that frame's wait pool (`frame_wait`, shared with the full-screen draws), a mesh
@@ -3146,7 +3147,8 @@ the driver's cache a fast link takes 2 to 6 ms, so the pool covers the lookup ta
 ### `MESH_WAIT_MS`
 
 8 ms. What a mesh draw waits for is a few milliseconds when the caches hold it and 200 ms or more when they do not: the
-whole build of a mesh pipeline without stage libraries, which has no fast link, or with them (`vk_pipeline_mesh_libs`) the
+whole build of a mesh pipeline without stage libraries, which has no fast link, or with them (`vk_pipeline_mesh_libs`)
+the
 library of its task and mesh stages, which is most of that build. A longer wait only finds out which, and one that has
 been building for longer than this is a compile: the draws that meet it in the frames after wait for nothing
 (`oneshot_ms`). Before that rule a first visit waited 8 to 13 ms for each of 17 mesh draws over nine frames, up to four
@@ -3334,7 +3336,8 @@ image to the deferred release with it.
 Integer formats a texture view may give an image (`nvnTextureViewSetFormat`): the Vulkan format and the translator's
 TextureFormat code (`runtime/gfx/gfx_shader.c` `fmt_names`) the translator declares a storage image with. A shader that
 packs texels itself writes raw words through such a view (the game's last post-process pass stores R11G11B10 bits
-through an R32UI view of an R11G11B10F target); through a view of the texture's own format the store converted them (a black
+through an R32UI view of an R11G11B10F target); through a view of the texture's own format the store converted them (a
+black
 picture with red blobs). 0: not an integer format.
 
 ### `texel_bytes()`
@@ -3346,7 +3349,8 @@ ones they alias); 0 unknown.
 
 `RAW` (8 entries): images written this frame through an integer storage view (`storage_view_format()`), in the order of
 their writes (`seq`): the game's last post-process pass stores shared-exponent RGB9E5 texels that way into its
-R11G11B10F scene target, raw words the upscaler that reads them (tensor-core, untranslatable) decodes itself, and the fallback blit must too
+R11G11B10F scene target, raw words the upscaler that reads them (tensor-core, untranslatable) decodes itself, and the
+fallback blit must too
 (`raw_9e5`). Now and then (1 of 529 frames sampled in a field) the same pass writes them into the RGB9E5 image at that
 address instead, as native texels (`raw_native_9e5`); the R11G11B10F image there then holds an older picture.
 
@@ -3491,7 +3495,8 @@ binds one's resources, a compute module's bindings are those of this NVN stage (
 stage (`DrawCtx.mfb_stage`, which `nvn_stage_of()` gives for a compute resource).
 
 Per-binding descriptor reuse (`bind_resources()`, `PB`): while a descriptor that may be kept resolves, `pb_cap` is where
-its census count goes, so a later reuse counts the same bytes again; `pb_spoiled` is set when the resolution copied guest
+its census count goes, so a later reuse counts the same bytes again; `pb_spoiled` is set when the resolution copied
+guest
 bytes into transient memory or counted more than once, and such a descriptor is not kept (both in `DrawCtx`).
 
 ### `count_use()`
@@ -3932,7 +3937,8 @@ refreshes in 600 frames with 1,090 slots left between them.
 `pool_defer` holds, per slot, 1 + the low bits of the frame a refresh left it in (`pool_create_ns()`).
 
 `pool_left`: the slots a refresh left (`pool_refill()` failed: the creation budget or the frame's time was spent), so
-that the next refresh of the same submission looks up these and the changed slots (`vk_texture_dirty_slots_locked`) instead of walking
+that the next refresh of the same submission looks up these and the changed slots (`vk_texture_dirty_slots_locked`)
+instead of walking
 the whole table again. While an area loads, slots are left at every refresh, and each refresh walked the table: about
 67,000 slot reads and 1.65 ms of the replay per submission in Kokiri Forest on an RX 580 (2026-11-11), with six
 submissions a frame. `pool_left_all`: the list overflowed (or nothing tracks it yet): walk the table.
@@ -4596,7 +4602,8 @@ texture and image handles and every slot's resolution (`vk_texture_slots_gen`, r
 it is ordered after this draw, as `answers_for()`'s own check would order it) stay the same: `answers_for()` reads
 nothing else, so `shader_for()` would return the same shaders. About 65% of field draws repeat them
 (`NX2SARIA_BIND_STATS`). `NX2SARIA_SHADER_MEMO=0` turns it off; `=check` looks the shaders up on every hit too, and
-every slot's texture type in `answers_for()`, and stops on a difference. `tex_serial` (bumped by every texture and image bind)
+every slot's texture type in `answers_for()`, and stops on a difference. `tex_serial` (bumped by every texture and image
+bind)
 equal to the key's means the handles were not rebound since they were compared, so the 1 KiB compare is skipped; a
 rebind to the same handles still matches by the compare. The memo and its key (`MemoKey`) are `DrawCtx.SM`.
 
