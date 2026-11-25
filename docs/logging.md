@@ -100,7 +100,7 @@ listed as they are; search for all of a group when you look at one subsystem:
 - RomFS and files: `RomFS:`, `RomFS` (the image and index checks), `RomFS overlay:`, `RomFS ready:`, `fs:`, `fs`
   (mounts and the RomFS trace), `fs commit save:`, `host save import:`, `host save recovery:`, `host save storage:`,
   `host save working copy:`, `save share:`, `mods:`.
-- Menus: `menu:`, `menu_cursor:`, `menu_mouse:`, `menu_sound:`, `debug:`.
+- Menus: `menu:`, `menu_cursor:`, `menu_mouse:`, `menu_sound:`, `quit_menu:`, `debug:`.
 - Widescreen: `widescreen:`, `wide hud:`, `wide menus:`, `balloon:`, `camera clearance:`, `fov:`.
 - Input and motion: `input:`, `hid:`, `motion:` (the gyro), `mouse:`, `mousetrace:`, `mic:`.
 - Audio: `audio:`, `audren:`, `aud:u:`, `auddmg:u manager:`, `audsmx:u:`, `nn::codec:`.
@@ -260,6 +260,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `present:` | Present intervals (NX2SARIA_TRACE=present) | `vk_backend.c` |
 | `preset:` | Graphics presets and the hardware detection behind them | `cfg.c`, `hw_detect.c` |
 | `prof:` | Sampling profiler (NX2SARIA_PROFILE) | `prof_win.c`, `perf.c` |
+| `quit_menu:` | Quit Game in the game's own menus (docs/quit-menu.md) | `quit_menu.c` |
 | `rdoc:` | RenderDoc capture (NX2SARIA_RDOC) | `rdoc.c` |
 | `resolution:` | Resolution and dynamic resolution | `resolution.c`, `dynres.c` |
 | `restart:` | Restart wait for the previous process | `main.c` |

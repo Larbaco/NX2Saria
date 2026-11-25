@@ -525,7 +525,7 @@ site camera_clearance main 71a844 bd451e6a bd451e6a 951e196f   # ldr s10, [x19, 
 site camera_clearance main 71b624 bd451e6e bd451e6e 951e15f7   # ldr s14, [x19, #0x51c] -> the same; bl page+0xe00
 
 # Quit Game in the game's own menus (runtime/ui/quit_menu.c; the disassembly of each site and why its registers are
-# free: docs/quit-menu.md). The sites:
+# free: docs/code/ui.md). The sites:
 # - main+0x2d13b0, the copy of the screen into x19 in every interface screen's update: the same cut and the same call
 #   (the page's +0xee0) as the set menu_mouse, so either set alone gives both their look at the screen.
 # - main+0x3405b04 in the system window's open (main+0x3405a00, x19 the window, w20 its kind): the fmov s0, #2.0 before

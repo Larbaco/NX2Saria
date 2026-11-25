@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=3e1215cb4eabd364dac0d0f0c1e4c0a6487cc2ce reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=babe27d98602764cbc9c05e515afe69e4a719db6 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -423,6 +423,17 @@ desliga com 0. `NX2SARIA_MENU_CURSOR_LOG=1` registra no log cada tela de menu pa
 `menu_mouse: on for 1.1.1 ...` no início, uma linha `menu_mouse: screen <name>: ...` para os primeiros menus abertos e
 uma linha por menu em que o mouse foi usado, com os movimentos do foco, os cliques, os passos da roda e as contagens de
 testes de acerto. Como funciona: [menu-mouse.md](../menu-mouse.md) (em inglês).
+
+## Sair do jogo
+
+No jogo 1.1.1 os menus do próprio jogo têm uma saída, para quando só o controle está na mão. A entrada aparece no idioma do jogo, com as palavras do próprio jogo (*Sair* em português do Brasil).
+
+- **Tela de título:** a lista tem uma quarta entrada abaixo das três do jogo. A nela fecha o jogo.
+- **Menu de pausa:** na página *Menu*, *Tela inicial* abre a pergunta do jogo, que tem um terceiro botão: *Tela inicial*, *Cancelar*, *Sair*. O foco começa em *Cancelar*. A em *Sair* fecha o jogo; o que não foi salvo se perde, como diz a pergunta.
+
+O teclado e o mouse funcionam ali como nos outros menus do jogo. O jogo também fecha pelo menu de configurações (F1 ou Esc, *Sair do jogo*), fechando a janela e com Alt+F4. Enquanto o jogo grava um save, o fechamento espera por ele.
+
+`NX2SARIA_QUIT_MENU` (`quit_menu` no `nx2saria.ini`; padrão 1, lido ao iniciar) desliga os dois com 0: os menus do jogo ficam como no console. O log tem `quit_menu: on ...` no início, com cada tela ligada ou desligada, e `quit_menu: title: Quit Game chosen; closing the game` ou `quit_menu: pause: ...` quando é usado. Como funciona: [quit-menu.md](../quit-menu.md).
 
 ## Vibração HD nos controles do Switch
 

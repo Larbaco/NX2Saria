@@ -2,16 +2,17 @@
 
 The in-game menu: the settings pages and their draft, the menu's look from the game's own textures, fonts and sounds,
 the bindings page, the Amiibo page and picker, the Cheats tab, the debug menu's panel, the performance overlay's panel,
-the host's folder dialogs, the mouse in the game's own menus, and the catalog of the text the host shows. The feature
+the host's folder dialogs, the mouse in the game's own menus, Quit Game in the game's own menus, and the catalog of the text the host shows. The feature
 docs:
 
 - [controls.md](../controls.md): the menu, its tabs, the draft and Apply, the bindings.
 - [menu-mouse.md](../menu-mouse.md): the mouse in the game's own menus, how the game's objects were found.
+- [quit-menu.md](../quit-menu.md): Quit Game in the game's own menus.
 - [amiibo.md](../amiibo.md): the Amiibo tab, the picker, the keys and write-back.
 - [performance.md](../performance.md): the performance overlay.
 - [presets.md](../presets.md): the quality preset the menu stages.
 - [translating.md](../translating.md): the menu's strings and their translations.
-- [logging.md](../logging.md): the `menu:` and `menu_mouse:` lines.
+- [logging.md](../logging.md): the `menu:`, `menu_mouse:` and `quit_menu:` lines.
 
 "The settings file" on this page is the selected one, `nx2saria.ini` or the older name that still works
 ([branding.md](../branding.md)). "The game" is the game the port runs; where two game versions differ the version is
@@ -2603,6 +2604,232 @@ walk.
 The press that brings page `cur` one nearer to page `goal`: `MM_L`, `MM_R`, or -1 when it is there (or either is
 unknown). The pages do not wrap past the ends.
 
+## `runtime/ui/quit_menu.c`
+
+Quit Game in the game's own menus in game version 1.1.1: a fourth entry on the title screen and a third button in the
+confirmation the pause menu's Title Screen opens. What the game has, why the entry sits where it does, the texts and
+the log: [quit-menu.md](../quit-menu.md).
+
+The runtime calls no game code. The set `quit_menu` (`recomp/patches-v111.txt`) has seven sites; three call host
+functions, four make the game call its own text helper once more in each screen. The readers of the game's objects
+(`ok_at()`, `game_object()`, `pane_parent()`, the offsets) are the ones of `runtime/ui/menu_mouse.c`, whose notes
+name each field; they are repeated here so that neither file needs the other.
+
+The title screen's own fields: +0x2c8 the number of its buttons, +0x2d0 their array, +0x2e8 its menu shown
+(`TITLE_COUNT`, `TITLE_BUTTONS`, `TITLE_MENU`). The entries of a screen are in the order its buttons were made, so the
+title's fourth entry (`TITLE_SPARE`, 3) is `Pa_Button_03` and the window's third (`WINDOW_SPARE`, 2) `Pa_Button_02`.
+From a button's root pane the part pane that holds it in the screen's layout is two panes up (`TITLE_PART_DEPTH`, 3,
+is the most that is looked at).
+
+State shared between the interface thread and the pad read: `g_title_ms` and `g_pause_ms`, the time the focus was last
+seen on the new button of each screen (0 when it is not there); the pad read takes them as true for `ARMED_MS`, 250,
+so a screen that stops updating lets go by itself. `g_window`: the window opened with three buttons. `g_quit`: the
+choice was made. `g_texts`, `g_title`, `g_pause`: the labels are served, and each screen is on.
+
+### The sites
+
+Each is in a function that saved its x30 in its prologue (`stp x29, x30`), and is followed by a call that sets x30
+again before it is read. None is between a flag-setting word and its reader. `tests/quit_menu_sites_check.py` holds
+the words.
+
+**`main+0x2d13b0`, every interface screen's update** (`main+0x2d1380`): the cut and the call of the set `menu_mouse`
+(`runtime/ui/menu_mouse.c`), so with either set on the page's +0xee0 runs once, and its host function
+(`runtime/patches/patches.c` `screens_host()`) calls both files. The host functions change no register.
+
+**`main+0x3405b04`, the window's open** (`main+0x3405a00`):
+
+```
+3405a18: mov x20, x1              the kind
+3405a1c: mov x19, x0              the window
+...
+3405ab0: sub w8, w20, #2
+3405ab4: cmp w8, #2
+3405ab8: b.lo 0x3405b00           kinds 2 and 3
+...
+3405b00: ldr x0, [x19, #0x2b0]    the BtnNum animation
+3405b04: fmov s0, #2.0            <- bl page+0xe20: s0 = 2.0, or 3.0 for kind 2
+3405b08: bl 0x2d2d90              the animation's frame
+3405b0c: mov x0, x19
+3405b10: mov w1, wzr
+3405b14: mov w2, #3
+3405b18: b 0x3405b34
+```
+
+The host function writes s0 (as the fmov does, the rest of v0 zero) and reads x19 and w20. x0 is loaded before the
+cut and is not touched; every other argument register is written after the call at `main+0x3405b08`.
+
+**`main+0x3405b38` and `main+0x3405b3c`, between the open's two calls of the helper**:
+
+```
+3405b34: bl 0x3405bc0             the helper for button 0 (x0 the window, w1 0, w2 the label's number)
+3405b38: mov w1, #1               <- mov w1, #2; mov w2, #12; mov x0, x19; bl 0x3405bc0
+3405b3c: mov w2, #1               <- mov w1, #1; mov w2, #1
+3405b40: mov x0, x19
+3405b44: bl 0x3405bc0             the helper for button 1
+3405b48: ldr w8, [x19, #0x2b8]
+```
+
+After the call at `main+0x3405b34` returns, every caller-saved register is dead: the next three words write w1, w2 and
+x0, and the first read after the second call is of x19, which the helper keeps (it saves x19 to x21). So a third call
+between the two, with its own w1, w2 and x0, changes nothing the open reads, and the second cut writes the w1 the first
+took the place of. All the two-button kinds pass here (0 and 4 from `main+0x3405b1c`, 1 from `main+0x3405ba0`, 2 and 3
+from `main+0x3405b00`), so button 2 gets the text of the label 1012 in each; it is shown for kind 2 only.
+
+**`main+0x3405bfc`, in the helper** (`main+0x3405bc0`):
+
+```
+3405bd8: mov x21, x0              the screen
+3405be0: mov w19, w2              the label's number
+3405be4: mov w20, w1              the button
+3405be8: bl 0xa66f70
+3405bec: adrp x8, 0x3df6000       "LayoutMsg/SystemWindow_00"
+3405bf0: add x8, x8, #0xbcd
+3405bf4: adrp x2, 0x3e1e000       "10%02d"
+3405bf8: add x2, x2, #0x4dd
+3405bfc: mov w3, w19              <- bl page+0xe10: w3 = w19, or 10 or 11 with three buttons
+3405c00: str x8, [x29, #0x18]
+3405c04: add x0, sp, #8
+3405c08: bl 0x6458a0              the label formatted
+...
+3405c30: adrp x2, 0x3d26000       "Pa_Button_%02d/T_Btn_00"
+3405c3c: mov w3, w20
+...
+3405c64: ldr x0, [x21, #0x28]     the screen's layout: the only field of the screen the helper reads
+3405c68: bl 0xa67d30              the text pane takes the message
+```
+
+The host function writes x3 only (the mov's zero extension) and reads x19, x20 and x21. x8 and x2 are live across the
+cut: a host call leaves the registers it does not write as they are. The helper names the message file itself, so it
+gives a button of any screen a text of `LayoutMsg/SystemWindow_00.msbt`: that is why the title's entry takes its text
+from the label 1012 there.
+
+**`main+0x3406964` and `main+0x3406968`, the title screen's set-up** (`main+0x34067d0`, x19 the screen from
+`main+0x34067ec` on, not written again before `main+0x3406cdc`):
+
+```
+3406950: str x0, [x19, #0x2d8]
+3406954: ldr x0, [x19, #0x2c0]
+3406958: bl 0x2d0fe0
+340695c: ldr x0, [x19, #0x2b8]
+3406960: bl 0x2d0fe0
+3406964: adrp x2, 0x3e04000       <- mov x0, x19; mov w1, #3; mov w2, #12; bl 0x3405bc0
+3406968: add x2, x2, #0x8e        <- adrp x2, 0x3e04000; add x2, x2, #0x8e
+340696c: mov x0, sp
+3406970: mov w3, #1
+3406974: strb wzr, [x19, #0x2e8]
+3406978: mov w4, wzr
+340697c: bl 0x6f99d0
+```
+
+The cut follows a call, so every caller-saved register is dead there, and the words after it write x2, x0, w3 and w4
+before the next call reads them. The buttons are made by then (the loop at `main+0x34068a4`). The adrp moves one word
+down inside its page (0x3406964 and 0x3406968 are both in 0x3406000), so its word is the same. x20 to x23, which the
+set-up uses later, are callee-saved and the helper keeps them. The game does not call the window's helper for the
+title; it works there because the helper reads only the screen's layout (+0x28, a field of the class every screen
+derives from) and looks the pane up by its path, `Pa_Button_03/T_Btn_00`, which the title's layout has.
+
+### `test_flag()`
+
+A word of `NX2SARIA_QUIT_MENU_TEST` ([quit-menu.md](../quit-menu.md), "Testing").
+
+### `quit_menu_wanted()`
+
+The set `quit_menu` is in this build and on, on game 1.1.1.
+
+### `sites_ok()`
+
+The words of the game's image at a screen's sites are the ones the sites were written for (`title_sites[]`,
+`pause_sites[]`: the sites that screen needs, the screens' update and the helper's among them). The generator refuses
+a build whose module differs at a site, so this is the same check at run time; a difference turns that screen off with
+the address and the word in the start line.
+
+### `quit_menu_texts()`
+
+Called once by `runtime/hle/romfs.c` `quit_menu_overlay()` with the number of message archives edited: the start line,
+and what is on. Nothing is on unless every archive wanted got its labels.
+
+### `focused_entry()`, `entries_of()`
+
+The entry that has the game's focus (0 for none), and a screen's entries in order.
+
+### `hidden_at()`
+
+How far up from a pane the first pane is that hides it (0 the pane itself, -2 none: it is shown), as the game's entry
+test takes it: a pane not shown, or transparent where the alpha is inherited.
+
+### `describe()`, `trace()`
+
+The line of `NX2SARIA_QUIT_MENU_TEST=log`: each entry's button flags, its place, whether it has the focus and what
+hides it.
+
+### `title_tick()`
+
+At the title screen's update. A title with other than four entries and four buttons is left alone, with one line.
+The fourth button's part pane gets its shown bit when it is the pane that hides the button and at most
+`TITLE_PART_DEPTH` up; an ancestor further up (the menu not faded in yet) is the game's. The bit is written once: the
+game does not clear it. `g_title_ms` is the time while the screen is open and the focus is on the fourth entry.
+
+### `window_tick()`
+
+At the update of the window that was opened with three buttons: `g_pause_ms` while it is open with the focus on the
+third entry. When it leaves the open state without the choice, one line says so and the window is forgotten.
+
+### `quit_menu_window_count_host()`, `quit_menu_window_label_host()`
+
+The host functions of the sites at `main+0x3405b04` and `main+0x3405bfc`. The label 12 becomes 1 (the game's Cancel)
+when the labels were not served, so the helper never asks for a label the message file lacks; the button it is for
+is hidden then.
+
+### `quit_menu_poll()`
+
+Once per pad read, after the mouse in the menus has added its presses (`runtime/input/input.c` `input_poll()`), so a
+click on the entry is taken too. While the focus is on a new button, A does not reach the game and a new press of it
+is the choice (`runtime/ui/quit_menu_core.h` `qm_press()`). The window is asked to close once no save is being written
+(`runtime/hle/fs_host.c` `fs_save_busy()`), as the settings menu's Quit game waits. The pad is read on more than one
+thread: one at a time decides (`busy`), the others drop A while it is held taken.
+
+## `runtime/ui/quit_menu_core.h`
+
+The parts of Quit Game that need neither the game's memory nor the runtime, so `tests/quit_menu_check.c` runs them.
+
+The game's message files (MSBT) as this game writes them: a header of 0x20 bytes (`MsgStdBn`, the byte order mark, the
+encoding at 0xc, which is 0, UTF-8; the number of sections at 0xe, two; the file's size at 0x12), then `LBL1` and
+`TXT2`, each a tag, its size, 8 bytes of zero and its data, padded to 16 bytes with 0xab. `LBL1`: a count of groups,
+then a count and an offset per group, then the labels of each group (a length byte, the name, the index of its text);
+a label is in the group its hash names (`qm_label_hash()`: h = h * 0x492 + byte, modulo the groups). `TXT2`: a count,
+an offset per text, the texts, each ending in a zero byte. A text's control tags hold zero bytes too, so a text's
+length is the next offset less one, never the first zero.
+
+### `qm_msbt_open()`, `qm_msbt_text()`, `qm_msbt_labels()`, `qm_msbt_find()`
+
+A file of that shape, checked whole before anything is read from it: any other (UTF-16, a third section, an offset
+outside its section, a text without its zero) is refused. `qm_msbt_find()`: a label's text.
+
+### `qm_msbt_add()`
+
+The file with labels added, written anew with the same number of groups. A label that is there with the same text
+counts for nothing, one with another text gets the new one. Returns the number of labels that changed, 0 for none (no
+file is made), -1 for a file of another shape.
+
+### `qm_window_label()`
+
+The number of the label a button of the window gets: with three buttons shown, 10 for the first's 3 (Title Screen) and
+11 for the second's 1 (Cancel); otherwise the game's.
+
+### `qm_press()`
+
+Whether the pad read takes A away from the game, and whether this is the press that chooses: a press that starts
+while the focus is on the entry. An A held since another entry is the game's; an A taken stays taken until it is let
+go, also when the focus has gone.
+
+## `runtime/ui/quit_menu_text.c`
+
+The labels in a message archive, free of the runtime for the test. `quit_menu_archive()`: a decompressed archive (a
+SARC) with the three labels of [quit-menu.md](../quit-menu.md) ("The texts") added to
+`LayoutMsg/SystemWindow_00.msbt`, their texts read from the same archive, and the archive laid out again
+(`runtime/hle/sarc.c` `sarc_rebuild()`). `quit_menu_build()`: the same on the compressed file, with the dictionary
+its zstd frame names. Each returns 1 when made, 0 when the archive has the labels already, -1 with why.
+
 ## `runtime/ui/binds_page.h`
 
 The remapping rows of the menu's Controls tab (`runtime/ui/binds_page.cpp`). Present path only (ImGui). What the player
@@ -3216,6 +3443,11 @@ The catalog language for a Switch language code (`en-GB` gives `en`, `zh-CN` giv
 The game languages the F1 menu offers for a game build (`rt_game_version`): one entry per Mals language file the build
 ships (`UiGameLang`), each with the Switch code `NX2SARIA_LANG` takes and the id of its name. 1.4.3 adds Brazilian
 Portuguese (`USpt`). Fills `out` (room for `max` entries) and returns the count.
+
+### `ui_text_game_lang_mals()`
+
+The four-letter prefix of the message archive a game language reads (`USpt` for `pt-BR`), NULL for a language the
+list does not have (`runtime/hle/romfs.c` `quit_menu_overlay()`).
 
 ### `ui_text_game_langs_in()`
 
