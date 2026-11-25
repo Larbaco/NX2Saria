@@ -3965,45 +3965,38 @@ already bound by this submission, it refuses.
 
 ### `pool_catch_up()`
 
-- `pool_memo_hits`: `pool_fill`: slots that shared another slot's lookup (defined with `pool_memo` below).
-- `pool_memo_same`: of those, slots whose entries held the shared views already.
+The current set gets the entries written into other sets in [from, to) of the log, as `PL.view` / `PL.samp` hold them
+now. When the log has wrapped since, that is every entry. Otherwise each entry is written once, at its newest write: an
+entry written again later (also by this submission's own sync, which wrote it into this set already) is skipped at the
+older positions.
 
-The current set gets the entries written into other sets in [from, to) of the log, as PL.view / PL.samp hold them now.
-
-- `if (to - from > POOL_LOG)`: the log has wrapped since: every entry.
-- Each entry once, at its newest write: an entry written again later (also by this submission's own sync, which wrote it
-  into this set already) is skipped at the older positions.
-- `if (PL.switches % 3600 == 0)`: diagnosis: what invalidates the slots
-  (`runtime/vk/vk_texture.c` `vk_texture_bucket_stats()`).
+Every 3600 switches it logs, for diagnosis, what invalidates the slots (`runtime/vk/vk_texture.c`
+`vk_texture_bucket_stats()`) and the pool lines: the sets, the dirty walks and the slot groups, from `PL`'s counters and
+`pool_memo_hits` (`pool_fill()`: slots that shared another slot's lookup) and `pool_memo_same` (of those, slots whose
+entries held the shared views already).
 
 ### `shader_skipped()`
 
-Entry id of every kind in mask: the slot's view of that kind or the kind's stand-in. Texture lock held. 0: the slot's
-texture was left to a later sync by the creation budget (`pool_sync`). `NX2SARIA_SKIP_SHADERS=<hash>,...`: draws and
-dispatches whose shader's SPIR-V has one of these FNV-1a hashes (the "vs"/"fs"/ "cs" hashes of the frame dump's
-passes.txt) are skipped (diagnosis: which pass makes an effect).
-
-- `uint64_t h = gfx_shader_spirv_fnv(sh)`: as `runtime/vk/vk_dump.c` `shader_hash()`.
+`NX2SARIA_SKIP_SHADERS=<hash>,...`: draws and dispatches whose shader's SPIR-V has one of these FNV-1a hashes (the "vs"/
+"fs"/"cs" hashes of the frame dump's passes.txt, 16 at most) are skipped (diagnosis: which pass makes an effect). The
+hash is `gfx_shader_spirv_fnv`, as `runtime/vk/vk_dump.c` `shader_hash()` prints it.
 
 ### `pool_on()`
 
 `NX2SARIA_POOL=0`: draws and dispatches of pipelines that index the pools are skipped (A/B against bindless shaders).
 
-### `pool_fast()`
+### The pool's lookup memo (`pool_memo`) and `pool_fast()`
 
-- `pool_stamp`: the last stamp given out.
-
-Slots that resolve alike share one lookup (`vk_texture_slot_khash_locked`): Ocarina keeps ~400 descriptors of each
+Slots that resolve alike share one lookup (`vk_texture_slot_khash_locked`): the game keeps ~400 descriptors of each
 transient render target registered over its storage, and every finalize and initialize of that target changes their
-tokens, so a refill looked up the same texture ~400 times, ~15,000 lookups a frame in Kokiri Forest. An entry holds the
-views one slot got, for the slots with its hash, address generation and entry generation. Its stamp changes only when
-one of its views does (`NX2SARIA_POOL_FAST`, default on): a slot whose entries were written from the entry at the stamp
+tokens, so a refill looked up the same texture ~400 times, ~15,000 lookups a frame in Kokiri Forest. An entry of
+`pool_memo` (`POOL_MEMO` = 4096) holds the views one slot got, for the slots with its hash, address generation and entry
+generation. Its stamp changes only when one of its views does (`pool_stamp` is the last stamp given out). With
+`NX2SARIA_POOL_FAST` (default on; "ab": in the B blocks) a slot whose entries were written from the entry at the stamp
 it has now (`PoolSlot`) holds those views already, so a refill that finds the entry so compares and writes nothing. That
 is most refills: a transient render target released and taken back moves the address generation of its storage, ~1,300
 slots in Kokiri Forest, and every slot resolves as before (18,500 of 18,800 refills a submission shared a lookup, each
 comparing up to 16 views a quarter megabyte apart: 1.9 ms).
-
-ab: in the B blocks.
 
 ### `pool_hold()`
 
@@ -4031,10 +4024,9 @@ For the flight recorder's blank-slot events: 16384 when no pipeline made so far 
 
 ### `pool_note_blank()`
 
-- `pool_blanked`: the slots that lost their picture since the last `pool_blank_check`.
-
 Slot id's entry of a kind went from the view was to now: noted when a texture's view gives way to the stand-in, which
 every draw of the submission that samples the slot then reads (the set is written with update-after-bind).
+`pool_blanked` (512 at most) lists the slots that lost their picture since the last `pool_blank_check()`.
 
 ### `pool_blank_check()`
 
@@ -4047,41 +4039,51 @@ Whether slot id's entry of a kind in mask is a texture's view now (`vk_texture_p
 
 ### `pool_fill()`
 
-- `if (tok)`: the descriptor hash changes only with a registration (the token's upper half).
-- `ps->stamp = 0`: its entries match no memo entry, unless the one below.
-- `if (m && ok)`: the generation after the lookups: an entry they created is part of what they resolved.
-- A view that changes gives the entry a new stamp; one kept outside the mask keeps its value, so a kind that comes back
-  with another view is a change too.
+Entry id of every kind in mask: the slot's view of that kind or the kind's stand-in. Texture lock held. 0: the slot's
+texture was left to a later sync by the creation budget (`pool_sync()`).
+
+The descriptor hash (`PoolSlot.kh`) changes only with a registration (the token's upper half), so it is read again only
+then. A memo hit (`pool_memo`) writes the views that differ, or nothing when the slot's stamp is the entry's
+(`pool_fast()`). A miss looks every kind up (`tex_info_full()`); the slot's stamp is cleared, so its entries match no
+memo entry, unless the one filled next. That entry takes the entry generation as it is after the lookups: an entry they
+created is part of what they resolved. A view that changes gives the memo entry a new stamp; one kept outside the mask
+keeps its value, so a kind that comes back with another view is a change too.
 
 ### `pool_sync_draw()`
 
-A chunk of a parallel group (`runtime/vk/vk_exec.c` "replay workers") binds the set as `vk_exec_draw_group_begin` left
-it, up to date when the group began; a chunk that still finds no set of this submission takes it in turn, under
-`pool_mt`. Elsewhere the replay syncs the pools at every draw that binds them, as before, under `pool_mt` past a group
-whose chunks still record (`NX2SARIA_REPLAY_PIPE`): the set is the submission's, read by the GPU when the part runs.
+A chunk of a parallel group (`runtime/vk/vk_exec.c`, "replay workers") binds the set as `vk_exec_draw_group_begin()`
+left it, up to date when the group began; a chunk that still finds no set of this submission takes it in turn, under
+`pool_mt`. Elsewhere the replay syncs the pools at every draw that binds them, under `pool_mt` past a group whose chunks
+still record (`NX2SARIA_REPLAY_PIPE`): the set is the submission's, read by the GPU when the part runs.
 
 ### `vk_exec_draw_group_begin()`
 
-- `if (vk_ctx()->has_mesh_shader && !vk_ctx()->mesh_fallback) mesh_ring_make()`: the chunks' indirect mesh draws.
-- The set this submission took, or its first one when it has none yet: taken by a chunk instead, that chunk waited for
-  every earlier chunk of the group to be done (`pool_sync_draw`), and so did each chunk that reached its first draw
-  before one had taken it, so the first group of a submission recorded one chunk at a time (Hyrule Field: 2.4 ms for 209
-  draws where a later group of 784 took 0.8).
-- `int lk = vk_exec_shared()`: earlier groups may still record (`NX2SARIA_REPLAY_PIPE`).
+Before a parallel group records: the stand-ins, the limits and, with mesh shaders, the ring for the chunks' indirect
+mesh draws (`mesh_ring_make()`) are made, and the pools are synced: the set this submission took, or its first one when
+it has none yet. Taken by a chunk instead, that chunk waited for every earlier chunk of the group to be done
+(`pool_sync_draw()`), and so did each chunk that reached its first draw before one had taken it, so the first group of a
+submission recorded one chunk at a time (Hyrule Field: 2.4 ms for 209 draws where a later group of 784 took 0.8). The
+sync is under `pool_mt` when earlier groups may still record (`NX2SARIA_REPLAY_PIPE`). Returns the number of uniform
+updates noted so far in this submission (`UPD.n`).
 
 ### `pool_sync()`
 
-- `if (took && flight_on) pool_blank_check()`: what the submission before went to the queue with.
-- `int switched = pool_take_set(ex, &from)`: every submission its own set, before the shortcut.
-- `if (PL.sealed) return`: current when checked: a change since waits for the next sync, which takes a new set.
-- `vk_texture_pool_make_ns_take()`: what other lookups left: only this sync's making counts for the frame.
-- `pool_catch_up(from, pre)`: what the other sets got since; this sync's own writes went into it already.
-- A set taken and up to date (with one set, the refresh above wrote into it directly), counted only when this sync left
-  no slot behind: once the frame's creation time is spent, `pool_refill` skips a slot it left earlier in the frame and
-  `pool_sync_entries` may return before the walk, and such a slot keeps its old view in this set with nothing in the
-  log, so the takes after it would not carry the change into the other sets. After a counted take, every slot change
-  made before it is in this set and in the log; `runtime/vk/vk_texture.c` `retire_sweep()` frees a retired image only
-  after more than `VK_POOL_SETS` of them, so no set of the ring still holds its view.
+1. A submission's first sync first notes, for the flight recorder, what the submission before went to the queue with
+   (`pool_blank_check()`).
+2. `pool_take_set()`: every submission its own set, before the shortcut in `pool_sync_entries()`.
+3. A sealed set that is still current is left: it was current when checked, and a change since waits for the next sync,
+   which takes a new set.
+4. `vk_texture_pool_make_ns_take` is called once before the refresh, to drop what other lookups left: only this sync's
+   making counts for the frame (`PL.frame_ns`).
+5. `pool_sync_entries()`, then, after a switch, `pool_catch_up()` with what the other sets got since; this sync's own
+   writes went into the set already.
+6. The take is counted (`pool_takes`): a set taken and up to date (with one set, the refresh wrote into it directly),
+   counted only when this sync left no slot behind: once the frame's creation time is spent, `pool_refill()` skips a
+   slot it left earlier in the frame and `pool_sync_entries()` may return before the walk, and such a slot keeps its old
+   view in this set with nothing in the log, so the takes after it would not carry the change into the other sets. After
+   a counted take, every slot change made before it is in this set and in the log; `runtime/vk/vk_texture.c`
+   `retire_sweep()` frees a retired image only after more than `VK_POOL_SETS` of them, so no set of the ring still holds
+   its view.
 
 ### `pool_refill()`
 
@@ -4108,51 +4110,59 @@ holds the current resolution: its token did not change (its views are what that 
 nothing. A slot that joined since is at the tail and refilled on its own (its registration's entry on the dirty ring).
 The members keep their older tokens: their views are what those tokens resolved to, and what the current ones do.
 (Comparing the memo's stamps instead left half the groups to their members: the memo's entries are shared between
-hashes, so the same views came back under a new stamp.).
+hashes, so the same views came back under a new stamp.)
 
 ### `pool_group_check()`
 
 `NX2SARIA_POOL_GROUP_CHECK=1`: a group left alone is walked member by member all the same, and the writes that walk
 makes are counted (none when the rule holds; the pool log's slot groups line), but for the members registered since
-their last fill: their registration's entry on the dirty ring refills them in the same walk (counted apart).
-
-- `if (on < 0) on = rt_knob("POOL_GROUP_CHECK", "0") == 1`: a diagnosis: no settings row.
+their last fill: their registration's entry on the dirty ring refills them in the same walk (counted apart). A
+diagnosis, so it has no settings row.
 
 ### `pool_dirty_group()`
 
-- `if (!same)`: the first member's refill: nothing written, an entry found, its token taken.
-- `int r0 = d->retry, uni = 1`: member by member: then all hold the current resolution, unless a fill was left.
-- `if (id >= d->n) continue`: outside the pool.
-- `if (chk)`: the check: a member registered since its last fill is refilled by its own entry anyway.
+`vk_texture_dirty_slots_locked`: a dirty bucket's slot group. A group known to hold one resolution for the kinds in use
+(`VkSlotGroup.stamp`, `fmask`) is left alone when its first member's token is unchanged, or when that member's refill
+wrote nothing, found an entry and took the new token. Otherwise (and under `pool_group_check()`) the members inside the
+pool are refilled one by one: after that they all hold the current resolution, unless a fill was left or a member has no
+entry, and the group is stamped so. In the check, a member registered since its last fill would be refilled by its own
+entry on the dirty ring anyway, so its writes are counted apart.
 
 ### `pool_sync_entries()`
 
-- `int spent = pool_create_ns() && PL.frame_ns >= pool_create_ns()`: this frame creates nothing more.
-- `if (spent && PL.ready && used == PL.kinds && gen == PL.gen && ep == PL.epoch && sg == PL.sgen) ...`: left slots only.
-- `vk_texture_pool_ctx(1)`: these lookups are the pool's own: a texture evicted by disuse keeps its stand-in.
-- `if (!PL.ready)`: every entry a stand-in first: partially bound arrays are still read out of range by guests.
-- `int retry = 0`: slots whose texture the creation budget left: filled again by the next sync.
-- Only a slot change since the last sync (no new kinds, no new submission): the slots that changed
-  (`vk_texture_dirty_slots_locked`), not the whole table. With `NX2SARIA_POOL_FAST` (default on) a new submission too:
-  its freshness check goes through the entries the slots resolved to and the slots that resolved to none
-  (`vk_texture_pool_fresh_locked`, `pool_unres`), not every slot.
-- `if (grp && !PL.gmode) vk_texture_groups_unstamp_locked()`: members were refilled one by one meanwhile.
-- With slots left by an earlier refresh (the creation budget or the frame's time spent): those (`pool_left`) first, then
-  the changed slots, instead of the walk over every slot. While an area loads, slots are left at every refresh, and each
-  one walked the table: about 67,000 slot reads and 1.65 ms of the replay per submission in Kokiri Forest on an RX 580
-  (0.7.1, 2026-11-11), six submissions a frame. `pool_left_all`: no list kept yet (until the first walk): walk.
-- The slots without an entry are over storage the guest has not mapped (stale descriptors, 1,160 in Kokiri Forest):
-  looked up again when the mapping changed, while a lookup is left for the creation budget, and every 8th submission for
-  the rest (an entry whose creation failed, an image at their address that took GPU content since: `slot_resolve`'s
-  alias rule).
-- `if (r)`: resolves now (an entry it made changes its token: refilled), was refilled since, or.
-- `PL.unres_on[id] = 0`: resolves to none until its token changes (the refill lists it again).
-- `for (int id = 0; id < n && !walked; id++)`: slots past n were never registered: stand-ins since the first sync.
-- `vk_texture_by_id_locked(id, NULL, NULL)`: the submit's freshness check.
-- `vk_texture_groups_unstamp_locked()`: the walk over every slot refilled members one by one.
-- `retry = (int)pool_nleft`: every slot left, by this refresh or an earlier one not filled since.
-- Retry counts every slot left (`pool_left`: this sync's and the earlier ones' not filled since).
-- `stutter_load()`: the stutter map counts the frames around it as an area load's.
+1. Nothing to do when every entry is current (`pool_current()`'s test). With the frame's creation time spent (`spent`:
+   this frame creates nothing more) it also returns when only left slots remain.
+2. The lookups are marked as the pool's own (`vk_texture_pool_ctx`): a texture evicted by disuse keeps its stand-in.
+3. The first sync writes a stand-in into every entry of every set first: partially bound arrays are still read out of
+   range by guests.
+4. With new kinds, a slot change, a new submission or slots left, the slots are refreshed under the creation budget
+   (`pool_create_budget()`, 0 when `spent`). `retry` counts the slots whose texture the budget left: filled again by the
+   next sync.
+   - Quick path. Only a slot change since the last sync (no new kinds, no new submission): the slots that changed
+     (`vk_texture_dirty_slots_locked`, `pool_dirty_slot()`, `pool_dirty_group()`), not the whole table. With
+     `NX2SARIA_POOL_FAST` (default on) a new submission too: its freshness check goes through the entries the slots
+     resolved to and the slots that resolved to none (`vk_texture_pool_fresh_locked`, `pool_unres()`), not every slot.
+     When the group mode was off at the last sync the groups are unstamped first: members were refilled one by one
+     meanwhile.
+   - With slots left by an earlier refresh (the creation budget or the frame's time spent): those (`pool_left`) first,
+     then the changed slots, instead of the walk over every slot. While an area loads, slots are left at every refresh,
+     and each one walked the table: about 67,000 slot reads and 1.65 ms of the replay per submission in Kokiri Forest on
+     an RX 580 (0.7.1, 2026-11-11), six submissions a frame. `pool_left_all`: no list kept yet (until the first walk):
+     walk.
+   - The slots without an entry are over storage the guest has not mapped (stale descriptors, 1,160 in Kokiri Forest):
+     looked up again when the mapping changed, while a lookup is left for the creation budget, and every 8th submission
+     for the rest (an entry whose creation failed, an image at their address that took GPU content since:
+     `runtime/vk/vk_texture.c` `slot_resolve()`'s alias rule). A slot leaves the list when it resolves now (an entry it
+     made changes its token: refilled), was refilled since, or resolves to none until its token changes (the refill
+     lists it again).
+   - The walk over every slot, when the quick path could not be taken. Slots past the registered count were never
+     registered: stand-ins since the first sync. An unchanged slot gets the new kinds, or, in a new submission, the
+     submit's freshness check (`vk_texture_by_id_locked`). The groups are unstamped after it: the walk refilled members
+     one by one.
+5. `retry` becomes every slot left (`pool_left`: this sync's and the earlier ones' not filled since), and decides the
+   area load state (`pool_loading`): at its start and end `stutter_load()` tells the stutter map to count the frames
+   around it as an area load's, and the end logs how many textures were made in how many frames.
+6. A new sampler generation rewrites the samplers that changed.
 
 ### Depth twins: colour images under a compare sampler in a compute shader
 
@@ -4161,10 +4171,12 @@ float or unorm texel; Vulkan only formats with `SAMPLED_IMAGE_DEPTH_COMPARISON` 
 AMD's drivers do not give `R32_SFLOAT`, so the result there is undefined. Such an image gets a depth twin of the same
 size and bits (`R32_SFLOAT` -> `D32_SFLOAT`, `R16_UNORM` -> `D16_UNORM`), copied through a buffer right before each
 dispatch that samples it (a dispatch is outside any render pass), and the dispatch samples the twin. Draws keep the
-colour image: a copy cannot go inside their pass. `NX2SARIA_DEPTH_TWIN=0`: off.
+colour image: a copy cannot go inside their pass. `NX2SARIA_DEPTH_TWIN=0`: off. Up to `TWINS` (8) are kept, the oldest
+replaced.
 
-- `twin_dispatch`: `op_dispatch*`: the resources being bound are a dispatch's, on this thread (the replay workers record
-  draws meanwhile); 2 when the dispatch is a network program's (`uses_tensor_ops`; `net_binding`).
+`twin_dispatch` (per thread) is set by `op_dispatch()` and `op_dispatch_ind()`: the resources being bound are a
+dispatch's, on this thread (the replay workers record draws meanwhile); 2 when the dispatch is a network program's
+(`uses_tensor_ops()`; `net_binding()`).
 
 ### `twin_free()`
 
@@ -4176,17 +4188,18 @@ Completion thread, after the last submission that may copy through it.
 
 ### `twin_format()`
 
-- `static int compares[2] = {-1, -1}`: per source format: the driver compares it as it is.
+The twin's format, `VK_FORMAT_UNDEFINED` when the image needs none: only a single-sample 2D colour image of the two
+formats, and only when the driver does not compare that format as it is (asked once per source format, and logged).
 
 ### `twin_update()`
 
 The twin of img holding img's current texels, the copies recorded into `ex->cb`; NULL when img needs none or it cannot
-be made.
+be made (also when it would be over 64 MiB).
 
-- `if (bytes > twin_buf_cap)`: one copy buffer, grown; the old one goes after the submission being recorded.
-- `if (t->img)`: the submission being recorded may still sample the replaced twin.
-- The source's earlier writes and the twin's earlier readers before the copies; the twin's old texels are dropped.
-- The twin's texels before the dispatch; the source's next writers and the buffer's next copy after these copies.
+There is one copy buffer, grown when needed; the old one goes after the submission being recorded (`twin_buf_free()`),
+as a replaced twin does, which that submission may still sample (`twin_free()`). The barriers: the source's earlier
+writes and the twin's earlier readers come before the copies, and the twin's old texels are dropped; the twin's texels
+are there before the dispatch, and the source's next writers and the buffer's next copy come after these copies.
 
 ### `net_binding()`
 
@@ -4201,8 +4214,9 @@ here (the same texel size: a copy keeps the bits), each written picture once. It
 use cannot be written, and the dispatch then writes a dummy; logged, as the picture is then lost without another sign.
 Texture lock held.
 
-- `if (o == t) return`: written as native texels, later than the target was.
-- The target's earlier writes and the texture's earlier readers before the copy, the copy before the dispatch.
+Nothing is copied when the texture itself was written as native texels, later than the target was. The copy is recorded
+between two barriers: the target's earlier writes and the texture's earlier readers before the copy, the copy before the
+dispatch.
 
 ### `tex_info()`
 
@@ -4212,11 +4226,12 @@ its depth twin; in a pass larger than it, the scene's light target, once DLSS sc
 
 ### `alloc_set()`
 
-- `if (res == VK_ERROR_OUT_OF_DEVICE_MEMORY || res == VK_ERROR_OUT_OF_HOST_MEMORY)`: once more, as scratch.
+A set from the submission's newest descriptor pool, or from a new pool (a spare one when there is one) when that one is
+full. A pool creation refused for lack of memory is tried once more after a give-back, as in `scratch()`.
 
 ### `support_in()`
 
-What `support_fill` reads: viewport size, point size.
+What `support_fill()` reads: viewport size, point size.
 
 ### `pcss_params()`
 
@@ -4237,20 +4252,25 @@ once, as `runtime/vk/vk_texture.c` `shadow_scale()` reads it: the maps keep the 
 
 ### `support_fill()`
 
-- `memcpy(b + 1392, &point_size, 4)`: `point_size` (translator patch 0008): vertex shaders that write none output it.
-- `memcpy(b + 1408, pcss_params(), 16)`: pcss (translator patch 0010): soft sun shadows in the cascade compares.
-- `memcpy(b + 1424, shadow_spread_params(), 16)`: `shadow_spread` (translator patch 0011): sun shadow filter width.
-- `for (int i = 0; i < 73; i++) memcpy(b + 192 + 16 * i, &one, 4)`: render scale 1: the host renders at guest size.
-- `if (vk_hdr_armed())`: read by the game's tonemap only, once `runtime/vk/vk_hdr.c` `tonemap_splice()` has grown its
-  block past the translator's.
+The fields it fills, by byte offset:
 
-### `bind_stats_on()`
+| Offset | Field |
+|---|---|
+| 144 | `viewport_inverse` (2 / width, 2 / height) |
+| 160 | `viewport_size` |
+| 192 + 16 i, i < 73 | render scale 1: the host renders at guest size |
+| 1392 | `point_size` (translator patch 0008): vertex shaders that write none output it |
+| 1408 | pcss (translator patch 0010): soft sun shadows in the cascade compares (`pcss_params()`) |
+| 1424 | `shadow_spread` (translator patch 0011): sun shadow filter width (`shadow_spread_params()`) |
+| 1440 | HDR (`vk_hdr_support`, when `vk_hdr_armed`): read by the game's tonemap only, once `runtime/vk/vk_hdr.c` `tonemap_splice()` has grown its block past the translator's |
 
-`NX2SARIA_BIND_STATS=1`: bindings and descriptors per draw of each stage (Task 2.2's choice of the pushed stage), and
-how often a draw repeats the previous one, logged every 20000 draws: pushes recorded and skipped, allocated sets written
-and reused, stage texture-type recomputations (`answers_for`), draws with the previous draw's program, bound state and
-textures (shaders and pipeline would be the same) and those that also have its buffers and viewport (all descriptors
-would be the same). BS is declared beside DS.
+### `bind_stats_on()`, `bind_stats()`
+
+`NX2SARIA_BIND_STATS=1`: bindings and descriptors per draw of each stage (what the choice of the pushed stage went by),
+and how often a draw repeats the previous one, logged every 20000 draws: pushes recorded and skipped, allocated sets
+written and reused, stage texture-type recomputations (`answers_for()`), draws with the previous draw's program, bound
+state and textures (shaders and pipeline would be the same) and those that also have its buffers and viewport (all
+descriptors would be the same). `BS` is declared beside `DsSig`.
 
 ### `repeat_stats()`
 
@@ -4286,24 +4306,26 @@ descriptor commands.
 
 ### `rs_list()`
 
-- `if ((nd += cnt) > MAX_DESC) { ok = 0; break; }`: the build stops on it.
-- Slot 1: the program (`bind_sig`); others: the zero buffer.
-- `} else if (b->kind == GFX_RES_SSBO)`: every descriptor of the binding is the same range.
-- `if (r->ptr || (!direct && ubo_ptr_res(r)))`: an address read from memory: `bind_sig` reads it again.
+The pipeline info's `RsList`, built at first use ("Resources of one command buffer"). Per binding it lists: for a
+uniform binding, c0's storage table (slot 0) or the bound uniform range (slots 3-20); slot 1 is the program, which
+`bind_sig()` covers, and the others the zero buffer. For a storage binding, the slot it names (every descriptor of the
+binding is the same range), and when its address is read from memory (a pointer table or a user uniform block) an entry
+of `p`, which `bind_sig()` reads again at every draw. For textures and images, their handles. More than `MAX_DESC`
+descriptors make the list not `ok`: the build stops on that count anyway.
 
 ### `bind_sig()`
 
-The signature of a graphics draw's descriptor inputs into RS; 1 when it equals the stored one. The bound-slot bytes are
-compared only when a bind op ran since they were stored or the pipeline changed: otherwise they are the same. Check mode
-compares them anyway and stops when the bind op generation said they could not differ but they do.
+The signature of a graphics draw's descriptor inputs into `RS`; 1 when it equals the stored one. The bound-slot bytes
+are compared only when a bind op ran since they were stored or the pipeline changed: otherwise they are the same. Check
+mode compares them anyway and stops when the bind op generation said they could not differ but they do. `vk_mem_gen` and
+`vk_usnap_gen` go in as one word, their sum: both only grow.
 
-- `PUT(vk_mem_gen() + vk_usnap_gen())`: both only grow.
-
-### `bt_now()`
+### `bt_now()` and the replay phases
 
 The binding profile in the `NX2SARIA_TRACE=gfx` frame line reads the clock around every descriptor; without the trace
-those reads would cost more than some of what they time, so they read 0. The phases `NX2SARIA_REPLAY_PHASES` times
-(`vk_exec_op_draw` below); the binding's four are inside `PH_BIND`.
+(and outside a draw op timed by `NX2SARIA_REPLAY_PHASES`, `ph_t`) those reads would cost more than some of what they
+time, so they read 0. The `PH_*` values are the phases `NX2SARIA_REPLAY_PHASES` times (`vk_exec_op_draw()`); the
+binding's four (`PH_BIND_TEX`, `PH_BIND_BUF`, `PH_BIND_SIG`, `PH_BIND_PUSH`) are inside `PH_BIND`.
 
 ### Per-binding descriptor reuse
 
@@ -4334,10 +4356,11 @@ info's entry, emptied when it held another pipeline's results or the globals mov
 
 ### `pb_key()`
 
-The bound-slot values descriptor k of binding b resolves from, when they are all it reads besides `pb_globals`.
-
-- `return 1`: slot 1: the program's constants (`pb_globals`); others: the zero buffer.
-- `if ((r->flags & 1) || r->ptr || r->cbuf_slot >= VK_GPA_CB_SLOT) return 0`: the table, the mesh fallback's buffers.
+The bound-slot values descriptor k of binding b resolves from, when they are all it reads besides `pb_globals()`; 0 when
+the descriptor is not kept. Of the uniform slots, c0 is not kept; slots 3-20 key on the bound range; slot 1 is the
+program's constants, which `pb_globals()` covers, and the others the zero buffer. A storage buffer is not kept when the
+shader writes it, when it is read through a pointer table, or when it is the device address table or one of the mesh
+fallback's buffers (`cbuf_slot` >= `VK_GPA_CB_SLOT`).
 
 ### `pb_take()`
 
@@ -4355,57 +4378,58 @@ Writes allocated set s from its packed descriptors d: through the layout's updat
 
 ### `gpa_reader()`
 
-- `emu_d`: Writes the pipeline's sets from the bound state: set 0, and set 1 with independent layouts. Each is pushed
-  into the command buffer, or allocated, written and bound; a graphics set whose contents equal the last one allocated
-  for that set number in this command buffer is reused, and bound again only when another layout or a push came between.
-  A graphics push equal to the last one at its set number, with no other layout or bind between, is not recorded. The
-  descriptors go into one packed array d, a `VkDescSlot` per descriptor in binding order, which a set's update template
-  reads directly (`VkPipeInfo.tpl`); write structs are filled only when a set has no template.
-
-  set 0's descriptors of the last `bind_resources` build (mesh emulation).
-
 A pipeline that binds the device address table reads what it names, mostly guest memory itself (pools without a mirror),
-as the GPU runs: the submission's submit wait is the GPU's (`vk_mem_take_live`). Without this the staged mirror uploads
-(`NX2SARIA_MIRROR_STAGE`) ended the wait once the replay had submitted, and the game wrote the next frame's instances
-while the GPU still drew from them: the small grass and moss, which reach their instances through the table, flickered
-and slid over the ground as the camera turned (RX 580, Kokiri Forest, 2026-11-11). Noted at every bind, before the bind
-skip and the kept descriptors (`bind_sig`, `pb_take`), which leave `ssbo_info` out: noted only there, it was missed once
-those had warmed up, and the flicker came back after a minute of play. the pipeline's binding list holds a table
-binding.
+as the GPU runs: the submission's submit wait is the GPU's (`vk_mem_note_live`, `vk_mem_take_live`). Without this the
+staged mirror uploads (`NX2SARIA_MIRROR_STAGE`) ended the wait once the replay had submitted, and the game wrote the
+next frame's instances while the GPU still drew from them: the small grass and moss, which reach their instances through
+the table, flickered and slid over the ground as the camera turned (RX 580, Kokiri Forest, 2026-11-11). Noted at every
+bind, before the bind skip and the kept descriptors (`bind_sig()`, `pb_take()`), which leave `ssbo_info()` out: noted
+only there, it was missed once those had warmed up, and the flicker came back after a minute of play.
 
-- `int8_t g = __atomic_load_n(&info->gpa, __ATOMIC_RELAXED)`: the replay workers bind too.
+Whether the pipeline's binding list holds a table binding is worked out once and kept in `VkPipeInfo.gpa` (1 no, 2
+yes), read and stored with atomics: the replay workers bind too.
 
 ### `bind_resources()`
 
-- `cx->B.res_valid = 0`: until the build below ends.
-- `uint32_t lo[2] = {0, 0}, hi[2] = {0, 0}, d0[2] = {0, 0}`: bindings [lo, hi) and first descriptor per set.
-- `int need_w = 0`: a set without a template: fill the write structs.
-- `int st = nvn_stage_of(b->stage), kind = 0`: kind: 0 buffer, 1 image, 2 texel buffer view.
-- `if (!cx->B.sup_valid || memcmp(in, cx->B.sup_in, sizeof in))`: `support_fill` reads only these.
-- A new buffer only when the contents changed.
-- `for (uint32_t k = 0; k < cnt; k++)`: buffer textures are not replayed yet.
-- `int locked = 0`: `tex_info` looks up with the texture lock held; kept descriptors (`pb_take`) need none.
-- The context's memo (`TexMemo`) for sampled textures while other threads record (the lock is free otherwise), outside a
-  dispatch's depth twins and DLSS's stand-in image, with the generations read before any lookup below.
-- `uint64_t tok = m ? token_of(h) : 0`: before the lookup.
-- `o[k].w[2] = (uint32_t)o[k].image.imageLayout`: zero the tail padding.
-- `if (kind == 0) w[i].pBufferInfo = &o->buffer`: a `VkDescSlot` is as large as either info struct.
-- An empty set 1 (a fragment stage without resources: depth and shadow draws) starts past the last binding, which the
-  loop never reaches: `d0[1]` stayed 0 and set 0 was pushed with 0 bytes, so the driver read stale descriptors.
-- Under the validation layer, a new graphics layout binds set 1 before set 0 is pushed or bound. The layer (SDK 1.4.363,
-  `PipelineLayoutCompatDef::operator==`) takes any two `INDEPENDENT_SETS` layouts as compatible, so
-  vkCmdPushDescriptorSetKHR keeps the push set it made for an earlier layout and drops writes to bindings that layout
-  lacks (false VUID-vkCmdDrawIndexed-None-08114, then an access violation inside the layer). A bind at set 1 disturbs
-  set 0 by its canonical id, which drops the layer's push set: the push after it gets a new one.
-- `if (gfx && info->layout != cx->B.ds_layout)`: another layout: sets bound before may be disturbed.
-- `if (s && i1 == i0)`: no fragment stage: set 1 is empty and unused.
-- `if (set1_first)`: bound only to drop the layer's push set (comment above).
-- `if (info->pool)`: set 2: the texture and sampler pools.
-- `cx->RS.volatile_ = 1`: the pools may change under an equal draw: build the next one again.
-- An equal next draw records nothing when every push set holds its push (`NX2SARIA_PUSH_SKIP` on) and nothing made the
-  build unrepeatable; allocated sets are always bound to the one written last.
-- `if (skip == 2)`: with the pipeline info equal (`bind_sig`), the packed descriptors determine every write.
-- `if (same && was_valid) BS.bind_skip++`: the draws a skip would have spared, compared instead.
+Writes the pipeline's sets from the bound state: set 0, and set 1 with independent layouts. Each is pushed into the
+command buffer, or allocated, written and bound; a graphics set whose contents equal the last one allocated for that set
+number in this command buffer is reused, and bound again only when another layout or a push came between. A graphics
+push equal to the last one at its set number, with no other layout or bind between, is not recorded. The descriptors go
+into one packed array d, a `VkDescSlot` per descriptor in binding order, which a set's update template reads directly
+(`VkPipeInfo.tpl`); write structs are filled only when a set has no template (`need_w`). `emu_d` (per thread) keeps set
+0's descriptors of the last build, for mesh emulation (`mesh_emu_draw()`).
+
+1. `gpa_reader()`, then the whole-draw skip (`bind_skip_on()`, `bind_sig()`): an equal draw with valid sets only counts
+   its census again. Otherwise `B.res_valid` is cleared until the build ends.
+2. Per binding, the descriptors resolve (`pb_take()` and `pb_keep()` around each one that may be kept):
+   - The support buffer is filled again only when `support_in()`'s values changed (`support_fill()` reads only these),
+     and gets a new buffer only when the contents changed.
+   - Uniform and storage buffers: `ubo_info()`, `ssbo_info()`.
+   - Buffer textures are not replayed yet: they bind the zero buffer's view.
+   - Textures and images: `tex_info()` looks up with the texture lock held; kept descriptors need none. While other
+     threads record (the lock is free otherwise) sampled textures go through the context's memo (`TexMemo`), outside a
+     dispatch's depth twins and DLSS's stand-in image, with the generations read before any lookup and the slot's token
+     before its lookup. The image layout is stored into the slot's third 64-bit word, which zeroes the tail padding:
+     the packed descriptors are compared as bytes.
+   - A write struct points at the packed slot itself: a `VkDescSlot` is as large as either info struct.
+3. An empty set 1 (a fragment stage without resources: depth and shadow draws) starts past the last binding, which the
+   loop never reaches: `d0[1]` stayed 0 and set 0 was pushed with 0 bytes, so the driver read stale descriptors. So
+   `d0[1]` is set to the end.
+4. Another graphics layout than the last: sets bound before may be disturbed, so the bound and pushed state is
+   forgotten. Under the validation layer, a new graphics layout binds set 1 before set 0 is pushed or bound. The layer
+   (SDK 1.4.363, `PipelineLayoutCompatDef::operator==`) takes any two `INDEPENDENT_SETS` layouts as compatible, so
+   vkCmdPushDescriptorSetKHR keeps the push set it made for an earlier layout and drops writes to bindings that layout
+   lacks (false VUID-vkCmdDrawIndexed-None-08114, then an access violation inside the layer). A bind at set 1 disturbs
+   set 0 by its canonical id, which drops the layer's push set: the push after it gets a new one. A set 1 that is empty
+   and unused (no fragment stage) is bound only for that.
+5. Each set is pushed, or allocated, written and bound, as above.
+6. Set 2, the texture and sampler pools, is synced and bound (`pool_sync_draw()`). The pools may change under an equal
+   draw, so the build is marked volatile: the next one is built again.
+7. With the skip on, `B.res_valid` is set: an equal next draw records nothing when every push set holds its push
+   (`NX2SARIA_PUSH_SKIP` on) and nothing made the build unrepeatable; allocated sets are always bound to the one written
+   last. In check mode, with the pipeline info equal (`bind_sig()`), the packed descriptors determine every write: a
+   draw with the inputs of the previous one that gets other writes, census counts or descriptor commands stops the run,
+   and the draws a skip would have spared are counted as skipped.
 
 ### Draws
 
@@ -5566,15 +5590,16 @@ payload (`OP_COPY_STRIDE` or the tight row). Every copy ends the open pass and s
 an image is marked GPU-written at record time; a CPU-visible buffer range is reported to `vk_gpu_written` once the GPU
 is done (write watch does not see GPU writes, textures stored there re-upload).
 
-Events and counters are CPU-visible side effects. Their values go into guest memory on the completion thread through
-`vk_completion_add`, in submit order, as `runtime/gfx/gfx_null.c` does: event WRITE / ADD, counter {0, timestamp} for
-every type but samples passed. A timestamp report puts 0 in the counter word: the game gates its clears on two such
+Events and counters are CPU-visible side effects. Their values go into guest memory after the submission's GPU work
+through `vk_completion_add_result`, in submit order (on the completion thread, or on the thread whose wait after a submit
+runs the results, `runtime/vk/vk_sync.c` `results_run()`), as `runtime/gfx/gfx_null.c` does: event WRITE / ADD, counter
+{0, timestamp} for every type but samples passed. A timestamp report puts 0 in the counter word: the game gates its clears on two such
 words being unequal.
 
 Samples passed (`NVN_COUNTER_TYPE_SAMPLES_PASSED`) is a running count on the queue: `RESET_COUNTER` zeroes it, every
 draw after it adds the samples that passed the depth and stencil tests, `REPORT_COUNTER` writes the running value. The
 game resets and reports it 3 to 8 times a frame in the field and its CPU reads the results back (`f_70010c3298`); a 0
-there culls what the query tested. The replay counts with Vulkan occlusion queries ("occlusion counts" below).
+there culls what the query tested. The replay counts with Vulkan occlusion queries ("Occlusion counts").
 
 Conditional rendering is a CPU-side skip, not `VK_EXT_conditional_rendering`: the extension compares one 32-bit word
 with zero, NVN compares the counter words at addr and addr + 16. The condition is evaluated when the op is recorded from
@@ -5586,36 +5611,32 @@ the work the condition would have saved; in the field the game conditions only o
 dispatches. A condition that cannot be read (address outside every pool) renders. Copies and `CLEAR_TEX` are not
 conditional.
 
-### Completion callbacks (completion thread)
-
-- `Range`: back: written into a VRAM mirror (`vk_mem_mirrored`).
-- `ex_results`: What the GPU work of the submission being recorded hands to the CPU at its completion without a fault to
-  fetch it: event values, counter and occlusion reports, GPU writes of memory no VRAM mirror holds
-  (`vk_sync_recorded_wait` waits for the newest such submission). Write-backs of the mirrors note it in
-  `runtime/vk/vk_memory.c`; the lazily written ones fetch on the CPU's first access.
-
-  `VK_RES_*` bits.
-- `tail_results`: those noted while the submission's tail records (`runtime/vk/vk_exec.c` "the early tail").
-
 ### `vk_exec_note_results()`
 
-- `vk_gpu_passes_result(kind)`: `NX2SARIA_GPU_PASSES`: where in the submission it is done.
+`ex_results` (`VK_RES_*` bits) is what the GPU work of the submission being recorded hands to the CPU at its completion
+without a fault to fetch it: event values, counter and occlusion reports, GPU writes of memory no VRAM mirror holds
+(`runtime/vk/vk_sync.c` `vk_sync_recorded_wait()` waits for the newest such submission). Write-backs of the mirrors note
+it in `runtime/vk/vk_memory.c`; the lazily written ones fetch on the CPU's first access. `tail_results` holds those
+noted while the submission's tail records (`runtime/vk/vk_exec.c` "The early tail"). The kind also goes to
+`NX2SARIA_GPU_PASSES` (`vk_gpu_passes_result`), which notes where in the submission it is done.
 
-### `ub_write_cb()`
+### `vk_exec_tail_ub()`, `ub_write_cb()`
 
 An inline uniform update in a submission's tail (`runtime/vk/vk_exec_draw.c` `op_update_ub()`, `runtime/vk/vk_exec.c`
-"the early tail"): the GPU copies the bytes into the pool's mirror where the stream has the update, and guest memory
+"The early tail"): the GPU copies the bytes into the pool's mirror where the stream has the update, and guest memory
 gets them here, with the results the game reads, in place of a write-back.
 
 ### `note_gpu_write()`
 
-The GPU wrote [addr, addr+size) of CPU-visible memory: tell the texture cache once the fence is reached.
+The GPU wrote [addr, addr+size) of CPU-visible memory: tell the texture cache once the fence is reached. A `Range`'s
+`back` says the range was written into a VRAM mirror (`vk_mem_mirrored`); a write that is not counts as a result
+(`VK_RES_WRITE`).
 
 ### `vk_exec_late_stats()`
 
-The side effects below that ran after a waiter on the executed timeline had gone on
-(`runtime/vk/vk_sync.c` `vk_sync_effect_late()`): the game was already past the wait after its submit when these reached
-its memory.
+The side effects of this file's callbacks (event values, counter reports, occlusion counts) that ran after a waiter on
+the executed timeline had gone on (`runtime/vk/vk_sync.c` `vk_sync_effect_late()`): the game was already past the wait
+after its submit when these reached its memory.
 
 ### `write_counter()`
 
@@ -5625,39 +5646,44 @@ timestamp is that much past now (a tail timestamp the GPU has not reached yet, `
 
 ### `counter_cb()`
 
-- `report_write()`: Reports other than samples passed (timestamps; the statistics counters are not modelled) write a
-  counter of 0. The counter word matters: Ocarina writes {1, 0} into a record from the CPU, reports `TIMESTAMP_TOP` into
-  it and gates clears on it differing from a zero record (mode 1), clears that must not run.
+Reports other than samples passed (timestamps; the statistics counters are not modelled) write a counter of 0. The
+counter word matters: the game writes {1, 0} into a record from the CPU, reports `TIMESTAMP_TOP` into it and gates
+clears on it differing from a zero record (mode 1), clears that must not run.
 
-  below, with the pending table.
-- `CounterWrite`: tail: the submission's value for a timestamp reported in its tail (`runtime/vk/vk_exec.c` "the early
-  tail"), else 0.
+A `CounterWrite`'s `tail` is the submission's value for a timestamp reported in its tail (`runtime/vk/vk_exec.c` "The
+early tail"), else 0. A timestamp of the tail is written while the GPU still runs the tail, with the time the tail is
+expected to end at (`runtime/vk/vk_sync.c` `vk_sync_tail_pending_ns()`).
 
-- A timestamp of the tail, written while the GPU still runs the tail: the time the tail is expected to end at.
+### The pending reports
+
+Reports queued by the replay that the GPU has not finished. The condition of `RENDER_COND` reads a timestamp one as 0
+and a samples-passed one as unknown. The table (`pending`, `PENDING` = 65,536 entries) holds the newest report per
+address, probed over `PENDING_PROBE` (32) slots from the address's hash: the game issues hundreds of occlusion reports a
+frame and conditions draws on them in the same frame, so a ring of the last 256 reports had dropped the report a
+condition referred to, which then read an older query's count (often 0) and culled visible ground and trees. It also
+rotates through tens of thousands of record addresses, so an entry whose value is in memory (written >= seq: a condition
+reads memory anyway) gives its slot to a new address; a table that only grew filled up after a minute and conditions on
+the newer records read the CPU's 1 again.
+
+A `Pending` entry:
+
+- `seq` is the newest report to addr and `written` the newest whose value the completion thread has put in guest
+  memory. A report counts as pending until then, not until its fence passes: the callback runs after the fence, and in
+  between the record still held what the CPU wrote (the game re-arms its condition records with 1 for the next frame),
+  so a condition read 1 where the GPU had written 0, a depth clear ran after the depth copy and frames showed only sky.
+- `frame` is the present count (`vk_exec_cond_frame_end()`, in replay order) when the report was replayed. The game arms
+  its condition records from the CPU between frames, so within a frame a timestamp report decides the record's value
+  even after it reached memory: the game's CPU, running a frame ahead, had re-armed a record with 1 by the time a later
+  depth clear of the frame read it, the clear ran after the depth copy and the frame showed only sky (white flashes).
+- `clr_seq`, `clr_mask`: the quarters of the record a small buffer clear filled after the report `clr_seq`, the newest
+  replayed before the clear ("Small buffer clears over counter records"). Written by the replay thread under
+  `clr_lock`; the report writes read them under it.
 
 ### `vk_exec_cond_frame_end()`
 
-- `PENDING`: Reports queued by the replay that the GPU has not finished. The condition of `RENDER_COND` reads a
-  timestamp one as 0 and a samples-passed one as unknown. The newest report per address, in a table probed over
-  `PENDING_PROBE` slots from the address's hash: Ocarina issues hundreds of occlusion reports a frame and conditions
-  draws on them in the same frame, so a ring of the last 256 reports had dropped the report a condition referred to,
-  which then read an older query's count (often 0) and culled visible ground and trees. It also rotates through tens of
-  thousands of record addresses, so an entry whose value is in memory (written >= seq: a condition reads memory anyway)
-  gives its slot to a new address; a table that only grew filled up after a minute and conditions on the newer records
-  read the CPU's 1 again.
-- `Pending`: seq: the newest report to addr; written: the newest whose value the completion thread has put in guest
-  memory. A report counts as pending until then, not until its fence passes: the callback runs after the fence, and in
-  between the record still held what the CPU wrote (Ocarina re-arms its condition records with 1 for the next frame), so
-  a condition read 1 where the GPU had written 0, a depth clear ran after the depth copy and frames showed only sky.
-  frame: the present count (`vk_exec_cond_frame_end`, in replay order) when the report was replayed. The game arms its
-  condition records from the CPU between frames, so within a frame a timestamp report decides the record's value even
-  after it reached memory: Ocarina's CPU, running a frame ahead, had re-armed a record with 1 by the time a later depth
-  clear of the frame read it, the clear ran after the depth copy and the frame showed only sky (white flashes).
-  `clr_seq`, `clr_mask`: the quarters of the record a small buffer clear filled after the report `clr_seq`, the newest
-  replayed before the clear ("small buffer clears over counter records" below). Written by the replay thread under
-  `clr_lock`; the report writes read them under it.
-- `vk_cond_clears_run`: Per-frame counts of conditional work (`NX2SARIA_LOG_RCOND=1`, `vk_exec_cond_frame_end` logs
-  them): clears and draws issued under a render condition, run or skipped.
+Logs and zeroes the per-frame counts of conditional work (`NX2SARIA_LOG_RCOND=1`; `vk_cond_clears_run` and the others):
+clears and draws issued under a render condition, run or skipped. Then the frame count the pending reports go by
+(`cond_frame`) moves on.
 
 ### `pending_written()`
 
@@ -5665,10 +5691,10 @@ Completion thread: the value of report seq to addr is in guest memory.
 
 ### `pending_slot()`
 
-Lookups run on the replay thread and the completion thread; only the replay thread inserts.
-
-- `victim = e`: done, and not from this frame (whose reports still decide their records).
-- `if (!e) return NULL`: every probed entry still has a report in flight.
+Lookups run on the replay thread and the completion thread; only the replay thread inserts. An insert takes a free
+slot, else the oldest entry that is done and not from this frame (whose reports still decide their records); when every
+probed entry still has a report in flight it returns NULL, and conditions on that address read memory
+(`report_counter()` logs it once).
 
 ### Small buffer clears over counter records
 
@@ -5681,11 +5707,11 @@ reads the record when it is replayed (`counter_word`). For a record that gets bo
 of the stream:
 
 - A report followed by a clear ends as the report: its write comes after the fence, the fill ran before it. When the
-  clear is in a later submission the completion thread races the GPU for the last word;
+  clear is in a later submission the completion thread races the GPU for the last word.
 - A condition replayed after the clear reads what memory held before the GPU ran the fill, or the 0 of a report that the
   clear has since overwritten.
 
-So a fill of at most `CLEAR_SMALL` bytes is also applied here, at its place in the replay, to the records it covers that
+So a fill of at most `CLEAR_SMALL` (256) bytes is also applied here, at its place in the replay, to the records it covers that
 the pending table holds, which are the records a counter report went into: the covered bytes get the value in guest
 memory at once, the entry notes which quarters of the record were filled and after which report, reports up to that one
 leave those quarters alone when their write comes, and a condition takes them from memory. A report replayed after the
@@ -5697,32 +5723,27 @@ before the passes that still count on the old value have run. Nothing on the GPU
 decided on the CPU), a report's own write already lands on the same page, and whatever this write puts a value over, the
 GPU's fill puts the same value over later. The counts (`vk_exec_clear_stats`) are kept whatever the setting is: the
 small fills into CPU-visible memory, how many covered such a record, and the reports that went into bytes one of the
-last `CLR_RING` fills had covered.
+last `CLR_RING` (8) fills had covered.
 
-- `clr_lock`: a report's write against a clear's note and write.
-- `clr_any`: an entry holds a note: the report writes take `clr_lock` from here on.
-- `clr_cpu`: the setting.
-- `rep_pages`: A flag per 4 KiB page a counter report went into, by a hash of the page (a page that shares another's
-  flag only costs a clear its table lookups). Replay thread.
-- `CS`:
-  - `uint64_t n, bytes, hit, recs, after, frame0`: since the last line: fills, their bytes, fills over a record, such
-    records, reports into filled bytes; the frame of the last line.
-  - `volatile uint64_t kept`: report writes that left filled quarters alone.
-  - `uint64_t addr`: the last fill.
-  - `struct { uint64_t lo, hi; } ring[CLR_RING]`: the last fills, and the range that holds them all.
+`clr_lock` sets a report's write against a clear's note and write; once an entry holds a note (`clr_any`), the report
+writes take the lock. `rep_pages` has a flag per 4 KiB page a counter report went into, by a hash of the page (a page
+that shares another's flag only costs a clear its table lookups); replay thread. In `CS`, since the last line: the fills
+(`n`), their bytes, the fills over a record (`hit`), such records (`recs`), the reports into filled bytes (`after`) and
+the report writes that left filled quarters alone (`kept`); `frame0` is the frame of the last line, `addr`, `size` and
+`value` the last fill, and `ring` the last fills with the range that holds them all (`lo`, `hi`).
 
 ### `clear_note_report()`
 
-Replay thread, at a report into the record at addr.
+Replay thread, at a report into the record at addr: flags its pages, and counts it when one of the last fills covered
+bytes of the record.
 
 ### `clear_small()`
 
 Replay thread: the fill of [a, a + n) with value, 4-byte aligned, backed and CPU-visible, at its place in the stream.
-
-- `if (!*rep_page(a) && !*rep_page(a + n - 1)) return`: no report ever went into these pages.
-- `for (uint64_t k = a - 12; k < a + n; k += 4)`: every record address whose 16 bytes reach into the fill.
-- The quarters filled since the newest report: an earlier fill's stay when no report came in between.
-- `e->clr_seq = report_seq`: every report replayed so far.
+When no report ever went into the fill's pages there is nothing more to do. Otherwise every record address whose 16
+bytes reach into the fill (a - 12 to a + n, in steps of 4) is looked up in the pending table. An entry found gets the
+quarters filled since its newest report (an earlier fill's stay when no report came in between) and `clr_seq`, which
+stands for every report replayed so far, and the quarters are written into guest memory.
 
 ### `clear_quarters()`
 
@@ -5752,49 +5773,51 @@ a report into guest memory. Slots come from one ring; the completion thread read
 draw uncounted and the segment's count at least 1, as does a query still unavailable after its fence. Without
 `hostQueryReset` the counts stay 0. The ring holds about four frames of Hyrule Field's queries (about 3,500 a frame):
 the replay workers' chunks take blocks of slots sized to their draws (`vk_exec_xfer_slots`), more than they use, and
-with 4096 the ring came round to slots the completion thread had not reset yet, leaving draws uncounted.
+with 4096 the ring came round to slots the completion thread had not reset yet, leaving draws uncounted (`OQ_N` is
+16,384).
 
-- `oq_state`: 0 not set up, 1 counting available, -1 unavailable.
-- `oq_busy`: from begin until the completion thread read and reset the slot.
-- `oq_next`: replay: next ring slot.
-- `oq_counting`: replay: draws are counted (a reset since the last report, or `oq_keep`).
-- `oq_reported`: replay: a samples-passed report since the last reset.
-- `oq_keep`: replay: the game reported twice without a reset: count every draw.
-- `oq_open`: replay: the slot whose query is active in the open pass.
-- `oq_seg`: replay: slots closed since the last report or reset.
-- `oq_lost`: replay: the segment missed a draw (ring full).
-- `oq_count`: completion thread: samples since the last reset.
-- `XW`: The replay workers (`runtime/vk/vk_exec.c` "parallel groups") record the draws of one group at once. The front
-  pass replays a group's samples-passed resets and reports in the order of the stream before the workers record
-  (`vk_exec_xfer_front`): each makes its segment, queued for the completion thread in that order, and they are listed in
-  GS. A worker follows the counting as the stream does from its chunk's first op (`vk_exec_xfer_chunk_state`):
-  XW.counting and the segment its closed queries belong to, the next one at or after its position in the stream (XW.seg;
-  past the group's last, the pending list `oq_seg`, which a later reset or report takes). It keeps the query open in its
-  own pass (XW.open), takes ring slots from its chunk's block and keeps the slots it closes with their segment in its
-  chunk's list (CP), which `vk_exec_xfer_group_merge` puts into the segments once the group is done, chunk after chunk:
-  under a lock per slot, the workers waited for each other at every query. XW.cond: the decisions of its chunk's render
-  conditions, made by the front pass in the order of the stream. The blocks (`vk_exec_xfer_slots`): the front pass gives
-  each chunk as many slots as it has draws that count samples and render, one after the other, so the slots follow the
-  stream as the replay's own do and the completion thread reads and resets them in long runs (`oq_take`). Taken from the
-  ring at once, the slots of a group's chunks interleaved: four times the result calls and a reset per slot, 3.5 ms more
-  of the wait after a frame's first submission (RX 7900 XT, Hyrule Field, 3 workers). A chunk that needs more than its
-  block takes them from the ring.
-- `GS_GROUPS`: GS: per group slot (`runtime/vk/vk_exec.c` `LIVE_GROUPS()`), the front pass's segments of the group.
-  tail: with `NX2SARIA_REPLAY_PIPE` the submitting thread replays on past the group before its chunks are done: the
-  first segment made after the group's front pass (`tail_wait`), by the next group's front pass or the replay, takes the
-  queries the chunks close after the group's last report or reset, which in the stream come before that one's own.
-- `gs_on`: the group slot whose front pass runs.
-- `CP`: per chunk: closed slots and their segment.
+The state: `oq_state` is 0 not set up, 1 counting available, -1 unavailable, and a slot's `oq_busy` is set from its
+begin until the completion thread read and reset the slot. The replay's: `oq_next` the next ring slot; `oq_counting`
+draws are counted (a reset since the last report, or `oq_keep`); `oq_reported` a samples-passed report came since the
+last reset; `oq_keep` the game reported twice without a reset, so every draw counts; `oq_open` the slot whose query is
+active in the open pass; `oq_seg` the slots closed since the last report or reset; `oq_lost` the segment missed a draw
+(ring full). The completion thread's: `oq_count`, the samples since the last reset.
+
+### Occlusion counts in parallel groups
+
+The replay workers (`runtime/vk/vk_exec.c` "Parallel groups") record the draws of one group at once. The front pass
+replays a group's samples-passed resets and reports in the order of the stream before the workers record
+(`vk_exec_xfer_front()`): each makes its segment, queued for the completion thread in that order, and they are listed in
+`GS`. A worker follows the counting as the stream does from its chunk's first op (`vk_exec_xfer_chunk_state()`):
+`XW.counting` and the segment its closed queries belong to, the next one at or after its position in the stream
+(`XW.seg`; past the group's last, the pending list `oq_seg`, which a later reset or report takes). It keeps the query
+open in its own pass (`XW.open`), takes ring slots from its chunk's block and keeps the slots it closes with their
+segment in its chunk's list (`CP`, per chunk: closed slots and their segment), which `vk_exec_xfer_group_merge()` puts
+into the segments once the group is done, chunk after chunk: under a lock per slot, the workers waited for each other at
+every query. `XW.cond`: the decisions of its chunk's render conditions, made by the front pass in the order of the
+stream.
+
+The blocks (`vk_exec_xfer_slots()`): the front pass gives each chunk as many slots as it has draws that count samples
+and render, one after the other, so the slots follow the stream as the replay's own do and the completion thread reads
+and resets them in long runs (`oq_take()`). Taken from the ring at once, the slots of a group's chunks interleaved: four
+times the result calls and a reset per slot, 3.5 ms more of the wait after a frame's first submission (RX 7900 XT,
+Hyrule Field, 3 workers). A chunk that needs more than its block takes them from the ring.
+
+`GS` holds, per group slot (`GS_GROUPS`, 4, as `LIVE_GROUPS` of `runtime/vk/vk_exec.c`), the front pass's segments of
+the group; `gs_on` is the group slot whose front pass runs. `tail`: with `NX2SARIA_REPLAY_PIPE` the submitting thread
+replays on past the group before its chunks are done: the first segment made after the group's front pass
+(`tail_wait`), by the next group's front pass or the replay, takes the queries the chunks close after the group's last
+report or reset, which in the stream come before that one's own.
 
 ### `vk_exec_xfer_group()`
 
-A group's front pass begins (its slot), or it ended (-1): the list stays.
-
-- `else if (gs_on >= 0) GS[gs_on].tail_wait = 1`: until `vk_exec_xfer_group_merge`.
+A group's front pass begins (its slot), or it ended (-1): the list stays, and the group waits for its tail segment
+(`tail_wait`) until `vk_exec_xfer_group_merge()`.
 
 ### `vk_exec_xfer_slots()`
 
-The workers of a group the submitting thread went on past take some too.
+A block of n ring slots, taken with an atomic add: the workers of a group the submitting thread went on past take some
+too.
 
 ### `seg_add()`
 
@@ -5802,25 +5825,19 @@ Adds closed slot q to the segment a worker's queries belong to now, or the pendi
 
 ### `oq_ready()`
 
-- `runtime/vk/vk_device.c` enables every feature the device reports, so supported means enabled.
+`runtime/vk/vk_device.c` enables every feature the device reports, so supported means enabled.
 
 ### `vk_exec_oq_draw()`
 
-- A worker takes the next slot of its chunk's block, past it one from the ring at once (as the replay does, while a
-  group's workers may still take some); a busy one is lost, not tried again.
+A worker takes the next slot of its chunk's block, past it one from the ring at once (as the replay does, while a
+group's workers may still take some); a busy one is lost, not tried again.
 
 ### `vk_exec_xfer_shutdown()`
 
-- `oq_batch_drop()`: the results kept by the completion thread (`oq_take`).
-- `oq_hold_drop()`: the counts remembered by the completion thread (`oq_report_count`).
+Also drops what the completion thread kept: the results of a batch (`oq_batch_drop()`, `oq_take()`) and the counts it
+remembered (`oq_hold_drop()`, `oq_report_count()`).
 
-### `oq_batch_drop()`
-
-- `OQB`:
-  - `uint32_t first, n`: the slots kept: [first, first + n).
-  - `uint64_t v[OQ_BATCH * 2]`: per slot: samples, available.
-  - `uint32_t r0, rn`: the run of taken slots still to be reset.
-  - `uint64_t calls, slots, segs`: since the last perf line: result calls, slots they read, segments served.
+### Reading the results in batches
 
 The completion thread reads the results in batches (`NX2SARIA_OQ_BATCH`, default 1; 0: every segment by itself, as
 before). The game tests one proxy per report, so a segment holds one query, and a frame of Hyrule Field has about a
@@ -5833,45 +5850,47 @@ the one asked for: one call reads `OQ_BATCH` slots from there on with their avai
 (the results stay in the pool until the reset), and the segments after it take theirs from what is kept. A slot not
 available in the batch (its part had not run yet) is read again when its segment comes. The slots taken are reset in
 runs, one `vkResetQueryPool` for each: a run ends when a slot that does not continue it is taken or a new batch is read.
-Until then its slots stay busy for the replay, at most `OQ_BATCH` of the ring's `OQ_N`, also while the game reports
-nothing.
+Until then its slots stay busy for the replay, at most `OQ_BATCH` (256) of the ring's `OQ_N`, also while the game
+reports nothing.
+
+In `OQB`: the slots kept are [`first`, `first` + `n`), with `v` holding per slot the samples and whether they are
+available; `r0`, `rn` are the run of taken slots still to be reset; `calls`, `slots` and `segs` count, since the last
+perf line, the result calls, the slots they read and the segments served.
 
 ### `oq_take()`
 
-The samples of slot q, whose submission has completed; `*avail` 0 when the query has no result.
+The samples of slot q, whose submission has completed; `*avail` 0 when the query has no result. A slot that is not
+kept, or kept as unavailable (read before its part ran), starts a new batch: from this slot on, up to the replay's next
+slot. The run of taken slots is reset before the kept results go, as its slots are among them.
 
-- Not kept, or kept as unavailable (read before its part ran): from this slot on, up to the replay's next slot.
-- `oq_reset_flush(dev)`: before the kept results go: the run's slots are among them.
+### `oq_report_count()`
 
-### `oq_hold_drop()`
-
-`NX2SARIA_OQ_HOLD` (default 0): a report whose segment left draws uncounted (a full ring, `vk_exec_oq_draw`) writes the
-larger of what was counted and the last complete count of its record (`runtime/vk/vk_oq_hold.h`); off, what was counted,
-at least.
-
-- Such reports are counted either way and logged at the 1st, 10th, 100th... so a log shows how often the ring ran.
-
-full. Completion thread only, as `oq_count`.
+`NX2SARIA_OQ_HOLD` (default 0): a report whose segment left draws uncounted (a full ring, `vk_exec_oq_draw()`) writes
+the larger of what was counted and the last complete count of its record (`runtime/vk/vk_oq_hold.h`); off, what was
+counted, at least 1. Such reports are counted either way and logged at the 1st, 10th, 100th... so a log shows how often
+the ring ran full. Completion thread only, as `oq_count`.
 
 ### `oq_cb()`
 
-- A segment the replay workers filled lists its slots in the order the chunks closed them: in ring order, they are taken
-  in runs (`oq_take`).
-- The fence has passed, so a query that is still unavailable will not become available: waiting would block the
-  completion thread, and with it every later callback, for good. It counts as visible (one sample).
-- A query its submission never wrote. Every RX 6000 report of a lost device (0.8.0 to 0.9.2) had this line first, its
-  callback run for work the GPU had not finished. A timeline read above every value its signals carry, then the device
-  itself, end the run here when it is lost (`runtime/vk/vk_sync.c` "a lost device in the timelines' values",
-  `runtime/vk/vk_device.c` `vk_device_lost_poll()`). Otherwise the slot counts as visible and the game goes on, as a
-  ring that came round too early would leave it. The first such slot is logged with the submissions' state and the GPU's
-  breadcrumbs: whether the GPU had finished this submission, and whether the timeline read above what was signalled.
+1. A segment the replay workers filled lists its slots in the order the chunks closed them: they are sorted into ring
+   order, so they are taken in runs (`oq_take()`).
+2. The fence has passed, so a query that is still unavailable will not become available: waiting would block the
+   completion thread, and with it every later callback, for good. It counts as visible (one sample).
+3. Such a query is one its submission never wrote. Every RX 6000 report of a lost device (0.8.0 to 0.9.2) had the log
+   line of it first, its callback run for work the GPU had not finished. A timeline read above every value its signals
+   carry, then the device itself, end the run here when it is lost (`runtime/vk/vk_sync.c` "A lost device in the
+   timelines' values", `runtime/vk/vk_device.c` `vk_device_lost_poll()`). Otherwise the slot counts as visible and the
+   game goes on, as a ring that came round too early would leave it. The first such slot is logged with the
+   submissions' state and the GPU's breadcrumbs: whether the GPU had finished this submission, and whether the timeline
+   read above what was signalled.
+4. A reset zeroes the running count; otherwise the sum is added, a segment that lost a draw counts at least 1, and a
+   report's count goes into guest memory (`oq_report_count()`, `report_write()`).
 
 ### `oq_segment()`
 
-Hands the segment to the completion thread with a report (addr; 0: no CPU-visible memory) or a reset.
-
-- `if (gs_on >= 0)`: the front pass: the workers add the queries of the group's ops before it.
-- `for (int g = 0; g < GS_GROUPS; g++)`: the first made after a group's front pass.
+Hands the segment to the completion thread with a report (addr; 0: no CPU-visible memory) or a reset. In a group's
+front pass the segment is also listed in `GS`: the workers add the queries of the group's ops before it. The first
+segment made after a group's front pass becomes that group's `tail`.
 
 ### `oq_report()`
 
@@ -5887,12 +5906,13 @@ replay keeps the value each event reaches in replay order (`ev_seen`, the signal
 in memory) and counts the waits it reaches unmet; `NX2SARIA_TRACE=perf` logs the count, and the first few are logged as
 they happen. Replay thread only, apart from `vk_exec_event_met_now`'s unlocked read of `ev_seen`.
 
-- `EV_OPEN`: Waits reached unmet, until a replayed signal meets them (`ev_late`: the signal came that many submissions
-  later, so the work after the wait ran before the work it waited for) or they are pushed out by newer ones.
+`ev_open` (`EV_OPEN`, 64) holds the waits reached unmet, until a replayed signal meets them (`ev_late`, and in
+`ev_late_subs` how many submissions later the signal came, so the work after the wait ran before the work it waited for)
+or they are pushed out by newer ones.
 
 ### Events the CPU signals
 
-Ocarina gates its main queue on the CPU: each frame the game sets one of two events to 0 (they take turns frame by
+The game gates its main queue on the CPU: each frame the game sets one of two events to 0 (they take turns frame by
 frame), submits the worker queues' command buffers and the main queue's, whose first command waits for the event to be
 1, and signals 1 from the CPU (`nvnEventSignal`) once it has finished writing what the frame's commands read. The signal
 comes before the main queue's submit call, after it, or while that call is replaying. On the console the GPU starts the
@@ -5908,10 +5928,10 @@ count for that submission. The wait then stops the submission like any wait reac
 `runtime/vk/vk_backend.c` `submit_sync()` lets it go on at once in a submission of its own, whose copies are taken after
 the signal. `NX2SARIA_EVENT_AT_SYNC=0`: the value in memory when the walk reaches the wait, as before.
 
-- `cpu_ev_n`: `cpu_ev_lock`.
-- `cpu_ev_seq`: `cpu_ev_lock`: `nvnEventSignal` calls so far.
-- `ev_sync_seq`: `cpu_ev_lock`: `cpu_ev_seq` at the recording's start; `UINT64_MAX` outside one.
-- `ev_after_sync`: replay: waits only a signal after the copies would have passed.
+Under `cpu_ev_lock`: `cpu_ev` (up to `CPU_EV`, 16, events, each with its last `CPU_EV_HIST`, 8, signals: number and
+value replaced), `cpu_ev_seq`, the `nvnEventSignal` calls so far, and `ev_sync_seq`, which is `cpu_ev_seq` at the
+recording's start and `UINT64_MAX` outside one. `ev_after_sync` (replay) counts the waits only a signal after the copies
+would have passed.
 
 ### `vk_exec_event_cpu_known()`
 
@@ -5924,9 +5944,8 @@ The wait's condition on the value in memory now, whatever the replay has seen. A
 ### `ev_mem()`
 
 The event's value in memory, and in `*at_sync` the value it had when the submission being recorded took its copies (the
-same outside a recording, and for an event the CPU has not signalled since).
-
-- `for (unsigned k = 0; k < n; k++)`: the earliest signal after the copies replaced the value they saw.
+same outside a recording, and for an event the CPU has not signalled since): the earliest signal after the copies
+replaced the value they saw.
 
 ### `ev_met()`
 
@@ -5943,24 +5962,25 @@ submission, which decides again under the lock (`runtime/vk/vk_exec.c` `evo_resu
 
 ### `report_counter()`
 
-- `report_seq++`: before `oq_report` / `counter_cb` take it.
-- `if (nvn_gpu_only(p->addr))`: CPU-invisible pool: no host memory behind it.
-- A timestamp in the tail is the one result a tail may hand the CPU: its time is written ahead (`counter_cb`).
-
-### Conditional rendering
+The report's number (`report_seq`) is counted up first: `oq_report()` and `counter_cb()` take it. A report into a
+CPU-invisible pool has no host memory behind it: a samples-passed one still ends its segment, nothing else is done. A
+timestamp in the tail is the one result a tail may hand the CPU, so it is not noted among the tail's results: its time
+is written ahead (`counter_cb()`). The report then takes its entry in the pending table.
 
 ### `counter_word()`
 
-1: `*v` read, 0: not readable, 2: a samples-passed report not in memory yet (unknown).
+Conditional rendering reads a counter word here. 1: `*v` read, 0: not readable, 2: a samples-passed report not in
+memory yet (unknown).
 
-- `const Pending *e = pending_slot(addr, 0)`: the last report to addr decides.
-- But for the halves of the word a small clear filled after it (`clear_small`): memory holds those.
-- `int zero = 0`: the report decides the halves that were not filled: 0.
-- `if (!e->unknown && e->frame == cond_frame) zero = 1`: a timestamp/statistics report of this frame.
+The last report to addr decides, but for the halves of the word a small clear filled after it (`clear_small()`): memory
+holds those. For the halves that were not filled the report gives 0 when it is a timestamp or statistics report of this
+frame, or one whose value is not in guest memory yet; a samples-passed report not in memory yet is unknown. Otherwise
+the word is read from memory.
 
 ### `last_type()`
 
-The counter type of the newest report to addr the ring still holds, -1 when there is none (`NX2SARIA_LOG_RCOND`).
+The counter type of the newest report to addr the pending table still holds, -1 when there is none
+(`NX2SARIA_LOG_RCOND`).
 
 ### `vk_exec_cond_why()`
 
@@ -5970,22 +5990,16 @@ frame (0), "p" a pending report (0 or unknown), "m" memory, "c" memory after a s
 
 ### `cond_enabled()`
 
-- `if (rx == 2 || ry == 2) return 1`: a samples-passed count not done yet.
-- `NX2SARIA_LOG_RCOND=1`: one condition in 499 (up to 300 lines), on or off, with the counter types last reported there.
-- (pending: the report value has not reached guest memory yet).
-- `int px = 0, py = 0`: the word came from a report not done yet (forced to 0) rather than memory.
-
-### Textures
-
-- `Sub`:
-  - `int32_t x, y, z`: region origin.
-  - `uint32_t w, h, nz`: region extent; nz: slices (3D) or layers.
+A condition whose counters are not readable renders (warned once), and so does one on a samples-passed count that is
+not done yet. `NX2SARIA_LOG_RCOND=1` logs one condition in 499 (up to 300 lines), on or off, with the counter types last
+reported there; "pending" in that line says the word came from a report whose value has not reached guest memory yet
+(forced to 0) rather than from memory.
 
 ### `sub_resolve()`
 
-Resolves tex, its view and a copy region to image coordinates. 0 (warned) when the copy cannot be replayed.
-
-- `int k = img->scale > 1 ? img->scale : 1`: a larger shadow map: the game's region in its texels.
+Resolves tex, its view and a copy region to image coordinates (`Sub`: the region's origin and extent, `nz` the slices
+of a 3D image or the layers). 0 (warned) when the copy cannot be replayed. For a larger shadow map (`img->scale`) the
+game's region is scaled to the image's texels.
 
 ### `buffer_side()`
 
@@ -5994,63 +6008,50 @@ one).
 
 ### `copy_buffer_image()`
 
-- `if (s.img->scale > 1)`: the buffer holds the game's texel count, the image more.
+A buffer copy of a shadow map enlarged by `NX2SARIA_SHADOW_SCALE` is skipped (warned): the buffer holds the game's
+texel count, the image more. `OP_COPY_T2B` comes here with a `p_copy_b2t` whose `src` holds the destination address.
 
 ### `copy_t2t()`
 
-- Otherwise a scaled or converting copy: nearest, or linear when asked for (colour only).
-
-### Buffer to buffer
-
-### Buffer fills
-
-(ClearBuffer, and ReportValue as a 4-byte one): `vkCmdFillBuffer` in GPU order after a full barrier, so the value lands
-after earlier work, as NVN's semaphore release does; CPU-visible ranges go to `vk_guest_written` at the fence, as copies
-do. Works in CPU-invisible pools. A small fill of CPU-visible memory is also applied to the counter records it covers,
-here in the replay (`clear_small`).
+A multisampled source into a single-sample image of the same size and format is a resolve, the same size and format a
+copy, anything else a scaled or converting blit: nearest, or linear when asked for (colour only).
 
 ### `clear_buf()`
 
-- A VRAM mirror's guest copy is filled too, at once: atomics through the device address table count in both copies
-  (translator patch 0036), and a counter reset here must start from the same value in both.
+Buffer fills (ClearBuffer, and ReportValue as a 4-byte one): `vkCmdFillBuffer` in GPU order after a full barrier, so
+the value lands after earlier work, as NVN's semaphore release does; CPU-visible ranges go to `vk_gpu_written` at the
+fence (`note_gpu_write()`), as copies do. Works in CPU-invisible pools. A small fill of CPU-visible memory is also
+applied to the counter records it covers, here in the replay (`clear_small()`).
 
-### Texture clears
+A VRAM mirror's guest copy is filled too, at once: atomics through the device address table count in both copies
+(translator patch 0036), and a counter reset here must start from the same value in both.
 
 ### `clear_tex()`
 
 Whole levels only (`vkCmdClear*Image` has no rectangle); partial regions, channel masks and a view that reinterprets the
 format are skipped.
 
-- A value of the other kind that is all zero bits (0.0f is) is the same clear either way: Ocarina clears its rg16ui edge
-  map (480x270) with a float 0 each frame, and skipped, the post chain's edge classification read the previous frames'
-  edges. Other values stay skipped.
-
-### Parallel groups
-
-(`runtime/vk/vk_exec.c`): the CPU side in the front pass, the rest in the workers.
+A clear value of the other kind than the format's (a float for an integer format or the reverse) is skipped too, unless
+it is all zero bits (0.0f is), which is the same clear either way: the game clears its rg16ui edge map (480x270) with a
+float 0 each frame, and skipped, the post chain's edge classification read the previous frames' edges.
 
 ### `vk_exec_xfer_front()`
 
-The front pass, in the order of the stream, before the workers record (`vk_exec_xfer_group` on): a counter report or
+Parallel groups (`runtime/vk/vk_exec.c`) split these ops: the CPU side in the front pass, the rest in the workers. The
+front pass, in the order of the stream, before the workers record (`vk_exec_xfer_group()` on): a counter report or
 reset (completion callbacks, pending entries, the occlusion segments and counting), a render enable and a render
 condition (decided here, on the reports replayed so far). Returns the condition's decision: 1 renders.
 
 ### `xfer_worker()`
 
 A worker: what the front pass left, in its chunk. The contact shadows' pass (`vk_contact_flush`) is recorded where the
-replay would, once every earlier chunk of the group is done.
-
-- `oq_close(ex)`: into the segment this op ends; the next queries go to the next one.
-- `if (XW.reported) XW.keep = 1`: as `oq_report`.
-
-### `op_xfer_impl()`
-
-- `case OP_COPY_T2B: copy_buffer_image(ex, payload, 0); break`: `p_copy_b2t`: src holds the destination address.
+replay would, once every earlier chunk of the group is done. At a samples-passed report or reset the open query is
+closed into the segment this op ends, and the next queries go to the next one; the counting state follows as in
+`oq_report()` and `reset_counter()`. A render condition takes the front pass's decision.
 
 ### `vk_exec_op_xfer()`
 
-`NX2SARIA_REPLAY_TIME`: see the note over `vk_exec_op_draw` in `runtime/vk/vk_exec_draw.c`; transfers are the third
-kind.
+`NX2SARIA_REPLAY_TIME`: as in `runtime/vk/vk_exec_draw.c` `vk_exec_op_draw()`; transfers are the third kind.
 
 ## `runtime/vk/vk_exec_probe.c`
 
