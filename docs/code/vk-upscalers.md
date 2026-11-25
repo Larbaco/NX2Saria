@@ -1247,6 +1247,11 @@ while one is set (dlaa): without an upscaler the FSR 3.1 library's runs.
 Follows the setting: `runtime/gfx/gfx_present.c` `window_settings_live()` remakes the swapchain when this stops matching
 `vk_fg_active()`.
 
+The answer, in the code's order: 0 outside Windows; 0 unless `NX2SARIA_FRAMEGEN` is fsr3, and 0 on a device made
+through Streamline's proxies; with the SDK 2.4 swapchain in place, `use4()`; with the FSR 3.1 library's in place, 1
+unless it failed or `use4()` is now 1; with none in place, 1 when `use4()` is, else 0 after a failure or without a
+present queue, else `runtime/vk/vk_ffx.cpp` `vk_ffx_framegen_available()`. The reasons:
+
 - With or without an upscaler (`runtime/vk/vk_dlaa.c` makes the motion vectors either way, `fg_only_frame()`), and with
   the FSR 3.1 library: a build without it keeps the plain swapchain whatever the setting says, with one line in the log.
   Outside Windows there is no AMD library: `runtime/gfx/gfx_present.c`'s presenter runs the runtime's passes
@@ -1276,6 +1281,16 @@ the plain Vulkan calls must never get that handle.
 
 ### `vk_fg_create_swapchain()`
 
+With the SDK 2.4 swapchain in place the call is its (`runtime/vk/vk_fg4.cpp` `vk_fg4_create_swapchain()`), and with
+none in place and `use4()` it is tried first. With the FSR 3.1 library's swapchain context in place (a window resize)
+the swapchain is made again through AMD's replacement for `vkCreateSwapchainKHR`. Else, the first create:
+`VK_ERROR_FEATURE_NOT_PRESENT` when frame generation is not wanted, failed, has no present queue or the library does
+not load; then the swapchain context (`ffxCreateContextDescFrameGenerationSwapChainVK`: the create info without its old
+swapchain, the game's queue with `submit_game()` as its submit function, no async compute queue, the present and
+acquire queues of `vk_fg_queues()`), then the query for AMD's replacement functions
+(`ffxQueryDescSwapchainReplacementFunctionsVK`), which the other swapchain calls of this file go through. Either of
+the two failing is `fail()`: frame generation off for the run, `VK_ERROR_INITIALIZATION_FAILED`.
+
 - The SDK 2.4 path may fail before its swapchain exists, and says so (`use4()` is 0 from then on): the FSR 3.1 library's
   swapchain is made instead.
 - A swapchain context whose swapchain did not come is destroyed, and with it the swapchain it made: nothing was handed
@@ -1290,6 +1305,16 @@ The HDR10 metadata goes to AMD's swapchain through its own call (`runtime/vk/vk_
 An HDR10 swapchain (10-bit PQ or 16-bit float): frame generation is told its inputs are HDR.
 
 ### `vk_fg_frame()`
+
+Nothing without the swapchain context or after a failure; the SDK 2.4 path's frame when that one is active. Each frame,
+in this order: the inputs; the frame generation context made if there is none (the Vulkan back end with
+`runtime/vk/vk_ffx.cpp` `vk_ffx_proc_addr()`, then the HUD-less descriptor, then the frame generation one: the display
+size is the swapchain's, the largest render size the larger of it and the picture's); the frame counted for the
+periodic line; `ffxConfigure` with the frame's id, `generate()` as the callback with the context as its argument,
+generation on or off, no async workloads, the rectangle and, with generation on, the HUD-less picture; and, with
+generation on only, the preparation dispatched into cb. The configuration is sent every frame, also with generation
+off. A context that is not made, a refused configuration and a refused preparation each end in `fail()`: frame
+generation off for the run.
 
 - `vk_dlaa_hudless_wanted` is set: the upscaling pass keeps a copy of the picture before the HUD (`runtime/vk/vk_dlaa.c`
   `hudless()`).
@@ -1319,6 +1344,8 @@ An HDR10 swapchain (10-bit PQ or 16-bit float): frame generation is told its inp
   swapchain warped the picture's edges into the bars.
 - The motion vector scale is 1: render pixels, current to previous (`runtime/vk/vk_dlaa.c` `mv_pass()`), as FSR takes
   them.
+- The frame time is the wall time since the last prepared frame, in ms; 16.67 for the first one and for a time of 100 ms
+  or more.
 - The frame's camera (`runtime/vk/vk_dlaa.c` `proj_planes()`), as the upscaler gets it (`runtime/vk/vk_ffx.cpp`).
 
 ### `vk_fg_release()`
@@ -3636,24 +3663,31 @@ The device's `timestampPeriod` takes ticks to ms.
 
 ### Motion vectors
 
-The camera's motion first (`runtime/shaders/dlaa_mv.comp`): this frame's scene camera block is copied out of the
-replay's uniform snapshot (`runtime/vk/vk_usnap.c`, as of the submit call) into one slot of `camb`, last frame's stays
-in the other, and the compute pass reprojects every pixel's depth through the two (`inv4()` and `mv_pass()`). Then the
-per-object pass (`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`) writes the motion of whatever moves on its own over
-it.
+The camera's motion first (`runtime/shaders/dlaa_mv.comp`): this frame's view-projection is read on the CPU from the
+scene camera block, as the scene's draws read it or out of the replay's uniform snapshot (`runtime/vk/vk_usnap.c`, as of
+the submit call), last frame's is kept in `D.cam_prev`, and the compute pass reprojects every pixel's depth through one
+matrix made of the two (`mv_pass()`), which it reads from a pair of blocks in `mvm`. Then the per-object pass
+(`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`) writes the motion of whatever moves on its own over it. `camb` is
+that pass's: the deferred engine's whole camera block is copied into one of its two slots each frame and last frame's
+stays in the other (`vk_dlaa_prev_camera()`); the game's own frame, whose camera is the scene context, copies nothing
+into it.
 
-- `CAM_BYTES` (256): vec4 rows 0-15: view, view-projection (3-6), projection, inverse view.
-- `CAM_BLOCK` (0x940): the whole block, kept for the per-object motion pass's vertex shaders
+- `CAM_BYTES` (256): vec4 rows 0-15: view, view-projection (3-6), projection, inverse view. The size of each of the two
+  blocks the shader binds.
+- `CAM_BLOCK` (0x940): the deferred engine's whole block, kept for the per-object motion pass's vertex shaders
   (`runtime/vk/vk_exec_draw.c`).
 - `CAM_SLOT` (0xa00): the stride of a `camb` slot.
-- `MVM_SLOTS` (16): frames the GPU may still be reading the reprojection blocks of.
+- `MVM_SLOTS` (16): frames the GPU may still be reading the reprojection blocks of; `mvm` holds that many pairs and
+  each motion pass takes the next.
 
 `MvPush`: `runtime/shaders/dlaa_mv.comp`'s push constants in its layout (std430: `dz` at offset 32); `dz` is the
 projection's [2][2], [2][3], [3][2], [3][3].
 
 ### `inv4()`
 
-The reprojection from this frame's clip space to last frame's, last \* inverse(this), in double precision: the shader
+A 4x4 inverse in double precision (Gauss-Jordan with row pivoting); 0 for a matrix with no usable pivot. `mv_pass()`
+uses it for the reprojection from this frame's clip space to last frame's, last \* inverse(this), in double precision:
+the shader
 took each pixel back to world space through a float inverse of the view-projection, and with the game's world
 coordinates in the thousands and its far plane the result was noise of a fraction of a pixel and more on distant
 surfaces, which DLSS followed into a shimmer like heat haze (roofs and trees, most of all in the upscaling modes). The
@@ -3668,9 +3702,8 @@ view-projection is rows 7-10 times rows 0-2.
 
 ### `fg_store()`
 
-Frame generation's camera (`vk_dlaa_fg_camera()`) from the game's block: the projection is rows 7-10, the view rows 0-2
-(rows: right, up, back; the camera looks down -z), m the reprojection from this frame's clip space to last frame's. Each
-matrix is handed out transposed, for row vectors.
+One of the camera's matrices as frame generation takes it: single precision and transposed, for row vectors
+(`fg_camera()`).
 
 ### `plane_dist()`
 
@@ -3687,18 +3720,28 @@ projection with the same planes would: `(f / (f - n)) (1 - n / distance)`, the c
 The game's planes are not fixed: in Hyrule Field its z row is (-1.00001, -0.200001), near 0.1 and far about 25,000 (the
 view's units are metres), and the camera before it had far about 1,000. Taken as 0.1 and 1e8 (no far plane), a distance
 d reads as `(f - n) d / (f - d)`: 1,000 as 1,042, 10,000 as 16,650, and the far plane's neighbourhood without bound. So
-the planes come from the projection every frame; a projection whose stored 0 is not in front of the camera keeps the
-last frame's planes.
+the planes come from the projection every frame; a projection whose near plane does not come out as a finite distance
+in front of the camera keeps the last frame's planes. A far plane at `VK_DLAA_FAR_INFINITE` (1e8) or beyond, or one no
+distance gives, is "infinite": `zfar` is then that constant and `infinite` is set.
 
 - The distances stored as 0 and 1 are taken (`plane_dist()`); when the first is not the smaller the depth is reversed:
   the near plane is stored as 1.
-- One line at the start and whenever the planes change (the first 20 times).
+- One line at the start and whenever the planes change by more than one part in 10,000 (the first 20 times).
 
 ### `fg_camera()`
 
+Frame generation's camera (`vk_dlaa_fg_camera()`, `D.fg_cam`) from the game's block: the projection is rows 7-10, the
+view rows 0-2 (rows: right, up, back; the camera looks down -z), m the reprojection from this frame's clip space to last
+frame's. Four matrices are handed out, each transposed (`fg_store()`): view to clip (the projection) and its inverse,
+clip to last frame's clip (m) and its inverse. If either inverse cannot be made, the camera is left as it was and
+`D.fg_cam_ok` stays 0 for this frame (`mv_pass()` cleared it).
+
 - The position is `-R^T t`, R the view's 3x3 and t its last column.
+- The vertical field of view is `2 atan(1 / |P[5]|)`, in radians, and the aspect `|P[5] / P[0]|`; 1 radian and 1.777
+  for a projection with a zero there.
 - Until a projection gives the planes: near 0.1 and no far plane.
-- `NX2SARIA_MOUSE_TRACE=1` (test runs, `runtime/input/mouse_direct.c`): the camera's direction each frame.
+- `NX2SARIA_MOUSE_TRACE` set to anything but 0 (test runs, `runtime/input/mouse_direct.c`): the camera's direction and
+  position each frame.
 
 ### Frames without a camera
 
@@ -3718,16 +3761,18 @@ first. Two things change:
 
 ### `cam_note()`
 
-One line for each of the first frames without a camera: what the frame drew into the scene depth, which submission the
-scene context was seen in and why the evaluating one lacks it, and what was done.
+One line for each of the first frames without a camera (`D.gap_logged`, 40 lines a run, shared with `mv_pass()`'s
+"camera read at the draw" lines): what the frame drew into the scene depth, which submission the scene context was seen
+in and why the evaluating one lacks it (`usnap_why`, the texts for `vk_usnap_why()`'s answers), and what was done.
 
 ### Camera cuts
 
 `NX2SARIA_DLAA_CUT` (default 1; 0: off). Only a lost camera (`mv_pass()`), another scene size or another target started
 a new history, so DLSS and frame generation (`vk_dlaa_fg_inputs()`) carried their history across a camera that jumped:
 an area load or a spawn moves it 5 to 180 m in one frame. Such a frame now starts a new history, as NVIDIA's DLSS guide
-asks for a camera cut: a move over 5 m, or a turn over 10 degrees together with a move over 0.5 m, both per 60 Hz frame
-and scaled by the time since the last camera. Camera traces of play in the Fire Temple (`NX2SARIA_MOUSE_TRACE`) had a
+asks for a camera cut. The rule was first a move over 5 m, or a turn over 10 degrees together with a move over 0.5 m,
+both per 60 Hz frame and scaled by the time since the last camera; the code's turn threshold is now `CUT_TURN`, 30
+degrees, for the reason below. Camera traces of play in the Fire Temple (`NX2SARIA_MOUSE_TRACE`) had a
 median of 0.05 m and 0.08 degrees a frame. A turn alone (the mouse camera, which orbits about 3 m from Link) does not
 count, and the turn with a move counts only from `CUT_TURN` degrees: a quick swing of the orbiting camera turns 11 to 18
 degrees and moves 0.9 to 1.4 m a frame, and taken for a cut at 10 degrees it started a new history at every frame of the
@@ -3739,7 +3784,10 @@ those frames, blocky and flickering. Its motion vectors carry it as well as any 
 
 `v`: rows 0-2 of the game's scene context, the view (`fg_camera()`).
 
-The thresholds are scaled by the 60 Hz frames since the last camera.
+A cut is a move over 5 units, or a turn over `CUT_TURN` (30) degrees together with a move over 0.5 units, since the last
+frame that had a camera. The thresholds are scaled by the 60 Hz frames since then, no less than a quarter of a frame and
+no more than four. A cut sets `D.reset` and counts in `D.cuts`. With `NX2SARIA_DLAA_CUT=0` the position and direction
+are still kept, and nothing is tested.
 
 ### `mv_pass()`
 
