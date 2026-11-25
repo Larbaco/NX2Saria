@@ -26,7 +26,7 @@ enum { SCR_LAYOUT = 0x28, SCR_HEAD = 0x88, SCR_FIRST = 0x90, SCR_LINK = 0x9c, SC
 enum { BTN_FLAGS = 0x40, BTN_ROOT = 0x58, BTN_ENABLED = 0x10 };
 enum { PANE_LAYOUT = 0x18, PANE_MTX = 0x28, PANE_ALPHA = 0x74, PANE_FLAGS = 0xa8, PANE_STRIDE = 0xb0, PANE_SHOWN = 1 };
 enum { LYT_PANES = 0x100, LYT_HOST = 0x108, LYT_TREE = 0x110 };
-enum { TITLE_COUNT = 0x2c8, TITLE_BUTTONS = 0x2d0, TITLE_MENU = 0x2e8, TITLE_ENTRIES = 4, TITLE_SPARE = 3 };
+enum { TITLE_COUNT = 0x2c8, TITLE_BUTTONS = 0x2d0, TITLE_MENU = 0x2e8, TITLE_ENTRIES = 4, TITLE_SPARE = 3, TITLE_PART_DEPTH = 3 };
 enum { WINDOW_KIND_TITLE = 2, WINDOW_ENTRIES = 3, WINDOW_SPARE = 2 };
 enum { AT_NONE, AT_TITLE, AT_PAUSE };
 #define ARMED_MS 250
@@ -189,10 +189,17 @@ static void title_tick(uint64_t s) {
     }
     uint64_t btn = rd64(e[TITLE_SPARE] + ENT_BUTTON), root = ok_at(btn, BTN_ROOT + 8) ? rd64(btn + BTN_ROOT) : 0;
     if (!ok_at(root, PANE_STRIDE)) return;
-    if (test_flag("show")) {
-        uint32_t flags = rd32(root + PANE_FLAGS) | PANE_SHOWN, bf = rd32(btn + BTN_FLAGS) | BTN_ENABLED;
-        memcpy((void *)(uintptr_t)(root + PANE_FLAGS), &flags, 4);
-        memcpy((void *)(uintptr_t)(btn + BTN_FLAGS), &bf, 4);
+    uint64_t where = 0;
+    int depth = hidden_at(root, &where);
+    if (depth > 0 && depth <= TITLE_PART_DEPTH && !test_flag("noshow")) {
+        static int lines;
+        uint32_t was = rd32(where + PANE_FLAGS), now = was | PANE_SHOWN;
+        if (now != was) {
+            memcpy((void *)(uintptr_t)(where + PANE_FLAGS), &now, 4);
+            if (lines++ < 4)
+                rt_log("quit_menu: title: the fourth button's pane shown (flags %#x -> %#x, %d above the button's own)",
+                       was, now, depth);
+        }
     }
     int on = rd8(s + SCR_STATE) == SCR_OPEN && focused_entry() == e[TITLE_SPARE];
     __atomic_store_n(&g_title_ms, on ? plat_now_ms() : 0, __ATOMIC_RELEASE);
