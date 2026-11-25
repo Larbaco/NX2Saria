@@ -1,21 +1,3 @@
-"""HTTPS for the launcher: JSON requests and file downloads that resume, report progress, can be cancelled and are
-checked against a sha256. The standard library (urllib), and on Windows the truststore package of the launcher's
-Python for Windows' own certificate check.
-
-Two checks can accept a server's certificate, tried in turn by request():
-
-- Python's: OpenSSL with the certificates of Windows' ROOT and CA stores (ssl.create_default_context). It knows only
-  the certificates already in those stores, while Windows holds few roots and downloads the others the first time a
-  Windows program needs them. And it takes a stored certificate before the server's copy of the same name and key: a
-  store that still holds an old, expired cross-signature of the root a server's chain leads to makes it report
-  "certificate has expired" for a valid chain (repo.msys2.org's chain on a PC whose CA store still holds the
-  "ISRG Root X2" cross-signature that expired in September 2025).
-- Windows': Windows' own chain engine, which Windows programs check servers with (CertGetCertificateChain and
-  CertVerifyCertificateChainPolicy, through truststore.SSLContext). It weighs every path the stores and the server
-  allow, prefers a valid one, and downloads a missing root from Windows Update.
-
-A certificate both refuse ends the request with CertificateError: what each check said, whether the PC's clock agrees
-with the server's, and what to do."""
 import email.utils
 import errno
 import hashlib
@@ -34,7 +16,7 @@ from pathlib import Path
 from . import NAME
 
 CHUNK = 1 << 20
-CLOCK_TOLERANCE = 3600   # seconds between this PC's clock and a server's beyond which this PC's is wrong
+CLOCK_TOLERANCE = 3600
 
 
 class Cancelled(Exception):
@@ -46,10 +28,7 @@ class DownloadError(Exception):
 
 
 class CertificateError(DownloadError):
-    """No certificate check accepts a server's certificate. Asking again gets the same answer, so download() does
-    not retry it."""
-
-
+    pass
 def user_agent(version='dev'):
     return f'{NAME}-Launcher/{version}'
 
@@ -63,21 +42,17 @@ def _under_wine():
 
 
 def _windows_check():
-    """An SSLContext that leaves the certificate to Windows' own verifier, or None off Windows, in a Python without
-    truststore (a checkout's own Python) and under Wine. Wine's crypt32 accepts a chain that stops at an issuer it
-    does not know (CERT_TRUST_IS_PARTIAL_CHAIN passes its SSL policy), and its roots are the host's, which Python's
-    check reads already."""
     if os.name != 'nt' or _under_wine():
         return None
     try:
         import truststore
         return truststore.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-    except Exception:   # not installed, or crypt32 not reachable through ctypes
+    except Exception:
         return None
 
 
-_CHECKS = None      # [(name, SSLContext)] in the order request() tries them
-_ACCEPTED = {}      # host -> index into _CHECKS of the check that accepted its certificate last
+_CHECKS = None
+_ACCEPTED = {}
 
 
 def _checks():
@@ -95,14 +70,10 @@ LOOPBACK = ('127.0.0.1', 'localhost', '::1')
 
 
 def _plain_ok(url):
-    """Plain HTTP only to this PC (the tests' local servers): anything fetched from elsewhere comes over TLS."""
     return urllib.parse.urlsplit(url).hostname in LOOPBACK
 
 
 class _Redirect(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect only to https (or to this PC), and drops the Authorization header when the redirect leaves
-    the host it was meant for: urllib copies every header given to the Request onto the redirected one, and GitHub
-    sends asset downloads on to its file servers."""
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         if urllib.parse.urlsplit(newurl).scheme.lower() != 'https' and not _plain_ok(newurl):
             raise urllib.error.HTTPError(newurl, code, f'redirect to {newurl} refused: not https', headers, fp)
@@ -119,10 +90,6 @@ def _open(url, h, timeout, ctx=None, data=None, method=None):
 
 
 def request(url, headers=None, timeout=30, version='dev', data=None, method=None):
-    """The open response to a GET of url (or method, with data as its body: the session reports' POST and DELETE,
-    launcher/telemetry.py). An https URL is tried with each certificate check in turn, first the one that accepted
-    the host last, until one accepts the server; CertificateError when none does. Plain http is refused but for this
-    PC's own address."""
     h = {'User-Agent': user_agent(version)}
     h.update(headers or {})
     if urllib.parse.urlsplit(url).scheme.lower() != 'https':
@@ -148,9 +115,6 @@ def request(url, headers=None, timeout=30, version='dev', data=None, method=None
 
 
 def server_clock(url, timeout=10, version='dev'):
-    """The time (epoch seconds) of the Date header a plain-HTTP HEAD request to url answers with, without following a
-    redirect, or None without an answer. A PC whose clock is wrong cannot check any certificate, so its clock is
-    compared over HTTP; the answer is not authenticated and only chooses the advice of an error message."""
     class Stay(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, *args, **kwargs):
             return None
@@ -159,10 +123,10 @@ def server_clock(url, timeout=10, version='dev'):
     try:
         with urllib.request.build_opener(Stay).open(req, timeout=timeout) as r:
             date = r.headers.get('Date')
-    except urllib.error.HTTPError as e:   # the redirect to https, or any other status: its Date is as good
+    except urllib.error.HTTPError as e:
         date = e.headers.get('Date')
         e.close()
-    except Exception:   # no answer, whatever the reason (refused, timed out, not HTTP)
+    except Exception:
         return None
     if not date:
         return None
@@ -183,8 +147,6 @@ def _local(t):
 
 
 def certificate_problem(url, refused, version='dev'):
-    """The message of a CertificateError for url: what each check in refused ([(name, error)]) said, then the advice
-    that fits this PC's clock."""
     host = urllib.parse.urlsplit(url).hostname or url
     said = '; '.join(f'{name}: {_said(e)}' for name, e in refused)
     text = f'{url}: the certificate of {host} was not accepted ({said}).'
@@ -200,16 +162,12 @@ def certificate_problem(url, refused, version='dev'):
 
 
 def _check_eof(response):
-    # HTTPResponse.read(n) accepts an early EOF on a Content-Length body and leaves the missing byte count in length.
     remaining = getattr(response, 'length', None)
     if remaining:
         raise ConnectionError(f'connection closed with {remaining} response bytes still expected')
 
 
 def get_bytes(url, headers=None, timeout=30, version='dev', limit=64 << 20, retries=3):
-    """The body of a GET of url, at most limit bytes. A cut connection, a timeout or a server error (5xx, 429) is tried
-    again after 1, then 2 seconds, as download's are: one connection reset during Gather Build Tools (the package
-    index read by toolchain.ensure_zbic) ended the install. A refused certificate or another HTTP error is not."""
     last_error = None
     for attempt in range(retries):
         try:
@@ -223,7 +181,7 @@ def get_bytes(url, headers=None, timeout=30, version='dev', limit=64 << 20, retr
             if e.code != 429 and e.code < 500:
                 raise
             last_error = e
-        except (urllib.error.URLError, OSError, IncompleteRead) as e:   # not DownloadError or CertificateError
+        except (urllib.error.URLError, OSError, IncompleteRead) as e:
             last_error = e
         if attempt + 1 < retries:
             time.sleep(min(2 ** attempt, 8))
@@ -244,17 +202,12 @@ def sha256_file(path):
     return h.hexdigest()
 
 
-SPACE_MARGIN = 32 << 20   # bytes a disk keeps free beyond what is about to be written to it (space_problem)
+SPACE_MARGIN = 32 << 20
 
 
 class NoSpace(DownloadError):
-    """The disk has no room for the file. Asking again or another server gets the same answer, so download() does
-    not retry it, and it keeps the part file: the download goes on from it once there is room."""
-
-
+    pass
 def free_bytes(folder):
-    """The free bytes of the disk that holds folder, asked of the nearest folder above it that exists; None when that
-    cannot be asked."""
     p = Path(folder).absolute()
     for d in (p, *p.parents):
         try:
@@ -267,10 +220,6 @@ def free_bytes(folder):
 
 
 def space_problem(folder, need, what):
-    """'' when the disk of folder has room for need more bytes and SPACE_MARGIN, or when its free space cannot be
-    asked; else the sentence that says there is no room for what, how much it takes and how much is free. Asked
-    before a download or an unpack starts: a disk that fills in the middle otherwise ends it with an error that
-    names no cause and leaves half of it behind."""
     free = free_bytes(folder)
     if free is None or free >= max(0, need) + SPACE_MARGIN:
         return ''
@@ -279,22 +228,11 @@ def space_problem(folder, need, what):
             f'{free / 1e6:,.0f} MB free): make room there and try again')
 
 
-PART_OF = '.of'   # <dest>.part.of: what the part file beside it is a part of (download)
+PART_OF = '.of'
 
 
 def download(url, dest, sha256=None, size=None, progress=None, cancel=None, headers=None, retries=4, version='dev',
              log=None):
-    """Fetch url to dest through dest.part, resuming a part file a cut connection left. progress(done, total) after
-    every chunk; cancel() returning True raises Cancelled. A wrong size or sha256 deletes the file and raises
-    DownloadError. A dest already holding the expected sha256 is kept without a request. NoSpace, before anything
-    is written, when the disk has no room for the rest of the file (the expected size, else the size the server
-    names).
-
-    A part file is resumed only as a part of the same file: dest.part.of beside it names the file it was begun
-    for, by the expected sha256 (the same file from any server) or, without one, by its address.
-    A part begun for another file under the same name (a release published again with other bytes) is deleted
-    with a line for log, where resuming it ended in "sha256 ..., expected ..." as if the download were damaged. A
-    part without that note (an older launcher's) is resumed as before."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     if sha256 and dest.is_file() and sha256_file(dest) == sha256.lower():
@@ -316,7 +254,7 @@ def download(url, dest, sha256=None, size=None, progress=None, cancel=None, head
                     'and the download starts over')
     try:
         note.write_text(wanted, encoding='utf-8')
-    except OSError:   # without the note the part is resumed as it always was
+    except OSError:
         pass
     if size:
         full = space_problem(dest.parent, size - (part.stat().st_size if part.is_file() else 0), dest.name)
@@ -331,12 +269,8 @@ def download(url, dest, sha256=None, size=None, progress=None, cancel=None, head
         try:
             with request(url, h, 60, version) as r:
                 status = getattr(r, 'status', 200)
-                if have and status != 206:   # the server ignores Range: start over
+                if have and status != 206:
                     have = 0
-                # The whole file's size for progress: the expected one, else what the server says is still to come
-                # plus what the part file holds, else unknown (0: progress then gets the bytes so far as the total).
-                # "length + have or size or 0" took the part file's size for the whole when a resumed answer named
-                # no length, and the bar ran past its end.
                 coming = int(r.headers.get('Content-Length') or 0)
                 total = size or (coming + have if coming else 0)
                 if coming and not size:
@@ -354,7 +288,7 @@ def download(url, dest, sha256=None, size=None, progress=None, cancel=None, head
                             break
                         f.write(b)
                         done += len(b)
-                        if size and done > size:   # stop a server that sends more than the file: it would fill the disk
+                        if size and done > size:
                             raise DownloadError(f'{url}: more than the expected {size} bytes')
                         if progress:
                             progress(done, total or done)
@@ -365,15 +299,15 @@ def download(url, dest, sha256=None, size=None, progress=None, cancel=None, head
             part.unlink(missing_ok=True)
             raise
         except urllib.error.HTTPError as e:
-            if e.code == 416 and have:   # the part file is complete or longer than the file: start over
+            if e.code == 416 and have:
                 part.unlink(missing_ok=True)
                 last_error = e
                 continue
-            if e.code in (401, 403, 404, 410) or 300 <= e.code < 400:   # 3xx: a redirect _Redirect refused
+            if e.code in (401, 403, 404, 410) or 300 <= e.code < 400:
                 raise DownloadError(f'{url}: HTTP {e.code}') from e
             last_error = e
         except (urllib.error.URLError, OSError, IncompleteRead) as e:
-            if isinstance(e, OSError) and e.errno == errno.ENOSPC:   # the disk filled meanwhile: trying again cannot help
+            if isinstance(e, OSError) and e.errno == errno.ENOSPC:
                 p = dest.parent.absolute()
                 raise NoSpace(f'{p.anchor or p} is full: {dest.name} could not be written. Make room there and try '
                               'again') from e
