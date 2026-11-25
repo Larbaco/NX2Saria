@@ -7755,7 +7755,7 @@ memory accesses.
 
 ## `runtime/vk/vk_dump.c`
 
-`NX2SARIA_DUMP=<frame>`: a frame dump for the Vulkan back end, which RenderDoc cannot capture (it hides
+`NX2SARIA_DUMP=<frame>`: a frame dump for the Vulkan back end, which a frame capture tool cannot capture (it hides
 `VK_EXT_external_memory_host`). Between presents frame-1 and frame, the replay's command buffers also copy, after each
 render pass, its colour and depth targets and, after each dispatch, the storage images it writes into host buffers; the
 completion thread turns them into 8-bit PNGs once the submission is done. 3D textures (LUTs, volumes) sampled or written
@@ -7774,107 +7774,89 @@ Sampled 8-bit 2D textures up to `TEX2D_CAP` texels are copied once each as `pass
 pass that samples them; texture lines carry the storage address, mirror state, upload count and the image's and slot's
 swizzle. Copies and texture clears are logged as "copy/clear after pass N". `NX2SARIA_DUMP_LOG=<from>` also logs the
 frames from..frame-1 to passes.txt, with PNGs only of targets up to 64K texels. `NX2SARIA_DUMP_BUF=<addr>:<size>[:...]`
-snapshots one GPU buffer range after every logged pass (`buf_<pass>.bin` and bufs.txt, see `buf_snap`). PNGs are opaque
-(alpha dropped). Integer formats are scaled by the image maximum, depth by its min..max range, SNORM as x/2+1/2, UNORM
-and sRGB bytes written as stored. Caps: `MAX_PASSES` passes copied, `PNG_CAP` bytes of PNGs.
+snapshots one GPU buffer range after every logged pass (`buf_<pass>.bin` and bufs.txt, `buf_snap()` below). PNGs are
+opaque (alpha dropped). Integer formats are scaled by the image maximum, depth by its min..max range, SNORM as x/2+1/2,
+UNORM and sRGB bytes written as stored. Caps: `MAX_PASSES` passes copied, `PNG_CAP` bytes of PNGs.
 `NX2SARIA_DUMP_TEX=<id>|<w>x<h>[,...]`: those texture slots, or 2D textures of that size, are copied where first
 sampled, whatever their format. `NX2SARIA_DUMP_UBO=<n>`: each listed pipeline also prints the first n vec4 of its user
 uniform blocks (c3 and up; 1 means 16, the cap is 4096), read from guest memory when the entry is listed. A block the
-submission rewrites with UpdateUniformBuffer shows its value from before the submission
-(`runtime/vk/vk_exec_draw.c` `upd_note()`). `NX2SARIA_DUMP_SKIP_RUNS=1`: a render pass with the same targets as the
-render pass before it is logged but not copied (the terrain decals draw one pass each into the G-buffer and would use up
-both caps). `NX2SARIA_DUMP_SHADERS=<hash>,...`: copy images only for passes using those shader hashes; metadata covers
-the whole frame. `NX2SARIA_DUMP_RAW=1`: also save each copied image's native texel bytes as .bin, for numerical
-analysis. `NX2SARIA_DUMP_KEY=<key>` (Windows): each press of that key in the game window dumps the next frame to
+submission rewrites with UpdateUniformBuffer shows its value from before the submission (`runtime/vk/vk_exec_draw.c`
+`upd_note()`). `NX2SARIA_DUMP_SKIP_RUNS=1`: a render pass with the same targets as the render pass before it is logged
+but not copied (the terrain decals draw one pass each into the G-buffer and would use up both caps).
+`NX2SARIA_DUMP_SHADERS=<hash>,...`: copy images only for passes using those shader hashes; metadata covers the whole
+frame. `NX2SARIA_DUMP_RAW=1`: also save each copied image's native texel bytes as .bin, for numerical analysis.
+`NX2SARIA_DUMP_KEY=<key>` (Windows): each press of that key in the game window dumps the next frame to
 `NX2SARIA_DUMP_DIR/f<frame>`. Keys: pause (also 1), scrolllock, insert, home, end, pageup, pagedown, f2-f7, f9, f12 (F1,
 F8, F10 and F11 are the menu, the bug capture, the overlay and fullscreen). The game still gets a key it has bound.
 
-- `vk_exec_cs_storage_addr()`: `runtime/vk/vk_exec_draw.c`.
-- `vk_exec_storage_addr()`: `runtime/vk/vk_exec_draw.c`.
-- `vk_exec_raw_9e5()`: `runtime/vk/vk_exec_draw.c`.
-- `INFLIGHT_CAP`: host buffers waiting for their submission.
-- `MAX_ENTS`: distinct pipeline + texture sets listed per pass.
-- `MAX_LUTS`: 3D textures and small sampled 8-bit 2D textures dumped per frame.
-- `TEX2D_CAP`: texels of a sampled 2D texture that is dumped.
-- `dump_frame`: `log_from`: `NX2SARIA_DUMP_LOG`, first frame logged to passes.txt without images.
-- `base_dir`: `NX2SARIA_DUMP_DIR`; with `NX2SARIA_DUMP_WHITE` each attempt goes to `base_dir/f<frame>`.
+he limits and the state the switches fill:
+
+- `INFLIGHT_CAP`: bytes of host buffers waiting for their submission. `MAX_ENTS`: distinct pipeline + texture sets
+  listed per pass. `MAX_LUTS`: 3D textures and small sampled 8-bit 2D textures dumped per frame. `TEX2D_CAP`: texels of
+  a sampled 2D texture that is dumped.
+- `log_from`: `NX2SARIA_DUMP_LOG`, the first frame logged to passes.txt without images.
+- `base_dir`: `NX2SARIA_DUMP_DIR`; a dump named as the run goes (white, movie, key, file) has its files in
+  `base_dir/f<frame>`.
 - `white_last`: `NX2SARIA_DUMP_WHITE`: the frame dumped last (0: none), checked 3 presents on.
-- `dump_after`: `NX2SARIA_DUMP_AFTER`.
-- `dump_key`: `NX2SARIA_DUMP_KEY`: the Windows virtual-key code, 0 off.
-- `seq`: copied: passes and dispatches of the dump frame whose images were copied.
-- `skip_runs`: `NX2SARIA_DUMP_SKIP_RUNS`, `NX2SARIA_DUMP_UBO` (vec4 per block, 0 for none).
+- `dump_after`: `NX2SARIA_DUMP_AFTER`. `dump_key`: `NX2SARIA_DUMP_KEY`: the Windows virtual-key code, 0 off.
+- `copied`: passes and dispatches of the dump frame whose images were copied.
+- `skip_runs`: `NX2SARIA_DUMP_SKIP_RUNS`; `dump_ubo`: `NX2SARIA_DUMP_UBO` (vec4 per block, 0 for none).
 - `want_tex`: `NX2SARIA_DUMP_TEX`: slot id and 0, or width and height.
-- `last_targets`: `targets_sig` of the last render pass; 0 after a dispatch.
+- `last_targets`: `targets_sig()` of the last render pass; 0 after a dispatch.
 - `pass_skip`: why the current pass copies nothing, or NULL.
+- `ents`, `luts`: per pass, the distinct pipeline + texture sets with their draws, and the 3D textures queued for a
+  copy at the next pass end or dispatch.
 
-### Formats
+### Formats (`fmts`)
 
-- `fmts`:
-  - `F(D16_UNORM, "d16", 2, 1, 16, K_D16), F(D16_UNORM_S8_UINT, "d16s8", 2, 1, 16, K_D16)`: depth aspect of depth
-    formats, as `vkCmdCopyImageToBuffer` writes it.
+The depth formats' rows describe the depth aspect, as `vkCmdCopyImageToBuffer` writes it.
 
 ### `ufloat()`
 
-Unsigned small float with a 5-bit exponent and mbits of mantissa (half: 10, R11G11B10: 6 and 5).
-
-### Conversion on the completion thread
-
-- `Job`:
-  - `uint32_t w, h, d`: d: 3D slices, laid side by side in the PNG.
+Unsigned small float with a 5-bit exponent and `mbits` of mantissa (half: 10, R11G11B10: 6 and 5).
 
 ### `distinct()`
 
-Distinct raw texel values among rows [y0, y1) of every slice.
+Distinct raw texel values among rows [y0, y1) of every slice. A job's `d` is its 3D slices, which are laid side by
+side in the PNG.
 
 ### `write_images()`
 
-- `uint8_t *out = malloc(n * 4), *isnan_ = calloc(n, 1)`: `isnan_`: a pixel with a NaN channel, drawn magenta.
+On the completion thread. A pixel with a NaN channel is marked (`isnan_`) and drawn magenta.
 
 ### `job_done()`
 
-- Raw captures retain the exact texel bytes. BC blocks always get a .bin because the PNG's integer mapping loses their
-  bits; other formats get one when `DUMP_RAW` is enabled.
-
-### Recording
+Raw captures retain the exact texel bytes. BC blocks always get a .bin because the PNG's integer mapping loses their
+bits; other formats get one when `NX2SARIA_DUMP_RAW` is on.
 
 ### `copy_region()`
 
 Records the copy of one subresource into a host buffer and queues its PNGs. Returns NULL, or why it was skipped. The
-buffer is w x h x d texels of vf; the image region is `ext` image texels at depth plane z (differs for the blocks of a
-BC image read as an uncompressed format of the block size, and for a 3D slice).
-
-- `.imageExtent = ext}`: packed rows: a BC row of ext.width texels is w blocks.
-
-### `NX2SARIA_DUMP_BUF=<addr>:<size>[:<off>:<stride>:<w>:<h>]`
-
-After every pass and dispatch that is logged, the GPU buffer range is copied to a host buffer; when it differs from the
-previous copy it goes to `buf_<pass>.bin`, and bufs.txt gets the changed bytes' extent plus, with the grid arguments,
-one map per dword of the w x h records of `stride` bytes at `off` (each record a letter: its value's index in the table
-under the map).
+buffer is `w` x `h` x `d` texels of `vf`; the image region is `ext` image texels at depth plane `z` (differs for the
+blocks of a BC image read as an uncompressed format of the block size, and for a 3D slice). The rows are packed: a BC
+row of `ext.width` texels is `w` blocks.
 
 ### `buf_snap()`
 
-- `VK_MEM_PICK(s)`: the GPU's view of the buffer.
+`NX2SARIA_DUMP_BUF=<addr>:<size>[:<off>:<stride>:<w>:<h>]`: after every pass and dispatch that is logged, the GPU
+buffer range is copied to a host buffer; when it differs from the previous copy it goes to `buf_<pass>.bin`, and
+bufs.txt gets the changed bytes' extent plus, with the grid arguments, one map per dword of the `w` x `h` records of
+`stride` bytes at `off` (each record a letter: its value's index in the table under the map).
+
+The copy reads the GPU's view of the buffer (`VK_MEM_PICK`).
 
 ### `active()`
 
-`passes_f` is NULL before a dump that opens its files when it starts (`open_files`).
+`passes_f` is NULL before a dump that opens its files when it starts (`open_files()`).
 
 ### `vk_dump_draw_skipped()`
 
-A draw can be rejected before it opens a render pass. Count it against the captured frame as a whole.
+A draw can be rejected before it opens a render pass, so it is counted against the captured frame as a whole.
 
 ### `shader_hash()`
 
-SPIR-V hash of a shader; the first time, its SPIR-V goes to `sh_<hash>.spv` and its guest program to `sh_<hash>.code`.
-
-- `snprintf(path, sizeof path, "%s/sh_%016llx.code", dir, (unsigned long long)h)`: the guest program it came from.
-
-### `queue_lut()`
-
-- `luts`: queued for the next pass end or dispatch.
-
-Per pass: distinct pipeline + texture sets, draws, 3D textures to copy at its end.
+SPIR-V hash of a shader; the first time, its SPIR-V goes to `sh_<hash>.spv` and the guest program it came from to
+`sh_<hash>.code`.
 
 ### `block_format()`
 
@@ -7883,7 +7865,7 @@ blocks (one texel per block), which shows at least whether it was ever written.
 
 ### `flush_luts()`
 
-- A sampled depth texture copies its depth aspect (the colour aspect of a depth image read as zeros).
+A sampled depth texture copies its depth aspect (the colour aspect of a depth image read as zeros).
 
 ### `nvn_stage()`
 
@@ -7891,105 +7873,99 @@ The NVN stage numbers `VkExec`'s slot arrays use: 6 task, 7 mesh.
 
 ### `describe_bindings()`
 
-The textures, images and samplers of info's bindings; 3D textures are queued for a copy.
+The textures, images and samplers of `info`'s bindings; 3D textures are queued for a copy.
 
-- `if (r && bd->kind == GFX_RES_SSBO)`: where the address lives (c0: the stage's NVN slot table) and the stage's slots.
-- `uint64_t pa; uint32_t ps`: an NVN2 compute push-constant pointer {address, size}
-- `if (st == 5 || st == 6 || st == 7)`: the address and how far its backing span reaches (what a size-0 binding covers).
-- `VkDescriptorBufferInfo cb`: "(copy)": a binding that only reads it uses the submit-time copy
-  (`runtime/vk/vk_usnap.c`).
-- `NX2SARIA_DUMP_UBO`: also the small storage buffers' guest bytes (GPU results as of the last write-back); per-view
-  constants (exposure and such) live in such buffers.
-- Storage image: no sampler.
-- `int bw = 0`: a border wrap: its colour, as the sampler builder stored it.
+- **Storage buffers.** The line says where the address lives (c0: the stage's NVN slot table) and lists the stage's
+  slots. For a compute stage it adds the NVN2 push-constant pointer {address, size}; for compute, task and mesh the
+  address and how far its backing span reaches (what a size-0 binding covers). "(copy)" marks a slot that a binding
+  which only reads it takes from the submit-time copy (`runtime/vk/vk_usnap.c`). With `NX2SARIA_DUMP_UBO` the small
+  storage buffers' guest bytes are printed too (GPU results as of the last write-back): per-view constants (exposure
+  and such) live in such buffers.
+- **Textures and images.** A storage image has no sampler. For a sampler with a border wrap the line has its colour, as
+  the sampler builder stored it.
 
 ### Mesh primitive counts
 
 With `VkCtx.has_mesh_queries`, each mesh draw of the dumped frame runs inside a
-`VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT` query, and `mesh_prims.txt` (written by `vk_dump_present`) lists what each
-draw's mesh shader emitted, with its pass, program and depth state. A pipeline statistics query runs alongside: task and
-mesh shader invocations, primitives the clipper got and gave out, and fragment shader invocations (a triangle with a NaN
-or degenerate vertex is emitted but never clipped).
-
-- `mq_n`: queries begun in the dumped frame.
-- `mq_draw`: `mq_next`: the mesh draw `vk_dump_draw` saw last.
+`VK_QUERY_TYPE_MESH_PRIMITIVES_GENERATED_EXT` query, and `mesh_prims.txt` (written by `vk_dump_present()`) lists what
+each draw's mesh shader emitted, with its pass, program and depth state. A pipeline statistics query runs alongside:
+task and mesh shader invocations, primitives the clipper got and gave out, and fragment shader invocations (a triangle
+with a NaN or degenerate vertex is emitted but never clipped). `mq_n` counts the queries begun in the dumped frame;
+`mq_next` is the mesh draw `vk_dump_draw()` saw last, which the next query takes as its entry of `mq_draw`.
 
 ### `vk_dump_mesh_begin()`
 
-- `if (!mq_n)`: the last dump's queries finished at its present.
-- `mq_draw[q].pass = seq`: the number this pass gets when it ends.
+The pools are reset at a frame's first query: the last dump's queries finished at its present. The entry's pass is
+`seq`, the number this pass gets when it ends.
 
 ### `mq_write()`
 
 After `vk_sync_finish`: every query of the frame was submitted and ran.
 
-- The counters come in the order of their flag bits: clipping invocations 0x20, clipping primitives 0x40, fragment
-  invocations 0x80, task invocations 0x800, mesh invocations 0x1000.
+The statistics counters come in the order of their flag bits: clipping invocations 0x20, clipping primitives 0x40,
+fragment invocations 0x80, task invocations 0x800, mesh invocations 0x1000.
 
 ### `vk_dump_draw()`
 
-- `if (mesh)`: a mesh draw's per-draw parameters often live in its uniform blocks: draws that differ there are told
-  apart.
-- `for (int st = 0; st < 8; st++)`: every NVN stage: 6 is task, 7 mesh.
-- `if (mesh)`: depth: test, write and the NVN function (`VkCompareOp` + 1: LESS 2, EQUAL 3, LEQUAL 4, GREATER 5, GEQUAL
-  7).
-- Target 0's blending as NVN numbers (`NVNblendFunc`, `NVNblendEquation`), which decides whether a quad covers or mixes.
+A pass lists each distinct pipeline + texture set once. For a mesh draw the uniform block bindings of every NVN stage
+(6 is task, 7 mesh) go into that identity as well: a mesh draw's per-draw parameters often live in its uniform blocks,
+and draws that differ there are told apart. Its line also has the depth state: test, write and the NVN function
+(`VkCompareOp` + 1: LESS 2, EQUAL 3, LEQUAL 4, GREATER 5, GEQUAL 7). An entry has target 0's blending as NVN numbers
+(`NVNblendFunc`, `NVNblendEquation`), which decides whether a quad covers or mixes.
 
 ### `target_line()`
 
-- A block view: the plane's blocks, read as the view format (one texel per block).
+A target drawn through a block view copies the plane's blocks, read as the view format (one texel per block).
 
-### `render_copy_selected()`
+### `pass_decide()`
 
 Sets `pass_skip` for the pass or dispatch being logged and counts it when it copies.
 
 ### `vk_dump_pass_end()`
 
-- `if (!passes_f) open_files()`: `NX2SARIA_DUMP_WHITE` and `NX2SARIA_DUMP_MOVIE` open them for each of their dumps.
-- `dump_frame = frame_now()`: this pass and the rest of its frame.
+With `NX2SARIA_DUMP_AFTER` the first pass into that depth target names its own frame: this pass and the rest of its
+frame are dumped. The files are opened there when they are not open yet (`NX2SARIA_DUMP_WHITE` and
+`NX2SARIA_DUMP_MOVIE` open them for each of their dumps).
 
 ### `vk_dump_dispatch()`
 
-- `if (dump_ubo)`: `NX2SARIA_DUMP_UBO`: the NVN2 push constants as 64-bit words.
-- `for (uint32_t i = 0; i < info->n_bindings && !pass_skip; i++)`: storage images the dispatch writes.
-- `if (t->type == VK_IMAGE_TYPE_3D)`: a written volume: this copy replaces the sampled-3D one.
+With `NX2SARIA_DUMP_UBO` the line has the NVN2 push constants as 64-bit words. The storage images the dispatch writes
+are copied; a written volume is taken off the list of volumes already dumped, so this copy replaces the sampled-3D one.
 
-### `vk_dump_movie_frame()`
+### Dumps named as the run goes
 
-- `vk_dump_white`: `NX2SARIA_DUMP_WHITE=1` (diagnosis): no frame is named; from frame 1800 each present looks at the
-  thumbnail of the frame three presents back (`runtime/gfx/gfx_present.c` `vk_thumbs_*`), and the first one whose
-  picture left of the overlay and above the dialogue box is blank white makes the dump take the next frame (white
-  flashes come in runs of several frames).
-
+- **`NX2SARIA_DUMP_WHITE=1`** (`vk_dump_white`, diagnosis): no frame is named; from frame 1800 each present looks at the
+  thumbnail of the frame three presents back (`runtime/gfx/gfx_present.c` `vk_thumbs_*`), and a run of white ones (their
+  picture left of the overlay and above the dialogue box blank white) makes the dump take the next frame.
   `runtime/vk/vk_backend.c` asks for a thumbnail of every present while it is set.
-- `movie_k`: `NX2SARIA_DUMP_MOVIE=<k>:<frame>[,<frame>...]` (diagnosis): the k-th movie of the run (counted from 1 as
-  each video decoder comes up, `runtime/hle/ov_movie2.c` `ov_initialize()`) asks for a dump of the next present once it
-  has shown each listed frame, so a movie's picture can be followed through the game's passes at chosen moments. Each
-  dump has its own folder, `base_dir/f<present>`.
-- `key_mode`: `NX2SARIA_DUMP=key` (`vk_dump_init`).
-- `movie_req`: set by the movie's thread, taken by `vk_dump_present`.
+- **`NX2SARIA_DUMP_MOVIE=<k>:<frame>[,<frame>...]`** (`movie_k`, diagnosis): the k-th movie of the run (counted from 1
+  as each video decoder comes up, `runtime/hle/ov_movie2.c` `ov_initialize()`) asks for a dump of the next present once
+  it has shown each listed frame, so a movie's picture can be followed through the game's passes at chosen moments.
+  `vk_dump_movie_frame()` sets `movie_req` on the movie's thread and `vk_dump_present()` takes it.
+- **`NX2SARIA_DUMP=key`** (`key_mode`): no frame is named; each press of Insert (`input_dump_key`: unbound in the game's
+  layout, and read on Windows even while another window has the focus) dumps the frame after it, as often as it is
+  pressed: for a glitch that comes and goes, caught by the player while it is on screen.
+- **`NX2SARIA_DUMP_KEY`** (`dump_key`): a key of ours, also outside `NX2SARIA_DUMP=key`.
+- **`NX2SARIA_DUMP_FILE=<path>`** (`dump_file`, diagnosis): every 8th present looks for that file (a relative path
+  starts in the game folder); when it is there, the present deletes it and asks for a dump of the next present, so a
+  shell or a test script takes dumps at the moments it chooses, as many as it likes. A number in the file (up to 8)
+  dumps that many consecutive frames, for what a frame hands to the next; `file_more` is the consecutive frames still
+  to dump after the one named.
+
+Each such dump has its own folder, `base_dir/f<present>`.
 
 ### `open_files()`
 
-- `dump_file`: `NX2SARIA_DUMP_FILE=<path>` (diagnosis): every 8th present looks for that file (a relative path starts in
-  the game folder); when it is there, the present deletes it and asks for a dump of the next present, so a shell or a
-  test script takes dumps at the moments it chooses, as many as it likes. A number in the file (up to 8) dumps that many
-  consecutive frames, for what a frame hands to the next. Each dump has its own folder, `base_dir/f<present>`.
-- `file_more`: consecutive frames still to dump after the one named.
-
-passes.txt and images.txt in dir (a new folder per `NX2SARIA_DUMP_WHITE` attempt).
-
-- `NX2SARIA_DUMP_BUF` with dumps named as the run goes (key, white, movie): the log goes with each dump's folder.
+passes.txt and images.txt in `dir` (a new folder per dump named as the run goes). With `NX2SARIA_DUMP_BUF` and such
+dumps, bufs.txt is opened here too, so the log goes with each dump's folder.
 
 ### `vk_dump_init()`
 
-- `NX2SARIA_DUMP_AFTER=<address>`: the first render pass whose depth target lives at that address and the rest of its
-  frame (a target drawn once, at an area load).
-- `NX2SARIA_DUMP=key`: no frame is named; each press of Insert (`input_dump_key`: unbound in the game's layout, and read
-  on Windows even while another window has the focus) dumps the frame after it into `NX2SARIA_DUMP_DIR/f<frame>`, as
-  often as it is pressed: for a glitch that comes and goes, caught by the player while it is on screen.
-- `NX2SARIA_DUMP_KEY`: a key of ours, also outside `NX2SARIA_DUMP=key`.
-- A dump named as the run goes opens it with its folder (`open_files`); a named frame's folder exists already.
+`NX2SARIA_DUMP_AFTER=<address>`: the first render pass whose depth target lives at that address and the rest of its
+frame (a target drawn once, at an area load).
+
+A dump of a named frame opens its files here, as its folder is known; a dump named as the run goes opens them with its
+folder (`open_files()`), bufs.txt included.
 
 ### `key_pressed()`
 
@@ -7997,27 +7973,29 @@ passes.txt and images.txt in dir (a new folder per `NX2SARIA_DUMP_WHITE` attempt
 
 ### `thumb_white()`
 
-The thumbnail of frame f is blank white left of the overlay and above the dialogue box: -1 not available, 0 no, 1 yes.
+The thumbnail of frame `f` is blank white left of the overlay and above the dialogue box: -1 not available, 0 no, 1 yes.
 
 ### `open_frame()`
 
-Publish the selected frame and its output files together to the recording hooks.
+Publishes the selected frame and its output files together to the recording hooks.
 
 ### `white_check()`
 
-- `static int run`: consecutive white thumbnails: white runs are mostly 1-2 frames, too short for a dump 4 frames on.
-- `if (run >= 3)`: frames frame-5..frame-3 white: the run is likely still on 4 frames later.
+Counts consecutive white thumbnails (`run`): white runs are mostly 1 or 2 frames, too short for a dump 4 frames on.
+After three (frames `frame`-5 to `frame`-3 white) the run is likely still on 4 frames later, and the next frame is
+dumped.
 
 ### `vk_dump_present()`
 
-- `if (dump_white && white_last && frame == white_last + 3)`: was the dumped frame itself white?
-- `if (key_mode && dump_frame == UINT64_MAX)`: `NX2SARIA_DUMP=key`: a new press of Insert names the next frame.
-- `if (dump_key && dump_frame == UINT64_MAX && key_pressed())`: `NX2SARIA_DUMP_KEY`: our key names the next frame.
-- `open_files()`: before the frame is named: its passes write to them.
-- `vk_sync_finish()`: the frame's copies are converted and written.
-- `if (dump_white || movie_k || key_mode || dump_file[0] || dump_key)`: ready for another dump (`vk_dump_present` checks
-  a white one's thumbnail 3 presents on).
-- `if (file_more > 0)`: `NX2SARIA_DUMP_FILE` with a count: the next frame too.
+1. With `NX2SARIA_DUMP_WHITE`, three presents after a dump: was the dumped frame itself white? If not, it tries again,
+   up to 8 times.
+2. The dumps named as the run goes name the next frame: a white run, a movie's request, a new press of Insert
+   (`NX2SARIA_DUMP=key`), the file, our key (`NX2SARIA_DUMP_KEY`). The files are opened before the frame is named: its
+   passes write to them.
+3. At the dump frame's present: `vk_sync_finish`, so that the frame's copies are converted and written, then the mesh
+   counts, and the files are closed.
+4. With a dump named as the run goes the state is reset, ready for another dump. With a count in the file
+   (`NX2SARIA_DUMP_FILE`) the next frame is dumped too.
 
 ## `runtime/vk/vk_crumbs.c`
 
