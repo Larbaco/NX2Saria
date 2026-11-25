@@ -3283,7 +3283,8 @@ and nothing else is called while the lock is held, so it is always the innermost
 inside the queue lock for the shutdown). A wait for the GPU after a refused create (`vk_upscaler_gpu_wait()`) happens
 between two calls, outside it.
 
-What a thread can wait: the longest single call the other threads make. That is DLSS's feature creation (a size, a mode
+What a thread can wait: the longest single call the other threads make, or a few of them in a row, since the lock is
+not fair (a thread that gives it back may take it again before the waiter wakes). That is DLSS's feature creation (a size, a mode
 or a model change), and the present thread then waits for it before its own frame generation call: the frame's present
 is that much later, and the generated frames shown with it too. `tests/ngx_lock_check.c` with a 30 ms create on the
 replay thread: the present thread waited 30.0 ms at most. Uncontended, a call costs about 40 ns more (the try, the lock

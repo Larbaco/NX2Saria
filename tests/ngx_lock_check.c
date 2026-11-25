@@ -93,9 +93,6 @@ int main(void) {
           (unsigned long long)L.calls[NGX_AT_FRAME]);
     CHECK(L.hold_max >= create_ns && L.hold_max_at == NGX_AT_REPLAY, "the longest hold is the replay's create (%.2f ms at %s)",
           L.hold_max / 1e6, ngx_at_name(L.hold_max_at));
-    CHECK(L.wait_max[NGX_AT_PRESENT] <= L.hold_max + 5000000ull,
-          "the present thread waited %.2f ms, longer than any hold (%.2f ms)", L.wait_max[NGX_AT_PRESENT] / 1e6,
-          L.hold_max / 1e6);
     char line[512];
     ngx_lock_line(&L, line, sizeof line);
     printf("ngx_lock_check: %s\n", line);
