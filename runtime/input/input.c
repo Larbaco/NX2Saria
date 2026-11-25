@@ -16,6 +16,7 @@
 #endif
 #include "nvn_api.h"
 #include "ui/menu.h"
+#include "ui/quit_menu.h"
 #include "vk.h"
 #include "platform/platform.h"
 
@@ -1281,7 +1282,7 @@ int input_sdl_version(int *built) {
 
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     poll_merged(buttons, lx, ly, rx, ry);
-    if (!g_block && !g_menu) menu_cursor_poll(buttons), menu_mouse_poll(buttons);
+    if (!g_block && !g_menu) menu_cursor_poll(buttons), menu_mouse_poll(buttons), quit_menu_poll(buttons);
     const int32_t axes[4] = {*lx, *ly, *rx, *ry};
     int text = blocked(&g_block, &g_block_closed, "text entry", *buttons, axes),
         menu = blocked(&g_menu, &g_menu_closed, "menu", *buttons, axes);

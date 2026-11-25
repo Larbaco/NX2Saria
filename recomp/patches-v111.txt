@@ -523,3 +523,29 @@ site changebank_hold main 3299d28 9100054a 9100054a 94701c42   # add x10, x10, #
 set camera_clearance NX2SARIA_CAMERA_CLEARANCE_FIX 1
 site camera_clearance main 71a844 bd451e6a bd451e6a 951e196f   # ldr s10, [x19, #0x51c] -> the same; bl page+0xe00
 site camera_clearance main 71b624 bd451e6e bd451e6e 951e15f7   # ldr s14, [x19, #0x51c] -> the same; bl page+0xe00
+
+# Quit Game in the game's own menus (runtime/ui/quit_menu.c; the disassembly of each site and why its registers are
+# free: docs/code/ui.md). The sites:
+# - main+0x2d13b0, the copy of the screen into x19 in every interface screen's update: the same cut and the same call
+#   (the page's +0xee0) as the set menu_mouse, so either set alone gives both their look at the screen.
+# - main+0x3405b04 in the system window's open (main+0x3405a00, x19 the window, w20 its kind): the fmov s0, #2.0 before
+#   the BtnNum animation's frame is set (main+0x2d2d90) for the kinds 2 and 3, the confirmations of a return to the
+#   title. The cut calls the page's +0xe20, which puts 2.0 or 3.0 in s0.
+# - main+0x3405bfc in the helper that gives a button of the window its text (main+0x3405bc0, x0 the screen, w1 the
+#   button, w2 the number its label "10%02d" is made of; inside, x21, w20 and w19): the mov w3, w19 before the label is
+#   formatted. The cut calls the page's +0xe10, which puts w19 or another label's number in w3.
+# - main+0x3405b38 and main+0x3405b3c, between the open's two calls of that helper (button 0, then button 1): a third
+#   call for button 2 with the label 1012, then the mov w1, #1 the first cut took the place of.
+# - main+0x3406964 and main+0x3406968 in the title screen's set-up (main+0x34067d0, x19 the screen), after its
+#   buttons are made: a call of the same helper for button 3 with the label 1012, then the adrp and add the cuts took
+#   the place of (both words are in one page, so the adrp reads the same at the second cut).
+# Every function here saved its x30 in its prologue and the call that follows each cut sets it again; no word after a
+# cut reads the flags before they are set again.
+set quit_menu NX2SARIA_QUIT_MENU 1
+site quit_menu main 2d13b0 aa0003f3 aa0003f3 952f3ecc    # mov x19, x0 -> mov x19, x0; bl page+0xee0
+site quit_menu main 3405b04 1e201000 946a6cc7            # fmov s0, #2.0 -> bl page+0xe20
+site quit_menu main 3405bfc 2a1303e3 946a6c85            # mov w3, w19 -> bl page+0xe10
+site quit_menu main 3405b38 52800021 52800041 52800182 aa1303e0 94000022   # mov w1, #1 -> mov w1, #2; mov w2, #12; mov x0, x19; bl main+0x3405bc0
+site quit_menu main 3405b3c 52800022 52800021 52800022   # mov w2, #1 -> mov w1, #1; mov w2, #1
+site quit_menu main 3406964 d0004fe2 aa1303e0 52800061 52800182 97fffc97   # adrp x2, 0x3e04000 -> mov x0, x19; mov w1, #3; mov w2, #12; bl main+0x3405bc0
+site quit_menu main 3406968 91023842 d0004fe2 91023842   # add x2, x2, #0x8e -> adrp x2, 0x3e04000; add x2, x2, #0x8e

@@ -4004,6 +4004,36 @@ cannot drift apart. No game files, no GPU.
 - Version 1: records right after the 16 bytes, and nothing about where they came from.
 - Another version, record size or magic: not read.
 
+## `tests/quit_menu_check.c`
+
+Quit Game in the game's own menus without the game: the message file edit, the window's labels and the press
+(`runtime/ui/quit_menu_core.h`), and with a game folder the edit of its message archives
+(`runtime/ui/quit_menu_text.c`); `tests/quit_menu_check.py` builds and runs it, with `--romfs <folder>` for the game's
+archives. The message files of the first part are made by the test from the format.
+
+- The label hash puts the labels of two of the game's files in the groups the game has them in (`0000`, `0002` and
+  `0001` on two groups; `1000`, `0000`, `1001`, `0001`, `1002` on five).
+- A file made by hand reads back; a text with a control tag, whose bytes hold zeros, is whole.
+- Labels added: the new ones are found, the old ones keep their texts, the size field and the 16-byte padding are
+  right; a label that has its text already changes nothing and makes no file; one with another text is replaced; five
+  labels into an empty file of five groups each land in their group.
+- Refused: UTF-16, a third section, a file cut anywhere, a text without its zero.
+- The window's labels with three buttons, and every other label left alone.
+- The press: A on the entry is taken and chosen once, stays taken while held when the focus goes, and an A held from
+  another entry chooses nothing.
+- With a game folder, for each message archive: the three labels have the texts of the labels they copy, the window's
+  own labels keep theirs, exactly one member of the archive differs, and an archive that has the labels needs no
+  edit.
+
+## `tests/quit_menu_sites_check.py`
+
+The set `quit_menu` of `recomp/patches-v111.txt`: its name, switch and default, so that `NX2SARIA_QUIT_MENU=0` leaves
+the game's own word at every site; its seven sites and no other; each site's original word and the shape of its
+replacement (plain words, then a call of the page's +0xee0, +0xe20 or +0xe10, or of the game's helper at
+`main+0x3405bc0`); the words each pair of cuts puts back after its call; the one site it shares, with `menu_mouse`,
+making the same call; no other set calling its two slots; `runtime/ui/quit_menu.c` listing the same words for its
+check at start; and the three host functions registered at their slots (`runtime/patches/patches.c`).
+
 ## `tests/rebrand_compat_test.py`
 
 Branding transitions preserve update discovery, private reports, shortcuts and existing installs. No game files.
