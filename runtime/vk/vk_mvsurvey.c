@@ -1,30 +1,3 @@
-// Motion-vector survey (NX2SARIA_MV_SURVEY=1, off by default): measures whether per-object motion vectors can be made from
-// the uniform blocks the scene's draws bind. Per-object vectors need each object's matrices of the previous frame; the
-// game keeps none (its shaders read gsys_shape, gsys_skeleton and gsys_projection of this frame only), so they would
-// have to be kept from the previous frame's uniform snapshot (vk_usnap.c). That works when a block's guest address
-// stands for the same object from one frame to the next, which this survey measures.
-//
-// For every scene draw (vertex stage, scene depth bound: D32 at least DLAA_SCENE_MIN_W wide, as vk_dlaa_draw), each user bank
-// (c3 + index) with a binding is noted: address, size and its first SNAP bytes as of the submit (the snapshot's copy).
-// At each frame the bank's blocks are compared with the previous frame's and the one before:
-//   repeat1 / repeat2   blocks whose address was bound in that bank one / two frames ago
-//   same / near / far   of the blocks repeated from last frame: bytes unchanged / every float within 5 % or 1.0 of
-//                       last frame's (the same object, moved a little) / some float further (another object, likely)
-// The game writes its per-object blocks into two copies that take turns, so a moving object's block is at one address
-// in even frames and another in odd ones. To find the rule that pairs them, a bank's blocks bound two frames ago but
-// not last frame (this frame's copy) are sorted by address, and so are last frame's blocks not bound this frame (the
-// other copy); with equal counts they are paired in order:
-//   pairs, delta        the paired blocks and the commonest address differences (this frame's minus last frame's)
-//   psame / pnear / pfar the pairs' contents, as same / near / far above (near: the same object, moved)
-//   unequal             frames whose two lists had different lengths (no pairing that frame)
-// What the bank holds: each block's leading 3x4 matrices (rows of a rotation times a scale: three rows of the same
-// length, at right angles, finite), counted over the whole block as of the submit:
-//   mats 0 / 1 / 2-7 / 8+   blocks by that count (one: an object's place, gsys_shape; many: bones, gsys_skeleton)
-// Every SURVEY_FRAMES frames the log gets two lines per bank with the window's totals:
-//   mv_survey: c<n>: <draws> draws, <blocks> blocks (<per frame>), sizes <top three>; repeat1 a %, repeat2 b %;
-//              same c %, near d %, far e %
-//   mv_survey: c<n>: pairs <n> (<unequal> frames unequal), delta <top three>; psame a %, pnear b %, pfar c %;
-//              mats 0 x<n> 1 x<n> 2-7 x<n> 8+ x<n>, at most <m>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -38,15 +11,15 @@
 #define BANKS 18
 #define SNAP 256u
 #define SURVEY_FRAMES 300
-#define TABLE (1u << 15)   // blocks per frame, all banks; a town frame binds about 10,000 uniform ranges
+#define TABLE (1u << 15)
 
 typedef struct {
-    uint64_t addr;   // 0: empty slot
+    uint64_t addr;
     uint32_t size, n;
     int bank;
     uint8_t bytes[SNAP];
-    uint32_t have;   // bytes of `bytes` that were in the snapshot
-    uint32_t mats;   // leading 3x4 matrices of the whole block, 0 when it was not in the snapshot
+    uint32_t have;
+    uint32_t mats;
 } Block;
 
 typedef struct {
@@ -61,8 +34,8 @@ typedef struct {
 
 static struct {
     int on;
-    Block *t[3];       // this frame, last frame, the one before
-    const Block **x, **y;   // pairing: this frame's copy, last frame's
+    Block *t[3];
+    const Block **x, **y;
     uint32_t frames;
     Stat st[BANKS];
 } S;
@@ -81,7 +54,7 @@ static Block *find(Block *t, uint64_t addr, int bank, int add) {
             return &t[i];
         }
     }
-    return NULL;   // full: the block goes uncounted
+    return NULL;
 }
 
 static void note_size(Stat *s, uint32_t size) {
@@ -90,7 +63,7 @@ static void note_size(Stat *s, uint32_t size) {
             s->size[i] = size, s->size_n[i]++;
             return;
         }
-    s->size_n[3]++;   // a fifth size: counted with the last
+    s->size_n[3]++;
 }
 
 static void note_delta(Stat *s, int64_t d) {
@@ -102,7 +75,6 @@ static void note_delta(Stat *s, int64_t d) {
     s->delta_n[3]++;
 }
 
-// Leading 3x4 matrices: three rows of about the same length (a uniform scale), at right angles, all finite.
 static uint32_t lead_mats(const float *f, uint32_t nf) {
     uint32_t k = 0;
     for (; (k + 1) * 12 <= nf && k < 4096; k++) {
@@ -170,7 +142,6 @@ void vk_mvsurvey_draw(VkExec *ex) {
     }
 }
 
-// Same object moved a little: every float within 5 % or 1.0 of last frame's.
 static int compare(const Block *a, const Block *b) {
     uint32_t n = a->have < b->have ? a->have : b->have;
     if (!n) return -1;
@@ -202,7 +173,6 @@ void vk_mvsurvey_frame(void) {
         }
         if (find(S.t[2], k->addr, k->bank, 0)) s->rep2++;
     }
-    // pairing of the two copies, bank by bank
     uint32_t nx = 0, ny = 0;
     for (uint32_t i = 0; i < TABLE; i++) {
         const Block *k = &S.t[0][i];
