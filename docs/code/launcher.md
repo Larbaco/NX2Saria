@@ -4,9 +4,9 @@ The launcher: the window, the installation of the build tools and of the game, t
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
 names. These files still keep their comments until their notes are here: `launcher/context.py`,
-`launcher/settings.py`, `launcher/telemetry.py`, `launcher/toolchain.py`, `launcher/ui/__init__.py`,
-`launcher/ui/app.py`, `launcher/ui/art.py`, `launcher/ui/picture.py`, `launcher/ui/selftest.py`,
-`launcher/ui/sound.py`, `launcher/updater.py`, `launcher/versions.py`, `launcher/winsys.py`, and `launcher/build.py`.
+`launcher/settings.py`, `launcher/toolchain.py`, `launcher/ui/__init__.py`, `launcher/ui/app.py`,
+`launcher/ui/art.py`, `launcher/ui/picture.py`, `launcher/ui/selftest.py`, `launcher/ui/sound.py`,
+`launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -1901,6 +1901,93 @@ Writes one Linux non-Steam shortcut per account, with Steam closed, and a backup
 
 ## `launcher/telemetry.py`
 
+Session reports and comments ([telemetry.md](../telemetry.md)): what the launcher sends to the project's own server,
+and when. The window asks about session reports at the first start of each version while they are not on
+(`Reporter.question_due()`, `Reporter.answer_question()`): Don't Send keeps them off; Send, closing the question and
+its countdown turn them on.
+
+- A session report is the summary the game writes when it ends (`logs/session-summary.json` in the game folder), sent
+  with the launcher's version. Nothing is sent unless the settings' `telemetry` is `on`: `Reporter.prepare_session()`
+  refuses everything else itself, so no caller can send without it.
+- A comment is text the player wrote in Send a Comment, with the last session's summary and, when asked for, the last
+  lines of the game's log. Its own Send button is the player's consent: it does not need `telemetry` on.
+- Neither carries an id of the installation, and the server keeps no IP address: nothing sent can be deleted on
+  request, because the server cannot tell whose it is. It deletes every report and comment after 180 days.
+
+A run that ended in a hard crash writes no summary; the launcher makes one from the crash's FATAL line
+(`synthesize_crash()`), with the hardware and settings of the header the game wrote during that run
+(`logs/session-start.json`) and every value it cannot know left null.
+
+The server's address is `TELEMETRY_URL` (the project's own Worker, `telemetry/` in the repository), which
+`NX2SARIA_TELEMETRY_URL` replaces (a local server for tests). With no address nothing is sent and the window shows
+nothing of session reports. No Tk here: the window (`launcher/ui/app.py`) runs the requests on a thread through
+`Tasks`.
+
+| Constant | Value | What it limits |
+|---|---|---|
+| `TIMEOUT` | 10 | seconds a request may take; a report is never worth a longer wait |
+| `QUESTION_SECONDS` | 30 | the question after an update turns reports on after this long without any input |
+| `MAX_ERROR_LINES` | 5 | `launcher.log` lines about failed requests in one launcher run |
+| `SESSION_LIMIT` | 8 KB | bytes of a session report's body the server takes |
+| `FEEDBACK_LIMIT` | 40 KB | bytes of a comment's body the server takes |
+| `TEXT_LIMIT` | 4000 | characters of a comment |
+| `TAIL_LINES` | 200 | lines of the game's log a comment may carry |
+| `TAIL_LIMIT` | 24 KB | bytes of those lines |
+| `FATAL_LIMIT` | 300 | characters of the FATAL line in a summary |
+| `LOG_TAIL_READ` | 256 KB | bytes read from the end of the game's log for its last lines |
+
+A `Request` has a `kind` of `session` or `feedback`. A `Result` has a `reason` for the player, empty when it is `ok`.
+
+### `server_url()` and `enabled()`
+
+`server_url()` is the server's address without a trailing slash: `NX2SARIA_TELEMETRY_URL` when set, else
+`TELEMETRY_URL`. `NX2SARIA_TELEMETRY_URL=none` is no server at all: nothing is asked, shown or sent. `enabled()` says
+whether this launcher has a server to send to. Without one the window shows nothing of session reports or comments: no
+question, no Session Reports screen, so no build without a server asks what it cannot do.
+
+### `empty_summary()` and `example_summary()`
+
+`empty_summary()` is a summary with every leaf null but the ones the format requires
+([telemetry.md](../telemetry.md)). `example_summary()` is the summary *See What Is Sent* shows before the game has
+written one: made-up values of a plausible PC.
+
+### `printable()`
+
+The text without control characters (those in `keep` stay): the server refuses them in a report.
+
+### `pending_summary()`, `last_summary()` and `mark_sent()`
+
+- `pending_summary()`: the summary of `logs/session-summary.json`, which nothing has sent or declined yet, or `None`.
+- `last_summary()`: the last session's summary for a comment: the pending one, else the one sent or declined last.
+  `None` when the player turned session reports off (`telemetry` is `off`): a comment never carries a report they said
+  no to.
+- `mark_sent()`: the pending summary becomes `session-summary.sent.json` (replacing the one before it): sent, refused
+  by the server, or declined by the player. It is not offered again.
+
+### `log_started()`
+
+When the current game log was begun, as near as the files tell: the game moves the log before it to `nx2saria.1.log`
+when it starts (`runtime/main.c` `log_open()`), so that file's last write came before this run. 0 when there is no
+such file (the first run).
+
+### `_covered()`
+
+Whether a summary (pending or already sent) was written during the run whose log began at `since`.
+
+### `log_version()`
+
+`(the port's version, the game's version)` of the game log's `version:` line (`runtime/main.c` `main_run()`), or
+`None`.
+
+### `_log_has()`
+
+Whether the game's current log holds a text, read in pieces: the log may be 64 MiB.
+
+### `_fits()`
+
+Whether a value has the type of the example summary's value of its field: null always does, and a whole number does
+where a decimal is expected.
+
 ### `synthesize_crash()` and `session_header()`
 
 A hard crash writes no summary, so the launcher makes one from the FATAL line, the log's `version:` line and the
@@ -1920,6 +2007,91 @@ Apply can be far from the start.
 - The line: `telemetry: the last run ended in a crash; a summary was made from its FATAL line, with the hardware and
   settings of logs/session-start.json (<n> of <m> fields null)`, or `..., without hardware or settings: <why> (<n> of
   <m> fields null)`, where `<why>` says which of the four it was.
+
+`session_header()` returns `(the header, '')` or `(None, why there is none)`. `_take_header()` copies the header's
+values of `HEADER_KEYS` into the summary.
+
+`synthesize_crash()` makes the summary when the game's log holds a FATAL line of its last run (`launcher/build.py`
+`last_fatal()`) and no summary was written during that run (`runtime/main.c` `crash_handler()` exits with 71 after its
+FATAL lines): `logs/session-summary.json` gets `session.end` `crash`, the FATAL line with the account's folders
+written short and cut to 300 characters, the versions of the log's `version:` line and this PC's `os.family`. Nothing
+is taken from an earlier summary, and without a version line nothing is made. It returns the summary made, or `None`.
+It must run before the launcher adds its own line to the log (`launcher/game_session.py` `note_exit_in_log()`), which
+ends the search of `last_fatal()`.
+
+### `log_tail()`
+
+The last lines of the game's log for a comment: at most `lines` lines and `limit` bytes (UTF-8), the last ones kept,
+the account's folders written short. `None` when there is no log.
+
+### `payload()` and `body()`
+
+`payload()` is the session report exactly as it is sent: what *See What Is Sent* shows and `Reporter.send_session()`
+posts. It carries no id of the installation: nothing in it tells two reports of one PC from those of two PCs alike.
+`body()` gives the bytes of a request's JSON body; *See What Is Sent* shows these same bytes as text.
+
+### `forget_install_id()`
+
+Removes the installation id an earlier version of the launcher made and kept in the settings file. Reports and
+comments carry none, so the launcher keeps none. The settings no longer know the key (the `DEFAULTS` of
+`launcher/settings.py`), so it is looked for in the file itself, and saving writes the file without it.
+
+### `clean_text()`
+
+A comment as it is sent: line ends as `\n`, no other control characters but tabs, no blank lines around it.
+
+### `Reporter`
+
+Sends for one launcher run. Each of `Reporter.send_session()` and `Reporter.send_feedback()` is a `prepare_*` (the
+checks and the request, on the caller's thread), `Reporter.post()` (the network, which the window runs on a thread)
+and a `finish_*` (the settings and the files, on the caller's thread again).
+
+- `Reporter.error()`: a failed request's line for `launcher.log`; `MAX_ERROR_LINES` in one run, then silence.
+- `Reporter.closed()`: whether the server said it takes no more reports (410) from this launcher version.
+- `Reporter.post()`: sends the request and returns `(HTTP status, None)`, or `(None, why)` when no answer came. It
+  never raises: no connection, a timeout, a refused address are all the same to the player.
+- `Reporter._answer()`: the answer as `launcher.log` names it: the HTTP status, or why none came.
+
+### `Reporter.prepare_session()` and `Reporter.finish_session()`
+
+`Reporter.prepare_session()` gives the request of the pending session report, or a `Result` saying why there is none.
+The consent check lives here, not only in the window: nothing is sent unless the settings' `telemetry` is `on`.
+
+`Reporter.finish_session()` marks the summary as sent also for an answer below 500 other than 429: the server will
+refuse it again, and it is not offered on every start.
+
+### `Reporter.prepare_feedback()`
+
+The request of a comment, or a `Result` saying why it cannot go. Sending a comment is its own consent: the player
+wrote it and pressed Send, so it does not need session reports on; it goes with the last session's summary (when there
+is one) and, with `attach_log`, the last lines of the game's log. Escaped characters can make the log lines grow, so a
+body over `FEEDBACK_LIMIT` loses the oldest quarter of those lines until it fits.
+
+### `Reporter.set_consent()`
+
+Session reports switched in Settings. Switching them off there counts as this version's answer: the question comes
+again with the next version (`Reporter.question_due()`), not at the next start.
+
+### `Reporter.question_due()`, `Reporter.answer_question()` and `Reporter.take_notice()`
+
+The question after an update (the consent screen of `launcher/ui/app.py`).
+
+- `Reporter.question_due()`: whether this start asks about session reports: there is a server, reports are not on,
+  and this launcher version has not asked yet. Reports that are on are never asked about; whoever answered Don't Send,
+  switched them off in Settings or never answered is asked once by each new version.
+- `Reporter.answer_question()`: the question's end. `send` and `don't send` are the two buttons; `closed` (the
+  window's close, Alt+F4, Esc) and `timeout` (`QUESTION_SECONDS` without any input) turn reports on too, and are told
+  once at the next start. Only Don't Send keeps them off. True when reports are on now.
+- `Reporter.take_notice()`: true once after reports were turned on by the countdown or by closing the question, if
+  they are still on: the next start tells it.
+
+### `Tasks`
+
+Requests run on threads and finished on the window's: `Tasks.start()` runs `work()` on a thread, and `Tasks.poll()`,
+called by the window's timer (`launcher/ui/app.py` `App.tick()`), calls `done(result)` for each that ended, as
+`launcher/jobs.py` `BackgroundUpdate.poll()` hands the window a staging's end. `Reporter.post()` never raises;
+anything else that does must not lose `done()`, so it becomes a "no connection" result. `Tasks.wait()` is for tests:
+it polls until no request runs.
 
 ## `launcher/ui/app.py`
 
@@ -1997,3 +2169,108 @@ nuisance: it is asked at every such end.
 The sentence of the game's end is shown without its last sentence (`launcher/game_session.py` `LOG_WHERE`, where the
 log is): with the longest fatal line the launcher shows (`FATAL_SHOWN`, 240 characters) the text would not fit the
 panel with it, and the question is about that very log. The home screen keeps the whole sentence.
+
+## `launcher/updater.py`
+
+Updating the launcher's own release folder (`app/`, `launcher/paths.py`; [launcher.md](../launcher.md#updating)).
+
+An update is staged beside the running version and switched to with two small files, so a failed or interrupted
+update never leaves a half-written release in use:
+
+1. The app archive goes to `data/downloads`, is checked against the manifest's size and sha256 and unpacks into
+   `app/<version>.part`, which is renamed to `app/<version>` once it is complete and holds the expected `VERSION`.
+2. A new Python (the manifest's runtime id differs from `python/runtime-id.txt`) unpacks into `python.next` on
+   Windows; Linux stages it beside the app and switches it while keeping `python.old` for recovery.
+3. `app/previous.txt` gets the running version and `app/current.txt` the new one. Windows starts the native stub
+   again; Linux starts the installed wrapper, which restores `previous.txt` and `python.old` if startup exits with
+   code 86.
+4. The new version rebuilds the game (`launcher/jobs.py`), then `prune()` removes every version but these two.
+
+The launcher also stages a release in the background while it runs, the game included (`stage()`), and installs it
+later, when the game is not running (`install_staged()`). Such a release waits in `app/<version>` with its Python,
+when it brings one, in `app/<version>/python.staged` rather than `python.next`: the stub swaps `python.next` in at
+every start, and the running version must not start on another Python before `current.txt` names the new one.
+`app/<version>/staged.json`, written last, says the release is complete; a folder without it is never installed and
+is staged again.
+
+- `STAGED` (`staged.json`), in `app/<version>`: the background staging of that release finished.
+- `STAGED_PYTHON` (`python.staged`), in `app/<version>`: the Python the release brings, until it installs.
+
+### `_linux_runtime()`
+
+Installed Linux runtimes have the relocatable `bin/python3` entry point of python-build-standalone.
+
+### `safe_extract()`
+
+Unpacks a zip into `dest`, refusing absolute names and names that climb out of it, and, before anything is written, a
+zip whose files do not fit the disk (`launcher/net.py` `space_problem()`).
+
+### `stage_app()`
+
+Downloads, checks and unpacks the release's app archive into `app/<version>`; returns that folder.
+
+### `stage_runtime()`
+
+Unpacks a new Python into `dest` (`python.next`, for the stub to swap in at the next start); false when the running
+one is current.
+
+### `prerelease()`
+
+True for a GitHub pre-release or a version with a pre-release tag (`0.5.0-rc1`): only the Preview channel installs it.
+
+### `stage()`
+
+Downloads, checks and unpacks a release into `app/<version>`, with the Python it brings in `python.staged` there,
+without switching to it; `staged.json`, written last, marks it complete. Earlier staged releases it supersedes are
+removed. Returns the folder.
+
+### `staged_info()`
+
+What `staged.json` says about `app/<ver>` (`{'version', 'runtime', 'prerelease', 'notes'}`) when `stage()` finished it
+and it is still whole (its launcher, its `VERSION`, the Python it needs), else `None`.
+
+### `staged()`
+
+The newest release `stage()` left complete that is newer than the running version, as `staged_info()` gives it, or
+`None`. A pre-release counts only on the Preview channel; `skip` is a version that failed to start.
+
+### `install_staged()`
+
+Makes a release `stage()` finished the one the stub starts at its next start: its Python goes to `python.next` for the
+stub to swap in, `current.txt` names it (`previous.txt` the running version), and `staged.json` goes, so a version the
+stub rolls back from is not installed again by itself.
+
+- On Linux the live Python moves to `python.old`. A running launcher has already made it through
+  `launcher/ui/app.py` `App.start()`, which removes stale `python.old` backups, so a leftover there can only be from
+  an earlier failed start, and it is replaced with this live runtime.
+- When a later step fails after the Python was moved, it is moved back: the running version stays, and it must not
+  start on the new Python.
+
+### `switch_to()`
+
+Makes a version the one the stub starts, keeping the running one as previous.
+
+### `rollback()`
+
+Back to the version of `previous.txt`; false when there is none to go back to.
+
+### `prune()`
+
+Removes every app version but the current and the previous one and a staged release newer than the current one
+(`_waiting()`), and stale downloads (`.part`, `.zip` and `.of` files). `python.old` is not removed here: it is the
+rollback runtime until the launcher's wrapper confirms that the new version started.
+
+## `launcher/versions.py`
+
+Release versions: "0.3.11", optionally with build metadata ("0.3.11+abc1234") that never orders releases.
+
+### `_pre_key()`
+
+A pre-release's order as semver 2.0.0 gives it: dot-separated identifiers compared one by one, numbers as numbers
+(`rc.9` before `rc.10`) and before text, and a shorter list before a longer one it starts.
+
+### `parse()`, `newer()` and `display()`
+
+`parse()` gives `(numbers, pre-release)` for comparing; a pre-release sorts before its release, and a malformed
+version raises `ValueError`. `newer()` is true when version `a` is newer than version `b`. `display()` is the version
+without build metadata.
