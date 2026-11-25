@@ -4,9 +4,7 @@ The launcher: the window, the installation of the build tools and of the game, t
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
 names. These files still keep their comments until their notes are here: `launcher/context.py`,
-`launcher/settings.py`, `launcher/toolchain.py`, `launcher/ui/__init__.py`, `launcher/ui/app.py`,
-`launcher/ui/art.py`, `launcher/ui/picture.py`, `launcher/ui/selftest.py`, `launcher/ui/sound.py`,
-`launcher/winsys.py`, and `launcher/build.py`.
+`launcher/settings.py`, `launcher/toolchain.py`, `launcher/ui/app.py`, `launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -2093,6 +2091,11 @@ called by the window's timer (`launcher/ui/app.py` `App.tick()`), calls `done(re
 anything else that does must not lose `done()`, so it becomes a "no connection" result. `Tasks.wait()` is for tests:
 it polls until no request runs.
 
+## `launcher/ui/__init__.py`
+
+The launcher's window: `launcher/ui/art.py` draws the sprites, `launcher/ui/app.py` lays out the screens and handles
+input.
+
 ## `launcher/ui/app.py`
 
 ### `App.home_reports()`
@@ -2169,6 +2172,291 @@ nuisance: it is asked at every such end.
 The sentence of the game's end is shown without its last sentence (`launcher/game_session.py` `LOG_WHERE`, where the
 log is): with the longest fatal line the launcher shows (`FATAL_SHOWN`, 240 characters) the text would not fit the
 panel with it, and the question is about that very log. The home screen keeps the whole sentence.
+
+## `launcher/ui/art.py`
+
+The window's pictures, drawn with numpy into RGBA arrays and handed to Tk as PNG data.
+
+Everything is drawn here from shapes and colours: the misty green backdrop, the wooden title band, the bronze label
+cells with their mottled texture, the description box, the white glowing cursor, the filigree divider, the leaf sprig
+and the small icons. Tk's canvas draws lines and polygons without antialiasing on Windows, so every curved or soft
+shape is a picture; flat rectangles and text stay canvas items.
+
+Colours follow the game's options menu ([launcher.md](../launcher.md#look)). Sizes are in logical pixels times the
+display scale `s`. `PALETTE` holds the colours of the colour scheme in use: `set_theme()` fills it from `THEMES`, each
+scheme the first one with its woods, accents, backdrop and glow turned to other hues. The Custom scheme takes three
+colours the player picks on a colour square (`color_square()`, `hue_bar()`): one for the backdrop, one for the panels
+and the title band, one for the buttons.
+
+- `BASE` is the first colour scheme, Forest: bronze wood on a misty dark green. Its `scene_0` to `scene_3` are the
+  backdrop field's four heights, `mist` its mist, `tint_edge`, `tint_side` and `tint_mid` the see-through tint over it
+  (edge, side, middle), `vignette` the corners. `wood_0` to `wood_3` are the title band's wood from top to bottom, and
+  `band_line_dark` and `band_line_light` the two lines under it. `glow_near` and `glow_far` are the cursor's glow near
+  and far from its frame, `spark` the sparks drifting over the backdrop, `halo` the sprig's halo.
+- `GROUPS` are the colours a scheme turns together, each group to one hue.
+- `THEMES` are the colour schemes of Customize Launcher, in the order the row steps through them. Each group is
+  `(hue in degrees or None to keep each colour's own, saturation factor, lightness factor, saturation added)`, applied
+  to the first scheme's colours (`recolor()`), so a scheme keeps the first one's light and dark steps. `set` gives
+  colours as they are.
+- `CUSTOM_SLOTS` is the Custom scheme: each colour the player picks takes the place of one colour of the first scheme
+  (`ref`), and the rest of that colour's part of the window follows it, lighter and darker as in the first scheme
+  (`follow()`). Each part is `(ref, the colours that follow it, the text on it, which turns dark when the picked colour
+  is light)`. The buttons are the rows' label cells, their value cells and the orange choices in them; the panel is the
+  list panel, the description box, the dividers and the title band. The colours start as the first scheme's.
+- `_KEPT` holds the blurred masks and the noise, which depend on sizes only, not on colours: kept there, a change of
+  the colour scheme paints them again in its colours without computing them again (most of the time a redraw took).
+  The arrays kept are read, never written. `kept()` empties the store at 160 entries; the row and box sizes of every
+  screen stay far below that.
+- `FILIGREE_PATHS` is the game's divider ornament, traced from the options menu: two pointed lens ends, S-waves into
+  spiral hooks and a diamond knot under the middle, in a 120 x 38 box (centre x 60).
+
+### `recolor()`, `hexcode()` and `follow()`
+
+- `recolor()`: a colour turned to `hue` (degrees; `None` keeps its own), its saturation times `sat` plus `add`, its
+  lightness times `light`.
+- `hexcode()`: `#rrggbb` of `r`, `g`, `b` in 0..1.
+- `follow()`: a colour moved as `ref` moves to `chosen`: the hue of `chosen`, and its lightness and saturation shifted
+  the way those of `ref` shift, so `ref` becomes `chosen` exactly and the colours lighter or darker than `ref` stay so.
+
+### `custom_palette()`
+
+The Custom scheme's colours from `{slot: '#rrggbb'}` (`CUSTOM_SLOTS`); a slot left out or not a colour keeps the first
+scheme's. Text on a light button or panel turns dark, so it stays readable, and its shadow light.
+
+- A slot set to the first scheme's own colour keeps that scheme's colours as written, without the arithmetic.
+- The choices come out lighter than the cells: when the orange of the buttons is brighter than 0.65, the text on it
+  turns dark too.
+
+### `theme_palette()` and `set_theme()`
+
+`theme_palette()` gives the colours of a scheme (an unknown name: the first scheme's). `set_theme()` fills `PALETTE`
+with them, in place because the window holds a reference, and returns the name in effect. `custom` is the Custom
+scheme's colours, `{slot: '#rrggbb'}`.
+
+### `png_bytes()`, `dib_icon()` and `ico_bytes()`
+
+- `png_bytes()`: the PNG of an HxWx4 float array in 0..1 (straight alpha) or of a `uint8` array.
+- `dib_icon()`: one `.ico` entry as a 32-bit bitmap with its AND mask (what every Windows API and Tk read), rows
+  bottom-up.
+- `ico_bytes()`: a Windows `.ico` of square HxWx4 images: bitmaps up to 64 pixels, PNG above (as Windows' own icons
+  do).
+
+### `over()`
+
+Composites `src` over `dst` at (`x`, `y`), straight alpha, clipped to `dst`. Onto a solid picture (the backdrop's
+layers) it is a plain mix, and the result stays solid. Where both are clear the summed colour is 0 and stays 0 after
+the division by the alpha, which is floored at `1e-6`.
+
+### `paint()`
+
+Paints a colour through a coverage mask (HxW, 0..1) onto a picture. With a mask of the picture's size it is `over()`
+with one colour for the whole layer, without making the layer.
+
+### The drawing primitives
+
+- `vgradient()`: HxWx3 colours down the height through `(position 0..1, colour)` stops.
+- `hgradient_alpha()`: HxW alphas across the width through `(position, alpha)` stops.
+- `hgradient_rgba()`: an RGBA layer whose colour and alpha run across the width through `(position, colour, alpha)`
+  stops.
+- `value_noise()`: smooth noise in 0..1 with features about `period` pixels apart.
+- `fractal()`: fractal noise around mid grey, about `contrast` wide (the range of an SVG `feTurbulence` turned grey).
+- `overlay()`: the CSS `mix-blend-mode: overlay` of a grey noise (HxW) over colours, at an opacity.
+- `box_blur()`: three box blurs of radius `r` over a 2-D array (close to a gaussian).
+- `rect_mask()`: the coverage of the rectangle [`x0`, `x1`) x [`y0`, `y1`) with fractional edges.
+- `polygon_mask()`: the antialiased coverage of a convex polygon (pixel coordinates), supersampled `ss` x `ss`.
+- `stroke_mask()`: the antialiased coverage of polylines (lists of (`x`, `y`)) stroked with round joins and caps.
+- `shadow()`: a soft shadow of a mask: blurred, offset, as an RGBA layer of the same size.
+- `svg_polylines()`: points along an SVG path made of M, L, C and Z commands (the filigree).
+- `hsv_rgb()`: HSV to RGB on arrays (or numbers) in 0..1; an H... x 3 array.
+
+### `backdrop()`
+
+The whole window behind the panels: a dim misty field under a see-through tint of the colour scheme, darker at the
+sides. `picture` is the player's own background instead of the field, an array of `H - top` rows and `W` columns in
+0..1 put below the title band (`top`: where the band ends), darkened by `dim` (0 as it is, up to 1 the scheme's
+darkest colour) so the text over it stays readable.
+
+### `color_square()`, `hue_bar()` and `picker_mark()`
+
+- `color_square()`: the colour square of the Custom scheme's picker for one hue (0..1): saturation from grey on the
+  left to the full colour on the right, brightness from black at the bottom to full at the top.
+- `hue_bar()`: the picker's hue bar: every hue from red on the left through yellow, green, cyan, blue and magenta to
+  red.
+- `picker_mark()`: the ring that shows the picked colour on the square and the bar: white with a dark edge inside and
+  out.
+
+### The window's pieces
+
+- `spark()`: one spark of the dust drifting over the backdrop: a soft round dot of the scheme's spark colour, `size`
+  pixels across, brightest in its middle, which is white.
+- `halo_frames()`: the title sprig's light: a soft disc of the scheme's halo colour, `n` frames of one slow pulse.
+- `band()`: the wooden title band, its two-line bottom edge and the shadow under it; `(image, extra height below)`.
+- `panel()`: the left list panel with the shadow on its right. `alpha` below 1 lets the player's own background show
+  through it.
+- `label_cell()`: a bronze label cell: gradient, mottled texture, 1 px border and the 1 px dark ring around the row.
+- `desc_box()`: with `alpha` below 1 the player's own background shows through the box, not through its border.
+- `glow_frames()`: the selection cursor around a `w` x `h` box: a 3 px white frame 6 px outside it with a soft glow of
+  the scheme's colour inside and out, `n` frames of one breath. Returns `(frames, margin)`, where the box sits at
+  (`margin`, `margin`).
+- `filigree()`: the divider: a thin line with a dot at each end and the ornament in the middle; `(image, height)`.
+- `sprig_icon()`: an original three-leaf sprig on the forest and gold palette, at the size Windows or Tk requests.
+- `sprig_ico()`: the icon of the launcher, the setup and the taskbar at the sizes Windows asks for (16, 20, 24, 32,
+  40, 48, 64, 96, 128 and 256).
+- `title_glyph()`: the minimise bar or the close cross of the band's buttons, in the band's light text colour.
+- `framed_icon()`: the square-framed icon of a big row (play or refresh), like the icon frames of the game's menu rows.
+- `badge()`: the orange "!" disc beside Updates when a new version is ready (the "!" itself is text).
+
+## `launcher/ui/picture.py`
+
+The player's own background picture (Customize Launcher): read a picture file into a numpy array, fit it to the shape
+of the window below its title band and keep that copy in `data/background.npy`, so the launcher shows it without the
+file it came from. Fitting cuts the picture to that shape around its middle and scales it evenly: it is never
+stretched.
+
+Pillow reads the file where the launcher's Python has it (a release's does: `tools/requirements-launcher.txt`), turned
+the way its EXIF data says. Without Pillow (a checkout's Python may lack it), GDI+ reads it on Windows (PNG, JPEG,
+BMP, GIF, TIFF) and Tk elsewhere (PNG, GIF; the pixels come over as a PPM file). The kept copy is 8-bit RGB at
+`KEEP_W` x `KEEP_H` (1600 x 928), 1.6 times the logical size of the window below the band (1000 x 580): enough for a
+display scaled to 200 %, and four and a half megabytes on disk.
+
+`TYPES` are the file types the dialog offers: what the reader in use takes (`load()`).
+
+### `PictureError`
+
+The file is no picture this PC can read; the text is for the player.
+
+### `_load_pillow()`
+
+The picture as an H x W x 3 `uint8` array, read by Pillow and turned upright (a phone's photo says in its EXIF data
+which way is up). Pillow raises its own errors, `OSError` and `SyntaxError` for files it cannot read; all become
+`PictureError`.
+
+### `_load_gdiplus()`
+
+The picture as an H x W x 3 `uint8` array, read by GDI+ (part of Windows). The bits are locked with
+`ImageLockModeRead` and `PixelFormat32bppARGB` (`0x26200A`): GDI+ converts whatever the file holds. A negative stride
+means bottom-up rows.
+
+### `read_ppm()`
+
+A binary PPM (P6, 8 bits a channel) as an H x W x 3 `uint8` array. Its header is four fields (magic, width, height,
+maximum) separated by white space, with comments from `#` to the line end.
+
+### `_load_tk()`
+
+The picture read by Tk (PNG, GIF) and written out as a PPM, which is three bytes a pixel after a short header.
+
+### `load()`
+
+The picture file as an H x W x 3 `uint8` array. `master` is a Tk window, needed where Tk reads the file. On Windows
+without `gdiplus.dll`, Tk's own reader is used.
+
+### `resize()`
+
+The picture (H x W x 3) at `w` x `h`: whole pixels averaged first where it shrinks to less than half (`k` x `k`
+blocks, so a much larger picture does not alias), then a bilinear interpolation. Returns `float32` when it
+interpolates.
+
+### `cover()`
+
+The picture cut to the shape `w` : `h` around its middle and resized to `w` x `h`, so it fills the room with nothing
+stretched; `uint8`, or `float32` in 0..255 with `as_float`. A picture wider than the window loses its sides, a taller
+one its top and bottom.
+
+### `keep()`, `kept_shape()` and `kept()`
+
+- `keep()` reads the picture, fits it to the window's shape and writes it to `store` (`data/background.npy`).
+- `kept_shape()` gives `(height, width)` of the kept background, or `None`.
+- `kept()` gives the kept background at `w` x `h` as `float32` in 0..1, cut to that shape when it has another (one
+  kept by an older launcher for the whole window), or `None` when there is none (or it is not what `keep()` wrote).
+
+## `launcher/ui/selftest.py`
+
+`--selftest [--shots DIR]`: draw every screen with made-up states, optionally save a PNG of each, and close. Nothing
+runs: the jobs are built and their steps set by hand ([launcher.md](../launcher.md#tests)).
+
+### `grab_gdi()`
+
+Windows: copies the screen rectangle with GDI (`BitBlt` with `SRCCOPY`, `0x00CC0020`) and writes it as PNG
+(`launcher/ui/art.py` `png_bytes()`); no extra packages. It uses private library handles with every argument typed: a
+handle is a pointer, and one above 2^31 passed as a plain int failed with "int too long to convert", so some screens
+went without their picture.
+
+### `grab()`
+
+A PNG of the window: GDI on Windows, else PIL's `ImageGrab`, else ImageMagick's `import` on X11.
+
+### `ahead_of()`
+
+A version a minor step past the given one: the made-up release must be newer than the launcher drawing it, or the
+update screens show "Up to Date" instead (a fixed 0.3.11 did from 0.4.0 on).
+
+### `states()`
+
+The made-up states, one inner function each. The ones with notes:
+
+- `rc2_release`: a release with the notes of a real release file, kept newer than the installed launcher without
+  editing its `VERSION` file.
+- `shaders`: the counts and the wording that `tools/make_game.py` `shader_progress()` sends.
+- `update_staged`: a release downloaded in the background, waiting for the game to be closed.
+- `color_scheme`: another colour scheme on the home screen, then the first one again.
+- `custom_picker`: the Custom scheme with two picked colours, and its picker on the button colour. It sets the theme
+  back at its end for the next screen's colours; its own screen is drawn already.
+- `mods_screen`: a game folder of made-up mods, removed when the selftest closes.
+- `consent`: the question about session reports as a preview: no countdown runs and nothing changes or is sent.
+
+## `launcher/ui/sound.py`
+
+The launcher's sound effects: two of the game's own interface sounds, the ones its menus make for a choice and for
+going back, read from the player's game (`launcher/gamefiles.py` `extract_sounds()` decodes them into
+`data/cache/sounds`, as `runtime/ui/menu_sound.c` plays them in the in-game menu). No sound ships with the launcher
+and none is made here: until the player's game has been read, and for a sound it does not hold, the launcher is
+silent.
+
+They play at Low until the player picks another loudness, or Off, in Customize Launcher (the Sounds row). An effect is
+the game's sound as a 16-bit WAV in memory, scaled to the loudness. Windows plays it with `PlaySound` from that
+memory; elsewhere the WAV goes to a file in the cache folder and the first of `pw-play`, `paplay` and `aplay` found
+plays it. One effect sounds at a time: a new one cuts the last. Moving the cursor makes no sound, as it would cut a
+choice's sound short every time the pointer lands on a row of the next screen.
+
+| Effect | When | The game's sound |
+|---|---|---|
+| `select` | a row was chosen, a switch or a choice changed, Play, the end of a build | its decide sound |
+| `back` | back to the screen before, something could not be done | its cancel sound |
+
+- `LEVELS` is the Sounds choice: the loudest sample's share of full scale (off 0.0, low 0.18, medium 0.4, high 0.75).
+- `DEFAULT_LEVEL` (`low`) is that of a new `launcher.json` (the `DEFAULTS` of `launcher/settings.py`), and also what a
+  value it cannot hold becomes.
+- `EFFECTS` are the names `Sounds.play()` takes: the game's sounds of `SOUNDS` in `launcher/gamefiles.py`.
+
+### `wav_bytes()`
+
+A 16-bit WAV of samples (-1..1, interleaved when there are two channels) at a level (0..1 of full scale).
+
+### `read_wav()`
+
+A 16-bit PCM WAV as written by `launcher/gamefiles.py` `pcm_to_wav()`: `(rate, channels, samples in -1..1 with its
+loudest at 1)`, or `None` when it is another kind of file.
+
+### `Sounds`
+
+Plays the effects at the level of the Sounds choice. Every failure is silent: a PC without a sound device, or without
+a player program, just has a quiet launcher.
+
+| Field | What it holds |
+|---|---|
+| `level` | the level in effect: `DEFAULT_LEVEL` unless the player chose another |
+| `game` | the game's sounds decoded from the player's files: name to `(rate, channels, samples)` |
+| `wavs` | name to WAV bytes at the current level (Windows plays from this memory: it must stay) |
+| `files` | name to the WAV file, off Windows |
+| `player` | off Windows: the program that plays a WAV file |
+
+- `Sounds.load_game()` takes up the game's sounds decoded into `<cache>/sounds` (again after
+  `launcher/gamefiles.py` `extract_sounds()` wrote them).
+- `Sounds.stop()` ends what is sounding, before the memory it plays from goes.
+- `Sounds.play()` on Windows calls `PlaySoundW` with `SND_ASYNC | SND_NODEFAULT | SND_MEMORY`: `PlaySound` reads the
+  bytes while it plays, and `wavs` keeps them until the level changes (`Sounds.set_level()` stops the sound first).
+  With no device or no player it logs once and stays quiet from then on.
 
 ## `launcher/updater.py`
 
