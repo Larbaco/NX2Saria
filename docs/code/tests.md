@@ -3323,6 +3323,12 @@ all, for each device kind and setting. No GPU, no game files, any Python.
 - A value the settings table does not list reads as auto. The reason names the driver default, and how to turn it off.
 - `mesh_fallback_batch` = auto batches where the fallback is the device's default (where `mesh_fallback` = auto would
   choose it).
+- RADV inside the releases whose task shaders lose the device takes the fallback by default, and `mesh_fallback` = 0
+  still draws natively there. The range is checked release by release: the last one before it, the first one in it,
+  each side of a series' fixed release (with a table of its own, since no series has one yet), a series with no fixed
+  release up to its last patch number, the snapshots a packager numbers 26.99.99 and the main branch's 27.0.0, and
+  another driver with the same number. A card without mesh shaders is drawn for as before, and its reason does not
+  name the regression.
 
 ## `tests/mesh_pipeline_check.c`
 
@@ -5244,6 +5250,48 @@ data is there from then on.
 
 Checks the bench sanitizer compile and cache boundaries without game data.
 
+## `tests/ui_text_ids_check.py`
+
+The text catalog of the menu, the overlay and the software keyboard (`runtime/ui/ui_text.h`, `runtime/ui/ui_text.c`):
+no id without a use, no string without an id. It reads the sources as text; no compiler, no game files.
+`tests/run.py` runs it with `--with-self-test` (the check, then the planted cases).
+
+- An id is used when a source under `runtime/` or `tools/` names it (not `runtime/third_party/`; in `ui_text.c`, a name
+  that is not a `[UI_...] =` designator of a table or of the `LANG_NAMES` and `SWKBD` macros, as in `all_langs[]`), or
+  when an entry of `ARITHMETIC` marked as showing text reaches it. A name in `docs/` or `tests/` is not a use. An
+  unused id fails the check: it goes with its strings in every language.
+- `ARITHMETIC` is every place that computes an id from another or compares ids by order: the file, the expression as
+  it stands in the code, the first and last id it can give, whether it shows their text, and what it is for. The bind,
+  key, gamepad and preset tier labels are reached this way; the `static_assert`s of `runtime/ui/binds_page.cpp` and
+  the loops of `runtime/hle/ov_probe.c` need the order but show nothing. An entry whose expression is no longer in its
+  file fails, and so does a line of C or C++ with `+`, `-`, `<`, `>`, `<=` or `>=` next to an id's name that no entry
+  holds, so new arithmetic has to be declared with its range. Comparisons with `UI_TEXT_COUNT` (the bound of the
+  tables) and `==` are not arithmetic. Arithmetic on a variable that holds an id (`label + 1`) has no id's name beside
+  the operator and is not seen: the tree has none (every conversion of a `UiTextId` to an integer in the C++ sources
+  was listed from the compiler's syntax tree when the check was written).
+- The tables `text_en`, `text_ru`, `text_pt_br` and `text_zh_hans`: a string for an id the header does not declare
+  fails, as do two strings for one id in one table (the compiler keeps the last without a word), a string in a
+  language for an id English has none for, and an id without an English string (it would show as nothing in every
+  language). A missing Russian, Brazilian Portuguese or Chinese string is allowed, since `ui_text_in()` shows the
+  English one; the summary line counts them per language.
+
+- `FILE_NAME_GLYPHS`: the characters `runtime/ui/ui_text.c` `file_name_glyphs_zh_hans` must hold, and
+  `ui_text_visit()` must hand that list to the font builder (`glyph_problems()`), so the Simplified Chinese glyph set
+  does not shrink below it ([ui.md](ui.md), `ui_text_visit()`).
+
+### `check()`
+
+Takes the header, the catalog source and the other sources as text, so the self-test plants its faults in copies in
+memory. Returns the problems and the counts of the summary line.
+
+### `self_test()`
+
+A planted id with strings in the four tables that nothing names; a string for an undeclared id; an id without its
+English string; a second string for one id; `UI_MENU_ON + k` in a source; a declared expression renamed in its file:
+a character taken out of the
+glyph list; a catalog walk that no longer hands the list over: each must fail with its own message. A dropped Brazilian Portuguese string must pass and raise that language's count
+by one.
+
 ## `tests/up_defer_check.py`
 
 Builds and runs `tests/up_defer_check.c` on `runtime/vk/vk_up_defer.h`, the list of what the upscalers let go of while
@@ -5791,3 +5839,15 @@ It needs git on `PATH` (`prepare_sources` applies the patches with it) and `tool
   module of the given instructions, each (opcode, operand words...), after a five-word header), `pool_check` refuses
   an exe that does not run, `check_xlate` refuses such an exe beside a matching `.id`, and a translator built here
   (`build/xlate`) passes when there is one.
+
+## `tests/launcher_mods_job_characterization_test.py`
+
+Characterizes the Tk adapter's existing handling of a mod rebuild result: success with cache kept or dropped, the
+ordered return to Play, and the separate cancelled and failed paths that retain the pending mod names. It also records that Tk can observe a result before `finished` is set, without asserting that the worker should do the same. The test invokes
+`App.job_finished` with synthetic jobs and does not run a build or launch a game.
+
+## `tests/launcher_mods_job_core_test.py`
+
+Checks that the worker-facing completion policy keeps a synthetic cache intact while `finished` is unset, then removes
+it and allows Play only after the job is fully finished. Tk's existing earlier observation of `result` is separately
+characterized and unchanged.

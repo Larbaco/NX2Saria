@@ -900,12 +900,6 @@ there. The dead zone's names follow the values in their order in `runtime/cfg/cf
 - The keyboard's sticks are all or nothing: the walk key scales them to the walk scale (0.2 to 0.9) while it is held
   (`runtime/input/input.c` `walk_get()`).
 
-### `go_to()`
-
-`g_tab` is the tab shown; `g_tab_request` selects a tab at the next layout (-1 none); `g_focus_page`: this tab's first
-row takes the cursor once it is shown (-1 none). `go_to()` is for a row of another tab: that tab opens with the row
-under the cursor.
-
 ### `menu_sounds_frame()`
 
 The game's interface sounds (`runtime/ui/menu_sound.c`) for what the frame did: a press or click on an item, the
@@ -915,6 +909,9 @@ cursor going to the first row is part of it. `g_sound_fresh` marks that frame, a
 nothing was laid out while the menu was closed.
 
 ### `layout_menu()`
+
+`g_tab` is the tab shown; `g_tab_request` selects a tab at the next layout (-1 none); `g_focus_page`: this tab's first
+row takes the cursor once it is shown (-1 none).
 
 - `opt_draft_sync()` runs first: a key something else changed (F11) leaves the draft.
 - With the game's frame art, the window's own border is 0: the game's frame is the border.
@@ -1210,12 +1207,6 @@ box opened by the row): `key` the row's setting, `from` and `to` its shown value
 A row that runs an action: true on A or a click. `id`: unique on the page and not a setting (`##copy_info`); `value`:
 shown on the right (`""` none).
 
-### `opt_text_row()`
-
-A row whose label, value, note (under the value) and description are text, not catalog ids: a mod's folder name.
-Returns 2 (A / click), -1 / +1 (left / right), 3 / 4 (move up / down: the top / left face buttons, Ctrl+Up /
-Ctrl+Down, the drawn arrows; movable rows only) or 0.
-
 ### `opt_toggle_text()`, `opt_group_text()`, `opt_text_str()`
 
 Rows and text that are not settings of the settings table: a label and description of the caller's own (the cheats of
@@ -1407,7 +1398,8 @@ the body do not, with the fonts and sizes of the game. At most 24 clicks.
 One row: draws it, handles A / click and left / right while selected. Returns 2 (A, or a click on a row without
 arrows), -1 / +1 (left / right, or the mouse on a stepper's framed arrow), 3 / 4 (move up / down, movable rows only)
 or 0; always 0 for a row the environment fixes (greyed out, still selectable so its description shows). `movable`: the
-top / left face buttons, Ctrl+Up / Ctrl+Down and two drawn arrows move it.
+top / left face buttons, Ctrl+Up / Ctrl+Down and two drawn arrows move it. No row is movable now: the row that was, a
+mod's folder in the Mods tab, is gone, and every caller passes `false`.
 
 A stepper takes the mouse on its two framed arrows only: a click anywhere else on the row selects it and changes
 nothing. A click on the row used to step to the next value, and the left arrow stood left of the value's text, so it
@@ -3302,10 +3294,13 @@ leaves room for a note.
 ### `UiTextId`: what each text is for
 
 The ids come in groups, in this order: the software keyboard; the menu's window, tabs and bottom row; Screen; Game;
-Mods (the port's own patches and the player's mods folder, `runtime/patches/mods.c`); Sound; Controls; the Controls
-tab's remapping rows; the Amiibo tab; the Menu tab; the Game tab's Testing rows; the language names; Advanced; the
-performance overlay; the Cheats tab; the Saves group; the capture note; the boot screen; the Picture rows.
+Sound; Controls; the Controls tab's remapping rows; the Amiibo tab; the Game tab's Discord row and Testing rows; the
+language names; the Cancel of the confirmation boxes; the performance overlay; the Cheats tab; the Saves group; the
+capture note; the boot screen; the Picture rows.
 `UI_MENU_FIRST` to `UI_MENU_LAST_ID` carry English, Russian, Brazilian Portuguese and Simplified Chinese texts.
+
+An id is added and removed together with its strings in all four languages: when the last code that names it goes,
+the id and its strings go in the same change (`tests/ui_text_ids_check.py` fails on an id nothing uses).
 
 For a translator, what a text is for and what its printf arguments take:
 
@@ -3326,25 +3321,13 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_GRAPHICS` | group heading over the resolution rows |
 | `UI_MENU_WIDE_HUD`, `UI_MENU_WIDE_MENUS` and their `_DESC`, `_CENTER`, `_EDGES`, `_FULL` | where the HUD and the menus go on a picture wider than 16:9 (`NX2SARIA_WIDE_HUD`, `NX2SARIA_WIDE_MENUS`) |
 | `UI_MENU_TEX_DETAIL_AUTO` | "Automatic: %s", `%s` the level it picks on this card |
-| `UI_MENU_COLOR` | group heading over the colour rows |
-| `UI_MENU_HDR_GROUP` | group heading over the HDR rows |
 | `UI_MENU_AA_TAA_FSR4` | "TAA (%s)": FSR 4's name as the Upscaling row gives it ("AMD FSR 4.1") |
 | `UI_MENU_FPS_DISPLAY`, `UI_MENU_FPS_DISPLAY_HZ` | the monitor's refresh rate; the second is a printf format with the rate in Hz, used when it is known |
 | `UI_MENU_FPS_RTSS`, `UI_MENU_FPS_RTSS_READONLY` | notes under the frame rate value: RivaTuner Statistics Server (`runtime/pacing/rtss_limit.c`) limits the game, or cannot |
-| `UI_MENU_MODS_NONE` | no mod folder yet: where to unpack one |
-| `UI_MENU_MODS_ROW_DESC` | printf: files it replaces, files it adds (as of this start) |
-| `UI_MENU_MODS_OVERRIDDEN` | printf: files a higher mod serves instead, that mod's name |
-| `UI_MENU_MODS_EXEFS_UNSUPPORTED` | printf: the file and why |
-| `UI_MENU_MODS_EXEFS_ON` | printf: its ExeFS patch files in use |
-| `UI_MENU_MODS_REPLACES_BUILTIN` | printf: its ExeFS patch files in use, the port's own patch sets they turn off |
-| `UI_MENU_MODS_OTHER_VERSION` | printf: files made for another game version, left out |
-| `UI_MENU_MODS_UNUSED` | under the switch of a mod the port cannot use |
-| `UI_MENU_MODS_CHEATS` | printf: its cheats as read at start |
-| `UI_MENU_MODS_CHEATS_FILE` | printf: `<build id>.txt`, when none were read |
 | `UI_MENU_RUMBLE_HD`, `UI_MENU_RUMBLE_HD_DESC`, `UI_MENU_RUMBLE_HD_NEEDS` | HD rumble, and the note on its row while the gamepad in use cannot take it (`runtime/input/input.h` `input_rumble_hd_available()`) |
 | `UI_MENU_GROUP_GYRO`, `UI_MENU_GYRO_*` | the Gyro group (`runtime/ui/menu.cpp` `rows_gyro()`): its heading, rows and dead zone levels, and the note on its rows while motion controls are off |
 | `UI_MENU_PROMPTS_MISSING`, `UI_MENU_PROMPTS_FAILED`, `UI_MENU_PROMPTS_RESTART`, `UI_MENU_PROMPTS_OFF_SHAPE`, `UI_MENU_PROMPTS_OFF_MODS`, `UI_MENU_PROMPTS_OFF_PATCHES` | the notes under the prompts: their files are missing or damaged, they change after restart, or why they are off |
-| `UI_MENU_RESTART`, `UI_MENU_RESTART_DESC`, `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | "Restart now" under the prompts while they change after restart, and its confirmation (its Cancel is `UI_MENU_RESET_NO`) |
+| `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | the confirmation of the bar's Restart and Quit (its Cancel is `UI_MENU_RESET_NO`) |
 | `UI_MENU_RESTART_COUNT` | the bar's Restart with the count of settings waiting for it (printf: `%d`) |
 | `UI_MENU_DRAFT_TITLE`, `UI_MENU_DRAFT_APPLY`, `UI_MENU_DRAFT_DISCARD`, `UI_MENU_DRAFT_KEEP`, `UI_MENU_DRAFT_RESTART_NOTE`, `UI_MENU_DRAFT_QUIT_NOTE` | the box that asks about the changes made in the menu when it is left (`runtime/ui/menu.cpp` `apply_confirm()`), and the lines restarting and quitting add to their confirmation while there are such changes |
 | `UI_MENU_KEEP_TITLE`, `UI_MENU_KEEP_COUNTDOWN`, `UI_MENU_KEEP_YES`, `UI_MENU_KEEP_REVERT`, `UI_MENU_RESTART_NOW_TITLE`, `UI_MENU_RESTART_NOW`, `UI_MENU_RESTART_LATER` | after Apply: the "keep these display settings?" box with its countdown (`UI_MENU_KEEP_COUNTDOWN`, a printf format with one `%d`), and the "restart now / later" box for settings read at start |
@@ -3369,17 +3352,14 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_AMIIBO_DAILY_LIMIT`, `UI_MENU_AMIIBO_DAILY_LIMIT_DESC` | the Game tab's switch for the game's once-a-day amiibo limit (`NX2SARIA_AMIIBO_DAILY_LIMIT`) |
 | `UI_MENU_REPLAY_WORKERS` and the ids after it | the Game tab's Testing rows (`runtime/ui/menu.cpp` `tab_game()`), English only |
 | `UI_MENU_NEEDS_WORKERS`, `UI_MENU_NEEDS_PIPE` | why a row is greyed out |
-| `UI_MENU_LANGNAME_*` | language names, each in its own language and the same in every row (game language and menu language lists) |
-| `UI_MENU_ACTION_FAILED` | beside a button whose action did not work (no clipboard, no folder) |
+| `UI_MENU_LANGNAME_*` | language names, each in its own language and the same in every row (the game language list) |
 | `UI_MENU_OV_FPS_LABEL`, `UI_MENU_OV_FG_LABEL`, `UI_PERF_LINE_FPS_FG`, `UI_MENU_OV_FRAME_LABEL`, `UI_MENU_OV_FMT_FPS` | the overlay's frame rows: their labels, the rate |
 | `UI_MENU_OV_LOW1`, `UI_MENU_OV_LOW01` | printf: the fps of the slowest 1% / 0.1% of the frames, no unit (the overlay column stays narrow) |
 | `UI_MENU_OV_FMT_PCT`, `UI_MENU_OV_FMT_TEMP`, `UI_MENU_OV_FMT_POWER`, `UI_MENU_OV_FMT_MHZ`, `UI_MENU_OV_FMT_GB`, `UI_MENU_OV_FMT_GB_OF`, `UI_MENU_OV_GAME_GB`, `UI_MENU_OV_FMT_MS`, `UI_MENU_OV_PER_FRAME` | number formats of the overlay's cells (printf, one number each) |
-| `UI_MENU_OV_WINDOW`, `UI_MENU_OV_OUTPUT`, `UI_MENU_OV_SCENE`, `UI_MENU_OV_SCALING`, `UI_MENU_OV_LIMIT`, `UI_MENU_OV_PRESENT` | the picture lines: window, game image and 3D scene sizes, the scaling to the window, frame limit and presentation |
+| `UI_MENU_OV_WINDOW`, `UI_MENU_OV_OUTPUT`, `UI_MENU_OV_SCENE`, `UI_MENU_OV_LIMIT` | the picture lines: window, game image and 3D scene sizes, and the frame limit |
 | `UI_MENU_OV_FMT_SIZE` | "%ux%u" |
 | `UI_MENU_OV_FMT_SCENE` | "%ux%u, %.0f%%": the scene and its share of the game image's width |
 | `UI_MENU_OV_FMT_FSR` | "AMD FSR 1, sharpness %d%%" |
-| `UI_MENU_OV_FMT_SHRINK` | the image is larger than the window: "bilinear + FSR sharpening %d%%" |
-| `UI_MENU_OV_SCALE_DOWN` | FSR is selected but the image is larger than the window: FSR only enlarges |
 | `UI_MENU_TAB_CHEATS` and the ids after it | the Cheats tab (`runtime/patches/cheats.c`): the file, the kinds of cheat and why one cannot be switched |
 | `UI_MENU_CHEATS_NONE` | `%s`: `<build id>.txt` |
 | `UI_MENU_CHEAT_KEY_DESC` | `%s`: the buttons |
@@ -3396,12 +3376,12 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_BOOT_TITLE`, `UI_BOOT_STARTING` | the boot screen while the boot prewarm prepares shaders and pipelines (`runtime/boot.c`, `runtime/ui/menu.cpp` `menu_boot_frame()`) |
 | `UI_BOOT_SHADERS`, `UI_BOOT_PIPELINES` | printf: `%lld` done, `%lld` total |
 | `UI_BOOT_COMPUTE`, `UI_BOOT_DRIVER_CACHE` | after a driver change (`runtime/vk/vk_pipeline.c` `bf_decide()`): the compute pipelines, then the prepared shader variants built into the driver's own cache; printf as above |
-| `UI_MENU_UPSCALING`, `UI_MENU_UPSCALING_DESC`, `UI_MENU_FRAMEGEN`, `UI_MENU_FRAMEGEN_DESC`, `UI_MENU_FRAMEGEN_OFF`, `UI_MENU_FRAMEGEN_NOTE`, `UI_MENU_FRAMEGEN_NEEDS`, `UI_MENU_HDR_TONEMAPPED`, `UI_MENU_HDR_NATIVE` | the settings menu's Picture rows for this game (`runtime/ui/menu.cpp` `tab_screen()`): one upscaling choice (bilinear, FSR 1 or a DLSS mode) and the picture's resolution |
-| `UI_MENU_UPSCALING_DESC_FSR`, `UI_MENU_FRAMEGEN_DESC_FSR`, `UI_MENU_FRAMEGEN_NOTE_FSR`, `UI_MENU_FRAMEGEN_NEEDS_FSR` | the same rows' texts on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there |
+| `UI_MENU_UPSCALING`, `UI_MENU_UPSCALING_DESC`, `UI_MENU_FRAMEGEN`, `UI_MENU_FRAMEGEN_OFF`, `UI_MENU_FRAMEGEN_NOTE`, `UI_MENU_HDR_TONEMAPPED`, `UI_MENU_HDR_NATIVE` | the settings menu's Picture rows for this game (`runtime/ui/menu.cpp` `tab_screen()`): one upscaling choice (bilinear, FSR 1 or a DLSS mode) and the picture's resolution |
+| `UI_MENU_UPSCALING_DESC_FSR` | the Upscaling row's description on a GPU DLSS does not run on (not NVIDIA): the menu leaves DLSS out there |
 | `UI_MENU_UPSCALING_DESC_NO_FSR` | where FSR 3.1 cannot run (`vk_ffx_available`: on Windows `amd_fidelityfx_vk.dll` does not load, elsewhere the runtime's own passes cannot run on the device, `runtime/vk/vk_fsr3.c`): the menu leaves it out there, and this text says so. Its English text differs by platform: off Windows there is no library to load, and the game's own passes (`runtime/vk/vk_fsr3.c` `vk_fsr3_init()`) found the device cannot run them |
 | `UI_MENU_FSR3_OFF` | FSR 3.1 is still set but cannot run: "in use: off" and why |
 | `UI_MENU_UPSCALING_NATIVE` | the scene at the picture's own size, no upscaler (`runtime/ui/menu.cpp` `share_native()`) |
-| `UI_MENU_FRAMEGEN_DESC_DLSS`, `UI_MENU_FRAMEGEN_NOTE_DLSS`, `UI_MENU_FRAMEGEN_NEEDS_DLSS` | DLSS only |
+| `UI_MENU_FRAMEGEN_NEEDS_DLSS` | DLSS only |
 | `UI_MENU_FRAMEGEN_DESC_NONE`, `UI_MENU_FRAMEGEN_NEEDS_NONE` | neither runs |
 | `UI_MENU_FRAMEGEN_DESC_FSR_WIN`, `UI_MENU_FRAMEGEN_NEEDS_FSR_WIN`, `UI_MENU_FRAMEGEN_OFF_FSR_WIN` | no DLSS, and FSR 3.1 upscales through the runtime's own passes while its frame generation needs AMD's library, which only the Windows build loads (`runtime/ui/menu.cpp` `row_framegen()`, `fsr_win_only`): the row says that, not that FSR 3.1 does not run. `OFF`: frame generation is still set to FSR 3.1 there |
 | `UI_MENU_FRAMEGEN_FSR3_NATIVE`, `UI_MENU_FRAMEGEN_OFF_HDR` | FSR 3.1's frame generation through the runtime's own passes (every build but the Windows one, `runtime/vk/vk_fsr3fg.c`): the row's note while it is chosen, and why it is off while HDR is on (it generates SDR pictures only) |
@@ -3489,6 +3469,14 @@ every version; `USpt` only from 1.4.3; `EUpl` only in this game (its `since` is 
 
 A language's own strings, for the font that draws them: the merged system font must cover the whole menu of the
 language, not only its name (`runtime/ui/menu.cpp` `fonts_up()`).
+
+For Simplified Chinese it also hands over `file_name_glyphs_zh_hans`, a list of 124 characters that is data, not menu
+text: 121 Han characters and `7`, `|`, `×`. They are the characters that only strings of removed menu rows held. The
+font atlas holds the glyphs of the strings it is given and nothing else, and the menu also draws names it does not
+know in advance, the files of the amiibo folder among them (`runtime/ui/amiibo_page.cpp`); a name with one of these
+characters drew before those rows left and would show `?` without the list. With it, the set of glyphs is the one the
+catalog gave before. `tests/ui_text_ids_check.py` fails when a character leaves the list or the walk stops handing it
+over. A name with a Han character outside the catalog and the list shows `?`, as it always did.
 
 ### `resolve_menu_lang()`
 

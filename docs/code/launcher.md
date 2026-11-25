@@ -249,3 +249,12 @@ estimate. `need=None` with `unbounded=True` represents an infinite estimate with
 `play_memory_response()` logs the player's answer and returns it; an unavailable dialog is logged and permits Play.
 `confirm_play_memory()` retains the synchronous entry point used by Steam and combines these functions with the
 existing native dialog, including the fallback that permits Play if the probe or dialog is unavailable.
+
+### `mods_job.py`: mod rebuild completion
+
+`drop_build_cache()` removes the lifted sources and objects when the player does not keep the build cache, while
+preserving build state needed for update. Its body is the former Tk method; `App` continues to expose it for other
+jobs. `finish_mods_job()` applies this policy after a successful mod rebuild and returns `resume` with cleared failed
+mods. A cancelled or failed rebuild retains the waiting mod names and returns its result for the caller to choose the
+screen or retry. Tk preserves its existing result timing. A worker calls with `require_finished=True`, which returns
+`pending` without cleanup until the job has completed marker, claim and lock cleanup.

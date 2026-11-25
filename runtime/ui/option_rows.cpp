@@ -336,12 +336,6 @@ static int row(const char *key, UiTextId label, UiTextId desc, const RowView &v)
     return row_text(key, menu_text(label), menu_text(desc), v, false);
 }
 
-int opt_text_row(const char *id, const char *label, const char *value, const char *note, const char *desc,
-                 bool movable) {
-    RowView v = {value ? value : "", false, false, note};
-    return row_text(id, label, desc, v, movable);
-}
-
 namespace {
 
 struct Group {

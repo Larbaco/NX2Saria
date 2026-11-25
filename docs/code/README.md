@@ -40,7 +40,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 16 | `tools/` | [tools.md](tools.md) | extracted; `tools/cheats.py`, `tools/exefs_patches.py` and `tools/mod_files.py` keep their comments until a change next alters the lift key of a game folder with mod code ([The checks](#the-checks)) |
 | 17 | `tests/` | [tests.md](tests.md): one line per test, without repeating [building.md](../building.md#checks) | extracted |
 | 18 | `runtime/shaders/` (not `ffx/`, `ffx3/` and `smaa.glsl`) | [shaders.md](shaders.md) | extracted |
-| 19-22 | `runtime/vk/` | `vk-pipeline.md`, `vk-exec.md`, `vk-memory.md`, `vk-texture.md`, `vk-upscalers.md` | not yet extracted |
+| 19-22 | `runtime/vk/` | [vk-pipeline.md](vk-pipeline.md), `vk-exec.md`, `vk-memory.md`, `vk-texture.md`, `vk-upscalers.md` | started: the RADV releases the mesh path avoids (`vk_mesh_path.h`); the rest not yet extracted |
 
 When an area is done, its row gets a link to the page and the status "extracted".
 

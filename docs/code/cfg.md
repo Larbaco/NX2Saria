@@ -158,7 +158,7 @@ The lazy write-back (`memory.c` "Lazy write-back") is on where it has run: its f
 - `PIPE_SKIP_STEADY`: `vk_exec.c` steady_on
 - `DRAW_WRITERS_WAIT`: `vk_exec_draw.c` writers_wait_on
 - `PREPARE_PIPELINES`: `vk_pipeline.c` seed_pipelines
-- `MESH_FALLBACK`, `MESH_FALLBACK_MB`: `vk_device.c`: task and mesh programs through compute passes (`vk_exec_draw.c` "mesh fallback"); auto: on a device without mesh shaders, on AMD's Windows driver for RDNA 1 and 2 and on Intel's (`vk_mesh_path.h`). The megabytes are the buffers the passes write (`vk_mesh_fb.c`).
+- `MESH_FALLBACK`, `MESH_FALLBACK_MB`: `vk_device.c`: task and mesh programs through compute passes (`vk_exec_draw.c` "mesh fallback"); auto: on a device without mesh shaders, on AMD's Windows driver for RDNA 1 and 2, on Intel's, and on RADV in the Mesa releases whose task shaders lose the device (`vk_mesh_path.h`). The megabytes are the buffers the passes write (`vk_mesh_fb.c`).
 - `MESH_FALLBACK_WORKERS`: `vk_exec_draw.c` mfb_worker_count
 - `MESH_FALLBACK_HOLD`: `vk_exec_draw.c` mfb_hold_role: a list's depth-only draw waits for its colour draw's pipeline
 - `MESH_FALLBACK_BATCH`: `vk_exec_draw.c` mfb_batch_on: a pass's fallback draws run their stages before the pass (`mfb_batch.h`)

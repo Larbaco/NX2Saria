@@ -194,7 +194,8 @@ Cheats tab` when the files hold no cheat). Its counted nouns follow the count: `
 cheats/<file>; the menu has no Cheats tab`. The last thing it does is note the settings' version
 (`runtime/cfg/cfg.c` `cfg_version()`), so `follow_settings()` starts from the state just read.
 
-The mods are read in the Mods tab's order, top first; `path` holds a mod's cheats folder (`ModInfo.cheats`) plus the
+The mods are read in their load order, top first (`mods_order` in the settings file, which the launcher's Load Order
+writes; the game's menu has no Mods tab now); `path` holds a mod's cheats folder (`ModInfo.cheats`) plus the
 file. A data master code runs in the VM, always on. A held-button cheat's patch set starts off: it is on while the
 buttons are held. `g_vm` is set when a held-button cheat, a data cheat or a data master code exists.
 
