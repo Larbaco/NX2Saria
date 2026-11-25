@@ -23,3 +23,7 @@ executable, and is not a real-game test.
 Windows process observation uses a read-only Tool Help snapshot and `QueryFullProcessImageNameW` with limited query access. Handles are closed after use. Process ancestry and image paths are observations subject to permissions, process exit and PID races; a missing match is not treated as proof of absence.
 
 `launcher-electron/src/runtime-paths.ts` `runtimePaths()` uses the bundled Python and backend under Electron resources in a packaged build, and preserves the development interpreter override in a checkout. The Windows development ZIP ships Python bytecode rather than project Python source; the embedded Python search path includes the resources directory.
+
+`launcher-electron/ui-tests/mods-synthetic.cjs` uses a fake mod rebuild job and a temporary executable to exercise
+successful resumption, cancellation and the following Play without repeatedly rebuilding the same failed mods.
+It does not compile or run the real game.
