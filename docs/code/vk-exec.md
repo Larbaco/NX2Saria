@@ -2987,11 +2987,10 @@ bottom. Runs on the submitting thread under `vk_sync_submit`'s lock: no locking 
   - `int bar_dirty, bar_passes, bar_dispatches`: `NX2SARIA_BARRIER_GAME` (`runtime/vk/vk_exec.c` `barrier_to_why()`):
     the last full barrier was one the replay itself needed (a copy, clear or fill of its own follows it), so the next
     pass or dispatch gets a full one too; passes and dispatches begun since the last full barrier.
-  - `VkImage fbl_img[9]`: Feedback loops (`runtime/vk/vk.h` `VkCtx.feedback`,
-    `runtime/vk/vk_exec_draw.c` `feedback_prepare()`). Learned targets are attached in
+  - `VkImage fbl_img[9]`: images in the feedback layout now. Feedback loops (`runtime/vk/vk.h` `VkCtx.feedback`,
+    `runtime/vk/vk_exec_draw.c` `feedback_prepare()`): learned targets are attached in
     `ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT`; they stay in it across consecutive passes and go back to GENERAL at the next
     full barrier that is not a pass begin.
-  - `VkImage fbl_img[9]`: images in the feedback layout now.
   - `uint32_t fbl_mask`: attachments of the open pass in that layout: bit i colour i, bit 8 depth.
   - `uint32_t fb_dirty`: attachments of the open pass written by a draw or clear since the pass began or the last
     in-pass barrier.
@@ -3106,29 +3105,27 @@ bottom. Runs on the submitting thread under `vk_sync_submit`'s lock: no locking 
   listed in `mesh_prims.txt`. begin returns the query, or -1 when none was begun; end takes that value.
 - `vk_dump_copy()`: before a copy or texture clear is replayed.
 - `vk_dump_present()`: `vk_be_present`: waits for the dump frame's copies and closes the logs.
-- `VK_C0_BYTES`: c0, the NVN driver constant bank of one stage (`runtime/vk/vk_exec_draw.c`; `NX2SARIA_FIX_C0=0` binds
+- `vk_c0_fill()`: c0, the NVN driver constant bank of one stage (`runtime/vk/vk_exec_draw.c`; `NX2SARIA_FIX_C0=0` binds
   zeros instead): bank is `VK_C0_BYTES`, stage an NVN stage (0 vertex, 1 fragment, 5 compute), ssbo and ubo the 16 bound
   slots of that stage.
-- `vk_exec_op_draw()`: Handler hooks. `runtime/vk/vk_exec.c` defines both WEAK: they stop with `rt_fatal` naming the op.
-  `runtime/vk/vk_exec_draw.c`: `OP_DRAW`, `OP_DRAW_IDX`, `OP_DISPATCH`, `OP_BIND_*` (program, state, vattr, vstream,
+- `vk_exec_op_draw()`: One of the two handler hooks (with `vk_exec_op_xfer()`). `runtime/vk/vk_exec.c` defines both
+  WEAK: they stop with `rt_fatal` naming the op. `runtime/vk/vk_exec_draw.c`: `OP_DRAW`, `OP_DRAW_IDX`, `OP_DISPATCH`, `OP_BIND_*` (program, state, vattr, vstream,
   vbuf, ubo, ssbo, tex, samp, img), `OP_UPDATE_UB`, `OP_DRAW_IDX_IND`, `OP_DISPATCH_IND`. payload: `nvn_op_payload` of
   the record.
 - `vk_exec_phase_worker()`: `NX2SARIA_REPLAY_PHASES` (`runtime/vk/vk_exec_draw.c`): a replay worker marks its thread
-  (`rw_main`), and each frame's end in replay order reports every 600 frames (`vk_exec_frame_end`).
+  (`rw_main`), and each frame's end in replay order reports every 600 frames (`vk_exec_phases_frame()`).
 - `vk_exec_phase_op()`: `runtime/vk/vk_exec.c` `op_one()`: an op of the stream, by its code.
 - `vk_exec_phase_record()`: `runtime/vk/vk_exec.c` `vk_exec_record()`: one call's time on its thread.
 - `enum { SEG_PROLOGUE, ... }`: `runtime/vk/vk_exec.c` `vk_exec_record()`'s parts: before the walk (pins, events, the
   mirror's and uniform snapshot's begin), the walk (ops, front passes, groups), the groups' drain to the closing
   barrier, the mirror's and snapshot's end, the rest.
-  - `SEG_PINS, SEG_EVSYNC, SEG_MIRROR_BEGIN, SEG_USNAP_BEGIN`: of the prologue: the pins' sweep, the event sync, the
-    mirror's begin, the uniform snapshot's begin.
-  - `SEG_PEEK, SEG_GBEGIN, SEG_FRONT, SEG_HANDOUT, SEG_OWN, SEG_N }`: of the walk, `group_start`: the peek ahead, the
-    barrier and group begin, the front pass's loop, the hand-out (slots, the part, the queue, the wakes), the submitting
-    thread's own chunks.
+  Of the prologue: `SEG_PINS` the pins' sweep, `SEG_EVSYNC` the event sync, `SEG_MIRROR_BEGIN` the mirror's begin,
+  `SEG_USNAP_BEGIN` the uniform snapshot's begin. Of the walk, `group_start`: `SEG_PEEK` the peek ahead, `SEG_GBEGIN`
+  the barrier and group begin, `SEG_FRONT` the front pass's loop, `SEG_HANDOUT` the hand-out (slots, the part, the
+  queue, the wakes), `SEG_OWN` the submitting thread's own chunks.
 - `vk_exec_view_aspect()`: The aspect a sampled view of img reads (`runtime/vk/vk_exec_draw.c` `get_view()`): stencil
   for a view in STENCIL depth-stencil mode.
-- `vk_exec_target_view()`:
-  - `uint32_t level, uint32_t base, uint32_t layers, int blocks)`: kept for the image's life.
+- `vk_exec_target_view()`: the view is kept for the image's life.
 - `vk_exec_op_xfer()`: `runtime/vk/vk_exec_xfer.c`: `OP_COPY_B2B`, `OP_COPY_B2T`, `OP_COPY_T2B`, `OP_COPY_T2T`,
   `OP_CLEAR_TEX`, `OP_SIGNAL_EVENT`, `OP_REPORT_COUNTER`, `OP_RESET_COUNTER`, `OP_RENDER_ENABLE`, `OP_RENDER_COND`,
   `OP_CLEAR_BUF`.
@@ -3139,9 +3136,8 @@ bottom. Runs on the submitting thread under `vk_sync_submit`'s lock: no locking 
 - `vk_exec_event_met_now()`: Any thread, without the replay's lock: the wait's condition on the value in memory now or
   the signals replayed so far, whatever submission another thread is recording (`vk_exec_held_ready`). A decision only.
 - `vk_exec_signalled`: set by every replayed SignalEvent; `runtime/vk/vk_exec.c` clears it.
-- `vk_exec_event_cpu()`: Events the CPU signals (`runtime/vk/vk_exec_xfer.c` "events the CPU signals").
-
-  any thread: `nvnEventSignal` is about to write the event's value.
+- `vk_exec_event_cpu()`: Events the CPU signals (`runtime/vk/vk_exec_xfer.c` "events the CPU signals"); any thread:
+  `nvnEventSignal` is about to write the event's value.
 - `vk_exec_event_sync()`: `vk_exec_record`: its mirror sync and uniform copy are taken now / it ends.
 - `vk_exec_event_cpu_known()`: the CPU has signalled this event before.
 - `vk_exec_event_holds_now()`: an `OP_WAIT_EVENT`'s condition on the value in memory now.
@@ -3162,7 +3158,7 @@ bottom. Runs on the submitting thread under `vk_sync_submit`'s lock: no locking 
 - `VkDescMem`: The memory report's descriptor pools (`runtime/vk/vk_memory.c` `outside_log()`): the replay's pools,
   spare ones included, the sets each holds, and the texture pool's sets (0 before it exists).
 - `vk_exec_held()`: any thread: held submissions waiting for a signal (event order).
-- `vk_exec_held_ready()`: ... and one of them can go on now (`runtime/vk/vk_backend.c` `present_held`); any thread.
+- `vk_exec_held_ready()`: ... and one of them can go on now (`runtime/vk/vk_backend.c` `held_resume()`); any thread.
 - `vk_dlaa_swap_img`: `runtime/vk/vk_dlaa.c`: once DLSS has scaled the scene this frame, passes larger than the scene's
   light target `vk_dlaa_swap_img` sample DLSS's output `vk_dlaa_swap_view` in its place, so the game's scaling draw
   scales DLSS's picture.
