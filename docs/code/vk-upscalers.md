@@ -1384,15 +1384,22 @@ The swapchain's life differs from the FSR 3.1 library's:
 - Taking it down (`vk_fg4_release()`) waits for its presents, destroys the frame generation context, then the swapchain
   context, and calls its destroy function last, as the SDK asks.
 
-AMD publishes the SDK's libraries for Windows only: in any other build this path is never available. The file defines
+AMD publishes the SDK's libraries for Windows only: in any other build this path is never available. There the file is
+a set of stubs, and everything below describes the Windows code: `vk_fg4_available()`, `vk_fg4_failed()`,
+`vk_fg4_active()`, `vk_fg4_generating()`, `vk_fg4_presents()` and `vk_fg4_vram()` return 0, `vk_fg4_name()` "",
+`vk_fg4_hdr_metadata_fn()` NULL, the create, get images, acquire and present calls `VK_ERROR_FEATURE_NOT_PRESENT`, and
+the others do nothing. The file defines
 `VK_FFX_NO_API` before it includes `runtime/vk/vk_ffx.h`, as `runtime/vk/vk_ffx4.cpp` does.
 
-The state, `F`, is `runtime/vk/vk_fg.cpp`'s with these:
+The state, `F`, is `runtime/vk/vk_fg.cpp`'s without `cuts` (there is no ring of cuts here: `generate()` changes
+nothing in the dispatch it is given, and a cut reaches the library as the preparation's `reset`) and with these:
 
 - `handle`: the swapchain the context made: remade in place, destroyed after the context.
 - `sc_desc` to `fg_pin`: what the contexts were made from: the API asks that it stays until the
   context is destroyed.
-- `prepared`: the last frame was prepared (a frame after one that was not starts a history).
+- `prepared`: the last frame was prepared. A frame after one that was not is counted as a cut in the periodic line
+  (`vk_fg4_frame()`); the preparation's `reset` is the one the inputs gave (`runtime/vk/vk_dlaa.c`
+  `vk_dlaa_fg_inputs()`), not that cut.
 - `on`: the last configured frame had generation on (`vk_fg4_generating()`).
 
 The probe's state:
@@ -1400,14 +1407,16 @@ The probe's state:
 - `g_lock`: the menu asks from its thread, the present from its own.
 - `g_avail`: -1 not asked yet; 0 this path does not run here; 1 it does.
 - `g_sc_list`: the swapchain versions the loader listed, for the log.
-- `g_fg_name`: the frame generation version a context gets: the one asked for, else the first listed.
+- `g_fg_name`: the first frame generation version the loader listed, up to its first comma or star
+  (`vk_fg4_name()`); a version a test asks for does not change it.
 - `g_fg_pin`, `g_sc_pin`: `NX2SARIA_FG4_VERSION`, `NX2SARIA_FG4_SWAPCHAIN` (tests): the version asked for by its id; 0
   the loader's choice.
 
 ### `submit_game()`, `generate()`
 
 As in `runtime/vk/vk_fg.cpp`: the queue lock for the game's queue, and the generation's GPU time with the preparation's
-(`runtime/vk/vk_fg_time.h`).
+(`runtime/vk/vk_fg_time.h`). The dispatch goes through the loader (`runtime/vk/vk_ffx4.cpp` `vk_ffx4_api_dispatch()`),
+and no cut is added to it.
 
 ### `fail()`
 
@@ -1448,7 +1457,15 @@ its functions, after a failure too, until the present code has taken it down.
 
 ### `vk_fg4_create_swapchain()`
 
-- A new size: the swapchain is remade in place and keeps its handle.
+The first create: `VK_ERROR_FEATURE_NOT_PRESENT` after a failure, without a present queue or where the path is not
+available; then the swapchain context (the descriptor of `runtime/vk/vk_fg.cpp` `vk_fg_create_swapchain()`, with the
+handle it makes written to `F.handle`, chained to the version descriptor and, for a test, to `ffxOverrideVersion`),
+then the query for the replacement functions: the present, create, get images and acquire functions and the handle
+must all be there. Either failing is `fail()` and `VK_ERROR_INITIALIZATION_FAILED`, and `runtime/vk/vk_fg.cpp` then
+makes the FSR 3.1 library's swapchain in the same call.
+
+- A new size: the swapchain is remade in place and keeps its handle, after a wait for its presents
+  (`wait_presents()`).
 - The version this code was built against, which the SDK asks for with every context, and a test's version.
 - The swapchain the driver brings (listed with a star, the loader's choice where it is listed) hands out no destroy
   function: its context's destruction is the swapchain's too (`vk_fg4_release()`).
@@ -1460,6 +1477,13 @@ Nothing while the swapchain context lives: a new size remakes the swapchain in p
 `vk_fg4_release()` destroys it after its context.
 
 ### `vk_fg4_frame()`
+
+The order and the failure paths are those of `runtime/vk/vk_fg.cpp` `vk_fg_frame()`. What differs: the context's
+descriptors are kept in `F` and chained frame generation, version, HUD-less, back end and, for a test,
+`ffxOverrideVersion`; the back end is given `vkGetDeviceProcAddr` itself, so its pipelines do not go through the
+runtime's pipeline caches; the context has `FFX_FRAMEGENERATION_ENABLE_DEPTH_INFINITE`, which the FSR 3.1 library's has
+not; the preparation is `ffxDispatchDescFrameGenerationPrepareV2`, with `reset` and the camera in the world; and its
+near plane, far plane and metres are constants here, not the frame's (`runtime/vk/vk_fg.cpp` gives the frame's).
 
 - `vk_dlaa_hudless_wanted` is set: the upscaling pass keeps a copy of the picture before the HUD (`runtime/vk/vk_dlaa.c`
   `hudless()`).
@@ -1476,7 +1500,9 @@ Nothing while the swapchain context lives: a new size remakes the swapchain in p
   swapchain warped the picture's edges into the bars.
 - The motion vector scale is 1: render pixels, current to previous (`runtime/vk/vk_dlaa.c` `mv_pass()`), as FSR takes
   them.
-- The game's projection: near 0.1, far at infinity (`runtime/vk/vk_ffx.cpp`).
+- The camera's planes are constants: near 0.1 and far 1e8 (the game's projection taken as near 0.1, far at infinity),
+  whatever the frame's projection is. The vertical field of view is the camera's when `runtime/vk/vk_dlaa.c`
+  `vk_dlaa_fg_camera()` gives one, else 1 radian.
 - `viewSpaceToMetersFactor` is 1: the game's world is taken to be in metres (its near plane is at 0.1). With 0.01 here,
   the value `runtime/vk/vk_fg.cpp` gives the FSR 3.1 library, frame generation 3.1.6 drew grey translucent shapes into
   the sky of its frames while the camera turned, and with 0 it smeared them; with 1 its frames were clean in the same
@@ -1485,7 +1511,9 @@ Nothing while the swapchain context lives: a new size remakes the swapchain in p
 
 ### `vk_fg4_release()`
 
-The next swapchain counts its presents from 0 (`runtime/vk/vk_fg.cpp` `vk_fg_release()`).
+The next swapchain counts its presents from 0 (`runtime/vk/vk_fg.cpp` `vk_fg_release()`). Then, when a context exists:
+the wait for the swapchain's presents, the frame generation context destroyed, the swapchain context destroyed, and
+last the swapchain's destroy function with the handle, where the swapchain handed one out.
 
 ### `vk_fg4_vram()`
 
@@ -3791,28 +3819,56 @@ are still kept, and nothing is tested.
 
 ### `mv_pass()`
 
-The pass, recorded through the recorder like the replay's own commands. 0: no camera this frame (the vectors stay zero
-and DLSS starts a new history); 2: no camera, but the history is kept (the vectors stay zero, `dlaa_cam_keep`). `bias` >
-0 with this frame's G-buffer classes (`D.ids`) also writes `e->mask`, the bias mask (`runtime/shaders/dlaa_mv.comp`);
-`*masked` says whether it did.
+The pass, recorded through the recorder like the replay's own commands. It returns 1 when it wrote the vectors; 0 when
+it did not and the caller is to start a new history (no camera this frame, no camera last frame, or a view-projection
+that cannot be inverted); 2 when there is no camera but the history is kept (`dlaa_cam_keep`). On 0 and 2 the caller
+clears the motion image to zero (`evaluate()`, `fg_only_frame()`). `jx`, `jy` are the jitter the scene was drawn with,
+in render pixels: the shader takes it off each pixel's position before it reprojects. `bias` > 0 with this frame's
+G-buffer classes (`D.ids`) also writes `e->mask`, the bias mask (`runtime/shaders/dlaa_mv.comp`); `*masked` says whether
+a mask was written, by the classes or by the depth check.
 
-- `view` is the `views[]` entry of the camera.
-- This frame's view-projection as the scene draws read it (the game, `dlaa_cam_keep`) or as the snapshot holds it, for
-  the reprojection; kept as last frame's for the next.
-- A camera block of `CAM_BLOCK` bytes is kept whole, for the per-object motion pass (the deferred engine's only).
-- Without last frame's camera there is nothing to reproject into: zero motion, new history.
-- The shader reads rows 3-6 of each of the two blocks.
-- The class mask needs the G-buffer at the scene size; otherwise bindings 4-7 get the mask images as stand-ins (the
-  shader returns before reading them with bias 0).
-- The depth check (`runtime/shaders/dlaa_mv.comp`, `depth_prev`) where nothing else gives characters their own motion:
-  the game's frame, which has neither the per-object pass nor the class buffer. Its distances take the projection's
-  depth terms from rows 7-10 of the scene context (`ocam_vp()`). `NX2SARIA_DLAA_ZFIT=0` (test): the camera's motion
-  alone, as before.
-- `NX2SARIA_MV_CHECK` (test) gets the motion image here (`runtime/vk/vk_mvcheck.c` `vk_mvcheck_camera()`).
-- The characters' own motion over the camera's (`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`).
-- Not on a frame that starts a new history, nor on the first frame of another render size (`D.stepped`, `evaluate()`):
-  that frame was left out before the history could stay across a size, and it still is.
-- With timing on, the DLSS marks follow in `evaluate()`.
+In the order of the function:
+
+1. `view` is the `views[]` entry of the camera (the game's frame only). The camera is looked up in the uniform copy of
+   the submission being recorded (`vk_usnap_find()`): rows 0-10 (`OCAM_BYTES`) of the game's scene context, or the whole
+   deferred block.
+2. Not found there, but the scene's draws read it (`views[].got`, with `dlaa_cam_keep`): those bytes serve, counted in
+   `D.cam_at_draw` and logged for the first frames. Not found at all: the frame has no camera (`cam_note()`); up to
+   `KEEP_MAX` (6) such frames in a row return 2 and keep last frame's camera for the next frame, a longer run or
+   `dlaa_cam_keep` = 0 returns 0 and forgets it.
+3. This frame's view-projection as the scene draws read it or as the snapshot holds it (`ocam_vp()` for the game's
+   block, rows 3-6 at `D.cam_vp` for the deferred one), and with last frame's the reprojection m (`inv4()`). It is
+   kept as last frame's for the next.
+4. On the game's frame: frame generation's camera (`fg_camera()`, only with a reprojection, so not on the first frame
+   after a gap) and the camera cut test (`cam_cut()`).
+5. A camera block of `CAM_BLOCK` bytes is copied whole into `camb`'s slot for this frame, for the per-object motion pass
+   (the deferred engine's only).
+6. Without last frame's camera there is nothing to reproject into: 0, zero motion, new history.
+7. The pair of blocks in `mvm`: the shader reads rows 3-6 of each, the identity in the first and m in the second.
+8. The class mask needs the G-buffer's target 0 at the scene size (`use`); otherwise binding 4 gets the bias mask's view
+   as a stand-in (the shader returns before reading it with bias 0). Bindings 5 to 9 are always the size's own: the bias
+   mask, last frame's and this frame's class masks, last frame's and this frame's distances.
+9. The depth check (`runtime/shaders/dlaa_mv.comp`, `depth_prev`; `zfit`) where nothing else gives characters their own
+   motion: the game's frame, which has no class buffer. Its distances take the projection's depth terms from rows 7-10
+   of the scene context (`ocam_vp()`). `NX2SARIA_DLAA_ZFIT=0` (test): the camera's motion alone, as before.
+10. `NX2SARIA_MV_CHECK` (test) gets the motion image here (`runtime/vk/vk_mvcheck.c` `vk_mvcheck_camera()`), and again
+    after the per-object pass (`vk_mvcheck_final()`).
+11. The characters' own motion over the camera's (`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`). The deferred frame
+    runs it on every frame that got this far. The game's frame runs it when its poses are ready
+    (`runtime/vk/vk_fg_pose.inc` `vk_fg_pose_prepare()`), and not on a frame that starts a new history, nor on the first
+    frame of another render size (`D.stepped`, `evaluate()`): that frame was left out before the history could stay
+    across a size, and it still is.
+12. What the next frame and frame generation's poses read: the class and distance images swap, `chars_ok` and `dist_ok`
+    say whether this frame wrote them, and with the depth check and a camera `pose_history` keeps this frame's jitter
+    and the projection's w row terms ([3][2] and [3][3]) for `vk_dlaa_pose_depth()`.
+
+With timing on, the DLSS marks follow in `evaluate()`.
+
+### `vk_dlaa_pose_depth()`
+
+Last frame's distances for the per-object motion pass of frame `frame` (`runtime/vk/vk_exec_draw.c`), with the jitter
+and projection terms they were written with. 0 unless the size the last evaluation ran with has them from exactly the
+frame before, at the size asked for, with a projection whose [3][2] is not zero.
 
 ### `vk_dlaa_prev_camera()`
 
@@ -3836,9 +3892,11 @@ at 19:45 in the first save), where DLSS would give up its anti-aliasing. It need
 into the mask, like the motion draws) before it can be on. In the upscaling modes the light target DLSS reads also holds
 the bloom by then; the copy would have to be compared at the end of the scene instead.
 
+`MASK_THR` is 0.1 and `MASK_GAIN` 2.5; `SNAPS` (3) light target sizes and formats keep a snapshot.
+
 The state, `R`:
 
-- `Snap`: per light target size and format: its copy at arming, and the mask.
+- `Snap`: per light target size and format: its copy at arming, and the mask (R8).
 - `cur`: this frame's copy, NULL: none.
 - `ok`: -1 not built, 0 failed, 1 ready; `knob`: -1 not read.
 - `made`, `missed`: frames with a mask; frames DLSS ran without the copy.
@@ -3893,16 +3951,22 @@ its copy, when the GPU has long been past it.
 
 ### `vk_dlaa_release()`
 
-The device is idle here. It releases the NGX features and parameters before their Vulkan resources, then shuts NGX down
-even if initialization succeeded but the layout check failed. The Linux core's Shutdown1 takes an extra output pointer
-compared with the SDK's public wrapper; it reports the number of devices still using NGX.
+Linux only: on Windows the function does nothing, and NGX and DLAA's resources go with the process. The device is idle
+here. It releases the NGX features and parameters before their Vulkan resources, then shuts NGX down even if
+initialization succeeded but the layout check failed. The Linux core's Shutdown1 takes an extra output pointer compared
+with the SDK's public wrapper; it reports the number of devices still using NGX. In the order of the function:
 
-- First what was let go of: the features before NGX goes, the images at once.
-- Frame generation's feature and parameters (`vk_ngxfg_evaluate()`) go before NGX does.
-- The reprojection blocks' buffer is mapped for good: the destroy unmaps it.
-- Without `N.device`, NGX never came up on this device (DLAA off, FSR 3.1, or its init failed), and there is nothing to
-  shut down.
-- The shutdown runs with the queue lock held: NGX may wait for the device itself.
+1. First what was let go of (`dead`): the features before NGX goes, the images at once.
+2. The features of the sizes, then frame generation's feature and parameters (`vk_ngxfg_evaluate()`), DLSS's parameter
+   object and the capability parameters' map: all before NGX goes.
+3. The sizes' images, the mask snapshots, the HUD-less picture, prebloom's images, the motion and mask pipelines and
+   their buffers, the free camera's buffer and the timing's query pool. The reprojection blocks' buffer is mapped for
+   good: the destroy unmaps it.
+4. The state (`D`, `R`, `T`, `F`, the swap image) goes back to its start values, so a new device starts clean.
+5. Without `N.device`, NGX never came up on this device (DLAA off, FSR 3.1, or its init failed), and there is nothing to
+   shut down.
+6. The shutdown runs with the queue lock held: NGX may wait for the device itself. Its result and the devices left are
+   logged, and `N.ngx_up` and `N.available` are cleared.
 
 ### Jitter
 
@@ -3959,7 +4023,8 @@ The jitter moves on right after DLAA ran, not at the present: the replay can rec
 present of this one is handled, and a step taken there landed in the middle of a frame (worse after an off/on switch,
 which shifted that order). Jitter needs a frame DLSS ran on; a frame without the DLAA point stops it. The sequence is as
 long as NVIDIA's DLSS guide asks for the upscaling ratio, 8 x (output / scene)^2 phases (18 in Quality, 24 in Balanced,
-32 in Performance, 72 in Ultra Performance), and 16 at least, the length DLAA has used from the start.
+32 in Performance, 72 in Ultra Performance), 16 at least, the length DLAA has used from the start, and 72 at most. The
+offsets are Halton(2, 3) points 1 to that length, less a half: within half a render pixel either way.
 
 - Jitter only where the camera is known (`vk_dlaa_draw()`): the deferred engine's block or the game's scene context. On
   the game's frame the draws that take it are the camera's into every scene-size depth (`jitter_draw()`); taking only
@@ -3976,7 +4041,7 @@ read when a feature is created; a change recreates the features (`preset_check()
 ### `char_bias()`
 
 How strongly DLSS favours the current frame on characters and where they just were (`NX2SARIA_DLSS_CHAR_MASK`, percent,
-live; 0 off). Where a character's vectors are the camera's only (`dlaa_objmv` = 0, or a draw the per-object pass skips),
+live; 0 off, 100 and above full, 65 when the setting has no value). Where a character's vectors are the camera's only (`dlaa_objmv` = 0, or a draw the per-object pass skips),
 one that moves on its own drags a faint copy of itself through DLSS's history; the bias mask makes DLSS take less of the
 history there, at the cost of some of its anti-aliasing on those pixels. The game's frame has no class buffer to find
 characters by: there the mask covers the pixels whose depth the camera's motion does not explain
