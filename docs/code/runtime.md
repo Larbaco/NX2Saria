@@ -425,6 +425,8 @@ stays black, not on the last count, until the game's first frame.
 - `cheats_init()` after the patch sets: a cheat's set follows its setting.
 - `boot_map_init()` before the guest reads its first file: what it reads of the title and the save
   (`runtime/patches/boot_map.c`).
+- `session_summary_header()` once the prewarm is waited for, just before the guest starts: the session header then
+  has the patch sets, the mods, the picture and the prewarm's numbers (`runtime/session_summary.c`).
 - The guest waits for all of the prewarm (`boot_wait()`): a warm start is ready in about half a second; a cold one (a
   new translator, GPU or driver) translated 2,987 shaders in about 11 s and then builds the recorded pipelines, with the
   boot screen showing its progress; after a driver change also the compute pipelines and the driver's cache of stage
@@ -2774,9 +2776,12 @@ Strong definitions are in `runtime/vk/vk_caps.c`, `runtime/gfx/gfx_shader.c` and
 - `session_summary_header()`: `logs/session-start.json`, the header the launcher builds a hard crash's summary from
   (`launcher/telemetry.py` `synthesize_crash()`). `at` names the moment for the log line. Called at four moments only,
   never per frame: the end of `session_summary_start()` (the OS, CPU, RAM and settings known, before any Vulkan
-  device), `runtime/vk/vk_device.c` `create_device()` after `vk_caps_init()` (the card), `runtime/vk/vk_pipeline.c`
-  `vk_pipeline_prewarm()` (the boot's prewarm numbers), and `runtime/ui/option_rows.cpp` `opt_draft_apply()` after the
-  settings file is saved (once per Apply). Nothing after the summary was written.
+  device), `runtime/vk/vk_device.c` `create_device()` after `vk_caps_init()` (the card; on the prewarm thread, which
+  brings the device up), `runtime/boot.c` `rt_boot()` just before the guest starts (the patch sets, the mods and the
+  picture, all set up beside the prewarm, and the prewarm's numbers, which the boot waits for), and
+  `runtime/ui/option_rows.cpp` `opt_draft_apply()` after the settings file is saved (once per Apply). Nothing after the
+  summary was written. A prewarm that went on in the background (`runtime/boot.c` `boot_wait()`) has no numbers yet at
+  the game's start, and its header keeps `startup` null.
 - `session_summary_exit()`: the orderly end (`runtime/gfx/gfx_present.c` `rt_exit_steps()`), after the frame-time
   summary: end "normal".
 - `session_summary_fatal()`: a fatal error's end (`runtime/dispatch.c` `fatal_end()`), after its frame-time summary, on

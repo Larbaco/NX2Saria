@@ -1893,9 +1893,6 @@ stage libraries at once (`gpl_link()`), as for any new pipeline in play. After a
 built from nothing, the boot waits for all of them and for the rest of the warm (`bf_decide()`). Without the library a
 draw would have to wait for a whole build, so the boot waits for all; so it does with `NX2SARIA_PREWARM_FULL=1`.
 
-When it ends, the session header is written again with the prewarm's numbers (`runtime/session_summary.c`
-`session_summary_header()`): a crash after this point gets them in its summary.
-
 ### `mesh_pre_note()`, `mesh_pre_worker()`, `mesh_pre_start()`, `mesh_pre_run()`
 
 Mesh pipelines' stage libraries ahead of their draws.

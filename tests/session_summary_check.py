@@ -199,7 +199,7 @@ def header_checks():
     bad += check('header_lock' not in write and 'gather(&s, &g, end, 1)' in write,
                  'write_summary takes no header lock (the fatal end runs it on a failing thread)')
     sites = [('vk/vk_device.c', 'vk_caps_init(&g_vk);', 'session_summary_header("the Vulkan device");'),
-             ('vk/vk_pipeline.c', 'prewarm_run();', 'session_summary_header("the boot prewarm");'),
+             ('boot.c', 'wide_init();', 'session_summary_header("the game\'s start");'),
              ('ui/option_rows.cpp', 'opt_save_now();', 'session_summary_header("settings applied");')]
     calls = 0
     for path in sorted(RT.rglob('*.c*')):
