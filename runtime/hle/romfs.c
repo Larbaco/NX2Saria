@@ -12,6 +12,7 @@
 #include "host.h"
 #include "input_map.h"
 #include "mods.h"
+#include "quit_menu.h"
 #include "romfs_config.h"
 #include "romfs_path.h"
 #include "platform/platform.h"
@@ -838,6 +839,45 @@ static void wide_hud_overlay(void) {
     }
 }
 
+static void quit_menu_overlay(void) {
+    static const char keeps[] = "the game's menus keep their own entries";
+    char why[300] = "";
+    int archives = 0, made = 0;
+    double t0 = now_s();
+    if (!quit_menu_wanted()) {
+        quit_menu_texts(0, 0, 0, "");
+        return;
+    }
+    Overlay *dic_base;
+    size_t dn = 0;
+    void *dic = read_served("Pack/ZsDic.pack.zs", &dic_base, &dn, keeps);
+    for (uint64_t i = 0; dic && i < file_count; i++) {
+        char rel[256];
+        if (snprintf(rel, sizeof rel, "%s", entry_name(entry(i))) >= (int)sizeof rel) continue;
+        if (strncmp(rel, "Mals/", 5) || !ends_with(rel, ".sarc.zs")) continue;
+        archives++;
+        Overlay *base;
+        size_t n = 0, out_n = 0;
+        void *in = read_served(rel, &base, &n, keeps), *z = NULL;
+        char one[200] = "the archive cannot be read";
+        int r = in ? quit_menu_build(in, n, dic, dn, &z, &out_n, one, sizeof one) : -1;
+        unsigned long long was = r > 0 ? ZSTD_getFrameContentSize(in, n) : 0, now = r > 0 ? ZSTD_getFrameContentSize(z, out_n) : 0;
+        if (r > 0 && (was >= ZSTD_CONTENTSIZE_ERROR || now >= ZSTD_CONTENTSIZE_ERROR ||
+                      (now > was && !restbl_room(rel, was, now, QUIT_MENU_FOLDER, one, sizeof one)))) {
+            free(z);
+            r = -1;
+        }
+        free(in);
+        if (r > 0 && !serve_generated(rel, served_overlay(rel), z, out_n, QUIT_MENU_FOLDER, "Quit Game labels", keeps))
+            r = -1, snprintf(one, sizeof one, "the archive cannot be written to the profile");
+        if (r >= 0) made++;
+        else if (!why[0]) snprintf(why, sizeof why, "%s: %s", rel, one);
+    }
+    if (!dic) snprintf(why, sizeof why, "Pack/ZsDic.pack.zs cannot be read");
+    free(dic);
+    quit_menu_texts(made, archives, (now_s() - t0) * 1e3, why);
+}
+
 #define PROMPTS_PADS 3
 #define PROMPTS_FOLDERS (PROMPTS_PADS * 2 + 1)
 static const char *prompts_style(int pick) {
@@ -979,6 +1019,7 @@ static void overlay_init(void) {
     camera_overlay();
     action_prompt_overlay();
     wide_hud_overlay();
+    quit_menu_overlay();
     added_init();
     if (noverlay) qsort(overlays, noverlay, sizeof *overlays, overlay_order);
     for (size_t k = 1; k < noverlay; k++)

@@ -1,0 +1,393 @@
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <zstd.h>
+
+#include "cfg.h"
+#include "cpu.h"
+#include "fs.h"
+#include "host.h"
+#include "input_map.h"
+#include "layout.h"
+#include "platform/platform.h"
+#include "quit_menu.h"
+#include "quit_menu_core.h"
+#include "sarc.h"
+#include "ui/menu.h"
+
+#define UI_SYSTEM 0x4e982e0ull
+#define UI_SYSTEM_VT 0x4c73ce0ull
+#define MAIN_SIZE 0x4ea0000ull
+#define MAX_RAW (64u << 20)
+
+enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, FM_CONTROL = 0x28 };
+enum { CTL_FOCUSED = 0x78, CTL_RESERVED = 0x80, CTL_FLAGS = 0xb4 };
+enum { ENT_BUTTON = 0x18, ENT_SCREEN = 0x20 };
+enum { SCR_LAYOUT = 0x28, SCR_HEAD = 0x88, SCR_FIRST = 0x90, SCR_LINK = 0x9c, SCR_STATE = 0x1a6, SCR_PROJ = 0x1c0,
+       SCR_OPEN = 2 };
+enum { BTN_FLAGS = 0x40, BTN_ROOT = 0x58, BTN_ENABLED = 0x10 };
+enum { PANE_ALPHA = 0x74, PANE_FLAGS = 0xa8, PANE_STRIDE = 0xb0, PANE_SHOWN = 1 };
+enum { TITLE_COUNT = 0x2c8, TITLE_BUTTONS = 0x2d0, TITLE_MENU = 0x2e8, TITLE_ENTRIES = 4, TITLE_SPARE = 3 };
+enum { WINDOW_KIND_TITLE = 2, WINDOW_ENTRIES = 3, WINDOW_SPARE = 2 };
+enum { AT_NONE, AT_TITLE, AT_PAUSE };
+#define ARMED_MS 250
+
+#define MSG_QUIT "LayoutMsg/GameOver_00.msbt"
+#define MSG_PAUSE "LayoutMsg/PlusMenu_00.msbt"
+#define MSG_SAVE "LayoutMsg/SystemSaveLoad_00.msbt"
+#define MSG_WINDOW "LayoutMsg/SystemWindow_00.msbt"
+#define MSG_TITLE "LayoutMsg/Title_00.msbt"
+#define LABEL_QUIT "Pa_Button_01-T_Btn_00"
+#define LABEL_TITLE_SCREEN "Pa_System_00-Pa_Button_04-T_Btn_00"
+#define LABEL_CANCEL "Pa_CheckButton_01-T_Btn_00"
+
+static uint64_t main_lo, main_hi;
+static volatile int32_t g_texts, g_quit;
+static volatile uint64_t g_title_ms, g_pause_ms, g_window, g_chosen_ms;
+
+static int ok_at(uint64_t p, uint64_t n) { return p >= 0x10000 && p < (1ull << 47) && mem_host_readable(p, n); }
+static uint64_t rd64(uint64_t a) { uint64_t v; memcpy(&v, (const void *)(uintptr_t)a, 8); return v; }
+static uint32_t rd32(uint64_t a) { uint32_t v; memcpy(&v, (const void *)(uintptr_t)a, 4); return v; }
+static uint8_t rd8(uint64_t a) { return *(const volatile uint8_t *)(uintptr_t)a; }
+static float rdf(uint64_t a) { float v; memcpy(&v, (const void *)(uintptr_t)a, 4); return v; }
+static int game_object(uint64_t p, uint64_t n) {
+    if ((p & 7) || !ok_at(p, n)) return 0;
+    uint64_t vt = rd64(p);
+    return vt >= main_lo && vt < main_hi;
+}
+
+static int test_flag(const char *name) {
+    const char *v = cfg_get("NX2SARIA_QUIT_MENU_TEST");
+    return v && strstr(v, name) != NULL;
+}
+
+int quit_menu_wanted(void) {
+    static int set = -2;
+    if (set == -2) set = rt_patch_set("quit_menu");
+    return RT_V111 && rt_patch_enabled(set);
+}
+
+static int enabled(void) { return quit_menu_wanted() && __atomic_load_n(&g_texts, __ATOMIC_RELAXED); }
+
+void quit_menu_texts(int made, int archives, double ms, const char *why) {
+    int set = rt_patch_set("quit_menu");
+    if (!RT_V111) return;
+    if (!quit_menu_wanted()) {
+        rt_log("quit_menu: off (set quit_menu %s, NX2SARIA_QUIT_MENU): the game's menus have no Quit Game",
+               set < 0 ? "missing from this build" : "off");
+        return;
+    }
+    if (archives > 0 && made == archives) {
+        __atomic_store_n(&g_texts, 1, __ATOMIC_RELEASE);
+        rt_log("quit_menu: on (NX2SARIA_QUIT_MENU): Quit Game on the title screen and in the pause menu's Title Screen "
+               "confirmation; the game's own labels in %d message archives (%.0f ms)", archives, ms);
+        return;
+    }
+    rt_log("quit_menu: off: the labels are in %d of %d message archives (%s); the game's menus stay as they are", made,
+           archives, why && *why ? why : "no message archive in the RomFS");
+}
+
+static int add_labels(const uint8_t *sarc, size_t n, const char *member, const QmText *add, int nadd,
+                      const uint8_t **with, size_t *with_n, int count, uint8_t **made) {
+    unsigned next = 0;
+    size_t at, size;
+    *made = NULL;
+    if (sarc_next(sarc, n, member, &next, &at, &size) != 1 || (int)next - 1 >= count) return -1;
+    size_t out_n = 0;
+    int r = qm_msbt_add(sarc + at, size, add, nadd, made, &out_n);
+    if (r > 0) with[next - 1] = *made, with_n[next - 1] = out_n;
+    return r;
+}
+
+static int archive(uint8_t **sarc, size_t *n, char *why, size_t why_n) {
+    static const struct { const char *member, *label; } from[3] = {
+        {MSG_QUIT, LABEL_QUIT}, {MSG_PAUSE, LABEL_TITLE_SCREEN}, {MSG_SAVE, LABEL_CANCEL}};
+    const uint8_t *text[3];
+    size_t text_n[3], at, size;
+    for (int i = 0; i < 3; i++)
+        if (!sarc_member(*sarc, *n, from[i].member, &at, &size) ||
+            !qm_msbt_find(*sarc + at, size, from[i].label, &text[i], &text_n[i]) || !text_n[i]) {
+            snprintf(why, why_n, "%s has no %s", from[i].member, from[i].label);
+            return -1;
+        }
+    const QmText window[] = {
+        {"1010", text[1], text_n[1]}, {"1011", text[2], text_n[2]},
+        {"Pa_Button_02-T_Btn_00", text[0], text_n[0]}, {"Pa_Button_02-T_Btn_01", text[0], text_n[0]}};
+    const QmText title[] = {
+        {"Pa_Button_03-T_Btn_00", text[0], text_n[0]}, {"Pa_Button_03-T_Btn_01", text[0], text_n[0]},
+        {"Pa_Button_03-T_Btn_02", text[0], text_n[0]}, {"Pa_Button_03-T_BtnSh_00", text[0], text_n[0]}};
+    int count = sarc_count(*sarc, *n), result = -1;
+    if (count <= 0) {
+        snprintf(why, why_n, "the message archive is no SARC");
+        return -1;
+    }
+    const uint8_t **with = calloc((size_t)count, sizeof *with);
+    size_t *with_n = calloc((size_t)count, sizeof *with_n);
+    uint8_t *made[2] = {NULL, NULL};
+    if (!with || !with_n) {
+        snprintf(why, why_n, "out of memory");
+        goto done;
+    }
+    int a = add_labels(*sarc, *n, MSG_WINDOW, window, 4, with, with_n, count, &made[0]);
+    int b = add_labels(*sarc, *n, MSG_TITLE, title, 4, with, with_n, count, &made[1]);
+    if (a < 0 || b < 0) {
+        snprintf(why, why_n, "%s is not the message file this expects", a < 0 ? MSG_WINDOW : MSG_TITLE);
+        goto done;
+    }
+    if (a + b == 0) {
+        result = 0;
+        goto done;
+    }
+    size_t rn = 0;
+    uint8_t *rebuilt = sarc_rebuild(*sarc, *n, with, with_n, &rn);
+    if (!rebuilt) {
+        snprintf(why, why_n, "the message archive cannot be laid out again");
+        goto done;
+    }
+    free(*sarc);
+    *sarc = rebuilt, *n = rn;
+    result = a + b;
+done:
+    free(made[0]);
+    free(made[1]);
+    free(with);
+    free(with_n);
+    return result;
+}
+
+int quit_menu_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, void **out, size_t *out_n, char *why,
+                    size_t why_n) {
+    *out = NULL;
+    int result = -1;
+    uint8_t *dics = NULL, *raw = NULL;
+    void *z = NULL;
+    ZSTD_DDict *dd = NULL;
+    ZSTD_CDict *cd = NULL;
+    unsigned id = ZSTD_getDictID_fromFrame(in, n);
+    size_t dn = 0, dic_at = 0, dic_n = 0;
+    if (id && (!(dics = zsdic_unpack(zsdic, zsdic_n, MAX_RAW, &dn)) || !zsdic_find(dics, dn, id, &dic_at, &dic_n))) {
+        snprintf(why, why_n, "no dictionary %u in Pack/ZsDic.pack.zs", id);
+        goto done;
+    }
+    if (id && (!(dd = ZSTD_createDDict(dics + dic_at, dic_n)) || !(cd = ZSTD_createCDict(dics + dic_at, dic_n, 3)))) {
+        snprintf(why, why_n, "dictionary %u of Pack/ZsDic.pack.zs cannot be loaded", id);
+        goto done;
+    }
+    unsigned long long rn = ZSTD_getFrameContentSize(in, n);
+    if (rn == ZSTD_CONTENTSIZE_UNKNOWN || rn == ZSTD_CONTENTSIZE_ERROR || !rn || rn > MAX_RAW) {
+        snprintf(why, why_n, "the message archive is not a zstd frame with a size");
+        goto done;
+    }
+    if (!(raw = malloc((size_t)rn))) {
+        snprintf(why, why_n, "out of memory");
+        goto done;
+    }
+    ZSTD_DCtx *dctx = ZSTD_createDCtx();
+    size_t got = !dctx ? 0 : dd ? ZSTD_decompress_usingDDict(dctx, raw, (size_t)rn, in, n, dd)
+                                : ZSTD_decompressDCtx(dctx, raw, (size_t)rn, in, n);
+    ZSTD_freeDCtx(dctx);
+    if (ZSTD_isError(got) || got != rn) {
+        snprintf(why, why_n, "the message archive does not decompress");
+        goto done;
+    }
+    size_t raw_n = (size_t)rn;
+    int changed = archive(&raw, &raw_n, why, why_n);
+    if (changed <= 0) {
+        result = changed;
+        goto done;
+    }
+    size_t cap = ZSTD_compressBound(raw_n), zn = 0;
+    ZSTD_CCtx *cctx = ZSTD_createCCtx();
+    if (cctx && (z = malloc(cap)))
+        zn = cd ? ZSTD_compress_usingCDict(cctx, z, cap, raw, raw_n, cd) : ZSTD_compressCCtx(cctx, z, cap, raw, raw_n, 3);
+    ZSTD_freeCCtx(cctx);
+    if (!z || !zn || ZSTD_isError(zn)) {
+        snprintf(why, why_n, "the message archive cannot be compressed again");
+        goto done;
+    }
+    *out = z, *out_n = zn, z = NULL;
+    result = 1;
+done:
+    free(z);
+    free(raw);
+    free(dics);
+    ZSTD_freeDDict(dd);
+    ZSTD_freeCDict(cd);
+    return result;
+}
+
+static int screen_is(uint64_t s, const char *want) {
+    uint64_t a = rd64(s + SCR_LAYOUT), lyt = ok_at(a, 0x88) ? rd64(a + 0x80) : 0, r = ok_at(lyt, 0x100) ? rd64(lyt + 0xf8) : 0,
+             name = ok_at(r, 0x20) ? rd64(r + 0x18) : 0;
+    size_t len = strlen(want) + 1;
+    return ok_at(name, len) && !memcmp((const void *)(uintptr_t)name, want, len);
+}
+
+static uint64_t focused_entry(void) {
+    uint64_t sys = rd64(MOD_MAIN_BASE + UI_SYSTEM);
+    if (!game_object(sys, UI_SCREENS + 8) || rd64(sys) != MOD_MAIN_BASE + UI_SYSTEM_VT) return 0;
+    uint64_t mgr = rd64(sys + UI_SCREENS);
+    if (!game_object(mgr, SM_FOCUS + 8)) return 0;
+    uint64_t focus = rd64(mgr + SM_FOCUS);
+    if (!game_object(focus, FM_CONTROL + 8)) return 0;
+    uint64_t ctl = rd64(focus + FM_CONTROL);
+    if (!game_object(ctl, CTL_FLAGS + 4)) return 0;
+    uint64_t e = rd64(ctl + CTL_FOCUSED);
+    return game_object(e, ENT_SCREEN + 8) ? e : 0;
+}
+
+static int entries_of(uint64_t s, uint64_t *out, int max) {
+    uint64_t head = s + SCR_HEAD;
+    int32_t off = (int32_t)rd32(s + SCR_LINK);
+    int n = 0, guard = 0;
+    if (off < 0 || off > 0x100) return 0;
+    for (uint64_t link = rd64(s + SCR_FIRST); link && link != head && guard < 64; link = rd64(link + 8), guard++) {
+        if (!ok_at(link, 16)) break;
+        uint64_t e = link - (uint64_t)off;
+        if (!ok_at(e, ENT_SCREEN + 8) || rd64(e + ENT_SCREEN) != s) continue;
+        if (n < max) out[n] = e;
+        n++;
+    }
+    return n;
+}
+
+static void describe(uint64_t s, char *out, size_t cap) {
+    uint64_t e[8];
+    int n = entries_of(s, e, 8), at = snprintf(out, cap, "state %d, %d entries:", rd8(s + SCR_STATE), n);
+    for (int i = 0; i < n && i < 8 && at > 0 && at < (int)cap; i++) {
+        uint64_t btn = rd64(e[i] + ENT_BUTTON), root = ok_at(btn, BTN_ROOT + 8) ? rd64(btn + BTN_ROOT) : 0;
+        int pane = ok_at(root, PANE_STRIDE);
+        at += snprintf(out + at, cap - at, " [%d] button flags %#x, pane %s alpha %.2f", i,
+                       ok_at(btn, BTN_FLAGS + 4) ? rd32(btn + BTN_FLAGS) : 0,
+                       pane && (rd32(root + PANE_FLAGS) & PANE_SHOWN) ? "shown" : "hidden",
+                       pane ? (double)rdf(root + PANE_ALPHA) : -1.0);
+    }
+}
+
+static void trace(const char *what, uint64_t s) {
+    static char last[2][600];
+    static int lines;
+    char now[600];
+    int slot = what[0] == 't';
+    if (!test_flag("log")) return;
+    describe(s, now, sizeof now);
+    if (!strcmp(now, last[slot])) return;
+    snprintf(last[slot], sizeof last[slot], "%s", now);
+    if (lines++ < 120) rt_log("quit_menu: %s: %s", what, now);
+}
+
+static void title_tick(uint64_t s) {
+    static int reported;
+    uint64_t e[TITLE_ENTRIES];
+    int n = entries_of(s, e, TITLE_ENTRIES);
+    uint32_t count = ok_at(s, TITLE_MENU + 1) ? rd32(s + TITLE_COUNT) : 0;
+    trace("title", s);
+    if (n != TITLE_ENTRIES || count != TITLE_ENTRIES) {
+        if (!reported++)
+            rt_log("quit_menu: title: the screen has %d entries and %u buttons, not %d: no Quit Game there", n, count,
+                   TITLE_ENTRIES);
+        __atomic_store_n(&g_title_ms, 0, __ATOMIC_RELEASE);
+        return;
+    }
+    uint64_t btn = rd64(e[TITLE_SPARE] + ENT_BUTTON), root = ok_at(btn, BTN_ROOT + 8) ? rd64(btn + BTN_ROOT) : 0;
+    if (!ok_at(root, PANE_STRIDE)) return;
+    if (test_flag("show")) {
+        uint32_t flags = rd32(root + PANE_FLAGS) | PANE_SHOWN, bf = rd32(btn + BTN_FLAGS) | BTN_ENABLED;
+        memcpy((void *)(uintptr_t)(root + PANE_FLAGS), &flags, 4);
+        memcpy((void *)(uintptr_t)(btn + BTN_FLAGS), &bf, 4);
+    }
+    int on = rd8(s + SCR_STATE) == SCR_OPEN && focused_entry() == e[TITLE_SPARE];
+    __atomic_store_n(&g_title_ms, on ? plat_now_ms() : 0, __ATOMIC_RELEASE);
+}
+
+static void window_tick(uint64_t s) {
+    static int open;
+    if (s != __atomic_load_n(&g_window, __ATOMIC_ACQUIRE)) return;
+    uint64_t e[WINDOW_ENTRIES];
+    int n = entries_of(s, e, WINDOW_ENTRIES), state = rd8(s + SCR_STATE);
+    trace("pause", s);
+    if (state == SCR_OPEN) open = 1;
+    if (open && state != SCR_OPEN) {
+        static int lines;
+        open = 0;
+        __atomic_store_n(&g_window, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&g_pause_ms, 0, __ATOMIC_RELEASE);
+        if (!__atomic_load_n(&g_quit, __ATOMIC_RELAXED) && lines++ < 16)
+            rt_log("quit_menu: pause: the confirmation closed without Quit Game (Title Screen or Cancel)");
+        return;
+    }
+    int on = n == WINDOW_ENTRIES && state == SCR_OPEN && focused_entry() == e[WINDOW_SPARE];
+    __atomic_store_n(&g_pause_ms, on ? plat_now_ms() : 0, __ATOMIC_RELEASE);
+}
+
+void quit_menu_screen_host(Cpu *c) {
+    uint64_t s = c->x[19];
+    if (!enabled()) return;
+    if (!main_hi) main_lo = MOD_MAIN_BASE, main_hi = MOD_MAIN_BASE + MAIN_SIZE;
+    if (!game_object(s, SCR_PROJ + 64)) return;
+    if (screen_is(s, "Title_00")) title_tick(s);
+    else if (screen_is(s, "SystemWindow_00")) window_tick(s);
+}
+
+void quit_menu_window_count_host(Cpu *c) {
+    float buttons = 2.0f;
+    uint64_t s = c->x[19];
+    if (enabled() && (uint32_t)c->x[20] == WINDOW_KIND_TITLE && !test_flag("nopause")) {
+        static int lines;
+        buttons = 3.0f;
+        __atomic_store_n(&g_window, s, __ATOMIC_RELEASE);
+        if (lines++ < 16)
+            rt_log("quit_menu: pause: the Title Screen confirmation opens with three buttons (Title Screen, Cancel, "
+                   "Quit Game)");
+    } else if (__atomic_load_n(&g_window, __ATOMIC_ACQUIRE) == s) {
+        __atomic_store_n(&g_window, 0, __ATOMIC_RELEASE);
+    }
+    uint32_t bits;
+    memcpy(&bits, &buttons, 4);
+    c->v[0] = bits;
+}
+
+void quit_menu_window_label_host(Cpu *c) {
+    int three = enabled() && c->x[21] == __atomic_load_n(&g_window, __ATOMIC_ACQUIRE);
+    c->x[3] = qm_window_label(three, (uint32_t)c->x[20], (uint32_t)c->x[19]);
+}
+
+static int armed(uint64_t now) {
+    uint64_t t = __atomic_load_n(&g_title_ms, __ATOMIC_ACQUIRE), p = __atomic_load_n(&g_pause_ms, __ATOMIC_ACQUIRE);
+    if (p && now - p < ARMED_MS) return AT_PAUSE;
+    if (t && now - t < ARMED_MS) return AT_TITLE;
+    return AT_NONE;
+}
+
+void quit_menu_poll(uint64_t *buttons) {
+    static QmPress press;
+    static volatile int32_t busy, held;
+    static int said;
+    const uint64_t a = 1ull << B_A;
+    if (!enabled()) return;
+    uint64_t now = plat_now_ms();
+    if (plat_xchg32(&busy, 1)) {
+        if (__atomic_load_n(&held, __ATOMIC_RELAXED)) *buttons &= ~a;
+        return;
+    }
+    int at = armed(now), chosen = 0, pass = test_flag("pass");
+    int swallow = qm_press(&press, at != AT_NONE, (*buttons & a) != 0, &chosen);
+    __atomic_store_n(&held, swallow && !pass, __ATOMIC_RELAXED);
+    if (swallow && !pass) *buttons &= ~a;
+    if (chosen && pass) {
+        rt_log("quit_menu: %s: Quit Game chosen; NX2SARIA_QUIT_MENU_TEST=pass gives the press to the game instead",
+               at == AT_TITLE ? "title" : "pause");
+    } else if (chosen && !plat_xchg32(&g_quit, 1)) {
+        __atomic_store_n(&g_chosen_ms, now, __ATOMIC_RELEASE);
+        rt_log("quit_menu: %s: Quit Game chosen%s", at == AT_TITLE ? "title" : "pause",
+               fs_save_busy() ? "; the game is saving, it closes once the save is written" : "; closing the game");
+    }
+    if (__atomic_load_n(&g_quit, __ATOMIC_RELAXED) && !said && !fs_save_busy()) {
+        said = 1;
+        uint64_t waited = now - __atomic_load_n(&g_chosen_ms, __ATOMIC_ACQUIRE);
+        if (waited > 50) rt_log("quit_menu: the save is written (%llu ms): closing the game", (unsigned long long)waited);
+        gfx_window_request_close();
+    }
+    plat_xchg32(&busy, 0);
+}

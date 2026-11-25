@@ -523,3 +523,19 @@ site changebank_hold main 3299d28 9100054a 9100054a 94701c42   # add x10, x10, #
 set camera_clearance NX2SARIA_CAMERA_CLEARANCE_FIX 1
 site camera_clearance main 71a844 bd451e6a bd451e6a 951e196f   # ldr s10, [x19, #0x51c] -> the same; bl page+0xe00
 site camera_clearance main 71b624 bd451e6e bd451e6e 951e15f7   # ldr s14, [x19, #0x51c] -> the same; bl page+0xe00
+
+# Quit Game in the game's own menus (runtime/ui/quit_menu.c). Three sites:
+# - main+0x2d13b0, the copy of the screen into x19 in every interface screen's update: the same cut and the same call
+#   (the page's +0xee0) as the set menu_mouse, so either set alone gives both their look at the screen.
+# - main+0x3405b04 in the system window's open (main+0x3405a00, x19 the window, w20 its kind): the fmov s0, #2.0 before
+#   the BtnNum animation's frame is set (main+0x2d2d90) for the kinds 2 and 3, the confirmations of a return to the
+#   title. The cut calls the page's +0xe20, which puts 2.0 or 3.0 in s0. The open saved its x30 in its prologue and
+#   the call that follows sets it again.
+# - main+0x3405bfc in the helper that gives a button of the window its text (main+0x3405bc0, x21 the window, w20 the
+#   button, w19 the number its label "10%02d" is made of): the mov w3, w19 before the label is formatted. The cut
+#   calls the page's +0xe10, which puts w19 or another label's number in w3. The helper saved its x30 too.
+# No word after either cut reads the flags before they are set again.
+set quit_menu NX2SARIA_QUIT_MENU 1
+site quit_menu main 2d13b0 aa0003f3 aa0003f3 952f3ecc    # mov x19, x0 -> mov x19, x0; bl page+0xee0
+site quit_menu main 3405b04 1e201000 946a6cc7            # fmov s0, #2.0 -> bl page+0xe20
+site quit_menu main 3405bfc 2a1303e3 946a6c85            # mov w3, w19 -> bl page+0xe10
