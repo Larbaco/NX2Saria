@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
+const { execFileSync } = require('node:child_process');
 const { _electron } = require('playwright-core');
 
 async function main() {
@@ -40,6 +41,31 @@ async function main() {
     await pick.click();
     await page.waitForFunction(() => !document.querySelector('#pick-game-folder').disabled);
     assert.equal(await location.textContent(), path.join(folder, 'NX2Saria'));
+    const valid = path.join(base, 'synthetic-game.nup');
+    const invalid = path.join(base, 'invalid.nup');
+    const repository = path.resolve(__dirname, '../..');
+    execFileSync('python3', [path.join(repository, 'tests', 'fixtures', 'worker_install_dump.py'), valid],
+      { cwd: repository, env: { ...process.env, PYTHONPATH: repository } });
+    await fs.writeFile(invalid, 'synthetic invalid metadata');
+    const dump = page.locator('#game-dump-proposal');
+    const pickDump = page.getByRole('button', { name: 'Escolher dump do jogo' });
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+    }, valid);
+    await pickDump.click({ timeout: 5000 });
+    await dump.getByText(valid, { exact: true }).waitFor({ timeout: 5000 });
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+    }, invalid);
+    await pickDump.click();
+    await page.getByText('O arquivo selecionado não é um dump válido do jogo.').waitFor({ timeout: 5000 });
+    assert.equal(await dump.textContent(), valid);
+    await app.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+    });
+    await pickDump.click();
+    await page.waitForFunction(() => !document.querySelector('#pick-game-dump').disabled);
+    assert.equal(await dump.textContent(), valid);
     assert.deepEqual(await fs.readdir(folder), ['unrelated.txt']);
     assert.equal(await fs.readFile(settings, 'utf8'), '{}');
   } finally {

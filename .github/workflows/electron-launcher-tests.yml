@@ -9,6 +9,7 @@ on:
       - launcher/**
       - tests/launcher_worker_test.py
       - tests/fixtures/worker_fake_game.c
+      - tests/fixtures/worker_install_dump.py
       - tests/fixtures/worker_restart_game.c
 
 permissions:

@@ -3588,6 +3588,11 @@ uses the saved path if present and otherwise asks `Layout.default_game_dir()`. A
 absolute existing directory and uses the shared `install_folder()` policy. The worker refuses the proposal
 during a Play, memory decision or job, and reports only the proposal's source or rejection in the log.
 
+`install_dump()` checks a picker result or saved choice with `launcher/gamefiles.py` `is_game_nup()`.
+The check recognizes the game's title in the container metadata. The build still validates the
+version and contents. No settings are changed, and the worker logs a selected, saved, unset or
+rejected outcome without the dump's filename.
+
 For Play, a memory decision has an attempt number. The worker rejects a stale answer and checks for another
 game before resuming. Mod rebuilds use the shared completion policy and wait for `finished` before resuming
 Play or reporting the result. Sequenced game events identify the session. They mark confirmed spawn, window

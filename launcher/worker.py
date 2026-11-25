@@ -7,7 +7,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import build, commit, game_session, jobs, locks, mods_job, play, saves, updater, versions, winsys
+from . import build, commit, game_session, gamefiles, jobs, locks, mods_job, play, saves, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context
 from .inspect_installation import inspect_installation
@@ -129,10 +129,8 @@ def action_log(ctx, counts, action, detail):
 
 
 def install_destination(ctx, request):
-    saved = ctx.settings.get('game_dir')
-    if saved and build.installed(saved):
-        return None
     if 'folder' not in request:
+        saved = ctx.settings.get('game_dir')
         if saved:
             return {'folder': saved, 'source': 'saved'}
         return {'folder': str(ctx.layout.default_game_dir()), 'source': 'default'}
@@ -140,6 +138,17 @@ def install_destination(ctx, request):
     if not isinstance(folder, str) or '\0' in folder or not Path(folder).is_absolute() or not Path(folder).is_dir():
         return None
     return {'folder': str(install_folder(folder)), 'source': 'selected'}
+
+
+def install_dump(ctx, request):
+    selected = 'file' in request
+    file = request['file'] if selected else ctx.settings.get('dump')
+    if (isinstance(file, str) and '\0' not in file and Path(file).is_absolute()
+            and Path(file).is_file() and gamefiles.is_game_nup(ctx.layout, file)):
+        return {'file': file, 'source': 'selected' if selected else 'saved'}
+    if not selected:
+        return {'file': None, 'source': 'unset'}
+    return None
 
 
 def defer_crash_offer(ctx, run, end):
@@ -456,17 +465,22 @@ def main(argv=None):
                         emit({'event': 'game_started', 'sequence': sequence, 'session': session})
                 else:
                     emit({'id': request['id'], 'result': {'status': prepared.status}})
-            elif request.get('method') == 'install_destination':
+            elif request.get('method') in ('install_destination', 'install_dump'):
+                choosing_dump = request['method'] == 'install_dump'
+                subject = 'dump' if choosing_dump else 'destination'
+                propose = install_dump if choosing_dump else install_destination
                 try:
-                    destination = None if run or job or pending else install_destination(ctx, request)
+                    saved = ctx.settings.get('game_dir')
+                    unavailable = run or job or pending or (saved and build.installed(saved))
+                    proposal = None if unavailable else propose(ctx, request)
                 except (OSError, ValueError, RuntimeError, TypeError, AttributeError):
-                    destination = None
-                if destination:
-                    action_log(ctx, counts, 'install', f'destination {destination["source"]}')
-                    emit({'id': request['id'], 'result': destination})
+                    proposal = None
+                if proposal:
+                    action_log(ctx, counts, 'install', f'{subject} {proposal["source"]}')
+                    emit({'id': request['id'], 'result': proposal})
                 else:
-                    action_log(ctx, counts, 'install', 'destination rejected')
-                    error(request['id'], 'invalid_destination')
+                    action_log(ctx, counts, 'install', f'{subject} rejected')
+                    error(request['id'], f'invalid_{subject}')
             elif request.get('method') == 'set_hide_while_playing':
                 value = request.get('value')
                 if type(value) is not bool:

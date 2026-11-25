@@ -199,6 +199,35 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('worker: install destination selected', log)
         self.assertIn('worker: install destination rejected', log)
 
+    def test_first_run_dump_proposal_checks_the_title_and_preserves_settings(self):
+        from fixtures.worker_install_dump import write_dump
+
+        root = Path(self.tmp.name)
+        valid = root / 'synthetic-game.nup'
+        wrong = root / 'different-title.nup'
+        write_dump(valid)
+        write_dump(wrong, title=1)
+        frames = [
+            {'id': 1, 'method': 'hello', 'protocol': 1},
+            {'id': 2, 'method': 'install_dump'},
+            {'id': 3, 'method': 'install_dump', 'file': str(valid)},
+            {'id': 4, 'method': 'install_dump', 'file': str(wrong)},
+        ]
+        result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)],
+                                input=''.join(json.dumps(frame) + '\n' for frame in frames),
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, empty, selected, rejected = map(json.loads, result.stdout.splitlines())
+        self.assertEqual(empty, {'id': 2, 'result': {'file': None, 'source': 'unset'}})
+        self.assertEqual(selected, {'id': 3, 'result': {'file': str(valid), 'source': 'selected'}})
+        self.assertEqual(rejected, {'id': 4, 'error': {'code': 'invalid_dump'}})
+        self.assertEqual((self.root / 'data' / 'launcher.json').read_text(), '{}')
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: install dump selected', log)
+        self.assertIn('worker: install dump rejected', log)
+        self.assertNotIn(valid.name, log)
+        self.assertNotIn(wrong.name, log)
+
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()

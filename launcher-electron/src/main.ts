@@ -202,6 +202,25 @@ app.whenReady().then(() => {
         !['default', 'saved', 'selected'].includes(result.source)) throw new Error('Unavailable');
     return result.folder;
   });
+  ipcMain.handle('install-dump', async (event, pick) => {
+    if (event.sender !== window.webContents || !worker || playing || typeof pick !== 'boolean' ||
+        (state?.status !== 'not_configured' && state?.status !== 'not_ready')) throw new Error('Unavailable');
+    const active = worker;
+    let options = {};
+    if (pick) {
+      const chosen = await dialog.showOpenDialog(window, {
+        properties: ['openFile'], title: 'Escolher dump do jogo',
+        filters: [{ name: 'Dump do jogo', extensions: ['nup'] }, { name: 'Todos os arquivos', extensions: ['*'] }],
+      });
+      if (chosen.canceled || !chosen.filePaths[0]) return null;
+      options = { file: chosen.filePaths[0] };
+    }
+    if (worker !== active || playing) throw new Error('Unavailable');
+    const result = await active.request('install_dump', options);
+    if (worker !== active || (result?.file !== null && (typeof result?.file !== 'string' ||
+        !path.isAbsolute(result.file)))) throw new Error('Unavailable');
+    return result.file;
+  });
   ipcMain.handle('play', async event => {
     if (event.sender !== window.webContents) return { error: 'unavailable' };
     log?.write('play', 'requested');

@@ -5870,6 +5870,9 @@ Linux compiles only this stand-in. Windows accepts the compiled fixture through 
 The first-run destination test checks the default, normalizes a selected nonempty folder and refuses a
 relative path without modifying settings or the chosen directory. `launcher-electron/ui-tests/first-run-synthetic.cjs`
 also checks the native dialog boundary, the displayed proposal and cancellation.
+The dump test uses `tests/fixtures/worker_install_dump.py` to generate valid header and table metadata
+without any game files. The worker distinguishes the expected title from another title. The window
+accepts the synthetic dump and preserves its proposal across a rejected selection or cancellation.
 
 Uses temporary launcher roots and child workers to check pre-validation without writes, including malformed settings,
 the versioned handshake, inspection, idle EOF, lock refusal and release, the unopenable-lock fallback, sanitized startup

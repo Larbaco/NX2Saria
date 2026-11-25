@@ -38,7 +38,7 @@ Milestones may overlap where dependencies allow; they do not authorize publishin
 Each entry stays open until implementation and the required verification are complete. Track automated results on Windows and Linux, owner-observed evidence where applicable, and remaining gaps. `docs/launcher.md` describes the existing behavior.
 
 - [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery.
-- [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The folder-proposal slice is covered by the Linux Electron first-run test and the worker's `test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder`. Dump, installation and validation remain open.
+- [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The installation job, automatic dump search and full preflight remain open.
 - [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection.
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. Electron still needs its own update flow and separately designed handover and rollback before parity.
@@ -71,9 +71,15 @@ the folder or save settings. The implementation will log each result as a defaul
 proposal. A synthetic installation will cover the default and a selected nonempty folder and verify that its
 files and settings are unchanged.
 
-Choosing a valid dump, creating the installation job and provisioning Python plus the active app on a machine
-without a launcher are subsequent slices. The proposed destination will be rechecked when installation is
-explicitly started.
+The dump picker opens a native file dialog and validates the selected file with the same NUP and title
+check as Tk. A valid saved choice can be shown when first run reopens. Cancel or a rejected selection
+keeps the previous proposal. Validation reads only the file's metadata, logs the result without its path
+and leaves the installation settings unchanged. Accepting a proposal confirms the game's identity.
+The installation job retains its version and content checks. Both the dump and the proposed destination
+will be rechecked when installation is explicitly started.
+
+Creating the installation job and provisioning Python plus the active app on a machine without
+a launcher are subsequent slices.
 
 ## Provisioning and handover design
 
