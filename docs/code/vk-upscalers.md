@@ -691,3 +691,412 @@ last two is read back. A reset at frame `reset_at`.
 - With `NX2SARIA_FSR3FG_PASS_TIMES=1`: each pass's share.
 - Last, as it is for the rest of a run (`NX2SARIA_FSR3FG_TEST_FAIL`): images that cannot be made turn frame generation
   off, nothing worse.
+
+## `runtime/vk/vk_ffx.h`
+
+What `runtime/vk/vk_ffx.cpp` and `runtime/vk/vk_ffx4.cpp` promise their callers, and the declarations of what
+`runtime/vk/vk_dlaa.c` gives every upscaler.
+
+`VkFfxImage`: `image` is level 0, layer 0, in `VK_IMAGE_LAYOUT_GENERAL`; `storage` says it was created with
+`VK_IMAGE_USAGE_STORAGE_BIT` (FSR writes it); `view` is a 2D view of level 0, layer 0 (the depth aspect for depth),
+which `runtime/vk/vk_fsr3.c` binds.
+
+`VkFfxCamera`: the scene camera FSR takes, from the frame's projection (`runtime/vk/vk_dlaa.c` `proj_planes()`): the
+vertical field of view in radians, the near and far planes' view distances (far: `VK_DLAA_FAR_INFINITE`, 1e8, for a
+projection without a far plane) and the metres in one unit of view space. A field of 0 is not known, and FSR then gets 1
+radian, 0.1, 1e8 and 1.
+
+From `runtime/vk/vk_dlaa.c`, on the thread that makes the upscalers' calls (its pass hooks):
+
+- `vk_dlaa_fsr3_boost()`: the share (0..1) of the extra sharpening FSR 3.1 gets at a render width w of an output width
+  ow.
+- `vk_upscaler_device_idle()`: a wait for the device to be idle, the queue lock held, before an upscaler frees what the
+  GPU may still use (`NX2SARIA_TRACE=perf`: "upscaler GPU waits", with those of `vk_upscaler_gpu_wait()`).
+- `vk_upscaler_idle_wait()`: `NX2SARIA_UPSCALER_IDLE_WAIT`: 1 waits for the device wherever an upscaler lets go of
+  something.
+- `vk_upscaler_let_go()`: after something was let go of: what the GPU is past goes (with `NX2SARIA_UPSCALER_IDLE_WAIT=1`
+  after a wait for the device, `vk_upscaler_settle()`).
+- `vk_upscaler_settle()`: a wait for the device, then everything let go of that a submission made so far names goes (a
+  present gate stays).
+- `vk_upscaler_gpu_wait()`: a refused creation: waits, without the device's idle, until the GPU is past timeline value v
+  (no further than the submissions made so far) and returns the value it is past; with `NX2SARIA_UPSCALER_IDLE_WAIT=1`,
+  or when that wait fails, a wait for the device.
+
+FSR 3.1:
+
+- `vk_ffx_load()`: 1 when FSR 3.1 upscaling can run: on Windows the library is there with its entry points (loaded
+  once); elsewhere the runtime's passes are made (`runtime/vk/vk_fsr3.c` `vk_fsr3_init()`: they need the device, so 0
+  before it exists, and asked again then).
+- `vk_ffx_available()`: whether FSR 3.1 upscaling can run in this build, for the settings menu: after `vk_ffx_load()`
+  ran, what it found; before, on Windows whether the library file is there, asked once without loading it, elsewhere
+  whether the runtime's passes may run (`vk_fsr3_available()`).
+- `vk_ffx_framegen_available()`: the same for frame generation.
+- `vk_ffx_upscale()`: records FSR 3.1 into cb: color (the scene light, render size), depth (D32F), mv (R16G16F, render
+  pixels, current to previous), out (the output size, RGBA16F, storage). jx, jy: the jitter the scene took, render
+  pixels. cam: the frame's camera. 0 on failure (the caller falls back as it does when DLSS fails).
+- `vk_ffx_release()`: before the device goes away (the device idle).
+- `vk_ffx_holds()`, `vk_ffx_release_idle()`: the upscale contexts of FSR 3.1 and FSR 4 (`runtime/vk/vk_dlaa.c`
+  `retire_idle()`): whether any is held, and all of them let go of (the caller's `vk_upscaler_let_go()` frees them once
+  the GPU is past them).
+- `vk_ffx_trim_idle()`: FSR 3.1's contexts that no upscale used in the last `recent` calls, let go of: room for an FSR 4
+  context whose creation failed, whose caller makes their memory free (`vk_ffx_dead_take()` after
+  `vk_upscaler_gpu_wait()`). Returns their count.
+- `vk_ffx_dead_take()`, `vk_ffx_dead_fence()`: the FSR 3.1 and FSR 4 contexts let go of (outside Windows FSR 3.1's are
+  `runtime/vk/vk_fsr3.c`'s): those whose last upscale's submission is at most `done` are destroyed (their count); the
+  highest such submission among those left (0: none).
+- `vk_ffx_proc_addr()`: the device's functions as the library is given them.
+- `vk_ffx_create()`, `vk_ffx_destroy()`, `vk_ffx_configure()`, `vk_ffx_query()`, `vk_ffx_dispatch()`: the API's calls
+  themselves, for `runtime/vk/vk_fg.cpp` (0 = `FFX_API_RETURN_OK`); the library is loaded first (`vk_ffx_load()`). C++
+  only, and not declared with `VK_FFX_NO_API`.
+
+FSR 4 (`runtime/vk/vk_ffx4.cpp`), which `vk_ffx_upscale()` runs in FSR 3.1's place when the setting asks
+(`NX2SARIA_FSR4`) and it runs here, falling back to FSR 3.1 when it fails:
+
+- `vk_ffx4_available()`: the libraries are there and list a 4.x version for the device; asked once, with the device,
+  from any thread (0 before the device exists).
+- `vk_ffx4_name()`: "AMD FSR 4.1.2" once `vk_ffx4_available()` found it.
+- `vk_ffx4_upscale()`: as `vk_ffx_upscale()`.
+- `vk_ffx4_holds()`: an FSR 4 upscale context is made. `vk_ffx4_release_idle()`: every one let go of.
+  `vk_ffx4_dead_take()`, `vk_ffx4_dead_fence()`: FSR 4's part of `vk_ffx_dead_take()` and `vk_ffx_dead_fence()`.
+- `vk_ffx4_failed()`: it failed `FAIL_MAX` times in a row: FSR 3.1 serves until `vk_ffx4_retry()`, which the menu calls
+  when FSR 4 is chosen again.
+- `vk_ffx4_trim()`: at each upscale: FSR 4's contexts unused for a while go.
+- `vk_ffx4_vram()`: FSR 4's upscale contexts and their video memory (`vk_ffx_vram()`).
+- `vk_ffx_fsr4()`: the setting asks for FSR 4 and it runs here: what `vk_ffx_upscale()` uses, for the menu.
+
+## `runtime/vk/vk_ffx.cpp`
+
+AMD FidelityFX through its API library (`amd_fidelityfx_vk.dll` next to the executable, loaded at run time): FSR 3.1
+temporal upscaling here, in the place of DLSS in `runtime/vk/vk_dlaa.c`, and the API's calls for frame generation
+(`runtime/vk/vk_fg.cpp`). The API's headers (`runtime/third_party/ffx_api/`) are C++ in places, hence this file. Nothing
+of it runs unless the upscaler or frame generation asks for FSR 3.1.
+
+AMD publishes that library for Windows only. The other builds upscale with the runtime's own build of FSR 3.1's passes
+(`runtime/vk/vk_fsr3.c`), which takes the same inputs, camera and sharpness, and generate frames with the runtime's own
+build of FSR 3.1's frame generation passes (`runtime/vk/vk_fsr3fg.c`, through `runtime/gfx/gfx_present.c`'s presenter).
+
+FSR 3.1 takes the same inputs `runtime/vk/vk_dlaa.c` makes for DLSS: the scene's light target (linear HDR), its D32F
+depth (0 near, 1 far, with the near and far planes of the frame's own projection, `runtime/vk/vk_dlaa.c`
+`proj_planes()`) and the camera motion vectors in render pixels from the current frame to the previous one, the
+convention both share, so the vectors go in unscaled.
+
+`g_loaded` and `g_present` hold what the settings menu may ask before anything has used FSR 3.1 (`vk_ffx_available()`),
+from any thread: what `vk_ffx_load()` found, and whether the library file is there (1 or 0; -1 while not asked). The
+library is `amd_fidelityfx_vk.dll` next to the executable (`library_path()`).
+
+Outside Windows `vk_ffx_load()` is the runtime's passes, made once the device exists (0 before, and asked again then).
+
+### `compute_pipelines()`, `graphics_pipelines()`
+
+The library's pipeline creates (`vk_ffx_proc_addr()`). It passes no pipeline cache, so a create that names none goes
+through the runtime's (`runtime/vk/vk_pipeline.c` `vk_pipeline_create_foreign()`); one that names a cache is the
+library's own business. `pipe_cache_on()` reads `NX2SARIA_FFX_PIPE_CACHE` once.
+
+### `create_counted()`
+
+`ffxCreateContext` with what it made in pipelines: the library compiles every pass of a context inside this call, on the
+thread that asked, so the line says what a context cost and where its pipelines came from.
+
+### `context_for()`
+
+One upscaling context per render size and output size, as AMD's own sample keeps them: it waits for the GPU and makes
+the context anew whenever the render resolution changes, and sets `FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION` only for its
+dynamic resolution mode. One context per output size that every mode of the menu ran on, with another render size at
+each dispatch and without that flag, preceded an access violation in AMD's driver inside FSR 4's dispatch at the first
+frame after a switch from 67 % to 100 % (`runtime/vk/vk_ffx4.cpp` keeps its contexts the same way).
+
+With the game's dynamic resolution on (`NX2SARIA_DYN_RES`, `runtime/pacing/dynres.c`), whose steps change the render
+size every few seconds, one context with that flag takes them all: it is made for every size up to the output's (and a
+scene at the output size).
+
+A context of another render size goes once it is not among the recent ones (`UP_RECENT`), so a switch keeps at most two
+of an output size for a few frames, and the game's second scenes, of another output size, keep their own. When all slots
+are taken, the least recently used one goes for the new size. The work of a context that goes may still be in flight: it
+is let go of (`retire_up()`) and destroyed once the GPU is past the submission of its last upscale (`g_dead`), without a
+wait for the device.
+
+- No infinite-depth flag: the game's far plane is finite (`runtime/vk/vk_dlaa.c` `proj_planes()`) and each dispatch
+  gives it.
+- `NX2SARIA_FFX_DEBUG=1` (test): the library checks the values of each dispatch and says what it finds (`message()`).
+- A creation refused while contexts let go of (this file's and FSR 4's) are still in flight: most often their video
+  memory, which a wait for the device freed before the creation up to 0.10.1. The GPU finishes with them
+  (`vk_upscaler_gpu_wait()`: those submissions only, not the device), they go, and the creation is tried once more, as
+  `runtime/vk/vk_ffx4.cpp` `context_for()` and `runtime/vk/vk_dlaa.c` `evaluate()` do, rather than the upscaler failing
+  for the run.
+- The context's video memory is asked for the memory report (`vk_ffx_vram()`); a provider that does not know the query
+  leaves it 0.
+
+`Up`, one context:
+
+- `mw`, `mh`, `ow`, `oh`: the render size it was made for (the largest it takes with `drs`); the output size.
+- `drs`: made for dynamic resolution (`FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION`).
+- `used`, `used_ns`: `up_tick` and the time when `context_for()` last returned it.
+- `vram`: its video memory as the library reported it at its creation, 0 not told.
+- `fence`: the submission of its last upscale (`vk_exec_recording_fence()`), 0 none.
+
+`UP_RECENT` (8): the contexts used in the last few calls stay: a frame makes one or two calls (the scene, and a second
+scene after it), so this is a few frames back. That is the policy only: a context that goes waits for the GPU through
+its fence, also when the command buffer that names it is not submitted yet.
+
+`UP_IDLE_NS` (90 seconds): a context no upscale used for this long goes (`trim()`): FSR 3.1's after a switch to FSR 4,
+and a second scene's (the pause screen's) a while after it closed.
+
+### `retire_up()`, `dead_release()`
+
+`g_dead`: the contexts let go of, destroyed once the GPU is past their last upscale (`vk_ffx_dead_take()`). Only the
+thread that makes the upscales (`runtime/vk/vk_dlaa.c`'s pass hooks) touches it; `vk_ffx_release()` at teardown.
+`dead_release()` is timed as "upscaler releases" (`NX2SARIA_TRACE=perf`).
+
+The list full, which the GPU's progress does not let happen: room after a wait for the device, or else all of them go as
+before this list existed, the device idle.
+
+### `image()`
+
+Windows only, for the library's dispatch (`vk_ffx_upscale()`); the other builds hand `runtime/vk/vk_fsr3.c` the images
+themselves.
+
+### `configure_keys()`
+
+`NX2SARIA_FFX_KEYS=<key>:<value>[,...]` (test): FSR 3.1's tuning constants for each new context
+(`FfxApiConfigureUpscaleKey` of the API's `ffx_upscale.h`: 0 velocity factor, 1 reactiveness scale, 2 shading change
+scale, 3 accumulation added per frame, 4 minimum disocclusion accumulation). The library reads the value through the
+pointer.
+
+### `vk_ffx_available()`
+
+The menu asks every frame: on Windows it looks for the file once, and leaves the loading to the first use. Elsewhere the
+answer is the runtime's passes': 1 until the device shows it cannot run them.
+
+### `vk_ffx_framegen_available()`
+
+Frame generation on Windows runs through the library's own API calls (`vk_ffx_create()` and the rest), so only where the
+library loads, and it needs a queue for the frame generation swapchain's presents (`vk_fg_has_queues()`). Elsewhere it
+runs through the runtime's passes and `runtime/gfx/gfx_present.c`'s presenter, wherever the device runs them.
+
+The answer there is `runtime/vk/vk_fsr3fg.c`'s: 1 until the device shows it cannot run the passes.
+
+### `vk_ffx_fsr4()`
+
+`NX2SARIA_FSR4` (default 0, live): FSR 4 where it runs (`runtime/vk/vk_ffx4.cpp`) and has not failed in a row, else FSR
+3.1.
+
+### `vk_ffx_dead_take()`
+
+Outside Windows it also takes the runtime's passes' contexts (`runtime/vk/vk_fsr3.c` `vk_fsr3_dead_take()`), FSR 3.1's
+there.
+
+### `vk_ffx_upscale()`
+
+- Each upscaler keeps a history of its own: the frame after a change from one to the other starts it anew, or it would
+  blend this picture with whatever that upscaler last saw.
+- `last` (3 or 4) is which one made the frame before.
+- When FSR 4 fails it says so, and FSR 3.1 makes this frame.
+- The sharpness slider (0-100) drives FSR's own RCAS, as it does for FSR 1. Below a render scale of three quarters it
+  goes towards the maximum, all the way from Performance down, where FSR 3.1 is soft (`runtime/vk/vk_dlaa.c`
+  `vk_dlaa_fsr3_boost()`, which has the measurements); 0 still turns it off.
+- Outside Windows the call goes to `runtime/vk/vk_fsr3.c` `vk_fsr3_upscale()` from here. On Windows: every image is in
+  GENERAL, which the backend reads as its unordered-access state, and is left there.
+- The frame's camera (`runtime/vk/vk_dlaa.c` `proj_planes()`).
+- The context's fence is the submission being recorded, taken after the dispatch: it was recorded into cb (a refusal
+  too, for all this side knows).
+
+### `vk_ffx_create()`
+
+The library's create, counted (`create_counted()`): never `runtime/vk/vk_fsr3.c`.
+
+### `vk_ffx_proc_addr()`
+
+What the library is handed as `ffxCreateBackendVKDesc.vkDeviceProcAddr`: the device's functions, with the two pipeline
+creates replaced by ours (`compute_pipelines`, `graphics_pipelines`) unless `NX2SARIA_FFX_PIPE_CACHE` is 0.
+
+### `vk_ffx_probe_cache()`
+
+`--probe-ffx-cache` (`runtime/host.h`): one FSR 3.1 upscaling context on the device, without a window or the game, and
+where its pipelines came from. The pipeline caches are those beside the executable, or `NX2SARIA_PIPELINE_CACHE`'s, and
+are saved as after a run, so a second run of the probe shows what the first one's files give (`tests/ffx_cache_check.py`
+runs it twice on a folder of its own). Fails when the context is not created, or when the library made no pipeline
+through the runtime's creates although they are on.
+
+- The first `vk_pipeline_*` call (`vk_pipeline_push_fn()`) reads the pipeline caches.
+
+### `vk_ffx_holds()`
+
+The upscaler is off (`runtime/vk/vk_dlaa.c` `retire_idle()`): FSR 3.1's and FSR 4's upscale contexts are let go of, made
+again at the next upscale; outside Windows FSR 3.1's are `runtime/vk/vk_fsr3.c`'s. The caller's `vk_upscaler_let_go()`
+frees them once the GPU is past them. Frame generation's contexts are not these.
+
+### `vk_ffx_release()`
+
+Teardown and the probe: the device is idle.
+
+### `vk_ffx_vram()`
+
+The memory report's FSR figures (`runtime/vk/vk_memory.c` `outside_log()`): the video memory of the upscaling contexts
+that exist, FSR 3.1's here and FSR 4's (`vk_ffx4_vram()`), as the library reported each at its creation, with their
+count; and frame generation's (`vk_fg_vram()`). The library allocates it itself, outside VMA. Read without a lock: a
+context made or destroyed meanwhile shows in the next report.
+
+## `runtime/vk/vk_ffx4_api.h`
+
+The entry points of AMD's FSR SDK 2.4 loader (`amd_fidelityfx_loader_vk.dll`, which `runtime/vk/vk_ffx4.cpp` loads), for
+`runtime/vk/vk_fg4.cpp`. C++ and Windows only, and never in one file with the API declarations of `runtime/vk/vk_ffx.h`:
+the two sets of headers name the same types with other layouts.
+
+- `vk_ffx4_api_versions()`: the versions the loader lists for one kind of context (a
+  `FFX_API_CREATE_CONTEXT_DESC_TYPE_*`) on this device, in its order, newest first: their count, at most cap. The names
+  are the library's memory. 0 without the loader, before the device exists, or when it lists none (an effect whose
+  library is not beside the executable).
+
+- `vk_ffx4_api_file()`: a file of that name is next to the executable (one of the SDK's libraries).
+
+- `vk_ffx4_api_create()`, `vk_ffx4_api_destroy()`, `vk_ffx4_api_configure()`, `vk_ffx4_api_query()`,
+  `vk_ffx4_api_dispatch()`: the API's calls (0 = `FFX_API_RETURN_OK`), valid once `vk_ffx4_api_versions()` returned a
+  count.
+
+## `runtime/vk/vk_ffx4.cpp`
+
+AMD FSR 4 (FSR Upscaling 4.x, the machine-learned upscaler) through the libraries of AMD's FSR SDK 2.4:
+`amd_fidelityfx_loader_vk.dll` and `amd_fidelityfx_upscaler_vk.dll` next to the executable, loaded at run time. The
+SDK's headers (`runtime/third_party/ffx_sdk/`) are at the paths they have in the SDK. FSR 3.1 and frame generation stay
+with `runtime/vk/vk_ffx.cpp` and the library of SDK 1.1.4: the two sets of headers name the same types with other
+layouts, so nothing of the API crosses between the two files, and `runtime/vk/vk_ffx.cpp` `vk_ffx_upscale()` calls in
+here first.
+
+The loader answers which upscaler versions it can run on a device (`ffxQueryDescGetVersions` with the device given):
+4.1.2, 3.1.6 and 2.3.4 on a Radeon the ML upscaler supports (RX 6000, 7000 and 9000 cards and some Ryzen APUs, with
+AMD's driver 26.10.1 or newer on Windows), 3.1.6 and 2.3.4 on any other. FSR 4 runs only where a 4.x version is listed,
+and its contexts are made with that version asked for by its id, so the loader cannot hand out another. Where it is not
+listed, or a context or a dispatch fails, `runtime/vk/vk_ffx.cpp`'s FSR 3.1 serves the frame as before.
+
+The inputs are the ones FSR 3.1 takes (`runtime/vk/vk_ffx.cpp`): the scene's light target in linear HDR, its D32F depth
+(not inverted, the far plane at infinity) and the camera motion vectors in render pixels from this frame to the previous
+one. FSR 4 needs no reactive or transparency mask.
+
+AMD publishes the SDK's libraries for Windows only: in any other build FSR 4 is never listed, `runtime/vk/vk_ffx.cpp`'s
+FSR 3.1 path is all there is, and the SDK's headers are not read. The file defines `VK_FFX_NO_API` before it includes
+`runtime/vk/vk_ffx.h`, which then leaves out the API declarations of the other set of headers.
+
+The state of the probe:
+
+- `g_lock`: the probe's lock: the menu asks from its thread, the replay from its own.
+- `g_state`: -1 not probed; 0 FSR 4 does not run here; 1 it does.
+- `g_off`: `FAIL_MAX` (4) failures in a row: FSR 3.1 serves until the menu asks again (`vk_ffx4_retry()`).
+- `g_version`: the id of the 4.x version the loader listed for the device.
+- `g_name`: "AMD FSR 4.1.2", for the menu and the log.
+- `g_failures`: contexts or dispatches that failed in a row.
+- `g_retry_ns`, `RETRY_NS` (2 seconds): after a context creation failed, FSR 3.1 serves the frames until the next try
+  this much later: a save loading fills the video memory with the area's textures for a few frames, and three tries in
+  three frames there turned FSR 4 off.
+
+### `beside_exe()`
+
+A library of the SDK next to the executable; 0 when the path does not fit.
+
+### `load()`
+
+Loads the SDK's loader from beside the executable. Under `g_lock`, once the device exists (-1 before: asked again
+later). `g_loader`, under `g_lock`: -1 not tried, 0 the loader is not there or does not load, 1 its entry points are in
+`A`. A loader not shipped beside this build is not logged: FSR 3.1 is what the menu offers.
+
+### `versions()`
+
+The versions the loader lists for one kind of context on this device, in its order: their count, at most cap. Under
+`g_lock`, the loader loaded. The first query asks for the count.
+
+### `probe()`
+
+Asks the loader for the device's upscaler versions. Under `g_lock`; -1 before the device exists. A version's name is
+"4.1.2", or "4.1.2 \*" for a version the driver brings; the name is the library's memory, so it is copied, without the
+driver's mark.
+
+### `create()`
+
+A context in `slot` for render sizes up to mw x mh and the output size ow x oh; NULL when it is not made.
+
+One context per render size and output size, kept as `runtime/vk/vk_ffx.cpp` `context_for()` keeps FSR 3.1's: a new
+render size makes a context of its own (50 to 70 ms and up to about 217 MiB of video memory) and the one before goes a
+few frames later, so a mode change costs a creation; with the game's dynamic resolution on one context with
+`FFX_UPSCALE_ENABLE_DYNAMIC_RESOLUTION` takes every step. Two other ways were tried:
+
+- Contexts kept for every mode tried piled up to six beside FSR 3.1's, and three creations that failed (the card out of
+  memory) turned FSR 4 off for the run.
+- One context for every render size preceded an access violation in AMD's driver inside the dispatch after a switch from
+  67 % to 100 %.
+
+The descriptors a context was made from stay with it, as the API asks ("must remain live until ffxDestroyContext"): in a
+`Made` of its own on the heap (zeroed, as the descriptors' `{}` were), so that a context let go of (`retire_up()`) keeps
+them until it is destroyed, once the GPU is past its last upscale (`g_dead`), while its slot already holds the next one.
+
+- The flags are HDR and auto exposure, with a finite far plane, as FSR 3.1's.
+- `NX2SARIA_FFX_DEBUG=1` (test): the library checks the values of each dispatch and says what it finds (`message()`).
+- The provider is asked for the version it runs: anything but a 4.x here means the loader gave another upscaler, and the
+  context, which the GPU never used, is destroyed at once.
+
+`Up`, one context: as in `runtime/vk/vk_ffx.cpp`, with `made`, the descriptors it was made from (calloc), freed after
+its destroy.
+
+`UP_RECENT` (8): contexts used this recently stay (as `runtime/vk/vk_ffx.cpp`'s): the policy only, as one that goes
+waits for the GPU through its fence. `UP_IDLE_NS` (90 seconds): a context no upscale used for this long goes
+(`vk_ffx4_trim()`): FSR 4's after a switch to FSR 3.1, and a second scene's (the pause screen's) a while after it
+closed.
+
+### `retire_up()`, `dead_release()`
+
+`g_dead`: the contexts let go of, destroyed once the GPU is past their last upscale (`vk_ffx4_dead_take()`): `handle` is
+the context, `aux` its `Made`. Only the thread that makes the upscales (`runtime/vk/vk_dlaa.c`'s pass hooks) touches it;
+`vk_ffx4_release()` at teardown. `dead_release()` is timed as "upscaler releases" (`NX2SARIA_TRACE=perf`).
+
+The list full, which the GPU's progress does not let happen: room after a wait for the device, or else all of them go as
+before this list existed, the device idle.
+
+### `context_for()`
+
+The context for a render size and an output size: the one made for them, else a new one, in a free slot or in place of
+the least recently used one; the others of that output size go once they are not recent. What goes is let go of and
+destroyed once the GPU is past it (`retire_up()`): its work may be in flight.
+
+A creation that fails is tried once more after every context not in use has gone, FSR 3.1's idle ones too
+(`vk_ffx_trim_idle()`), and the GPU has finished with them and with those let go of before: what it lacked was most
+often video memory. The creation needs their memory now, so this is a wait for the GPU to pass them all, this file's and
+FSR 3.1's (with `NX2SARIA_UPSCALER_IDLE_WAIT=1` for the device).
+
+### `failed()`
+
+Failures in a row: `FAIL_MAX` of them turn FSR 4 off until the menu asks for it again (`vk_ffx4_retry()`); a success
+starts the count again, so a creation that failed once in a while does not add up over a session.
+
+### `vk_ffx4_retry()`
+
+The menu chose FSR 4 again: after failures that turned it off, it is tried anew.
+
+### `vk_ffx4_trim()`
+
+Called at every upscale, with FSR 4 or FSR 3.1 (`runtime/vk/vk_ffx.cpp` `vk_ffx_upscale()`), on the thread that records
+them.
+
+### `vk_ffx4_upscale()`
+
+- After a failure FSR 3.1 serves until the next try (`g_retry_ns`).
+- Every image is in GENERAL, which the back end reads as its unordered-access state, and is left there.
+- The sharpness slider (`NX2SARIA_SHARPNESS`) drives the upscaler's own sharpening, as for FSR 3.1.
+- The frame's camera (`runtime/vk/vk_dlaa.c` `proj_planes()`), as FSR 3.1 gets it (`runtime/vk/vk_ffx.cpp`).
+- The context's fence is the submission being recorded, taken after the dispatch: it was recorded into cb (a refusal
+  too, for all this side knows).
+
+### `vk_ffx4_api_file()`
+
+The loader's calls for `runtime/vk/vk_fg4.cpp` (`runtime/vk/vk_ffx4_api.h`), this one and the `vk_ffx4_api_*` functions
+after it.
+
+### `vk_ffx4_release()`
+
+Teardown and the probe: the device is idle.
+
+### `vk_ffx4_release_idle()`
+
+The upscaler is off (`runtime/vk/vk_ffx.cpp` `vk_ffx_release_idle()`): every context is let go of.
+
+### `vk_ffx4_vram()`
+
+FSR 4's upscaling contexts that exist and their video memory, for the memory report (`runtime/vk/vk_ffx.cpp`
+`vk_ffx_vram()`).
