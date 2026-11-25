@@ -1,23 +1,3 @@
-"""Add to Steam (Customize Launcher): the game as a non-Steam shortcut in the player's Steam library, with the
-NX2Saria leaf icon and the game's title screen and logo as its pictures (launcher/gameart.py).
-
-Steam keeps the shortcuts of each account in <Steam>/userdata/<account id>/config/shortcuts.vdf, a binary key-value
-file: a map is 0x00 name 0x00 ... 0x08, a string 0x01 name 0x00 value 0x00, a 32-bit integer 0x02 name 0x00 value
-(0x07 is a 64-bit one). The file is the map "shortcuts" holding one map per shortcut, named "0", "1", ... Each holds
-appid, AppName, Exe, StartDir, icon, LaunchOptions and Steam's own fields; the other shortcuts are read and written
-back as they are, and a shortcut of ours already there (by its name or its id) is updated in place. Its pictures go
-into config/grid named by the shortcut's id: <id>p.png the cover, <id>.png the wide tile, <id>_hero.png the
-background, <id>_logo.png the logo, and the icon file the shortcut names. The id is CRC-32 of Exe and AppName as
-Steam writes them, with the top bit set.
-
-Steam reads the file when it starts and writes it back when it closes, so a running Steam would neither see the new
-shortcut nor keep it. Windows asks Steam to close and starts it again; Linux asks the player to close Steam first.
-
-The shortcut starts the launcher's pythonw.exe on data/steam_play.pyw, which starts this launcher with --play: the game
-runs from its own folder with its console hidden, and the Python process waits for it, so Steam shows the game as
-running for as long as it is (the game's own Restart included). Starting ocarina.exe directly would open a console
-window beside the game, and NX2Saria.exe ends a few seconds after it started the launcher.
-"""
 import os
 import shutil
 import struct
@@ -53,13 +33,10 @@ class SteamError(Exception):
     pass
 
 
-# ---------------------------------------------------------------- binary VDF
-
 T_MAP, T_STR, T_INT, T_FLOAT, T_PTR, T_WSTR, T_COLOR, T_U64, T_END = 0, 1, 2, 3, 4, 5, 6, 7, 8
 
 
 def vdf_load(b):
-    """A binary VDF as a list of [type, key, value]; a map's value is such a list. Raises SteamError when malformed."""
     def cstr(at):
         end = b.index(b'\0', at)
         return b[at:end].decode('utf-8', 'surrogateescape'), end + 1
@@ -133,12 +110,10 @@ def _set(items, t, key, v):
 
 
 def appid(exe, name):
-    """The id Steam gives a shortcut: CRC-32 of its Exe and AppName fields with the top bit set (unsigned)."""
     return (zlib.crc32((exe + name).encode('utf-8')) & 0xFFFFFFFF) | 0x80000000
 
 
 def add_shortcut(vdf_bytes, exe, start_dir, options, icon, name=NAME):
-    """shortcuts.vdf (b'' for none) with our shortcut added or updated; returns (new bytes, id)."""
     items = vdf_load(vdf_bytes) if vdf_bytes else []
     root = _get(items, 'shortcuts')
     if root is None or root[0] != T_MAP:
@@ -154,7 +129,7 @@ def add_shortcut(vdf_bytes, exe, start_dir, options, icon, name=NAME):
                 (a and a[0] == T_INT and struct.unpack('<I', a[2])[0] == sid):
             entry = it[2]
             if a and a[0] == T_INT and len(a[2]) == 4:
-                sid = struct.unpack('<I', a[2])[0]   # retain Steam's per-app playtime, collections and artwork
+                sid = struct.unpack('<I', a[2])[0]
             break
     if entry is None:
         used = {it[1] for it in root[2]}
@@ -174,7 +149,6 @@ def add_shortcut(vdf_bytes, exe, start_dir, options, icon, name=NAME):
     _set(entry, T_STR, 'StartDir', start_dir)
     _set(entry, T_STR, 'icon', icon)
     _set(entry, T_STR, 'LaunchOptions', options)
-    # Steam's order: appid and the strings first, then the switches and tags
     order = ['appid', 'AppName', 'Exe', 'StartDir', 'icon', 'ShortcutPath', 'LaunchOptions']
     entry.sort(key=lambda it: order.index(it[1]) if it[1] in order else len(order) + (it[1] == 'tags'))
     if _get(entry, 'ShortcutPath') is None:
@@ -192,10 +166,7 @@ def has_shortcut(vdf_bytes, name=NAME):
         it[0] == T_MAP and (_get(it[2], 'AppName') or [0, 0, None])[2] in names for it in root[2]))
 
 
-# ---------------------------------------------------------------- Steam on this PC
-
 def find_steam():
-    """(Steam's folder, executable) or None. Linux checks the native and Flatpak data roots."""
     import sys
     if sys.platform.startswith('linux'):
         roots = steam_roots()
@@ -228,7 +199,6 @@ def find_steam():
 
 
 def steam_roots(home=None):
-    """Existing Linux Steam data roots, including native and Flatpak installs."""
     home = Path(home) if home is not None else Path.home()
     candidates = (home / '.steam' / 'steam', home / '.local' / 'share' / 'Steam',
                   home / '.var' / 'app' / 'com.valvesoftware.Steam' / '.local' / 'share' / 'Steam')
@@ -247,7 +217,6 @@ def steam_roots(home=None):
 
 
 def is_flatpak_root(root):
-    """Whether a Linux Steam root is inside the Steam Flatpak's private data directory."""
     parts = Path(root).parts
     return any(parts[i:i + 3] == ('.var', 'app', 'com.valvesoftware.Steam') for i in range(len(parts) - 2))
 
@@ -262,8 +231,6 @@ def flatpak_accounts(home=None):
 
 
 def accounts(folder):
-    """The config folders of the accounts that signed in to Steam on this PC (config/loginusers.vdf), else of every
-    account folder under userdata."""
     ud = Path(folder) / 'userdata'
     if not ud.is_dir():
         return []
@@ -283,7 +250,6 @@ def accounts(folder):
 
 
 def added(folder=None):
-    """True when an account of this PC has our shortcut."""
     import sys
     if sys.platform.startswith('linux'):
         roots = [Path(folder)] if folder else native_steam_roots()
@@ -308,7 +274,6 @@ def added(folder=None):
 
 
 def steam_running(proc_root='/proc'):
-    """Find the native launcher script, Steam executable, web helper, or Flatpak client in procfs."""
     import sys
     if sys.platform.startswith('linux'):
         try:
@@ -346,14 +311,13 @@ def steam_running(proc_root='/proc'):
 
 
 def close_steam(exe, timeout=45.0):
-    """Ask Steam to close and wait for it; False when it is still running after timeout seconds."""
     subprocess.Popen([str(exe), '-shutdown'], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL, creationflags=NO_WINDOW, close_fds=True)
     end = time.time() + timeout
     while time.time() < end:
         time.sleep(1)
         if not steam_running():
-            time.sleep(2)   # it writes its files on the way out
+            time.sleep(2)
             return True
     return False
 
@@ -365,9 +329,6 @@ def write_atomic(path, data):
 
 
 def add(layout, game_dir, dump='', log=print, restart=True):
-    """Add the game to Steam (or update its old NX2navi shortcut): the pictures from the player's game, the sprig
-    icon, the shortcut in every account's shortcuts.vdf, Steam closed first and started again. Returns the sentence
-    the launcher shows."""
     import sys
     if sys.platform.startswith('linux'):
         return _add_linux(layout, game_dir, dump, log)
@@ -392,7 +353,7 @@ def add(layout, game_dir, dump='', log=print, restart=True):
     script = layout.data / PLAY_SCRIPT
     write_atomic(script, PLAY_TEXT.encode('utf-8'))
     python = Path(layout.python) / 'pythonw.exe'
-    if not python.is_file():   # a checkout runs under its own interpreter
+    if not python.is_file():
         import sys
         python = Path(sys.executable).with_name('pythonw.exe')
     exe, start = f'"{python}"', f'"{layout.root}"'
@@ -424,10 +385,10 @@ def add(layout, game_dir, dump='', log=print, restart=True):
                 shutil.copyfile(vdf, cfg / 'shortcuts.vdf.nx2navi-backup')
             write_atomic(vdf, new)
             log(f'steam: shortcut {got} in {vdf}')
-    finally:   # Steam comes back also when a file could not be written
+    finally:
         if was_running and restart:
             subprocess.Popen([str(exe_steam)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL, creationflags=0x00000008, close_fds=True)   # detached
+                             stderr=subprocess.DEVNULL, creationflags=0x00000008, close_fds=True)
     if was_running and restart:
         return 'Added to Steam.'
     return 'Added. It shows up the next time you open Steam.'
@@ -438,7 +399,6 @@ def game_executable(game_dir):
 
 
 def _add_linux(layout, game_dir, dump, log):
-    """Write one Linux non-Steam shortcut per account, with Steam closed and a backup before each atomic update."""
     from . import gameart
     from .ui import art
     roots = steam_roots()

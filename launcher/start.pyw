@@ -1,20 +1,9 @@
-"""What NX2Saria.exe runs: python\\pythonw.exe app\\<version>\\launcher\\start.pyw [arguments].
-
-The embeddable Python puts only its ._pth entries on sys.path, so the release folder (the parent of launcher/) goes
-first here. A failure before the window is up is written to data/logs/crash.log and ends the process with exit code
-86, which tells the stub to go back to the previous version (launcher/native/nx2saria.c wWinMain). The stub waits
-six seconds for that code (QUICK_MS), so the failure is shown in a message box only when the stub has no version to
-go back to or no longer waits (quiet_exit): a box holds the exit code back until the player closes it, and a new
-version that could not start then stayed the current one.
-"""
 import os
 import sys
 import traceback
 
 APP = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STARTUP_FAILED = 86
-# The stub's wait for this process's exit code is QUICK_MS, 6 s (launcher/native/nx2saria.c start_release). An exit
-# this long after the process was made still reaches it, with a second to spare for the exit itself.
 STUB_WAITS = 5.0
 
 
@@ -23,9 +12,6 @@ def launcher_root():
 
 
 def rollback_target(root):
-    """The version the stub goes back to when this one ends with STARTUP_FAILED (launcher/native/nx2saria.c
-    wWinMain): the one app/previous.txt names, when it is another than this one and its folder holds a launcher.
-    '' when there is none."""
     try:
         with open(os.path.join(root, 'app', 'previous.txt'), encoding='utf-8-sig') as f:
             prev = (f.read().splitlines() or [''])[0].strip()
@@ -37,8 +23,6 @@ def rollback_target(root):
 
 
 def process_age():
-    """Seconds since Windows made this process, which is when the stub began to wait for it. Infinite where that
-    cannot be read, so that the failure is then shown rather than left to a stub that may have stopped waiting."""
     try:
         import ctypes
         from ctypes import wintypes
@@ -49,23 +33,17 @@ def process_age():
         if not k.GetProcessTimes(k.GetCurrentProcess(), *(ctypes.byref(t) for t in (made, ended, kernel, user))):
             return float('inf')
         k.GetSystemTimeAsFileTime(ctypes.byref(now))
-        ticks = [t.dwHighDateTime << 32 | t.dwLowDateTime for t in (made, now)]   # 100 ns each
+        ticks = [t.dwHighDateTime << 32 | t.dwLowDateTime for t in (made, now)]
         return max(0.0, (ticks[1] - ticks[0]) / 1e7)
     except Exception:
         return float('inf')
 
 
 def quiet_exit(root, argv, age):
-    """True when a failed start ends without a message box: the stub goes back to the previous version on the
-    exit code (rollback_target), and that version's home screen says which version did not start. Not when Steam
-    started this version without the stub (--play, launcher/steam.py PLAY_TEXT), and not once the stub has stopped
-    waiting (age, process_age): nobody acts on the exit code then, and without the box nothing would be seen."""
     return bool(rollback_target(root)) and '--play' not in argv and age < STUB_WAITS
 
 
 def short_paths(text):
-    """text with the account's folders written short (tools/private_paths.py), or as it is when that cannot load: the
-    failure being reported may be the one that keeps it from loading."""
     try:
         sys.path.insert(0, os.path.join(APP, 'tools'))
         import private_paths
@@ -75,8 +53,6 @@ def short_paths(text):
 
 
 def crash(text, box=True):
-    """The failure into data/logs/crash.log and, with box, into a message box that waits for the player. The account's
-    folders are written short in both (tools/private_paths.py): crash.log is attached to public issues."""
     text = short_paths(text)
     try:
         logs = os.path.join(launcher_root(), 'data', 'logs')
@@ -95,8 +71,6 @@ def crash(text, box=True):
 
 
 def run():
-    # The script folder is sys.path[0]. It contains the platform adapter package, whose name would shadow Python's
-    # standard-library platform module for third-party packages on Linux (for example zstandard on Python 3.12).
     script_dir = os.path.dirname(os.path.abspath(__file__))
     sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.curdir) != script_dir]
     sys.path.insert(0, APP)

@@ -1,6 +1,10 @@
 # needs: exe, gpu
 # args: {exe}
-"""Run the game executable's --probe-fsr3 with Vulkan's validation on (runtime/vk/fsr3_probe.c: FSR 3.1 upscaling with
+import os
+import subprocess
+import sys
+
+USAGE = """Run the game executable's --probe-fsr3 with Vulkan's validation on (runtime/vk/fsr3_probe.c: FSR 3.1 upscaling with
 the runtime's own passes, runtime/vk/vk_fsr3.c, on a synthetic panning scene, without a window or the game).
 
 The probe checks the passes' output against a supersampled reference and against bilinear, the jitter and motion
@@ -12,14 +16,11 @@ The executable needs a Vulkan device that runs the passes; without one the probe
 
 Usage: fsr3_check.py PATH_TO_GAME_EXE
 """
-import os
-import subprocess
-import sys
 
 
 def main():
     if len(sys.argv) != 2:
-        print(__doc__)
+        print(USAGE)
         return 2
     env = dict(os.environ)
     env['NX2SARIA_VK_VALIDATION'] = '1'

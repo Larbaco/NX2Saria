@@ -1,9 +1,4 @@
 # needs: clang
-"""Build and run tests/mouse_stick_check.c with runtime/input/input_map.c: the mouse camera's stick deflection at each camera
-speed. No game files.
-
-Usage: python tests/mouse_stick_check.py [--cc <clang>]
-"""
 import argparse
 import os
 import subprocess
@@ -12,12 +7,18 @@ import tempfile
 from pathlib import Path
 import runtime_include
 
+DESCRIPTION = """Build and run tests/mouse_stick_check.c with runtime/input/input_map.c: the mouse camera's stick deflection at each camera
+speed. No game files.
+
+Usage: python tests/mouse_stick_check.py [--cc <clang>]
+"""
+
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

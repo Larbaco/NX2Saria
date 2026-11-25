@@ -1,14 +1,3 @@
-"""The player's own background picture (Customize Launcher): read a picture file into a numpy array, fit it to the
-shape of the window below its title band and keep that copy in data/background.npy, so the launcher shows it without
-the file it came from. Fitting cuts the picture to that shape around its middle and scales it evenly: it is never
-stretched.
-
-Pillow reads the file where the launcher's Python has it (a release's does: tools/requirements-launcher.txt), turned
-the way its EXIF data says. Without Pillow (a checkout's Python may lack it), GDI+ reads it on Windows (PNG, JPEG,
-BMP, GIF, TIFF) and Tk elsewhere (PNG, GIF; the pixels come over as a PPM file). The kept copy is 8-bit RGB at
-KEEP_W x KEEP_H, 1.6 times the logical size of the window below the band: enough for a display scaled to 200 %,
-and four and a half megabytes on disk.
-"""
 import ctypes
 import os
 import tempfile
@@ -16,28 +5,23 @@ from pathlib import Path
 
 import numpy as np
 
-KEEP_W, KEEP_H = 1600, 928         # the window's 1000 x 580 below the title band, times 1.6
+KEEP_W, KEEP_H = 1600, 928
 MAX_SIDE, MAX_PIXELS = 16384, 120_000_000
 try:
     from PIL import Image, ImageOps
 except ImportError:
     Image = None
-# the file types the dialog offers: what the reader in use takes (load)
 TYPES = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.gif', '.tif', '.tiff') if Image else     ('.png', '.jpg', '.jpeg', '.bmp', '.gif', '.tif', '.tiff') if os.name == 'nt' else ('.png', '.gif')
 
 
 class PictureError(Exception):
-    """The file is no picture this PC can read; the text is for the player."""
-
-
+    pass
 def _too_large(path, w, h):
     return PictureError(f'{Path(path).name} is {w} x {h} pixels; the background takes up to {MAX_SIDE} pixels a side '
                         f'and {MAX_PIXELS // 1_000_000} megapixels.')
 
 
 def _load_pillow(path):
-    """The picture as an H x W x 3 uint8 array, read by Pillow and turned upright (a phone's photo says in its EXIF
-    data which way is up)."""
     try:
         with Image.open(path) as im:
             w, h = im.size
@@ -46,12 +30,11 @@ def _load_pillow(path):
             return np.asarray(ImageOps.exif_transpose(im).convert('RGB')).copy()
     except PictureError:
         raise
-    except Exception as e:   # Pillow raises its own errors, OSError and SyntaxError for files it cannot read
+    except Exception as e:
         raise PictureError(f'{Path(path).name} is not a picture the launcher can read: {e}') from None
 
 
 def _load_gdiplus(path):
-    """The picture as an H x W x 3 uint8 array, read by GDI+ (part of Windows)."""
     from ctypes import wintypes
 
     class StartupInput(ctypes.Structure):
@@ -87,14 +70,13 @@ def _load_gdiplus(path):
             raise _too_large(path, w, h)
         data = BitmapData()
         rect = (ctypes.c_int * 4)(0, 0, w, h)
-        # ImageLockModeRead, PixelFormat32bppARGB: GDI+ converts whatever the file holds
         if g.GdipBitmapLockBits(bmp, ctypes.byref(rect), 1, 0x26200A, ctypes.byref(data)) or not data.Scan0:
             raise PictureError(f'{Path(path).name} could not be decoded.')
         try:
             stride = abs(data.Stride)
             raw = np.frombuffer(ctypes.string_at(data.Scan0, stride * h), dtype=np.uint8).reshape(h, stride)
             bgra = raw[:, :w * 4].reshape(h, w, 4)
-            if data.Stride < 0:   # bottom-up rows
+            if data.Stride < 0:
                 bgra = bgra[::-1]
             return bgra[..., [2, 1, 0]].copy()
         finally:
@@ -106,9 +88,8 @@ def _load_gdiplus(path):
 
 
 def read_ppm(data):
-    """A binary PPM (P6, 8 bits a channel) as an H x W x 3 uint8 array."""
     fields, pos = [], 0
-    while len(fields) < 4:   # magic, width, height, maximum: separated by white space, comments from # to line end
+    while len(fields) < 4:
         while data[pos:pos + 1].isspace():
             pos += 1
         if data[pos:pos + 1] == b'#':
@@ -126,7 +107,6 @@ def read_ppm(data):
 
 
 def _load_tk(path, master):
-    """The picture read by Tk (PNG, GIF) and written out as a PPM, which is three bytes a pixel after a short header."""
     import tkinter as tk
     try:
         photo = tk.PhotoImage(master=master, file=str(path))
@@ -145,7 +125,6 @@ def _load_tk(path, master):
 
 
 def load(path, master=None):
-    """The picture file as an H x W x 3 uint8 array. master: a Tk window, needed where Tk reads the file."""
     if not Path(path).is_file():
         raise PictureError(f'{path} is not there.')
     if Image:
@@ -153,18 +132,16 @@ def load(path, master=None):
     if os.name == 'nt':
         try:
             return _load_gdiplus(path)
-        except OSError as e:   # no gdiplus.dll: Tk's own reader
+        except OSError as e:
             if master is None:
                 raise PictureError(f'{Path(path).name} could not be read: {e}') from None
     return _load_tk(path, master)
 
 
 def resize(img, w, h):
-    """img (H x W x 3) at w x h: whole pixels averaged first where it shrinks to less than half, then a bilinear
-    interpolation. Returns float32 when it interpolates."""
     H, W = img.shape[:2]
     k = min(H // h, W // w)
-    if k >= 2:   # average k x k blocks, so a much larger picture does not alias
+    if k >= 2:
         img = img[:H // k * k, :W // k * k].reshape(H // k, k, W // k, k, 3).mean(axis=(1, 3), dtype=np.float32)
         H, W = img.shape[:2]
     if (H, W) == (h, w):
@@ -183,14 +160,12 @@ def resize(img, w, h):
 
 
 def cover(img, w, h, as_float=False):
-    """img cut to the shape w : h around its middle and resized to w x h, so it fills the room with nothing
-    stretched; uint8, or float32 in 0..255 with as_float."""
     H, W = img.shape[:2]
-    if W * h > H * w:   # wider than the window: cut the sides
+    if W * h > H * w:
         cw = max(1, round(H * w / h))
         x = (W - cw) // 2
         img = img[:, x:x + cw]
-    else:               # taller: cut top and bottom
+    else:
         ch = max(1, round(W * h / w))
         y = (H - ch) // 2
         img = img[y:y + ch]
@@ -201,7 +176,6 @@ def cover(img, w, h, as_float=False):
 
 
 def keep(path, store, master=None):
-    """Reads the picture at path, fits it to the window's shape and writes it to store (data/background.npy)."""
     fitted = cover(load(path, master), KEEP_W, KEEP_H)
     store = Path(store)
     tmp = store.with_name(store.name + '.tmp')
@@ -212,7 +186,6 @@ def keep(path, store, master=None):
 
 
 def kept_shape(store):
-    """(height, width) of the kept background, or None."""
     try:
         a = np.load(store, mmap_mode='r', allow_pickle=False)
         return a.shape[:2] if a.ndim == 3 else None
@@ -221,8 +194,6 @@ def kept_shape(store):
 
 
 def kept(store, w, h):
-    """The kept background at w x h as float32 in 0..1, cut to that shape when it has another (one kept by an older
-    launcher for the whole window), or None when there is none (or it is not what keep wrote)."""
     try:
         a = np.load(store, allow_pickle=False)
     except (OSError, ValueError):

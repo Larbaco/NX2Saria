@@ -1,20 +1,3 @@
-"""Where the launcher keeps everything.
-
-An installed launcher (NX2Saria-Setup.exe puts it in %LOCALAPPDATA%\\Programs\\NX2Saria) is one folder:
-
-    NX2Saria.exe              launcher/native/nx2saria.c: starts python\\pythonw.exe on app\\<current>\\launcher\\start.pyw
-    python/                  the embeddable Python with tkinter, numpy, lz4 and zstandard (tools/make_launcher.py)
-    app/current.txt          the version the stub starts; app/previous.txt the one before it, kept for a rollback
-    app/<version>/           one release: launcher/, runtime/, recomp/, tools/, bin/, VERSION, toolchain.lock.json
-    pydeps/                  zbic, downloaded from PyPI on this PC (launcher/toolchain.py ensure_zbic)
-    toolchain/msys64/ucrt64  MSYS2's clang and libraries, downloaded from the MSYS2 repository on this PC
-    toolchain/pkgs/          the downloaded package files, kept while the lock names them
-    data/launcher.json       settings; data/logs/ logs; data/cache/ the fonts read from the player's game
-    game/                    the built game, unless the player picks another folder
-
-Run from a checkout of the repository (python -m launcher), the app folder is the repository and everything else goes
-to build/launcher-dev/, which git ignores.
-"""
 import os
 import sys
 from pathlib import Path
@@ -27,8 +10,6 @@ def _is_release_app(app):
 
 
 def ansi_safe(path):
-    """True when the path survives the Windows ANSI code page: the MSYS2 tools and the game's own build read their
-    arguments through it, so a folder name outside it breaks the build. Always True elsewhere."""
     if os.name != 'nt':
         return True
     try:
@@ -38,19 +19,11 @@ def ansi_safe(path):
         return False
 
 
-# Windows: a file's whole path may be 259 characters for the programs that do not ask for more, and the build's tools
-# (the MSYS2 compiler, linker and resource compiler, tar) are among them whatever the system's long path setting.
-# LONGEST_IN_GAME is the room the game folder's own files need below it: the longest path a built game folder held
-# was 106 characters (romfs-patches-playstation-label\System\Resource\ResourceSizeTable...rsizetable.zs), and a file
-# is written under a temporary name up to 22 characters longer before it gets its own.
 WINDOWS_PATH_MAX = 259
 LONGEST_IN_GAME = 128
 
 
 def long_path_problem(game_dir):
-    """'' when the files of a game built into game_dir fit Windows' path length, else the sentence that says how long
-    the folder's path is and how long it may be. Always '' elsewhere. Without it a build into a deep folder stops
-    somewhere in the middle with "file not found" for a file that is there."""
     if os.name != 'nt' or not game_dir:
         return ''
     n, most = len(os.path.abspath(str(game_dir))), WINDOWS_PATH_MAX - 1 - LONGEST_IN_GAME
@@ -62,8 +35,6 @@ def long_path_problem(game_dir):
 
 
 def fixed_drive(drive):
-    """True when drive (X:\\) is a fixed disk (GetDriveTypeW DRIVE_FIXED), not a network, removable or optical drive.
-    True where that cannot be asked."""
     if os.name != 'nt':
         return True
     try:
@@ -98,8 +69,6 @@ class Layout:
         self.cache = self.data / 'cache'
         self.downloads = self.data / 'downloads'
         self.settings = self.data / 'launcher.json'
-        # held by whichever process works in this folder: the window while it is open, launcher/cli.py for a command
-        # and every job that changes files (launcher/locks.py)
         self.instance_lock = self.data / 'launcher.lock'
         tool_root = self.root
         if not ansi_safe(tool_root):
@@ -119,8 +88,6 @@ class Layout:
         return v.read_text(encoding='utf-8').strip() if v.is_file() else '0.0.0'
 
     def default_game_dir(self):
-        """<root>/game, or a Games folder on the fixed drive with the most free space when the root's drive has
-        less than 40 GB free or the root's path would break the build."""
         here = self.root / 'game'
         try:
             import shutil
@@ -134,7 +101,7 @@ class Layout:
             import string
             for letter in string.ascii_uppercase[2:]:
                 drive = Path(f'{letter}:\\')
-                if not fixed_drive(drive):   # a mapped network share or a USB stick is no place for 30 GB of build
+                if not fixed_drive(drive):
                     continue
                 try:
                     free = shutil.disk_usage(drive).free
@@ -145,8 +112,6 @@ class Layout:
         return best[1] if best else here
 
     def python_for_builds(self):
-        """The console python.exe beside the launcher's pythonw.exe (no window: the build starts it with
-        CREATE_NO_WINDOW), or this interpreter in a checkout."""
         exe = Path(sys.executable)
         if os.name != 'nt' and not self.dev:
             bundled = self.python / 'bin' / 'python3'
