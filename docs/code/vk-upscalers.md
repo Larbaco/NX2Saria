@@ -1754,7 +1754,8 @@ picture after it, in the scaling modes the pass runs on the scene first and the 
 leaves the upscaler's TAA alone on the edges.
 
 The game's passes are known by a hash of their guest code (`vk_aa_role()`), which does not change with the translator or
-its settings. Everything here runs on the replay thread.
+its settings. Everything here runs on the threads that replay the game's commands (`vk_aa_mode()` is asked by each
+of them).
 
 `GAME_SMAA`: FNV-1a over the guest code of the game's three SMAA compute programs (`runtime/vk/vk_exec_draw.c`
 `cs_guest_hash()`), game 1.1.1, found with `NX2SARIA_AA_LOG=1`: the edges (a 4x4-pixel tile per invocation), the weights
@@ -1780,7 +1781,8 @@ idle work images (`work_idle()`, which two threads would have freed twice) and t
 frame claimed gets the mode as it stands.
 
 - `taa` is the game's SMAA with DLSS's or FSR's TAA; without them at work, the game's SMAA alone.
-- A game version or a frame without the passes this file knows: nothing is replaced, and the log says so once.
+- A game version or a frame without the passes this file knows: nothing is replaced, and the log says so once, after
+  3600 frames with a replacement asked for and none made.
 
 ### `vk_aa_composed()`
 
@@ -1798,14 +1800,16 @@ frame on, until a composition is replaced again: the game's composition must nev
 ### `work_idle()`
 
 SMAA's work images stayed for the rest of the run once aa left smaa: three pictures of the scene's size, 109 MiB at
-5120x2142. They go `WORK_IDLE` presents after the last frame that used them, through the deferred destruction (no
+5120x2142. They go `WORK_IDLE` (3600) frames after the last frame that used them, through the deferred destruction (no
 submission still names them then); smaa again makes them as a change of the scene's size does (`work_images()`), in the
 command buffer of its first frame. A minute, not less: the passes run only where the game runs its own SMAA, so a long
 pause or loading screen with smaa set also counts as unused, and the images are made again after it.
 
 ### `img_make()`
 
-An image of the passes' own, in the GENERAL layout from cb on (the transition is recorded into cb).
+An image of the passes' own, in the GENERAL layout from cb on (the transition is recorded into cb); one made to be
+uploaded into (the two tables) is left in `TRANSFER_DST_OPTIMAL`, and `tables_make()` takes it to GENERAL after the
+copy.
 
 ### `tables_make()`
 
@@ -1820,6 +1824,13 @@ SMAA's work images at the scene's size, made again when it changes.
 One pass: its pipeline, its images (samplers: linear but for the search texture) and the push constants.
 
 The descriptors are pushed through the recorder (`runtime/vk/vk_rec.h`).
+
+### `vk_aa_record()`
+
+Returns 0, and the game's composition runs, for `game`, an empty size or passes that could not be made. smaa whose
+tables or work images cannot be made runs as off, with one line in the log. off and fxaa are one pass
+(`runtime/shaders/aa_post.comp`, its mode 0 or 1); smaa is four: luma, edges, weights (the search texture through the
+nearest sampler) and the blend.
 
 ## `runtime/vk/vk_contact.c`
 
@@ -1849,9 +1860,13 @@ STORAGE usage when the setting is on (`runtime/vk/vk_texture.c` `create_tex()`).
 
 ### `is_gbuffer()`
 
-A G-buffer pass: a B10G11R11 scene colour, an R32F linear depth and a D32F depth, all one size, at least 640 wide.
+A G-buffer pass: a B10G11R11 scene colour, an R32F linear depth and a D32F depth, all one size, at least 640 wide. The
+scene colour must have been made with STORAGE usage, so a texture made before the setting was on does not count.
 
 ### `vk_contact_flush()`
+
+Nothing is recorded inside a pass, or when the camera block's values do not make sense (a sun direction of no length,
+projection scales not above 0, a far plane not above 1). The strength is read once, at the first pass of the run.
 
 - The submitting thread past a group (`runtime/vk/vk_exec.c` `NX2SARIA_REPLAY_PIPE`): the group's first chunk may have
   made the pass due and a later one records it where the replay would; only one still due after the group is this one's.
@@ -1927,7 +1942,8 @@ as the picture), 8 at most: a scene whose size changes from frame to frame can c
 Views of the images the pass samples are kept as long as the image: `vk_tonemap_forget()` drops those of an image
 `fallback_scratch` frees, and those of a game image the pass read as it is when the game's texture goes
 (`vk_exec_image_gone()`), which also gives their places back. Without the second, a game image's view stayed naming a
-destroyed image whose handle a new image could get. The texture's destroy runs on any thread, hence `tm_view_lock`.
+destroyed image whose handle a new image could get. The texture's destroy runs on any thread, hence `tm_view_lock`. At
+most 16 views are kept; a source past that gets none and the caller blits it.
 
 ### `vk_tonemap_record()`
 
@@ -3066,9 +3082,10 @@ Performance at a 1080p output renders 640 wide, smaller windows less.
 
 The setting and the upscaler:
 
-- `vk_dlaa_wanted()`: the setting is on (the device may still lack DLSS).
-- `vk_dlaa_fsr3()`: the setting is on and its upscaler is AMD FSR 3.1 (`NX2SARIA_TAA` = fsr3) instead of DLSS, which
-  loads.
+- `vk_dlaa_wanted()`: the setting was on when the run started (the device may still lack DLSS), or it is on now with
+  AMD FSR 3.1 as its upscaler while NGX is not up.
+- `vk_dlaa_fsr3()`: the setting is on, its upscaler is AMD FSR 3.1 (`NX2SARIA_TAA` = fsr3, NGX not up) instead of DLSS,
+  and FSR 3.1 can run (`vk_ffx_available()`).
 - `vk_dlaa_needs_restart()`: the menu's upscaler cannot start in this run.
 - `vk_dlaa_instance_exts()`, `vk_dlaa_device_exts()`, `vk_dlaa_init()`: for `runtime/vk/vk_device.c`: NGX's instance and
   device extensions join the lists (room for max names); `vk_dlaa_init()` after the device exists brings NGX up and
@@ -3077,8 +3094,8 @@ The setting and the upscaler:
   allocator and the device go (Linux): releases the NGX features and parameters, frees every image, buffer, pipeline and
   query pool DLAA made, resets its state for a later device and shuts NGX down for this one. Safe when NGX never came
   up, when nothing was made, and more than once. Windows: does nothing.
-- `vk_dlaa_available()`: 1 when dlaa is on and NGX came up with DLSS (after `vk_dlaa_init()`): a DLSS mode's smaller
-  scene is scaled up by DLSS.
+- `vk_dlaa_available()`: 1 when dlaa is wanted and its upscaler came up: NGX with DLSS (after `vk_dlaa_init()`), or
+  FSR 3.1 loaded. A DLSS mode's smaller scene is then scaled up by it.
 - `vk_dlaa_active()`: 1 while DLSS or FSR 3.1 runs on the scene (the setting is on, the upscaler came up and has not
   failed): it scales the scene itself, and `vk_dlaa_upscaler()` puts its picture over the stand-in's. The thread that
   records the frame asks.
@@ -3101,7 +3118,8 @@ What frame generation takes (`runtime/vk/vk_fg.cpp`, `runtime/vk/vk_fg4.cpp`, `r
 `runtime/vk/vk_dlssg.c`):
 
 - `vk_dlaa_fg_inputs()`: the depth and motion vectors of the frame DLSS or FSR 3.1 last ran on, with its jitter and
-  whether its history reset; 1 once per evaluation (0: none since the last call). The images stay valid until the next
+  whether its history reset; 1 once per evaluation (0: none since the last call, one made more than
+  `FG_INPUT_PRESENTS` presents ago, or the upscaler failed in this run). The images stay valid until the next
   frame's scene draws over them, after this present. Without an upscaler, while frame generation runs, the same of the
   last frame armed for it alone (`runtime/vk/vk_dlaa.c` `fg_only_frame()`): the scene's size, a jitter of 0.
 - `vk_dlaa_fg_only()`: 1 while frame generation runs without an upscaler and the frame is armed for its inputs alone
@@ -3875,7 +3893,7 @@ In the order of the function:
     after the per-object pass (`vk_mvcheck_final()`).
 11. The characters' own motion over the camera's (`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`). The deferred frame
     runs it on every frame that got this far. The game's frame runs it when its poses are ready
-    (`runtime/vk/vk_fg_pose.inc` `vk_fg_pose_prepare()`), and not on a frame that starts a new history, nor on the first
+    (`runtime/vk/vk_exec_draw.c` `vk_fg_pose_prepare()`), and not on a frame that starts a new history, nor on the first
     frame of another render size (`D.stepped`, `evaluate()`): that frame was left out before the history could stay
     across a size, and it still is.
 12. What the next frame and frame generation's poses read: the class and distance images swap, `chars_ok` and `dist_ok`
