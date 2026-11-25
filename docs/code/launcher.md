@@ -3,14 +3,13 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/context.py`, `launcher/jobs.py`,
-`launcher/locks.py`, `launcher/mods.py`, `launcher/mods_job.py`, `launcher/native/common.h`,
-`launcher/native/nx2saria.c`, `launcher/native/res.rc`, `launcher/native/setup.c`, `launcher/net.py`,
-`launcher/paths.py`, `launcher/platform/__init__.py`, `launcher/platform/linux.py`, `launcher/saves.py`,
-`launcher/settings.py`, `launcher/start.pyw`, `launcher/steam.py`, `launcher/telemetry.py`, `launcher/toolchain.py`,
-`launcher/ui/__init__.py`, `launcher/ui/app.py`, `launcher/ui/art.py`, `launcher/ui/picture.py`,
-`launcher/ui/selftest.py`, `launcher/ui/sound.py`, `launcher/updater.py`, `launcher/versions.py`,
-`launcher/winsys.py`, and `launcher/build.py`.
+names. These files still keep their comments until their notes are here: `launcher/context.py`,
+`launcher/native/common.h`, `launcher/native/nx2saria.c`, `launcher/native/res.rc`, `launcher/native/setup.c`,
+`launcher/net.py`, `launcher/paths.py`, `launcher/platform/__init__.py`, `launcher/platform/linux.py`,
+`launcher/saves.py`, `launcher/settings.py`, `launcher/start.pyw`, `launcher/steam.py`, `launcher/telemetry.py`,
+`launcher/toolchain.py`, `launcher/ui/__init__.py`, `launcher/ui/app.py`, `launcher/ui/art.py`,
+`launcher/ui/picture.py`, `launcher/ui/selftest.py`, `launcher/ui/sound.py`, `launcher/updater.py`,
+`launcher/versions.py`, `launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -638,6 +637,444 @@ written again whole, without a comment it had, as `runtime/cfg/cfg.c` `cfg_save_
 with the file unchanged, when it exists but cannot be read or the new one cannot be put in place. When the section's
 header is the file's last line and has no line end, it gets one before the new line goes under it.
 
+## `launcher/jobs.py`
+
+The launcher's long tasks, run on a worker thread: install, update, rebuild, the update check and the background
+staging of an update. Each job is a list of steps the window shows as rows; the window reads the job's state on a
+timer (`rev` changes on every change) and never blocks on it. The same jobs run without the window from
+`launcher/cli.py`. `BackgroundUpdate` decides when a staged update installs.
+
+- `RECHECK` (3600) is the seconds between update checks while the launcher stays open, hidden during play included.
+- `PLAIN_FAILURES` are failures whose message says all there is to say: the log gets one line for them
+  (`failure_line()`), not a traceback. A refused update check wrote 22 lines of two tracebacks into `launcher.log`
+  each time.
+- `MARKER` is `data/job-running.json`: the job that is writing into the game folder, from its start to its end
+  (`Job._main()`). A job that ends, also by Cancel or an error, removes it and has told its result on screen. One the
+  launcher was stopped in (closed by the system, a power cut, a crash) leaves it, and the next start says so
+  (`interrupted()`).
+- `SCAN_EXPECTED` are the game files `tools/romfs_check.py` reports as damaged on every copy of the game looked at so
+  far: they are that way in the game's own data, not through a player's dump, so a new dump does not change them. The
+  three textures get a stand-in; the game does without the fourth file.
+
+### `interrupted()`
+
+The job the launcher was stopped in, as it wrote it (`{'task', 'kind', 'game_dir', 'started'}`), or `None`. The marker
+is removed: it is told once. It must be called while this process holds the launcher folder's lock and runs no job, or
+the marker read is a running job's.
+
+### `running_job()`
+
+The job writing into the game folder as `MARKER` says it, or `None`. The marker stays. It is only worth asking while
+another process holds the launcher folder's lock: a marker that a launcher stopped in its job left behind reads the
+same (`interrupted()` tells that one and removes it).
+
+### `failure_line()`
+
+A failure in one line for the log: its kind, its message and what it came from.
+
+### `scan_summary()`
+
+`(the scan row's value, a sentence for the home screen)` for what the check of the game files found
+(`launcher/build.py` `scan_report()`); two empty strings when nothing is damaged. The files of `SCAN_EXPECTED` are
+told as what they are, the same ones as on every copy: the player learns what the check did and that nothing needs
+doing. Other files are counted and pointed to, without advice the check cannot back.
+
+### `prompt_rows()`
+
+The prompts row, for a version with button art (`tools/make_game.py` draws the prompts after the shaders), or none.
+
+### `Step`
+
+`pace` holds `(time, fraction)` of recent progress, at most 400 entries, for `Job.eta()`.
+
+### `Job`
+
+- `claims` is what the job changes while it runs, for the lock between jobs (`launcher/locks.py` `claim()`): `game`
+  is the game folder and the build tools, `app` the app folder's versions and the downloads. A job with claims also
+  holds the launcher folder's lock between processes while it runs; one without (the update check) changes no file and
+  runs beside anything.
+- `task` is the job as the holder of a lock is named (`Job.doing()`).
+- `result` is `None` while the job runs, then `ok`, `failed` or `cancelled`. `after` is what the window does next
+  (`restart`, ...). `note` is a sentence for the home screen after the job (`Job.note_scan()`).
+- `_lock` is held for every change of a step and of `rev`, and by a reader that wants the steps as one change left
+  them (`Job.locked()`). The worker, the thread that reads the build's output and the window's thread (cancel) all
+  change the job. It is reentrant: `progress()` begins a step, and every change ends in `Job._touch()`.
+
+### `Job.eta()`
+
+The step running now is estimated from its recent pace (its progress over the last minute, as a fraction per second),
+and the steps still to come from the seconds per weight of the steps already done. A job-wide fraction does not work:
+a step can take far more or less time than its weight says (Compile Changed Files is over half the weight of an update
+and can take seconds), and the shader step then read "about 1 minute left" with 20 minutes to go. A step's own average
+does not work either: Prepare the Shaders fills the first half of its bar with the translation and the second with the
+much slower build into the driver's cache.
+
+### `Job.locked()`
+
+The lock to read the steps under (`with job.locked():`): they are then as one change left them, a step's state with
+the value and fraction that belong to it. It is held only to copy what is read, never across a wait.
+
+### `Job._touch()`
+
+`rev` is counted up under the lock: `rev += 1` from two threads at once can write an older count back, and a reader
+that had seen the newer one then takes the next change for one it has drawn already. The job's last change is its
+result, so the window stayed on the job screen of a job that had ended.
+
+### `Job.log()`
+
+The line is written short first (`shorten()`): the job screen and Copy Report show these lines, with the account's
+folders short. The write to the launcher's log happens outside the lock, because it waits for the disk.
+
+### `Job.last_lines()`
+
+The last `n` lines of the job's output, copied under the lock: the thread that reads the build's output appends while
+the window draws them, and a deque changed while it is read raises.
+
+### `Job.doing()`
+
+The job in a few words ("the rebuild of the game"), for the one a lock refuses because of it.
+
+### `Job._hold()`
+
+Takes what the job needs to itself before it runs (`launcher/locks.py`): the launcher folder against other processes,
+then its claims against the other jobs of this one. It raises `Busy`, with nothing held, when either is taken, and
+returns what `Job._main()` lets go of when the job has ended.
+
+### `Job._mark()`
+
+Leaves `MARKER` for the time the job writes into the game folder; true when it was written.
+
+### `Job._main()`
+
+Every failure ends the job with a message; the log has the traceback (or one line, for `PLAIN_FAILURES`).
+
+### `Job.note_scan()`
+
+After a build: what the check of the game files found goes into its row, and when the check ran in this job, into the
+note the home screen shows and into the log. The check itself only printed its counts into the build's lines, which
+scroll away, so a player never learned that files were flagged or that stand-ins are in use. A check kept from an
+earlier build shows its count in the row only.
+
+### `Job.make_game()`
+
+Runs `tools/make_game.py`; its steps drive the job's through `step_map` (its step to the job's step id, or `None`).
+
+- A `progress` event with a `fraction` comes from a step that words its own progress (the shaders).
+- A Cancel pressed before the build started (while the tools were checked) found no process to stop: the job stops
+  just before it starts the process, and a Cancel pressed while the process starts stops it at once.
+
+### `InstallJob.args()`
+
+The arguments of `tools/make_game.py`. A game folder whose game files an earlier run already unpacked and checked
+(`launcher/build.py` `can_rebuild()` and `unpacked()`) is built on from those, for this processor's level as a first
+build is: the dump is not read again, so an install that stopped after the RomFS image goes on although the dump was
+moved or deleted since, and the 26 GB image is not packed a second time.
+
+### `InstallJob.run()`
+
+The check for a path too long (`launcher/paths.py` `long_path_problem()`) is repeated here for the command line; the
+window asks first (`launcher/ui/app.py` `App.begin_install()`).
+
+### `RebuildJob`
+
+`retune = True`: Rebuild the Game compiles the game's code for this processor's level (`launcher/build.py`
+`rebuild_args()`).
+
+### `ModsRebuildJob`
+
+Play with a mod whose code cheats or ExeFS patches the game was not built with (`launcher/mods.py` `code_waiting()`):
+the game is built again with them, compiling only what they change, and then starts (`launcher/ui/app.py`
+`App.play()`).
+
+### `UpdateDownloadJob`
+
+Before the restart: download, check and stage the release, then switch `app/current.txt` to it. A checkout runs from
+the repository and has nothing to switch to: there the job ends after the check, with `after` set to `staged`.
+
+### `ContinueUpdateJob`
+
+After the restart, in the new version: bring the tools to its lock and rebuild the game. `retune = False`: an update
+keeps the compiled game's level, so it compiles only what changed. Its claims are `game` and `app`: the rebuild, then
+`launcher/updater.py` `prune()` in the app folder.
+
+### `StageJob`
+
+A release downloaded, checked and unpacked beside the running version without switching to it (`launcher/updater.py`
+`stage()`), while the launcher runs and the game too. Its thread runs at background priority, so the game shares only
+the network with it. No screen shows it: the home screen's Updates row reads it.
+
+### `BackgroundUpdate`
+
+The update the launcher fetches by itself, and when it goes in ([launcher.md](../launcher.md#in-the-background)). The
+window calls `BackgroundUpdate.poll()` on its timer, `BackgroundUpdate.checked()` after each update check, and
+`BackgroundUpdate.install()` when the launcher starts, when the game exits, when a game that held an install up has
+closed, and when the player selects Updates.
+
+A newer release is staged once per update check (`StageJob`); a staging that fails is logged and tried again after the
+next check. A staged release installs only while no copy of the game runs, no job holds the window and no staging is
+under way, and by itself only with Install Updates Automatically on. Installing switches `app/current.txt` to it and
+restarts the launcher (`restart(args)`, the stub), whose new version finishes in `ContinueUpdateJob`. A checkout has
+nothing to switch to: there (`enabled` false) nothing is staged or installed.
+
+| Field | What it holds |
+|---|---|
+| `job` | the `StageJob` running, or the last one |
+| `tried` | the release staged, or found staged, since the last update check |
+| `asked` | the player selected Updates during the download: it installs once staged |
+| `waiting` | an install had to wait (the game ran, a download ran): the window tries again |
+| `restarting` | the last install restarted the launcher |
+| `error` | why the last install failed |
+
+- `BackgroundUpdate.ready()`: the staged release an install would take now (the dict of `launcher/updater.py`
+  `staged_info()`), or `None`. With `release` (the last check's answer), a staged release newer than it is passed
+  over: the feed no longer offers it.
+- `BackgroundUpdate.checked()`: an update check ended; the release it found is staged at the next poll, also one that
+  failed before.
+- `BackgroundUpdate.poll()`: reports a staging that ended (`staged` or `failed`), or starts staging the release when
+  it is newer than the running version and not staged yet (`started`); `None` when nothing changed. `busy` means a job
+  holds the window (an install, update or rebuild); staging waits for it, as an update's `prune()` clears the same
+  folders.
+- `BackgroundUpdate.install()`: installs the staged release now unless something stops it, and restarts into it.
+  `asked`: the player selected Updates (now or during the download), which Install Updates Automatically off does not
+  stop. `running`: the window knows the game runs (the process it started). `game_dir`: a copy started elsewhere counts
+  too (`launcher/build.py` `game_running()`). It returns the version installed, or an empty string (then `waiting` says
+  whether it is worth trying again). When the stub does not start, the new version runs at the launcher's next start.
+
+## `launcher/locks.py`
+
+Who may work in a launcher folder: one process at a time, and in that process one job at a time on the same thing
+([launcher.md](../launcher.md#one-launcher-one-job)).
+
+Two launchers on one folder each ran their own build into the same game folder, wrote the same settings and unpacked
+an update over each other. So:
+
+- `FileLock` is a lock between processes: a file locked by the operating system (`msvcrt.locking` on Windows, `flock`
+  elsewhere), which lets go of it when the process ends, however it ends. The window takes the one of its folder
+  (`instance_lock` of `launcher/paths.py` `Layout`) for as long as it is open, `launcher/cli.py` for a command, and every
+  job that changes files while it runs (`launcher/jobs.py` `Job`). A process that holds it already shares it with its
+  own jobs. Who holds it is written beside it (`<lock>.owner`), so that the one refused can say so.
+- `claim()` is the lock between the jobs of one process: a job names what it changes (the `claims` of
+  `launcher/jobs.py` `Job`: the game folder and its build tools, the app folder), and a second job on the same thing is
+  refused with the first one's name.
+
+Both refuse with `Busy`, whose text names the holder; neither waits (`FileLock` for a few seconds when asked to, for a
+launcher that is closing for its restart).
+
+`_files` maps a lock file's path to the open file and how many `FileLock`s of this process share it. `_claims` maps
+(folder, what is claimed) to who claimed it.
+
+### `_os_lock()`
+
+Locks the open file for this process without waiting. `OSError` when another open file holds the lock.
+
+### `owner()`
+
+Who holds the lock file, as its holder wrote it ("the launcher window (process 1234, since 14:02)"), or "another
+NX2Saria" when that cannot be read. It is only worth asking after the lock was refused: the note of a holder that has
+ended stays.
+
+### `FileLock`
+
+The lock file held for this process until `FileLock.release()` or the process's end. `what` says who holds it, for the
+one that is refused. It raises `Busy` ("<the holder> is using <where>"; `where` is the lock's folder unless given) when
+another process still holds it after `wait` seconds. A lock file that cannot be made or opened (a folder that cannot
+be written) locks nothing and refuses nobody: the launcher must still start there.
+
+- `FileLock._take()`: true when this process holds the file now (or cannot lock at all), false when another process
+  does.
+- `FileLock.release()`: lets go of the lock. The file is closed when the last `FileLock` of this process on it lets
+  go, and closing the file releases the operating system's lock. Calling it again does nothing.
+
+### `claim()`
+
+Claims each of `names` in the folder for `who` (a job's description), all or none. It raises `Busy` with the holder of
+the first one that is taken, and returns what `release_claim()` takes.
+
+## `launcher/mods.py`
+
+The game's mods folder, for the launcher's Mods screen and Play ([launcher.md](../launcher.md#mods)).
+
+The game reads `<game>/mods` (`mods_dir` in `nx2saria.ini` names another folder; an existing `nx2navi.ini` remains
+supported): one folder per mod, each part of it where `tools/mod_files.py` says (`runtime/patches/mods.c`). The load
+order and the switches are the game's own settings, `mods_order` and `mods_disabled` in `nx2saria.ini` (or its
+existing `nx2navi.ini`), which this module writes as `runtime/cfg/cfg.c` does: the top mod wins a file two mods
+replace, and a mod nobody switched off is on.
+
+A mod as players download it often does not sit that way, so `prepare()` puts the mods folder in order before the game
+starts, and `add()` does the same for an archive or a folder the player picks:
+
+- An archive in the mods folder (`.zip`; `.7z` and `.rar` through the system's `tar`, which reads them on Windows 10
+  and 11) is unpacked into a folder of its own name, unless that folder is there already. The archive stays: removing
+  the folder and the archive removes the mod, and switching it off keeps both.
+- A mod folder with nothing of a mod at its top and one folder inside, down to where the mod's parts are, gets that
+  folder's contents (an archive unpacked into a folder of its own name, holding the mod's folder).
+- A `romfs`, `romfslite`, `exefs` or `cheats` folder put straight into the mods folder becomes a mod of its own (the
+  Atmosphere layouts, `atmosphere/`, `contents/` and the title's folder, already are one as they are).
+
+Nothing is deleted: files only move inside the mods folder, and a mod that holds several folders with mod files (a
+download with options to pick from) stays as it is, with a note.
+
+Mods that change the game's code (code cheats, ExeFS patches) need the game built with them (the lift step of
+`tools/make_game.py`). `code_waiting()` names the enabled ones whose files the last build did not take in
+(`build-cache/mod-code.json`), and Play rebuilds the game first then. The build reads them from `<game>/mods` only.
+
+The import of `mod_files` from `tools/` comes after the path is set, hence its `# noqa: E402`, which stays.
+
+- `LOOSE_PARTS` are a mod's parts that are no mod when they sit straight in `mods/`.
+- `MOD_TOP` is what a folder holds at its top when a mod starts there (the places of `runtime/patches/mods.c`
+  `find_root()`).
+- `STAND_INS` ("Damaged file stand-ins") is the launcher's own mod (`tools/romfs_check.py`), shown as such.
+- `WINDOWS_DEVICES` are the names Windows keeps for devices, with or without an extension and in any case: a file
+  called so is the device.
+- `STAGING` (`.adding-mod`) is beside the mods folder: where `add()` puts a mod together before it moves in.
+  `STAGING_STALE` (24 hours, in seconds) is the age after which a staging folder is one a stopped launcher left.
+
+### `mods_dir()`
+
+The mods folder the game reads: `mods_dir` in `nx2saria.ini` or an existing `nx2navi.ini`, else `mods`.
+
+### `_quoted()`
+
+A value as `runtime/cfg/cfg.c` `put_value()` writes it: quoted when the blanks at its ends or the quotes around it
+would be lost.
+
+### `order()`
+
+The names in the game's order (`runtime/patches/mods.c` `by_order()`): the ones `wanted` names first, in its order,
+then the rest by name (byte order of their UTF-8, as `strcmp`).
+
+### `set_enabled()` and `move()`
+
+`set_enabled()` switches a mod on or off for the game's next start (`mods_disabled`); `move()` moves a mod `d` places
+up (negative) or down in the load order (`mods_order`). Both write the current settings file, or the existing legacy
+one.
+
+### `Mod`
+
+| Field | What it holds |
+|---|---|
+| `files` | RomFS paths it replaces, lower case, `/` separated (with details) |
+| `patches` | ExeFS patch files for this game's `main` |
+| `other_version` | ExeFS patch files for another version |
+| `cheat_file` | its cheat file for this game's `main` |
+| `code_module` | `subsdk*` or `main` in its `exefs`: code the port cannot run |
+| `other_game` | the title id of another game its Atmosphere folders name |
+| `several` | folders that each hold a mod (a download with options) |
+| `unsupported` | why the last build could not take an ExeFS patch file of it |
+| `waiting` | code the last build did not take in |
+
+`Mod.problem()` says why the game leaves this mod off whatever its switch says (`runtime/patches/mods.c` `scan_cb()`),
+and is empty when it does not.
+
+### `_same_build()`
+
+Whether `hex_id` (trailing zeros may be left out) names `main`'s build id; true when `main`'s is unknown, as in
+`runtime/patches/mods.c`.
+
+### `_pchtxt_build()`
+
+The build id a pchtxt file names (its last `@nsobid-` line before `@stop`), empty when none.
+
+### `_status()`
+
+`{key: (kind, note)}` of a build status file (`build-cache/exefs.status`, `tools/exefs_patches.py`).
+
+### `_mod_folders_below()`
+
+The folders under a folder (down to `depth` levels) that hold a mod at their top.
+
+### `scan()`
+
+The mods of the mods folder in the game's load order, with their switches; with `details`, what each holds.
+
+### `overlaps()`
+
+`{mod name: [(other mod name, files both replace, whether this one wins)]}` among the enabled mods with RomFS files:
+the mod higher in the load order wins a file two replace.
+
+### `built_code()`
+
+`{"<mod>/<path>": sha256}` of the mods' code the last build took in (`MOD_RECORD` of `tools/make_game.py`).
+
+### `code_waiting()`
+
+The enabled mods whose code cheats or ExeFS patches the game was not built with (or with other ones). Only the game
+folder's own mods folder is built from.
+
+### `_unique()`
+
+`folder / name`, or the first free "name 2", "name 3" and so on (for a file, "stem (2).txt" and so on).
+
+### `_merge_into()`
+
+Moves the entries of `src` into `dst` (made when missing) and removes `src`: a folder `dst` holds already is merged
+into, and a file of a name `dst` holds already moves in under a free name (a readme beside the wrapped folder).
+
+### `unwrap()`
+
+A mod folder with nothing of a mod at its top and one folder inside (files beside it, a readme, do not count), down to
+`UNWRAP_DEPTH` (4) levels until the mod starts: that folder's contents move up. True when it did.
+
+The chain's top folder may share its name with a folder of the mod (`MyMod/romfs/romfs`), so it is moved aside first.
+The mod's folders go up first, then whatever lay beside them on the way down (a readme), so nothing stays behind.
+
+### `windows_name_problem()`
+
+Why Windows cannot keep a file or folder under a name, empty when it can: a device's name (`CON`, `NUL.txt`), a dot or
+a space at its end (Windows drops them, so the file gets another name than the one the game asks for), or a character
+Windows does not allow (a colon makes a hidden stream of another file).
+
+### `_safe_members()`
+
+`ModError` when a file of an archive (its member names) would land outside the archive's own folder, or, on Windows
+(`windows=None` asks the system), under another name than its own or not at all (`windows_name_problem()`): unpacked
+all the same, such a file is missing where the game looks for it, with no word about it. The game for Linux reads such
+names as they are, so there they pass.
+
+### `unpack()`
+
+Unpacks an archive into `dest` (a new folder); `ModError` when it cannot be. A zip's unpacked size is compared with the
+free space first (`launcher/net.py` `space_problem()`), so a full disk is told before a file is written, not as an
+error halfway through.
+
+### `prepare()`
+
+Puts the mods folder in order for the game, as the notes at the top of this section say, and returns what it did, one
+sentence each.
+
+- An archive whose name Windows cannot keep as a folder is refused before the folder is looked for: Windows says a
+  device's name exists in every folder.
+- An Atmosphere layout straight in the mods folder is a mod as it is, and a link (or a junction) is the player's own
+  arrangement: neither is unwrapped.
+
+### `_staging()`
+
+A new, empty folder for `add()` to put a mod together in. It is beside the mods folder, not in it: the game and the
+launcher take every folder of the mods folder for a mod, and beside it is the same disk, so the finished mod moves in
+with one rename. It is the mods folder itself when nothing can be made beside it. What a launcher that was stopped in
+the middle left there a day ago or longer is removed.
+
+### `_move_in()`
+
+Renames the finished mod folder into the mods folder under `name`, or the first free name after it (looked for now,
+not before the copy: a folder of that name may have come meanwhile), and returns where it is.
+
+- `EXDEV` means the mods folder is on another disk than its parent (a mount, a junction): the folder is moved by
+  copying.
+- Another error is tried again after 0.3 s, three times in all: a scanner may still hold a file just written.
+
+### `add()`
+
+Adds an archive or a folder the player picked as a mod: unpacked or copied into the mods folder under its name (a free
+one), in order for the game. Returns the new mod's folder.
+
+The mod is put together in a folder beside the mods folder (`_staging()`) and moves in only when it is complete. A
+copy that stops halfway (a full disk, a file that cannot be read, the launcher closed) leaves nothing in the mods
+folder: copied straight into it, the half that had arrived was a mod of its own, switched on, at the game's next
+start. The staging folder is removed in a `finally`, so also on Ctrl+C and when the window closes.
+
+When the player picked the mod's `romfs` (or `atmosphere`) folder itself, a folder is made around it.
+
 ## `launcher/mods_job.py`
 
 `drop_build_cache()` removes the lifted sources and objects when the player does not keep the build cache, while
@@ -646,6 +1083,11 @@ jobs. `finish_mods_job()` applies this policy after a successful mod rebuild and
 mods. A cancelled or failed rebuild retains the waiting mod names and returns its result for the caller to choose the
 screen or retry. Tk preserves its existing result timing. A worker calls with `require_finished=True`, which returns
 `pending` without cleanup until the job has completed marker, claim and lock cleanup.
+
+### `drop_build_cache()`
+
+With Keep Build Cache off it deletes the lifted C and the objects (about 1.5 GB) but keeps `state.json`, which an
+update needs to rebuild without the dump; the next build then lifts and compiles everything again.
 
 ## `launcher/play.py`
 
