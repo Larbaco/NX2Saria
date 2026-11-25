@@ -513,7 +513,9 @@ elsewhere 0, and nothing is changed.
 
 ### `plat_clipboard_set()`, `plat_clipboard_get()`, `plat_open_folder()`
 
-The desktop: the in-game menu's "Copy system info" and "Open log folder". `plat_clipboard_set()` replaces the
+The desktop. `plat_clipboard_set()` and `plat_open_folder()` were written for the in-game menu's "Copy system info"
+and "Open log folder" rows; the menu has neither row now, and nothing in the game calls the two. `plat_clipboard_get()`
+is the menu's paste. `plat_clipboard_set()` replaces the
 clipboard's text; 1 on success. `plat_clipboard_get()`: the clipboard's text as UTF-8 in `out` (`cap` bytes with the
 NUL; a longer text: "" on Windows, cut at a character elsewhere); 1 when it had text. With SDL only on the window
 thread, as SDL asks: the menu goes through `gfx_window_paste()` (`runtime/ui/menu.h`). `plat_open_folder()` shows the

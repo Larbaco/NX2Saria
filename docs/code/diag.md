@@ -1980,7 +1980,9 @@ thread that may hold it); 0 when it was held and nothing was written.
 
 ## `runtime/diag/sysinfo.h`
 
-What a bug report needs about the machine, for the menu's "Copy system info" and "Open log folder".
+What a bug report needs about the machine. It was written for the menu's "Copy system info" and "Open log folder"
+rows, which the menu no longer has. Its callers now: the bug capture takes `sysinfo_text()` and `sysinfo_log_folder()`
+(`runtime/diag/bugcap.c`), and the performance panel and the session summary take `sysinfo_cpu_name()`.
 
 - `sysinfo_text()`: plain text, one item per line: OS and build, CPU, RAM, the GPU and its driver as the Vulkan
   device reports them, and every setting with a value (the selected settings file, the menu, the environment).

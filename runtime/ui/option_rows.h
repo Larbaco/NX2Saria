@@ -30,8 +30,6 @@ int opt_choice_index(const char *key, UiTextId label, const char *const *names, 
 void opt_apply(const char *key, const char *value);
 void opt_context(const char *key, UiTextId label, const char *from, const char *to);
 bool opt_button(const char *id, UiTextId label, UiTextId desc, const char *value = "");
-int opt_text_row(const char *id, const char *label, const char *value, const char *note, const char *desc,
-                 bool movable);
 bool opt_toggle_text(const char *id, const char *label, const char *desc, bool on, const char *value = nullptr);
 void opt_group_text(const char *title);
 void opt_text_str(const char *text, bool warn = false);
