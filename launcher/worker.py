@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 from . import commit, game_session, jobs, locks, mods_job, play, saves, updater, versions, winsys
+from .build import game_log_path, game_log_paths
 from .context import Context
 from .inspect_installation import inspect_installation
 from .paths import Layout
@@ -19,6 +20,44 @@ _input_buffer = bytearray()
 _output = None
 _output_disconnected = False
 _output_lock = threading.Lock()
+
+
+class GameWindowLog:
+    def __init__(self, game_dir):
+        self.game_dir = game_dir
+        self.identity = None
+        self.offset = 0
+        self.partial = b''
+        self.previous = {}
+        for path in game_log_paths(game_dir):
+            try:
+                info = path.stat()
+            except OSError:
+                continue
+            self.previous[(info.st_dev, info.st_ino)] = info.st_size
+
+    def focused(self):
+        path = game_log_path(self.game_dir)
+        try:
+            info = path.stat()
+            identity = (info.st_dev, info.st_ino)
+            if identity == self.identity and info.st_size == self.offset:
+                return False
+            with path.open('rb') as log:
+                info = os.fstat(log.fileno())
+                identity = (info.st_dev, info.st_ino)
+                if identity != self.identity:
+                    self.identity, self.offset, self.partial = identity, self.previous.get(identity, 0), b''
+                if info.st_size < self.offset:
+                    self.offset, self.partial = 0, b''
+                log.seek(self.offset)
+                data = self.partial + log.read(MAX_FRAME)
+                self.offset = log.tell()
+        except OSError:
+            return False
+        *lines, tail = data.split(b'\n')
+        self.partial = tail[:256]
+        return any(line.startswith(b'[host] gfx: window gained the focus at ') for line in lines)
 
 
 def emit(payload):
@@ -193,6 +232,7 @@ def main(argv=None):
         input_closed = threading.Event()
         threading.Thread(target=read_requests, args=(requests, input_closed), daemon=True).start()
         run = None
+        window_log = None
         job = None
         job_revision = -1
         failed_mods = []
@@ -250,6 +290,7 @@ def main(argv=None):
                                                'memory': {'remaining': memory.remaining, 'need': memory.need,
                                                           'unbounded': memory.unbounded}}})
                         elif prepared.status == 'ready':
+                            window_log = GameWindowLog(job_game_dir)
                             run, failure = play.start(ctx, prepared, job_game_dir)
                             if failure:
                                 action_log(ctx, counts, 'spawn', 'failed')
@@ -270,6 +311,7 @@ def main(argv=None):
                 defer_crash_offer(ctx, run, end)
                 code = run.code()
                 run = None
+                window_log = None
                 waiting = bool(updater.staged(layout, channel=ctx.settings.get('channel', 'stable'),
                                               skip=ctx.settings.get('rolled_back', '')))
                 ctx.log(f'worker: game ended update_waiting={waiting}')
@@ -280,6 +322,11 @@ def main(argv=None):
                       'update_waiting': waiting, 'code': code, 'alarm': end.alarm, 'message': end.message})
                 if _output_disconnected:
                     continue
+            elif run and window_log and not disconnected and window_log.focused():
+                window_log = None
+                ctx.log('worker: game window focused')
+                sequence += 1
+                emit({'event': 'game_window_ready', 'sequence': sequence, 'session': session})
             try:
                 timeout = 0.2 if parent and not disconnected else (1 if run or job else None)
                 kind, request = requests.get(timeout=timeout)
@@ -376,6 +423,7 @@ def main(argv=None):
                         continue
                     prepared.status = 'ready'
                 if prepared.status == 'ready':
+                    window_log = GameWindowLog(game_dir)
                     run, failure = play.start(ctx, prepared, game_dir)
                     if failure:
                         action_log(ctx, counts, 'spawn', 'failed')

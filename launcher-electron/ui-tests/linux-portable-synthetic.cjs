@@ -23,7 +23,7 @@ async function main() {
     await fs.writeFile(path.join(root, 'app', 'current.txt'), version);
     await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: true }));
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: version, steps: { compile: {} } }));
-    await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' 'FATAL: portable synthetic failure' > logs/nx2saria.log\nsleep 1\nexit 71\n", { mode: 0o755 });
+    await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' '[host] gfx: window gained the focus at synthetic time' > logs/nx2saria.log\nsleep 2\nprintf '%s\\n' 'FATAL: portable synthetic failure' >> logs/nx2saria.log\nexit 71\n", { mode: 0o755 });
 
     app = await _electron.launch({
       executablePath: path.resolve(executable),

@@ -14,6 +14,11 @@ mutation. `main.ts` validates inspection and Play responses and uses the worker 
 owns the launcher lock, reports waiting updates without applying them and continues following a game after the window
 closes. The worker uses the shared mod rebuild job when Play requires rebuilding mod code.
 
+`renderer.ts` shows the opening status as soon as Play is clicked and again when a required mod build resumes Play.
+`main.ts` waits for the worker's same-session `game_window_ready` event before allowing the saved hide preference to
+hide the launcher. The renderer then shows the game as running. A startup error replaces the opening status even
+when the game never reported focus.
+
 `launcher-electron/ui-tests/worker-synthetic.cjs` exercises inspection, two synthetic games, hide and restore,
 reselection, cancellation that disables Play, refusal while a job marker is present and closing the window during a third game, which finishes while the worker records its end. It also kills the worker during a synthetic game and checks that the window returns, Play is disabled and the game finishes. The folder dialog is stubbed. It uses temporary files and a fake
 executable, and is not a real-game test.

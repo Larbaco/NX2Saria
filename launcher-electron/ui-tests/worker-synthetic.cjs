@@ -13,18 +13,46 @@ const assert = require('node:assert/strict');
     await fs.mkdir(path.join(root, 'data'), { recursive: true });
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
+    await fs.mkdir(path.join(game, 'logs'), { recursive: true });
     await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: true }));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), 'v1');
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: 'test', steps: { compile: {} } }));
-    await fs.writeFile(path.join(game, 'ocarina'), '#!/bin/sh\nsleep 2\n', { mode: 0o755 });
+    const focus = "printf '%s\\n' '[host] gfx: window gained the focus at synthetic time'";
+    const gameLog = path.join(game, 'logs', 'nx2saria.log');
+    await fs.writeFile(gameLog, '[host] gfx: window gained the focus at synthetic time\n');
+    await fs.copyFile(gameLog, path.join(game, 'logs', 'nx2navi.log'));
+    await fs.writeFile(path.join(game, 'ocarina'), `#!/bin/sh
+mv logs/nx2saria.log logs/nx2saria.1.log
+for attempt in $(seq 1 100); do
+  if test -f window-can-open; then
+    ${focus} > logs/nx2saria.log
+    sleep 2
+    exit
+  fi
+  sleep 0.1
+done
+exit 2
+`, { mode: 0o755 });
     app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'), env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_LOG_SHORT_PATHS: '0' } });
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, root);
     await app.evaluate(({ dialog }) => { globalThis.workerWarnings = []; dialog.showMessageBox = async (_window, options) => { globalThis.workerWarnings.push(options.message); return { response: 0 }; }; });
     const page = await app.firstWindow();
+    const visible = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
     for (let round = 0; round < 2; round++) {
       await page.getByRole('button', { name: 'Jogar' }).click();
-      await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Abrindo'));
+      for (let tries = 0; tries < 60; tries++) {
+        const workerLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
+        if ((workerLog.match(/worker: spawn started/g) || []).length === round + 1) break;
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      const workerLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
+      assert.equal((workerLog.match(/worker: spawn started/g) || []).length, round + 1);
+      await new Promise(resolve => setTimeout(resolve, 1250));
+      assert.equal(await visible(), true, 'the launcher must stay visible after spawn while the game window is opening');
+      assert.equal(await page.locator('#status').textContent(), 'Abrindo o jogo…');
+      assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
+      await fs.writeFile(path.join(game, 'window-can-open'), '');
       let hidden = false;
       for (let tries = 0; tries < 30; tries++) {
         if (!await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())) { hidden = true; break; }
@@ -42,9 +70,9 @@ const assert = require('node:assert/strict');
       if (round === 0) assert.ok((await app.evaluate(() => globalThis.workerWarnings)).some(message => message.includes('atualização')));
       assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
       await page.waitForFunction(() => !document.querySelector('#play').disabled);
+      await fs.rm(path.join(game, 'window-can-open'));
     }
 
-    await fs.mkdir(path.join(game, 'logs'), { recursive: true });
     await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' 'FATAL: synthetic end detail' > logs/nx2saria.log\nsleep 1\nexit 71\n", { mode: 0o755 });
     await page.getByRole('button', { name: 'Jogar' }).click();
     await page.locator('#status').getByText('O jogo terminou com erro').waitFor({ timeout: 10000 });
@@ -79,7 +107,7 @@ const assert = require('node:assert/strict');
     await fs.rm(path.join(root, 'data', 'job-running.json'));
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
     await page.waitForFunction(() => !document.querySelector('#play').disabled);
-    await fs.writeFile(path.join(game, 'ocarina'), '#!/bin/sh\nsleep 2\nprintf done > survived-worker\n', { mode: 0o755 });
+    await fs.writeFile(path.join(game, 'ocarina'), `#!/bin/sh\n${focus} > logs/nx2saria.log\nsleep 2\nprintf done > survived-worker\n`, { mode: 0o755 });
     await page.getByRole('button', { name: 'Jogar' }).click();
     let workerPid = 0;
     for (let tries = 0; tries < 30 && !workerPid; tries++) {
@@ -91,7 +119,6 @@ const assert = require('node:assert/strict');
       if (!workerPid) await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.notEqual(workerPid, 0);
-    await page.waitForFunction(() => document.querySelector('#status').textContent.includes('Abrindo'));
     for (let tries = 0; tries < 30; tries++) {
       if (!await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible())) break;
       await new Promise(resolve => setTimeout(resolve, 100));
@@ -108,7 +135,7 @@ const assert = require('node:assert/strict');
     assert.equal(survived, true);
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
     await page.waitForFunction(() => !document.querySelector('#play').disabled);
-    await fs.writeFile(path.join(game, 'ocarina'), '#!/bin/sh\nsleep 2\nprintf done > game-finished\n', { mode: 0o755 });
+    await fs.writeFile(path.join(game, 'ocarina'), `#!/bin/sh\nmv logs/nx2saria.log logs/nx2saria.1.log\n${focus} > logs/nx2saria.log\nsleep 2\nprintf done > game-finished\n`, { mode: 0o755 });
     await page.getByRole('button', { name: 'Jogar' }).click();
     let started = false;
     for (let tries = 0; tries < 30; tries++) {
@@ -136,8 +163,9 @@ const assert = require('node:assert/strict');
     assert.doesNotMatch(electronLog, /electron: start version=/);
     assert.match(electronLog, /electron: inspection result=ready/);
     assert.match(electronLog, /electron: window shown/);
-    assert.equal((electronLog.match(/electron: window hidden_for_game/g) || []).length, 5);
-    assert.equal((electronLog.match(/electron: window restored/g) || []).length, 4);
+    assert.equal((electronLog.match(/electron: window hidden_for_game/g) || []).length, 4);
+    assert.equal((electronLog.match(/electron: window restored/g) || []).length, 3);
+    assert.equal((electronLog.match(/electron: play window_ready/g) || []).length, 4);
     assert.equal((electronLog.match(/electron: play requested/g) || []).length, 7);
     assert.equal((electronLog.match(/electron: play result=started/g) || []).length, 5);
     assert.equal((electronLog.match(/electron: play game_ended code=0 alarm=false/g) || []).length, 2);

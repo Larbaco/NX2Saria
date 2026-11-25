@@ -5799,6 +5799,10 @@ window records lock refusal and its corresponding exit under the same instance I
 checks that a code-71 exit displays the worker's FATAL detail and logs `ended_with_error`, while an
 unexecutable stand-in never starts and logs `could_not_start`. Neither row contains message text.
 
+The synthetic window test holds a stand-in game after spawn and leaves the last game's focus line in place.
+It checks that the launcher remains visible with the opening status and Play disabled. It then lets the stand-in
+rotate the log and report focus, and checks that the launcher hides and restores after that session.
+
 `launcher-electron/ui-tests/published-crash-offer-synthetic.py` drives the worker with a stand-in executable and
 the published 0.25.0 and 0.26.0-rc.1 app archives. The newer release receives a marker accepted by its own
 `pending()` reader after abnormal exit. Normal exit, opt-out and the older release leave no marker. The worker

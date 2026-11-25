@@ -134,7 +134,10 @@ app.whenReady().then(() => {
           notifyPlayEnded({ error: 'play_failed' });
         } else if (frame.event === 'game_started') {
           gameSpawned = true;
-          if (state?.hide_while_playing && !window.isDestroyed() && window.isVisible() && !window.isMinimized()) {
+        } else if (frame.event === 'game_window_ready' && !window.isDestroyed()) {
+          log?.write('play', 'window_ready');
+          window.webContents.send('game-window-ready');
+          if (state?.hide_while_playing && window.isVisible() && !window.isMinimized()) {
             window.hide();
             hidden = true;
             log?.write('window', window.isVisible() ? 'hide_failed' : 'hidden_for_game');

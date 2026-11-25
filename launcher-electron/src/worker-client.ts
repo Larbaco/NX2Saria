@@ -13,6 +13,7 @@ export class WorkerClient extends EventEmitter {
   private nextId = 1;
   private lastSequence = 0;
   private activeSession: number | null = null;
+  private windowReady = false;
   private activeJob: number | null = null;
   private buffer = '';
   private pending = new Map<number, Pending>();
@@ -62,7 +63,7 @@ export class WorkerClient extends EventEmitter {
           else if ('result' in frame) pending.resolve(frame.result);
           else throw new Error();
         } else if (typeof frame.event === 'string') {
-          if (!['game_started', 'game_ended', 'job_started', 'job_progress', 'job_ended', 'memory_required', 'play_failed'].includes(frame.event) ||
+          if (!['game_started', 'game_window_ready', 'game_ended', 'job_started', 'job_progress', 'job_ended', 'memory_required', 'play_failed'].includes(frame.event) ||
               !Number.isSafeInteger(frame.sequence) || frame.sequence !== this.lastSequence + 1 ||
               !Number.isSafeInteger(frame.session) || frame.session < 1) throw new Error();
           if (frame.event === 'job_started') {
@@ -78,6 +79,10 @@ export class WorkerClient extends EventEmitter {
           } else if (frame.event === 'game_started') {
             if (this.activeSession !== null || this.activeJob !== null) throw new Error();
             this.activeSession = frame.session;
+            this.windowReady = false;
+          } else if (frame.event === 'game_window_ready') {
+            if (this.activeSession !== frame.session || this.windowReady) throw new Error();
+            this.windowReady = true;
           } else if (frame.event === 'game_ended') {
             if (this.activeSession !== frame.session || typeof frame.update_waiting !== 'boolean' ||
                 typeof frame.alarm !== 'boolean' || !(frame.code === null || Number.isSafeInteger(frame.code)) ||

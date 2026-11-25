@@ -1,6 +1,6 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; fraction?: number }) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -46,15 +46,24 @@ function showPlayFeedback(result: PlayFeedback) {
   if (result.messageId !== undefined) window.launcher.playMessageShown(result.messageId, kind);
 }
 
+function showOpeningGame() {
+  statusElement.textContent = 'Abrindo o jogo…';
+  detail.textContent = 'Aguarde a janela do jogo aparecer.';
+}
+
 playButton.onclick = async () => {
   playButton.disabled = true;
   button.disabled = true;
-  statusElement.textContent = 'Abrindo o fluxo de jogo existente…';
+  showOpeningGame();
   try {
     const result = await window.launcher.play();
     if (!result.started) { button.disabled = false; showPlayFeedback(result); }
   } catch { button.disabled = false; showPlayFeedback({}); }
 };
+window.launcher.onGameWindowReady(() => {
+  statusElement.textContent = 'Jogo em execução';
+  detail.textContent = '';
+});
 window.launcher.onPlayEnded(result => {
   cancelJob.hidden = true;
   button.disabled = false;
@@ -70,6 +79,6 @@ window.launcher.onJobStatus(result => {
     statusElement.textContent = 'Preparando os mods para jogar…';
     detail.textContent = typeof result.fraction === 'number' ? `Progresso: ${Math.round(result.fraction * 100)}%.` : 'Aguarde a compilação ou cancele.';
   } else if (result.status === 'resuming') {
-    statusElement.textContent = 'Abrindo o jogo…';
+    showOpeningGame();
   }
 });

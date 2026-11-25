@@ -274,6 +274,13 @@ active game or job as for EOF. An installed worker checks the active app again u
 its `Layout` for tools and writes a runtime line through the existing path filter. `toolchain.zbic_ok()` probes the build
 interpreter with stdin closed to input so the probe cannot inherit the worker's protocol pipe.
 
+`worker.py` `GameWindowLog` starts at the end of any logs named by `build.py` `game_log_paths()` before spawn and
+reads bounded chunks of new bytes. This also skips a stale legacy log while the current log is being rotated.
+It restarts at the beginning when the game rotates or truncates the log. The worker emits `game_window_ready` once
+per tracked session upon reading the game's first focus-gained line while the process is still running. This signal
+comes from the game's native window events on Windows and SDL on Linux. If the game ends before reporting focus,
+the normal completion path still supplies its result. If focus is never reported, the Electron window remains visible.
+
 A packaged worker imports `tools/private_paths.py` from the installed release. `Context` uses its
 `shorten_always()` when present. If that export is missing, `Context` uses the installed helper's
 `Shortener` directly, independent of the local log switch. This preserves shortening for report text and

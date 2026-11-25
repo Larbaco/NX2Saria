@@ -249,10 +249,14 @@ def installed(game_dir):
 FATAL_TAIL = 256 << 10   # bytes of the game's log last_fatal reads from its end
 
 
+def game_log_paths(game_dir):
+    logs = Path(game_dir) / 'logs'
+    return logs / 'nx2saria.log', logs / 'nx2navi.log'
+
+
 def game_log_path(game_dir):
     """Use the new log path, or read an existing legacy log until the new path is present."""
-    logs = Path(game_dir) / 'logs'
-    current, legacy = logs / 'nx2saria.log', logs / 'nx2navi.log'
+    current, legacy = game_log_paths(game_dir)
     return current if current.is_file() or not legacy.is_file() else legacy
 
 
