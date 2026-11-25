@@ -242,19 +242,19 @@ class WorkerTest(unittest.TestCase):
         os.utime(old, (100, 100))
         os.utime(newest, (200, 200))
         release = base / 'allow-scan'
-        script = ("import runpy,sys,time\n"
+        script = ("import contextlib,runpy,sys,time\n"
                   "from pathlib import Path\n"
                   "from unittest import mock\n"
                   "from launcher import gamefiles\n"
-                  "from launcher.platform import linux\n"
                   "downloads,release=map(Path,sys.argv[2:])\n"
                   "def directories(extra):\n"
                   " until=time.monotonic()+10\n"
                   " while not release.exists() and time.monotonic()<until: time.sleep(0.025)\n"
                   " return [downloads]\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
-                  "with mock.patch.object(gamefiles,'candidate_dirs',directories), "
-                  "mock.patch.object(linux,'mounted_drives',return_value=[]):\n"
+                  "drives=(mock.patch('launcher.platform.linux.mounted_drives',return_value=[]) "
+                  "if sys.platform.startswith('linux') else contextlib.nullcontext())\n"
+                  "with mock.patch.object(gamefiles,'candidate_dirs',directories), drives:\n"
                   " runpy.run_module('launcher.worker',run_name='__main__')\n")
 
         def search(pick):
@@ -267,6 +267,7 @@ class WorkerTest(unittest.TestCase):
             def collect():
                 for line in worker.stdout:
                     frames.put(json.loads(line))
+                frames.put(None)
 
             threading.Thread(target=collect, daemon=True).start()
 
@@ -274,6 +275,8 @@ class WorkerTest(unittest.TestCase):
                 worker.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
                 worker.stdin.flush()
                 response = frames.get(timeout=10)
+                if response is None:
+                    self.fail(worker.stderr.read())
                 self.assertEqual(response['id'], request_id)
                 return response['result']
 
