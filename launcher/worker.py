@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import queue
+import runpy
 import sys
 import threading
 from pathlib import Path
@@ -86,6 +87,26 @@ def action_log(ctx, counts, action, detail):
         ctx.log(f'worker: {action} {detail}')
     elif count == MAX_ACTION_LOGS:
         ctx.log(f'worker: {action} further events suppressed')
+
+
+def defer_crash_offer(ctx, run, end):
+    if not run.kind:
+        return
+    layout = ctx.layout
+    try:
+        active = layout.app
+        if layout.dev:
+            version = updater.current(layout)
+            versions.parse(version)
+            active = (layout.apps / version).resolve()
+            if active.parent != layout.apps.resolve():
+                return
+        source = active / 'launcher' / 'crash_offer.py'
+        if source.is_file():
+            offer = runpy.run_path(str(source), run_name='launcher._installed_crash_offer')
+            offer['game_ended'](ctx.settings, run.game_dir, run.kind, run.asked, end.message, ctx.log)
+    except Exception:
+        ctx.log('worker: crash offer unavailable')
 
 
 def main(argv=None):
@@ -246,7 +267,8 @@ def main(argv=None):
                                   'reason': prepared.status})
             if run and not run.running():
                 end = game_session.finish_game(run, ctx.log)
-                code = None if run.proc is None else run.proc.returncode
+                defer_crash_offer(ctx, run, end)
+                code = run.code()
                 run = None
                 waiting = bool(updater.staged(layout, channel=ctx.settings.get('channel', 'stable'),
                                               skip=ctx.settings.get('rolled_back', '')))
@@ -255,7 +277,7 @@ def main(argv=None):
                     return shutdown_status
                 sequence += 1
                 emit({'event': 'game_ended', 'sequence': sequence, 'session': session,
-                      'update_waiting': waiting, 'code': code, 'alarm': end.alarm})
+                      'update_waiting': waiting, 'code': code, 'alarm': end.alarm, 'message': end.message})
                 if _output_disconnected:
                     continue
             try:

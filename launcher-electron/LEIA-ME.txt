@@ -15,3 +15,7 @@ NX2Saria Electron — teste privado para Windows x64
 Com este ZIP, só o resumo da última sessão fica disponível para
 envio. O launcher instalado é quem pode enviá-lo quando for aberto,
 se a opção de relatórios estiver ligada.
+
+Se o jogo encerrar com erro, uma instalação que tenha a oferta
+de log de crash pode mostrá-la ao abrir o launcher instalado,
+enquanto o log do jogo ainda for o da mesma sessão.

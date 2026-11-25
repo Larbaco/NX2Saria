@@ -80,7 +80,8 @@ export class WorkerClient extends EventEmitter {
             this.activeSession = frame.session;
           } else if (frame.event === 'game_ended') {
             if (this.activeSession !== frame.session || typeof frame.update_waiting !== 'boolean' ||
-                typeof frame.alarm !== 'boolean' || !(frame.code === null || Number.isSafeInteger(frame.code))) throw new Error();
+                typeof frame.alarm !== 'boolean' || !(frame.code === null || Number.isSafeInteger(frame.code)) ||
+                (frame.message !== undefined && (typeof frame.message !== 'string' || frame.message.length > 1024))) throw new Error();
             this.activeSession = null;
           } else if (this.activeJob !== null || this.activeSession !== null) throw new Error();
           this.lastSequence = frame.sequence;

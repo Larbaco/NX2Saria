@@ -279,6 +279,13 @@ A packaged worker imports `tools/private_paths.py` from the installed release. `
 `Shortener` directly, independent of the local log switch. This preserves shortening for report text and
 crash summaries on older installations even when their local logs include full paths.
 
+After `finish_game()` has finalized the log, `worker.defer_crash_offer()` calls `game_ended()` from the installed
+version's `launcher/crash_offer.py` for an abnormal session. It uses the worker's launcher package for relative
+dependencies and runs before a disconnected worker exits. If the installed module is absent, it does nothing.
+The installed function applies its existing eligibility, opt-out and log-identity rules. This only records a
+local marker for the installed launcher to pick up on its next open. Loading or writing an offer cannot stop
+the worker from reporting the game end.
+
 ### `mods_job.py`: mod rebuild completion
 
 `drop_build_cache()` removes the lifted sources and objects when the player does not keep the build cache, while

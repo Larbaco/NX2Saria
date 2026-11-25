@@ -832,7 +832,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): pass\n"
-                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -841,7 +841,7 @@ class WorkerTest(unittest.TestCase):
                   "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
                   "mock.patch.object(commit,'play_memory_request',return_value=None), "
                   "mock.patch.object(play,'start',return_value=(run,None)), "
-                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(game_session,'finish_game',return_value=game_session.GameEnd('','','',False)), "
                   "mock.patch.object(winsys,'keep_awake'):\n"
                   " runpy.run_module('launcher.worker',run_name='__main__')\n")
         worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
@@ -873,7 +873,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): pass\n"
-                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -882,7 +882,7 @@ class WorkerTest(unittest.TestCase):
                   "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
                   "mock.patch.object(commit,'play_memory_request',return_value=commit.MemoryRequest(100,200,False)), "
                   "mock.patch.object(play,'start',return_value=(run,None)), "
-                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(game_session,'finish_game',return_value=game_session.GameEnd('','','',False)), "
                   "mock.patch.object(winsys,'keep_awake'):\n"
                   " runpy.run_module('launcher.worker',run_name='__main__')\n")
         worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
@@ -916,7 +916,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): raise OSError(\"synthetic failure\")\n"
-                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -925,7 +925,7 @@ class WorkerTest(unittest.TestCase):
                   "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
                   "mock.patch.object(commit,'play_memory_request',return_value=None), "
                   "mock.patch.object(play,'start',return_value=(run,None)), "
-                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(game_session,'finish_game',return_value=game_session.GameEnd('','','',False)), "
                   "mock.patch.object(winsys,'keep_awake'):\n"
                   " runpy.run_module('launcher.worker',run_name='__main__')\n")
         worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
@@ -963,7 +963,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): time.sleep(.4)\n"
-                  "run=SimpleNamespace(running=lambda:False,proc=SimpleNamespace(returncode=0))\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='')\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -972,7 +972,7 @@ class WorkerTest(unittest.TestCase):
                   "mock.patch.object(mods,'code_waiting',return_value=['Example']), "
                   "mock.patch.object(commit,'play_memory_request',return_value=None), "
                   "mock.patch.object(play,'start',side_effect=lambda ctx,*a: ((ctx.layout.data/'unexpected-start').touch(),(run,None))[1]), "
-                  "mock.patch.object(game_session,'finish_game',return_value=SimpleNamespace(alarm=False)), "
+                  "mock.patch.object(game_session,'finish_game',return_value=game_session.GameEnd('','','',False)), "
                   "mock.patch.object(winsys,'keep_awake'):\n"
                   " runpy.run_module('launcher.worker',run_name='__main__')\n")
         worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,

@@ -49,7 +49,7 @@ All entries below are **not yet implemented or verified in Electron**. For each,
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
 - [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings.
 - [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. Electron still needs the existing question, choices, preview, comments, sending and recovery behavior before parity.
-- [ ] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. This remains outside the current worker milestone; no new sending or question is implemented here.
+- [ ] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. This remains outside the current worker milestone; no new sending or question is implemented here.
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
 - [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages.
 - [ ] CLI, locks and diagnostics: retain existing supported command-line use, concurrent-job rules, crash/interruption reporting and log privacy; explicitly evaluate how the new UI shares these resources.
@@ -225,7 +225,7 @@ GitHub Tests and Content guard passed for branch head `4024d86d`. Three addition
 - **Mod rebuild:** blocked by a package defect. A synthetic mod triggered `play status=rebuild` and `job started` through the window. The job returned `failed` before compilation. The bundled Python 3.11.9 lacks a Zstandard reader. The package also lacks the build tool at the path expected by its worker. This finding applies to the earlier ZIP with its own Python.
 - **Forced exit:** the first Windows attempt killed the command wrapper reported by Playwright. A corrected test identifies the packaged Electron executable as the worker’s parent and kills that exact PID. The old and replacement ZIPs both passed: an idle worker exited and a new window took the lock. With a game running, the worker stayed alive and another window reported busy until the game finished. Linux passed the same test using SIGKILL and pipe EOF. An independent Windows test kept the writer end of stdin open, killed the worker’s parent and observed the native `parent exit idle` signal and output closure.
 
-The replacement Windows ZIP ships the Electron application and CPython 3.14 worker bytecode. It uses the selected installation's distributed Python and the tools of the release in `app/current.txt`. The worker records the chosen interpreter path, Python version and app path through the existing private-path logger. If Python or the tools are missing or the runtime cannot load 3.14 bytecode, the window directs the player to update or repair with the installed launcher. A first installation starts with the current NX2Saria installer. The synthetic Windows window verified both messages. With the published Python 3.14.9 runtime, a synthetic build tool from the active app verified its own path and the interpreter path. Success resumed Play. Cancelling a second job released the job marker and did not launch again. The dependency probe of the build interpreter now opens stdin as DEVNULL so it cannot inherit the worker pipe. The full worker test module under the Windows release runtime had 44 passing cases and two platform skips. These checks used a fabricated toolchain and game, so the owner's real-game test remains pending. Updates, session reporting, the crash-log offer and migration remain separate milestones.
+The replacement Windows ZIP ships the Electron application and CPython 3.14 worker bytecode. It uses the selected installation's distributed Python and the tools of the release in `app/current.txt`. The worker records the chosen interpreter path, Python version and app path through the existing private-path logger. If Python or the tools are missing or the runtime cannot load 3.14 bytecode, the window directs the player to update or repair with the installed launcher. A first installation starts with the current NX2Saria installer. The synthetic Windows window verified both messages. With the published Python 3.14.9 runtime, a synthetic build tool from the active app verified its own path and the interpreter path. Success resumed Play. Cancelling a second job released the job marker and did not launch again. The dependency probe of the build interpreter now opens stdin as DEVNULL so it cannot inherit the worker pipe. The full worker test module under the Windows release runtime had 44 passing cases and two platform skips. These checks used a fabricated toolchain and game, so the owner's real-game test remains pending. Applying updates, sending session reports, showing the crash-log offer inside Electron and migration remain separate milestones.
 
 The first owner Windows attempt exposed a mismatch between the worker's imports and the published
 0.24.0-rc.1 tools. The release audit found that `private_paths.shorten_always()` was the only missing
@@ -240,6 +240,18 @@ The test build leaves report sending with the installed launcher. Only the most 
 available to that launcher after consecutive sessions in Electron. A change to when reports are sent is
 pending the owner's decision.
 
+After an abnormal end, the worker calls the selected installed release's crash-offer helper, if available,
+after the game log has been finalized. The helper keeps its existing eligibility and opt-out logic. The new
+window still delegates display and any sending to the installed launcher. The published 0.26.0-rc.1 helper
+created a readable marker in testing, while 0.25.0 had no helper and left no marker. None of these tests made
+a network request.
+
+The Linux x86-64 test archive ships the same Electron and worker application build as the Windows test
+ZIP. It uses the selected AppImage installation's Python and tools. For a read-only readiness check,
+call the same `inspect_installation()` used by the worker before opening the lock. A normal app session
+takes `data/launcher.lock`, records its owner in `data/launcher.lock.owner`, and writes to the launcher logs.
+The owner can test on Preview 0.26.0-rc.2 when it is available. Synthetic windows use Xvfb and a fake game.
+
 ### Worker implementation: handshake and inspection
 
 The first worker slice implements a bounded JSON-lines handshake with exact protocol version 1, validates the selected
@@ -252,8 +264,10 @@ handshake. The synthetic worker tests run on Windows with Python 3.11; they use 
 ## Development logging and dependency inventory
 
 Electron writes `data/logs/launcher-electron.log` for a recognized installation after the logs directory is available.
-It records the build hash and process ID, selection origin and brand, inspection and Play results, window visibility,
-second instance refusal and normal exit. Lines omit paths regardless of the Python log setting. Existing files over
+It records the build hash and process ID, selection origin and brand with the worker version, inspection and Play
+results, window visibility, second instance refusal, the Play message kind confirmed by the renderer and normal exit. A game that started and concluded with
+an error displays the worker's game-end sentence, which may include a FATAL detail. A spawn failure has a
+separate message. Lines omit paths regardless of the Python log setting. Existing files over
 1 MiB are reset on opening. The worker still writes its own events to the existing `launcher.log`. The synthetic
 window tests verify both logs, including the Electron rows for a second instance sharing the same file. See `docs/electron-launcher-notices.md` for the preliminary runtime and development-dependency license inventory; it is not release clearance.
 

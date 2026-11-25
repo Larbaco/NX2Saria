@@ -143,10 +143,10 @@ Downloaded on the player's PC, not distributed: zbic 1.0.1.post1 (GPL-2.0), from
 
 ## Electron development test runtime
 
-The private Windows Electron test includes the following components. Their bundled notice files also cover their own
+The private Windows and Linux Electron test archives include the following components. Their bundled notice files also cover their own
 third-party dependencies; this list does not replace those complete notices.
 
-| Component | Origin | License | Text in the test ZIP |
+| Component | Origin | License | Text in the test archive |
 | --- | --- | --- | --- |
 | Electron 45.4.1 | https://github.com/electron/electron | MIT | `LICENSE` |
 | Chromium 156.0.8078.100 and bundled components | https://chromium.googlesource.com/chromium/src | BSD-3-Clause and component licenses | `LICENSES.chromium.html` |

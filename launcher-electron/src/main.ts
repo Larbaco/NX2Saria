@@ -16,27 +16,26 @@ app.whenReady().then(() => {
   let worker: WorkerClient | null = null;
   let state: Inspection | null = null;
   let playing = false;
+  let gameSpawned = false;
   let hidden = false;
   let shown = window.isVisible();
   let log: DevelopmentLog | null = null;
   let logRoot: string | null = null;
+  let messageSequence = 0;
+  let pendingPlayMessage: number | null = null;
   window.once('show', () => {
     if (!shown) log?.write('window', 'shown');
     shown = true;
   });
-  function logSelection(root: string, origin: 'default' | 'manual'): boolean {
+  function attachLog(root: string) {
     if (logRoot !== root) {
       log = null;
       logRoot = root;
     }
     if (!log && findDefaultRoot([root])) {
-      log = createDevelopmentLog(root, app.getVersion(), process.platform, build, startedAt);
+      log = createDevelopmentLog(root, process.platform, build, startedAt);
       if (shown) log?.write('window', 'shown');
     }
-    const name = path.basename(root).toLowerCase();
-    const brand = name === 'nx2saria' ? 'NX2Saria' : name === 'nx2navi' ? 'NX2navi' : 'other';
-    log?.write('root', `picked origin=${origin} brand=${brand}`);
-    return Boolean(log);
   }
   function restoreWindow() {
     if (!window.isDestroyed() && hidden) {
@@ -45,6 +44,16 @@ app.whenReady().then(() => {
       log?.write('window', window.isVisible() ? 'restored' : 'restore_failed');
     }
     hidden = false;
+  }
+  function expectPlayMessage(): number {
+    pendingPlayMessage = ++messageSequence;
+    return pendingPlayMessage;
+  }
+  function notifyPlayEnded(result: object) {
+    if (!window.isDestroyed()) window.webContents.send('play-ended', { ...result, messageId: expectPlayMessage() });
+  }
+  function playRefused(error: string) {
+    return { error, messageId: expectPlayMessage() };
   }
   async function answerMemory(active: WorkerClient, result: Extract<PlayResult, { status: 'memory' }>): Promise<PlayResult> {
     const memory = result.memory;
@@ -60,14 +69,21 @@ app.whenReady().then(() => {
   async function selectRoot(root: string, origin: 'default' | 'manual'): Promise<Inspection> {
     const previous = worker;
     worker = null;
+    pendingPlayMessage = null;
     if (previous) await previous.close();
-    const selectionLogged = logSelection(root, origin);
+    attachLog(root);
+    let current: WorkerClient | null = null;
     function inspected(result: Inspection, outcome: string): Inspection {
-      if (!selectionLogged) logSelection(root, origin);
+      attachLog(root);
+      const name = path.basename(root).toLowerCase();
+      const brand = name === 'nx2saria' ? 'NX2Saria' : name === 'nx2navi' ? 'NX2navi' : 'other';
+      const version = current?.handshake.version ?? '';
+      const installedVersion = /^v?\d+(?:\.\d+)+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version) && version.length <= 40
+        ? version : 'unknown';
+      log?.write('root', `picked origin=${origin} brand=${brand} installed_version=${installedVersion}`);
       log?.write('inspection', outcome);
       return result;
     }
-    let current: WorkerClient | null = null;
     try {
       const { source, python, installed } = runtimePaths(app.isPackaged, process.resourcesPath, __dirname, process.env, process.platform, root);
       current = await openWorker(root, python, source, installed);
@@ -80,7 +96,8 @@ app.whenReady().then(() => {
         playing = false;
         restoreWindow();
         log?.write('play', 'worker_disconnected');
-        if (!window.isDestroyed()) window.webContents.send('play-ended', { error: 'worker_disconnected' });
+        notifyPlayEnded({ error: 'worker_disconnected', outcome: gameSpawned ? 'monitor_lost' : undefined });
+        gameSpawned = false;
       });
       active.on('event', async frame => {
         if (worker !== active) return;
@@ -94,7 +111,7 @@ app.whenReady().then(() => {
           if (frame.outcome !== 'resume') {
             playing = false;
             try { state = parseInspection(await active.request('inspect')); } catch { state = null; }
-            if (!window.isDestroyed()) window.webContents.send('play-ended', { state, error: frame.outcome === 'failed' ? 'job_failed' : 'job_cancelled' });
+            notifyPlayEnded({ state, error: frame.outcome === 'failed' ? 'job_failed' : 'job_cancelled' });
           }
         } else if (frame.event === 'memory_required') {
           try {
@@ -104,18 +121,19 @@ app.whenReady().then(() => {
             log?.write('play', `resumed result=${result.status}`);
             if (result.status !== 'started') {
               playing = false;
-              if (!window.isDestroyed()) window.webContents.send('play-ended', { error: result.status });
+              notifyPlayEnded({ error: result.status });
             }
           } catch {
             playing = false;
             log?.write('play', 'resumed result=worker_failed');
-            if (!window.isDestroyed()) window.webContents.send('play-ended', { error: 'worker_failed' });
+            notifyPlayEnded({ error: 'worker_failed' });
           }
         } else if (frame.event === 'play_failed') {
           playing = false;
           log?.write('play', 'resumed result=play_failed');
-          if (!window.isDestroyed()) window.webContents.send('play-ended', { error: 'play_failed' });
+          notifyPlayEnded({ error: 'play_failed' });
         } else if (frame.event === 'game_started') {
+          gameSpawned = true;
           if (state?.hide_while_playing && !window.isDestroyed() && window.isVisible() && !window.isMinimized()) {
             window.hide();
             hidden = true;
@@ -124,9 +142,10 @@ app.whenReady().then(() => {
         } else if (frame.event === 'game_ended') {
           restoreWindow();
           playing = false;
+          gameSpawned = false;
           log?.write('play', `game_ended code=${frame.code ?? 'unknown'} alarm=${Boolean(frame.alarm)}`);
           try { state = parseInspection(await active.request('inspect')); } catch { state = null; }
-          if (!window.isDestroyed()) window.webContents.send('play-ended', { state, code: frame.code, error: frame.alarm ? 'game_failed' : undefined, update_waiting: frame.update_waiting });
+          notifyPlayEnded({ state, code: frame.code, alarm: frame.alarm, message: frame.message, outcome: 'game_ended' });
           if (frame.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: 'Há uma atualização esperando. Abra o launcher instalado para aplicá-la.' });
         }
       });
@@ -166,10 +185,11 @@ app.whenReady().then(() => {
     log?.write('play', 'requested');
     if (!worker || playing) {
       log?.write('play', 'result=unavailable');
-      return { error: 'unavailable' };
+      return playRefused('unavailable');
     }
     const active = worker;
     playing = true;
+    gameSpawned = false;
     try {
       state = parseInspection(await active.request('inspect'));
       if (state.status !== 'ready' || state.job_marker_present || state.game_running) throw new Error('Not ready');
@@ -177,14 +197,20 @@ app.whenReady().then(() => {
       if (result.status === 'memory') result = await answerMemory(active, result);
       log?.write('play', `result=${result.status}`);
       if (result.status === 'building') return { started: true, building: true };
-      if (result.status !== 'started') { playing = false; return { error: result.status }; }
+      if (result.status !== 'started') { playing = false; return playRefused(result.status); }
       return { started: true };
-    } catch { playing = false; log?.write('play', 'result=unavailable'); return { error: 'unavailable' }; }
+    } catch { playing = false; log?.write('play', 'result=unavailable'); return playRefused('unavailable'); }
   });
   ipcMain.handle('cancel-job', async event => {
     if (event.sender !== window.webContents || !worker || !playing) return { error: 'unavailable' };
     try { await worker.request('cancel_job'); return { cancelling: true }; }
     catch { return { error: 'unavailable' }; }
+  });
+  ipcMain.on('play-message-shown', (event, id, kind) => {
+    if (event.sender !== window.webContents || pendingPlayMessage === null || id !== pendingPlayMessage ||
+        !['could_not_start', 'ended_with_error', 'game_ended', 'monitor_lost'].includes(kind)) return;
+    pendingPlayMessage = null;
+    log?.write('window', `message_shown kind=${kind}`);
   });
   window.on('closed', () => {
     log?.write('window', 'closed');

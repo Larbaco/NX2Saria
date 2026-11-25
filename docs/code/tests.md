@@ -5792,7 +5792,14 @@ build and game fixtures have no game data and perform no downloads.
 The worker window test checks the actual Electron log for build identity, selection, inspection, Play
 requests and outcomes, hide and restore, and launcher exit. It checks that the log contains no installation
 or executable paths even with the local Python log switch off. The parent-exit test checks that the second
-window records lock refusal and its corresponding exit under the same instance ID.
+window records lock refusal and its corresponding exit under the same instance ID. The worker window test also
+checks that a code-71 exit displays the worker's FATAL detail and logs `ended_with_error`, while an
+unexecutable stand-in never starts and logs `could_not_start`. Neither row contains message text.
+
+`launcher-electron/ui-tests/published-crash-offer-synthetic.py` drives the worker with a stand-in executable and
+the published 0.25.0 and 0.26.0-rc.1 app archives. The newer release receives a marker accepted by its own
+`pending()` reader after abnormal exit. Normal exit, opt-out and the older release leave no marker. The worker
+finishes and hands off after EOF; a local HTTP test server checks that nothing was sent.
 
 `launcher-electron/ui-tests/published-runtime-synthetic.cjs` tests the packaged worker with the exact app and
 runtime archives of 0.24.0-rc.1, 0.25.0 and 0.26.0-rc.1 unpacked in temporary installations. The earlier
@@ -5814,3 +5821,8 @@ ordered return to Play, and the separate cancelled and failed paths that retain 
 Checks that the worker-facing completion policy keeps a synthetic cache intact while `finished` is unset, then removes
 it and allows Play only after the job is fully finished. Tk's existing earlier observation of `result` is separately
 characterized and unchanged.
+
+`launcher-electron/ui-tests/linux-portable-synthetic.cjs` launches an extracted Linux test package under Xvfb
+against an isolated installation containing a published Linux app and runtime. A synthetic code-71 game
+checks runtime selection and the crash-offer marker through the same path as the packaged worker. It also
+checks visibility, the renderer's error message and its path-free diagnostic record.

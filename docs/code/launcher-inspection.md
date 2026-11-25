@@ -33,7 +33,12 @@ It does not compile or run the real game.
 `launcher-electron/src/dev-log.ts` writes short records to `data/logs/launcher-electron.log` once an existing
 installation with a logs directory is recognized. The build step writes the checkout commit to
 `dist/build-id.txt`. The main process records startup, selection, inspection, Play results, window visibility,
-lock refusal and normal exit. The process ID distinguishes instances using the same file. Selection records
+lock refusal and normal exit. The process ID distinguishes instances using the same file. Startup logs the
+build hash. Selection records also include the version in the worker handshake when available. After changing
+its Play status text, the renderer acknowledges the message kind for that result. The main process logs one
+acknowledgement from the current window, with no message text. A confirmed game end shows the worker's
+existing end sentence when there is an error. Failure before spawn and loss of monitoring after spawn report
+separate outcomes. Selection records
 identify the origin and brand with fixed values. They and all other records omit paths and dialog or error
 text, even if the Python path shortening switch is off. Appending the compact normal exit record
 synchronously lets it finish before Electron quits.

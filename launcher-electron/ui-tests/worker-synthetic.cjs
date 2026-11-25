@@ -44,6 +44,22 @@ const assert = require('node:assert/strict');
       await page.waitForFunction(() => !document.querySelector('#play').disabled);
     }
 
+    await fs.mkdir(path.join(game, 'logs'), { recursive: true });
+    await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' 'FATAL: synthetic end detail' > logs/nx2saria.log\nsleep 1\nexit 71\n", { mode: 0o755 });
+    await page.getByRole('button', { name: 'Jogar' }).click();
+    await page.locator('#status').getByText('O jogo terminou com erro').waitFor({ timeout: 10000 });
+    assert.match(await page.locator('#detail').textContent(), /The game ended with a fatal error \(code 71\): synthetic end detail\./);
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
+    await page.waitForFunction(() => !document.querySelector('#play').disabled);
+    await fs.rm(path.join(game, 'logs', 'nx2saria.log'));
+    await fs.chmod(path.join(game, 'ocarina'), 0o644);
+    await page.getByRole('button', { name: 'Jogar' }).click();
+    await page.locator('#status').getByText('Não foi possível iniciar').waitFor({ timeout: 10000 });
+    assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
+    const refusedLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
+    assert.match(refusedLog, /worker: spawn failed/);
+    await fs.chmod(path.join(game, 'ocarina'), 0o755);
+
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
     await app.evaluate(({ dialog }) => { dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] }); });
@@ -59,7 +75,7 @@ const assert = require('node:assert/strict');
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
     const log = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
     assert.match(log, /worker: started/);
-    assert.equal((log.match(/worker: game ended/g) || []).length, 2);
+    assert.equal((log.match(/worker: game ended/g) || []).length, 3);
     await fs.rm(path.join(root, 'data', 'job-running.json'));
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
     await page.waitForFunction(() => !document.querySelector('#play').disabled);
@@ -81,7 +97,7 @@ const assert = require('node:assert/strict');
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     process.kill(workerPid, 'SIGKILL');
-    await page.getByText('Não foi possível iniciar').waitFor({ timeout: 10000 });
+    await page.getByText('Não foi possível acompanhar o jogo').waitFor({ timeout: 10000 });
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
     let survived = false;
@@ -106,7 +122,7 @@ const assert = require('node:assert/strict');
     for (let tries = 0; tries < 100; tries++) {
       const marker = await fs.readFile(path.join(game, 'game-finished'), 'utf8').catch(() => '');
       const currentLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
-      if (marker === 'done' && (currentLog.match(/worker: game ended/g) || []).length === 3) { completed = true; break; }
+      if (marker === 'done' && (currentLog.match(/worker: game ended/g) || []).length === 4) { completed = true; break; }
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     assert.equal(completed, true);
@@ -114,15 +130,22 @@ const assert = require('node:assert/strict');
     const build = (await fs.readFile(path.join(__dirname, '..', 'dist', 'build-id.txt'), 'utf8')).trim();
     assert.match(build, /^[0-9a-f]{8,40}$/);
     assert.ok(electronLog.includes(`build=${build} platform=linux`));
-    assert.match(electronLog, /electron: root picked origin=default brand=NX2Saria/);
-    assert.match(electronLog, /electron: root picked origin=manual brand=NX2Saria/);
+    const version = (await fs.readFile(path.join(__dirname, '../..', 'VERSION'), 'utf8')).trim();
+    assert.ok(electronLog.includes(`electron: root picked origin=default brand=NX2Saria installed_version=${version} `));
+    assert.ok(electronLog.includes(`electron: root picked origin=manual brand=NX2Saria installed_version=${version} `));
+    assert.doesNotMatch(electronLog, /electron: start version=/);
     assert.match(electronLog, /electron: inspection result=ready/);
     assert.match(electronLog, /electron: window shown/);
-    assert.equal((electronLog.match(/electron: window hidden_for_game/g) || []).length, 4);
-    assert.equal((electronLog.match(/electron: window restored/g) || []).length, 3);
-    assert.equal((electronLog.match(/electron: play requested/g) || []).length, 5);
-    assert.equal((electronLog.match(/electron: play result=started/g) || []).length, 4);
+    assert.equal((electronLog.match(/electron: window hidden_for_game/g) || []).length, 5);
+    assert.equal((electronLog.match(/electron: window restored/g) || []).length, 4);
+    assert.equal((electronLog.match(/electron: play requested/g) || []).length, 7);
+    assert.equal((electronLog.match(/electron: play result=started/g) || []).length, 5);
     assert.equal((electronLog.match(/electron: play game_ended code=0 alarm=false/g) || []).length, 2);
+    assert.match(electronLog, /electron: play game_ended code=71 alarm=true[^\n]*\n[^\n]*electron: window message_shown kind=ended_with_error/);
+    assert.match(electronLog, /electron: play result=unavailable[^\n]*\n[^\n]*electron: window message_shown kind=could_not_start/);
+    assert.match(electronLog, /electron: window message_shown kind=monitor_lost/);
+    assert.doesNotMatch(electronLog, /synthetic end detail/);
+    assert.equal((electronLog.match(/electron: window message_shown kind=game_ended /g) || []).length, 2);
     assert.match(electronLog, /electron: exit code=0 play_active=true/);
     assert.doesNotMatch(electronLog, /nx2-worker-ui-|ocarina|[/\\]/i);
   } finally {
