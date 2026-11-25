@@ -1,20 +1,3 @@
-// AMD FidelityFX Super Resolution 1 on the present path (gfx_present.c present_image): when the window is larger than
-// the game's output, EASU scales the game's crop rectangle to the swapchain size and RCAS sharpens it, in place of the
-// bilinear vkCmdBlitImage. When the game's output is larger than the window (Ocarina draws 2560x1440 docked, so a
-// 1920x1080 window shrinks it), EASU does not apply (it only enlarges): a bilinear blit shrinks the crop into the first
-// intermediate image and RCAS sharpens that, which gives back some of the detail the shrink blurs. NX2SARIA_UPSCALER=
-// fsr|bilinear picks it, NX2SARIA_SHARPNESS (0..100, 0 = no RCAS pass) sets RCAS; both apply at the next frame.
-//
-// Per frame: EASU reads the source through a view of its own format (the same colour conversion the blit does) and
-// writes an RGBA16F image of the picture's size on the swapchain (all of it, or the part between black bars,
-// gfx_window.c fit_rect); RCAS reads that and writes a second one; a 1:1 blit converts the result into its place in
-// the swapchain image, which the caller left in TRANSFER_DST. The shaders (runtime/shaders/fsr_*.comp)
-// compute AMD's constants from the push constants. Cost: two compute passes over the swapchain size and one copy per
-// present; nothing on the game's draws.
-//
-// The source view of slot s is destroyed when slot s records again: present_image has waited for that slot's fence.
-// The two intermediate images are shared by all slots; each frame's first barrier orders it after the previous
-// frame's reads (one queue, so the barrier covers earlier submissions).
 #include "vk.h"
 
 #include <string.h>
@@ -33,21 +16,16 @@ static struct {
     VkPipelineLayout layout;
     VkPipeline easu, rcas;
     VkSampler sampler;
-    VkImage img[2];                // EASU output, RCAS output
+    VkImage img[2];
     VmaAllocation alloc[2];
     VkImageView view[2];
-    uint32_t w, h;                 // their size
-    VkImageView src_view[SLOTS];   // the source view each slot's last frame read
+    uint32_t w, h;
+    VkImageView src_view[SLOTS];
     int logged;
-    uint32_t used_slots, since;    // slots whose frames used the images / that recorded without them since the last use
-    uint32_t idle;                 // presents recorded without them since their last use
+    uint32_t used_slots, since;
+    uint32_t idle;
 } F;
 
-// The two images while the upscaler is not fsr (or the picture needs no scaling): they stayed for the rest of the run,
-// two RGBA16F pictures of the window's size, 168 MiB at 5120x2142. They go once IDLE_FREE presents recorded without
-// them and every slot that ever used them has recorded since: the caller waited for that slot's fence before it
-// recorded (see the top of the file), so no submission still reads them. Taking fsr up again makes them as a window
-// size change does (ensure_images: a wait for the idle device and two images).
 #define IDLE_FREE 600
 static void free_images(VkCtx *c);
 static void idle_note(unsigned slot) {
@@ -120,8 +98,6 @@ static void free_images(VkCtx *c) {
 
 static int ensure_images(VkCtx *c, uint32_t w, uint32_t h) {
     if (F.img[0] && F.w == w && F.h == h) return 1;
-    // A swapchain size change: earlier presents may still read the old images. vkDeviceWaitIdle needs every queue
-    // externally synchronized, so it holds the queue lock like a submission.
     vk_queue_lock();
     vkDeviceWaitIdle(c->device);
     vk_queue_unlock();
@@ -176,8 +152,6 @@ static void bind_pass(VkCommandBuffer cb, VkPipeline p, VkImageView in, VkImageV
     vkCmdPushConstants(cb, F.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 32, pc);
 }
 
-// The shrink path: the crop of src (GENERAL) shrunk by a bilinear blit into F.img[0], RCAS into F.img[1], a 1:1 copy into
-// dst. Returns 2.
 static int shrink_sharpen(VkCommandBuffer cb, VkImage src, const int crop[4], VkImage dst, const int out[4], int sharp) {
     uint32_t dw = (uint32_t)out[2], dh = (uint32_t)out[3];
     if (F.logged != 2) {
@@ -186,8 +160,6 @@ static int shrink_sharpen(VkCommandBuffer cb, VkImage src, const int crop[4], Vk
                crop[3], dw, dh, sharp);
     }
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, XF = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-    // the game's writes to the source become visible to the blit; the earlier frame's reads of the intermediates finish
-    // before this frame writes them
     barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
             VK_ACCESS_2_MEMORY_WRITE_BIT, XF, VK_ACCESS_2_TRANSFER_READ_BIT);
     barrier(cb, F.img[0], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL, CS | XF, 0, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT);
@@ -198,7 +170,6 @@ static int shrink_sharpen(VkCommandBuffer cb, VkImage src, const int crop[4], Vk
                           .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                           .dstOffsets = {{0, 0, 0}, {(int)dw, (int)dh, 1}}};
     vkCmdBlitImage(cb, src, VK_IMAGE_LAYOUT_GENERAL, F.img[0], VK_IMAGE_LAYOUT_GENERAL, 1, &shrink, VK_FILTER_LINEAR);
-    // later submissions that write the source wait for the blit's read
     barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, XF, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0);
     barrier(cb, F.img[0], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT, CS,
             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
@@ -225,8 +196,6 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
     int sharp = cfg_int("NX2SARIA_SHARPNESS");
     if (sharp < 0) sharp = 0;
     if (sharp > 100) sharp = 100;
-    // EASU only enlarges: a picture smaller than the crop in either direction takes the shrink path, which without
-    // sharpening is the plain blit of the caller
     int shrink = dw < (uint32_t)cw || dh < (uint32_t)ch;
     if (shrink && !sharp) return idle_note(slot), 0;
     VkCtx *c = vk_ctx();
@@ -250,8 +219,6 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
         rt_log("vk: FSR upscales %dx%d to %ux%u (sharpness %d)", cw, ch, dw, dh, sharp);
     }
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, XF = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
-    // the game's writes to the source become visible to the compute read; the earlier frame's reads of the
-    // intermediates finish before this frame writes them
     barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
             VK_ACCESS_2_MEMORY_WRITE_BIT, CS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     for (int i = 0; i < 2; i++)
@@ -272,7 +239,6 @@ int vk_fsr_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat fmt, 
     }
     barrier(cb, F.img[last], VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT,
             XF, VK_ACCESS_2_TRANSFER_READ_BIT);
-    // later submissions that write the source wait for the compute read
     barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, CS, 0, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, 0);
     VkImageBlit region = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                           .srcOffsets = {{0, 0, 0}, {(int)dw, (int)dh, 1}},

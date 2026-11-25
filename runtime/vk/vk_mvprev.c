@@ -1,23 +1,3 @@
-// Last frame's object and bone blocks, for per-object motion vectors (NX2SARIA_DLAA_OBJMV, on with DLAA). The banks kept
-// start as c5, c7 and c14 and grow with what the vertex shader variants read (vk_mvprev_want); c7 and c5 are described
-// here, the others follow the same two-copy rule.
-//
-// The scene's vertex shaders read an object's place from bank c7 (gsys_shape: one 3x4 matrix at the start of a
-// 0x100 block) and a skinned object's bones from c5 (gsys_skeleton: a run of 3x4 matrices), of this frame only. The
-// game writes both into two copies that take turns, the second right after the first: an object's block is at addr in
-// one frame and at addr +- step in the next, step its size rounded up to 256 bytes (vk_mvsurvey.c measured it: every
-// c7 pair 0x100 apart, c5 pairs their rounded size apart, the pair's contents the same object moved a little). The
-// copy this frame does not write still holds last frame's when the frame is submitted, so the uniform snapshot
-// (vk_usnap.c) also copies both neighbours of these blocks, and vk_mvprev_find picks last frame's:
-//   self    the block was bound at the same address last frame too (an object the game did not write again): itself
-//   side    one neighbour was bound in that bank last frame: that one
-//   nearer  both were (the copies of adjacent objects interleave): the one with more of its first 16 words equal to
-//           this frame's
-//   none    neither: a new object, no motion of its own
-// The pick is checked against what was snapshotted of that block last frame (intact: the same first CHECK bytes), and
-// a summary goes to the log every SUMMARY frames:
-//   mv_prev: c<n>: <blocks> blocks: self a %, side b %, nearer c %, none d %; intact e %; moved: still f %, under
-//            one unit g %, more h %
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,12 +14,10 @@
 #define TABLE (1u << 14)
 #define SUMMARY 600
 
-enum { BONES = 2, PLACE = 4, CLOCK = 11, BANKS = 14 };   // NVN binding index: banks c5, c7 and c14; c3..c16
+enum { BONES = 2, PLACE = 4, CLOCK = 11, BANKS = 14 };
 
-// 16 bytes, so a table of TABLE entries stays in the cache: every scene draw probes it (the bytes of NX2SARIA_MVPREV_CHECK
-// live in a table of their own, by entry index, allocated only for the check)
 typedef struct {
-    uint64_t addr;   // 0: empty
+    uint64_t addr;
     int index;
     uint32_t have;
 } Seen;
@@ -47,16 +25,16 @@ typedef struct {
 typedef struct { uint64_t blocks, self, side, nearer, none, checked, intact, still, small, big; } Stat;
 
 static struct {
-    int on;          // 1 knob on and DLAA on this frame
-    int knob;        // -1 not read
-    Seen *t[2];      // this frame's bound blocks, last frame's
-    uint8_t (*bytes[2])[CHECK];   // NX2SARIA_MVPREV_CHECK: the first CHECK bytes of each entry of t[k], NULL without the check
-    int timed;       // NX2SARIA_MVOBJ_TIMES: the summary's times
+    int on;
+    int knob;
+    Seen *t[2];
+    uint8_t (*bytes[2])[CHECK];
+    int timed;
     uint32_t frames;
-    Stat st[BANKS];  // per binding index
-    uint64_t last[BANKS];   // the block the last scene draw bound per binding index
-    uint32_t mask;          // binding indices kept (vk_mvprev_want): bones, place and clock from the start
-    uint64_t ns_draw, ns_frame;   // time in vk_mvprev_draw and vk_mvprev_frame since the last summary
+    Stat st[BANKS];
+    uint64_t last[BANKS];
+    uint32_t mask;
+    uint64_t ns_draw, ns_frame;
 } P = {.knob = -1, .mask = 1u << BONES | 1u << PLACE | 1u << CLOCK};
 
 static uint32_t slot_of(uint64_t addr, int index) {
@@ -80,8 +58,8 @@ int vk_mvprev_on(void) { return P.on > 0; }
 
 void vk_mvprev_want(uint32_t index_mask) {
     static int fixed = -1;
-    if (fixed < 0) fixed = !rt_knob("MVPREV_GROW", "1");   // NX2SARIA_MVPREV_GROW=0: c5, c7 and c14 only (test)
-    if (!fixed) __atomic_fetch_or(&P.mask, index_mask & ((1u << BANKS) - 1), __ATOMIC_RELAXED);   // chunks at once
+    if (fixed < 0) fixed = !rt_knob("MVPREV_GROW", "1");
+    if (!fixed) __atomic_fetch_or(&P.mask, index_mask & ((1u << BANKS) - 1), __ATOMIC_RELAXED);
 }
 
 uint64_t vk_mvprev_step(int stage, int index, uint64_t size) {
@@ -89,7 +67,6 @@ uint64_t vk_mvprev_step(int stage, int index, uint64_t size) {
     return (size + 255) & ~(uint64_t)255;
 }
 
-// Translation distance between the first matrices of two blocks (rows' fourth floats).
 static float moved(const uint8_t *a, const uint8_t *b) {
     const float *x = (const float *)a, *y = (const float *)b;
     float dx = x[3] - y[3], dy = x[7] - y[7], dz = x[11] - y[11];
@@ -108,7 +85,7 @@ int vk_mvprev_find(int index, uint64_t addr, uint64_t size, uint64_t *prev, int 
     if (find(P.t[1], addr + step, index, 0)) cand[n++] = addr + step;
     if (addr >= step && find(P.t[1], addr - step, index, 0)) cand[n++] = addr - step;
     if (!n) return 0;
-    if (n == 2) {   // the copies of adjacent objects interleave: the one with more words equal to this frame's
+    if (n == 2) {
         const uint32_t *c = (const uint32_t *)vk_usnap_bytes(addr, 64), *a = (const uint32_t *)vk_usnap_bytes(cand[0], 64),
                        *b = (const uint32_t *)vk_usnap_bytes(cand[1], 64);
         if (!c || !a || !b) return 0;
@@ -126,33 +103,33 @@ int vk_mvprev_find(int index, uint64_t addr, uint64_t size, uint64_t *prev, int 
 static void mvprev_draw_(VkExec *ex);
 void vk_mvprev_draw(VkExec *ex) {
     if (P.on <= 0) return;
-    if (!P.timed) return mvprev_draw_(ex);   // the clock reads were 1 % of the render thread
+    if (!P.timed) return mvprev_draw_(ex);
     uint64_t t0 = kern_now_ns();
     mvprev_draw_(ex);
     P.ns_draw += kern_now_ns() - t0;
 }
 
 static void mvprev_draw_locked(VkExec *ex);
-static PlatMutex draw_lock = PLAT_MUTEX_INIT;   // the replay workers' scene draws note blocks at once
+static PlatMutex draw_lock = PLAT_MUTEX_INIT;
 
 static void mvprev_draw_(VkExec *ex) {
     const VkExecTarget *z = &ex->depth;
     if (!z->image || z->width < DLAA_SCENE_MIN_W || z->format != VK_FORMAT_D32_SFLOAT) return;
-    int lk = vk_exec_shared();   // only while a parallel group (vk_exec.c) records do several threads note at once
+    int lk = vk_exec_shared();
     if (lk) plat_mutex_lock(&draw_lock);
     mvprev_draw_locked(ex);
     if (lk) plat_mutex_unlock(&draw_lock);
 }
 
 static void mvprev_draw_locked(VkExec *ex) {
-    int check = P.bytes[0] != NULL;   // NX2SARIA_MVPREV_CHECK=1: the summary's checks (3.6 ms a frame)
+    int check = P.bytes[0] != NULL;
     for (int index = 0; index < BANKS; index++) {
         if (!(P.mask >> index & 1)) continue;
         const p_bind_buf *u = &ex->ubo[0][index];
-        if (!u->addr || !u->size || u->addr == P.last[index]) continue;   // the next draws keep the block: noted already
+        if (!u->addr || !u->size || u->addr == P.last[index]) continue;
         P.last[index] = u->addr;
         Seen *k = find(P.t[0], u->addr, index, 1);
-        if (!k || k->have || !check) continue;   // else only the address is noted
+        if (!k || k->have || !check) continue;
         int w = index;
         uint32_t want = u->size < CHECK ? (uint32_t)u->size : CHECK;
         const uint8_t *cur = vk_usnap_bytes(u->addr, want);
@@ -183,8 +160,6 @@ static void mvprev_draw_locked(VkExec *ex) {
 }
 
 void vk_mvprev_frame(void) {
-    // without DLSS (no NGX, no RTX GPU, dlaa = 0) and without frame generation alone (vk_dlaa_fg_only) nothing reads
-    // last frame's blocks: P.on stays 0, no tables
     if (!vk_dlaa_available() && !vk_dlaa_fg_only()) return;
     if (P.knob < 0) {
         P.knob = rt_knob("DLAA_OBJMV", "1");

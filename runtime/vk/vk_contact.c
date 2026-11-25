@@ -1,17 +1,3 @@
-// Screen-space contact shadows (NX2SARIA_CONTACT_SHADOWS, percent strength, 0 = off). NX2Saria fills a full-resolution
-// G-buffer whose targets include a B10G11R11 scene colour, an R32F linear depth (view distance / far) and a D32F depth
-// (is_gbuffer), lights it in half resolution, and then composites the lighting into that scene colour in one pass
-// whose only target is the scene colour, with a D16 depth that sorts pixels into material classes (is_composite).
-// When the pass after the composite begins, or a dispatch or copy comes first, runtime/shaders/contact_shadow.comp
-// marches each pixel a short way toward the sun through the linear depth and darkens the scene colour where the ray
-// passes behind nearby geometry: the small shadows at feet, under stones and in grass that the shadow maps are too
-// coarse for. Transparent surfaces, the sky and post-processing come after, untouched.
-//
-// Inputs from the game, read from the fragment stage's uniform block c4 bound in the composite pass (guest memory,
-// so it may be one frame newer than the replay): the projection scales c4[7].x and c4[8].y, the far plane c4[14].y,
-// and the first sun cascade's depth row c4[44].xyz, whose negated direction points from a view-space position toward
-// the sun (the G-buffer shaders compare dot(c4[44].xyz, pos) + c4[44].w with the cascade map). The scene colour images
-// get STORAGE usage when the setting is on (vk_texture.c create_tex).
 #include "vk.h"
 
 #include <math.h>
@@ -29,9 +15,9 @@ static struct {
     VkPipelineLayout layout;
     VkPipeline pipe;
     VkSampler sampler;
-    const VkTexImage *scene, *depth;   // the last G-buffer's scene colour and linear depth
+    const VkTexImage *scene, *depth;
     uint32_t w, h;
-    int pending;                       // the composite into scene ran; the march waits for the next pass
+    int pending;
     uint64_t c4;
 } C;
 
@@ -47,7 +33,7 @@ static int init(VkCtx *c) {
     C.tried = 1;
     vk_contact_strength();
     if (!C.strength) return 0;
-    const char *e = cfg_get("NX2SARIA_CONTACT_DEBUG");   // 1: the frame shows the contact shadow factor in grey
+    const char *e = cfg_get("NX2SARIA_CONTACT_DEBUG");
     C.debug = e && *e && strcmp(e, "0");
     C.push = (PFN_vkCmdPushDescriptorSetKHR)vk_dpa(c->device, "vkCmdPushDescriptorSetKHR");
     VkDescriptorSetLayoutBinding b[2] = {
@@ -89,7 +75,6 @@ static int init(VkCtx *c) {
     return C.ok = 1;
 }
 
-// A G-buffer pass: a B10G11R11 scene colour, an R32F linear depth and a D32F depth, all one size, at least 640 wide.
 static int is_gbuffer(const VkExec *ex, const VkTexImage **scene, const VkTexImage **depth) {
     *scene = *depth = NULL;
     if (ex->pass_noatt || ex->pass_w < 640 || ex->depth.format != VK_FORMAT_D32_SFLOAT || ex->depth.level) return 0;
@@ -115,8 +100,6 @@ static void mem_barrier(VkCommandBuffer cb) {
 int vk_contact_pending(void) { return C.pending; }
 
 void vk_contact_flush(VkExec *ex) {
-    // The submitting thread past a group (vk_exec.c NX2SARIA_REPLAY_PIPE): the group's first chunk may have made the
-    // pass due and a later one records it where the replay would; only one still due after the group is this one's.
     if (vk_exec_behind()) {
         vk_exec_hooks_wait();
         if (!C.pending) return;
@@ -144,7 +127,7 @@ void vk_contact_flush(VkExec *ex) {
         rt_log("vk: contact shadows on a %ux%u scene, sun toward %.3f %.3f %.3f (view space), far %g", C.w, C.h,
                pcv[4], pcv[5], pcv[6], zfar);
     }
-    mem_barrier(cb);   // the compose passes' writes, before the march reads and writes them
+    mem_barrier(cb);
     VkDescriptorImageInfo ii = {C.sampler, in, VK_IMAGE_LAYOUT_GENERAL}, oi = {VK_NULL_HANDLE, out, VK_IMAGE_LAYOUT_GENERAL};
     VkWriteDescriptorSet w[2] = {
         {.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET, .dstBinding = 0, .descriptorCount = 1,
@@ -155,12 +138,11 @@ void vk_contact_flush(VkExec *ex) {
     rec_push(C.push, cb, VK_PIPELINE_BIND_POINT_COMPUTE, C.layout, 0, 2, w);
     vkCmdPushConstants(cb, C.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pcv, pcv);
     vkCmdDispatch(cb, (C.w + 7) / 8, (C.h + 7) / 8, 1);
-    mem_barrier(cb);   // and what follows sees the darkened colour
+    mem_barrier(cb);
     ex->recorded += 6;
-    vk_exec_draw_new_cb();   // the game's bound compute pipeline and descriptors were replaced: bind them again
+    vk_exec_draw_new_cb();
 }
 
-// The lighting composite: the remembered scene colour as the only target, with a D16 depth of its size.
 static int is_composite(const VkExec *ex) {
     return C.scene && ex->pass_ncolor >= 1 && ex->color[0].img == C.scene && !ex->color[0].level &&
            ex->depth.format == VK_FORMAT_D16_UNORM && ex->pass_w == C.w && ex->pass_h == C.h;
@@ -170,8 +152,6 @@ void vk_contact_pass_begin(VkExec *ex) {
     if (!C.tried && !init(vk_ctx())) return;
     if (!C.ok) return;
     const VkTexImage *scene, *depth;
-    // The camera block: c4 of the fragment stage, 0x940 bytes. The composite binds it only after its pass begins, so
-    // the newest one seen at any pass start serves.
     const p_bind_buf *b = &ex->ubo[1][1];
     if (b->addr && b->size == 0x940 && C.c4 != b->addr) vk_exec_hook_turn(), C.c4 = b->addr;
     if (is_gbuffer(ex, &scene, &depth)) {

@@ -1,32 +1,3 @@
-// AMD FSR 3.1 frame generation recorded by the runtime (vk_fsr3fg.h): the optical flow passes (runtime/shaders/
-// fsr3of_*.comp) and the frame interpolation passes (fsr3fi_*.comp), over the headers in runtime/shaders/ffx3, built
-// into runtime/fsr3of_*_spv.h and fsr3fi_*_spv.h by tools/build_shaders.py. No library is loaded: this is what makes
-// NX2SARIA_FRAMEGEN = fsr3 run outside Windows, on any GPU the passes run on.
-//
-// One call (vk_fsr3fg_record), at the end of a present's command buffer, records in this order:
-// - optical flow on the picture without the HUD (the current one against the one before): its luma, the luma pyramid,
-//   the scene change detection (a histogram and its divergence from the frame before's), then from the coarsest of
-//   seven levels down to the finest a block search, a filter and (but at the finest) the scale of the vectors into the
-//   next level; the finest level's filter writes the vectors frame interpolation reads (8x8 blocks of the picture);
-// - frame interpolation's preparation from the frame's depth and motion vectors: the dilated depth and vectors and the
-//   previous frame's nearest depth reconstructed;
-// - frame interpolation: setup (clears the vector fields and the disocclusion mask, counts frames since the last
-//   reset), then, but on a reset, the interpolated frame's depth reconstructed, the game's vectors and the optical
-//   flow's as fields at the interpolated frame, the game field's pyramid (to fill its holes) and the disocclusion mask;
-//   the interpolation itself, the colour pyramid of its output, and the inpainting of the holes, which also puts the HUD
-//   of the current picture back where the two pictures differ;
-// - the copy of the picture without the HUD into the one the next frame interpolates from.
-// A global compute barrier separates the passes. The interpolation is at the middle, so one generated frame per
-// rendered frame (2x). After a reset the passes run as AMD's do, priming the histories, and no frame is shown.
-//
-// The context (the images) is made for the swapchain's size and format and for render sizes up to the larger of that
-// size and the game's picture (widescreen.c wide_picture), as vk_fg.cpp makes AMD's; another size or format makes it
-// again after a wait for the device. A context that cannot be made, or passes that cannot be made, turn frame
-// generation off for the run (vk_fsr3fg_failed), with a line in the log; the frames then go out the plain way.
-//
-// The constants live in a host-visible ring of RING slots, one per call: a call's slot is read by the present it was
-// recorded into, and gfx_present.c waits for the present FRAMES (2) back before it records, so a slot RING calls old is
-// done. The same ring index picks the call's timestamp queries, read back when the slot comes round again.
 #include "vk.h"
 
 #include <float.h>
@@ -68,29 +39,27 @@ int vk_fsr3fg_build(void) {
 #endif
 }
 
-// ---- the images of a context
-
-#define OF_LEVELS 7        // the optical flow's pyramid levels
-#define OF_BLOCK 8         // pixels per side of its blocks at the finest level
-#define PYR_VIEWS 13       // the inpainting pyramid passes write mips 0-12 through views of their own
-#define SCD_BINS (256 * 9) // the scene change histograms: 256 bins in each of 3 x 3 parts of the picture
+#define OF_LEVELS 7
+#define OF_BLOCK 8
+#define PYR_VIEWS 13
+#define SCD_BINS (256 * 9)
 
 enum { SZ_RENDER, SZ_DISPLAY, SZ_HALF, SZ_LUMA, SZ_FLOW, SZ_FIXED };
 enum {
-    I_DDEPTH, I_DMV, I_RPREV, I_RINTERP, I_GMX, I_GMY, I_OMX, I_OMY, I_DISOCC,   // render size (the largest)
-    I_PREV_SRC,                                                                  // display size, the swapchain's format
-    I_PYR,                                                                       // half the display size, every mip
-    I_LUMA_A, I_LUMA_B = I_LUMA_A + OF_LEVELS,                                   // luma pyramids, two frames
-    I_FLOW_A = I_LUMA_B + OF_LEVELS, I_FLOW_B = I_FLOW_A + OF_LEVELS,            // flow pyramids, ping-pong
-    I_OFVEC = I_FLOW_B + OF_LEVELS,                                              // the finest flow, for interpolation
+    I_DDEPTH, I_DMV, I_RPREV, I_RINTERP, I_GMX, I_GMY, I_OMX, I_OMY, I_DISOCC,
+    I_PREV_SRC,
+    I_PYR,
+    I_LUMA_A, I_LUMA_B = I_LUMA_A + OF_LEVELS,
+    I_FLOW_A = I_LUMA_B + OF_LEVELS, I_FLOW_B = I_FLOW_A + OF_LEVELS,
+    I_OFVEC = I_FLOW_B + OF_LEVELS,
     I_SCD_OUT, I_SCD_HIST, I_SCD_PREV, I_SCD_TEMP, I_DIST, I_ZERO_U,
     I_N
 };
 typedef struct {
-    VkFormat fmt;   // VK_FORMAT_UNDEFINED: the swapchain's
+    VkFormat fmt;
     uint8_t size;
-    uint8_t level;   // SZ_LUMA, SZ_FLOW: the pyramid level
-    uint16_t w;      // SZ_FIXED: the width (height 1)
+    uint8_t level;
+    uint16_t w;
 } ImgDesc;
 static ImgDesc img_desc(int i) {
     if (i >= I_LUMA_A && i < I_LUMA_A + 2 * OF_LEVELS)
@@ -110,24 +79,18 @@ static ImgDesc img_desc(int i) {
     case I_SCD_HIST: return (ImgDesc){VK_FORMAT_R32_UINT, SZ_FIXED, 0, SCD_BINS};
     case I_SCD_PREV: return (ImgDesc){VK_FORMAT_R32_SFLOAT, SZ_FIXED, 0, SCD_BINS};
     case I_SCD_TEMP: return (ImgDesc){VK_FORMAT_R32_UINT, SZ_FIXED, 0, 3};
-    case I_DIST: return (ImgDesc){VK_FORMAT_R8G8_UNORM, SZ_FIXED, 0, 1};    // no distortion: a vector of 0
-    default: return (ImgDesc){VK_FORMAT_R32_UINT, SZ_FIXED, 0, 1};          // I_ZERO_U: the confidence the passes ignore
+    case I_DIST: return (ImgDesc){VK_FORMAT_R8G8_UNORM, SZ_FIXED, 0, 1};
+    default: return (ImgDesc){VK_FORMAT_R32_UINT, SZ_FIXED, 0, 1};
     }
 }
 
-// ---- what the passes bind (the binding numbers of runtime/shaders/fsr3fi_*.comp and fsr3of_*.comp)
-
 enum {
-    // sampled images
     S_IN_DEPTH, S_IN_MV, S_DMV, S_DDEPTH, S_RPREV, S_RINTERP, S_PREV_SRC, S_CUR_SRC, S_PRESENT, S_DISOCC, S_GMX, S_GMY,
     S_OMX, S_OMY, S_OFVEC, S_OF_CONF, S_SCD, S_OUT, S_PYR, S_DIST, S_COLOR, S_LUMA, S_LUMA_PREV, S_FLOW, S_FLOW_PREV,
-    // storage images
     U_FIRST, U_RPREV = U_FIRST, U_DMV, U_DDEPTH, U_RINTERP, U_GMX, U_GMY, U_OMX, U_OMY, U_DISOCC, U_OUT,
     U_PYR0, U_LUMA0 = U_PYR0 + PYR_VIEWS, U_FLOW = U_LUMA0 + OF_LEVELS, U_FLOW_NEXT, U_SCD_HIST, U_SCD_PREV,
     U_SCD_TEMP, U_SCD_OUT,
-    // storage buffers (the counters)
     B_FIRST, B_CNT_RO = B_FIRST, B_CNT,
-    // uniform buffers
     C_FIRST, C_FI = C_FIRST, C_PYR, C_OF, C_OFSPD,
     R_N
 };
@@ -210,7 +173,6 @@ static VkDescriptorType desc_type(int r) {
                         : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
 }
 
-// The constants of frame interpolation (std140 cbFI: 4-byte members, the vec4 and the vec3 at 16-byte boundaries).
 typedef struct {
     int32_t render[2], display[2];
     float display_rcp[2], cam_near, cam_far;
@@ -246,33 +208,30 @@ _Static_assert(__builtin_offsetof(FiConsts, device_to_view) == 48, "a vec4 at a 
 _Static_assert(__builtin_offsetof(FiConsts, debug_bar) == 128, "a vec3 at a 16-byte boundary in std140");
 _Static_assert(sizeof(OfConsts) == 32, "cbOF is 32 bytes");
 
-// The blocks of one ring slot: the interpolation's, the two pyramids', the optical flow's base and one per level, its
-// SPD's.
 enum { K_FI, K_PYR_RENDER, K_PYR_DISPLAY, K_OF, K_OF_LEVEL0, K_OFSPD = K_OF_LEVEL0 + OF_LEVELS, K_N };
 #define RING 8
-#define TS_PER 3   // timestamps per call: start, after the optical flow, end
-// NX2SARIA_FSR3FG_PASS_TIMES=1 (diagnosis): a timestamp after every dispatch too, summed by pass (vk_fsr3fg_pass_ms)
+#define TS_PER 3
 #define PT_MAX 40
 
 typedef struct {
-    uint32_t w, h, mw, mh;   // the display size (the swapchain's) and the largest render size
-    VkFormat fmt;            // the swapchain's format
+    uint32_t w, h, mw, mh;
+    VkFormat fmt;
     VkImage img[I_N];
     VmaAllocation mem[I_N];
     VkImageView view[I_N];
     VkImageView pyr_mip[PYR_VIEWS];
     uint32_t pyr_levels;
-    VkBuffer cnt;            // the counters (two words)
+    VkBuffer cnt;
     VmaAllocation cnt_mem;
     uint64_t vram;
-    int fresh;               // never recorded into: transition and clear everything first
-    int of_odd;              // which luma pyramid is the current frame's
-    uint32_t of_frame;       // optical flow frames since its last reset
-    int have_prev;           // I_PREV_SRC holds the last frame's picture
+    int fresh;
+    int of_odd;
+    uint32_t of_frame;
+    int have_prev;
 } Ctx;
 
 static struct {
-    volatile int32_t state;   // -1: not tried; 0: off; 1: ready
+    volatile int32_t state;
     volatile int32_t failed;
     PFN_vkCmdPushDescriptorSetKHR push;
     VkSampler linear;
@@ -282,7 +241,7 @@ static struct {
     VkBuffer ring;
     VmaAllocation ring_mem;
     uint8_t *ring_map;
-    uint32_t block;   // one constant block (the uniform buffer offset alignment)
+    uint32_t block;
     uint32_t ring_next;
     VkQueryPool ts;
     int ts_on;
@@ -293,15 +252,12 @@ static struct {
     VkFsr3fgStats st;
     double gpu_of_sum, gpu_fi_sum;
     uint64_t last_ns;
-    volatile uint64_t made_ns;   // when the last generated frame was recorded (vk_fsr3fg_generating)
-    VkQueryPool pt;                      // the per-dispatch timestamps (NX2SARIA_FSR3FG_PASS_TIMES)
-    uint8_t pt_pass[RING][PT_MAX];       // the pass of each dispatch of a slot's call
-    uint8_t pt_n[RING];                  // its dispatches (0: nothing to read)
+    volatile uint64_t made_ns;
+    VkQueryPool pt;
+    uint8_t pt_pass[RING][PT_MAX];
+    uint8_t pt_n[RING];
     double pt_sum[P_N];
     uint64_t pt_count[P_N];
-    // NX2SARIA_FSR3FG_DUMP=<dir> (diagnosis): every NX2SARIA_FSR3FG_DUMP_EVERY seconds (10) the picture before (without
-    // the HUD), the generated frame and the picture after (with it) are copied into dump, and written as PPM images
-    // once the slot comes round again (the GPU is done with it then); at most 20 dumps a run
     VkBuffer dump;
     VmaAllocation dump_mem;
     void *dump_map;
@@ -310,8 +266,6 @@ static struct {
     int dump_pending, dumps;
     uint64_t dump_next_ns;
 } G = {.state = -1};
-
-// ---- setup
 
 static VkImageView make_view(VkImage img, VkFormat fmt, uint32_t base, uint32_t levels) {
     VkImageViewCreateInfo vi = {.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = img,
@@ -337,7 +291,6 @@ static int make_image(uint32_t w, uint32_t h, uint32_t levels, VkFormat fmt, VkI
     return 1;
 }
 
-// What the device lacks for the passes, or NULL.
 static const char *unsupported(const VkCtx *c) {
     VkPhysicalDeviceFeatures f;
     vkGetPhysicalDeviceFeatures(c->phys, &f);
@@ -370,7 +323,6 @@ static int make_pass(const VkCtx *c, int p) {
         b[n++] = (VkDescriptorSetLayoutBinding){.binding = PASS[p].b[i].binding, .descriptorCount = 1,
                                                 .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
                                                 .descriptorType = desc_type(PASS[p].b[i].res)};
-    // s_LinearClamp of the interpolation's headers, fixed in the layout: nothing to push for it
     b[n++] = (VkDescriptorSetLayoutBinding){.binding = 1000, .descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER,
                                             .descriptorCount = 1, .stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
                                             .pImmutableSamplers = &G.linear};
@@ -416,7 +368,7 @@ static void destroy_global(void) {
 
 static int make_global(const VkCtx *c) {
     uint32_t align = (uint32_t)c->props.limits.minUniformBufferOffsetAlignment;
-    if (align < 256) align = 256;   // the largest block (cbFI, 176 bytes) fits
+    if (align < 256) align = 256;
     G.block = align;
     VkBufferCreateInfo bi = {.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO, .size = (VkDeviceSize)G.block * K_N * RING,
                              .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT};
@@ -429,7 +381,6 @@ static int make_global(const VkCtx *c) {
         return 0;
     }
     G.ring_map = info.pMappedData;
-    // GPU timestamps, where the graphics queue has them
     uint32_t nq = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(c->phys, &nq, NULL);
     VkQueueFamilyProperties qp[16];
@@ -505,8 +456,6 @@ static void fail(const char *what) {
     __atomic_store_n(&G.failed, 1, __ATOMIC_RELAXED);
 }
 
-// ---- the context
-
 static void free_ctx(Ctx *x) {
     const VkCtx *c = vk_ctx();
     for (int i = 0; i < PYR_VIEWS; i++)
@@ -548,12 +497,12 @@ static int make_ctx(Ctx *x, uint32_t w, uint32_t h, VkFormat fmt, uint32_t mw, u
         }
         if (!make_image(iw, ih, levels, f, u, &x->img[i], &x->mem[i], &x->vram) ||
             !(x->view[i] = make_view(x->img[i], f, 0, levels))) {
-            free_ctx(x);   // half made: no submission names it
+            free_ctx(x);
             return 0;
         }
     }
     for (uint32_t m = 0; m < PYR_VIEWS; m++) {
-        uint32_t level = m < x->pyr_levels ? m : x->pyr_levels - 1;   // the passes name more mips than a small one has
+        uint32_t level = m < x->pyr_levels ? m : x->pyr_levels - 1;
         if (!(x->pyr_mip[m] = make_view(x->img[I_PYR], VK_FORMAT_R16G16B16A16_SFLOAT, level, 1))) {
             free_ctx(x);
             return 0;
@@ -577,11 +526,10 @@ static void idle_device(void) {
     vk_queue_unlock();
 }
 
-// The context for this display size and format, with render sizes up to the larger of rw x rh and the picture's.
 static Ctx *ctx_for(uint32_t w, uint32_t h, VkFormat fmt, uint32_t rw, uint32_t rh) {
     Ctx *x = &G.ctx;
     if (x->img[0] && x->w == w && x->h == h && x->fmt == fmt && rw <= x->mw && rh <= x->mh) return x;
-    if (x->img[0]) {   // another size: what a present in flight records into goes first
+    if (x->img[0]) {
         idle_device();
         free_ctx(x);
     }
@@ -590,11 +538,9 @@ static Ctx *ctx_for(uint32_t w, uint32_t h, VkFormat fmt, uint32_t rw, uint32_t 
     uint32_t mw = rw > pw ? rw : pw, mh = rh > ph ? rh : ph;
     if (mw < w) mw = w;
     if (mh < h) mh = h;
-    // NX2SARIA_FSR3FG_TEST_FAIL=1 (test, live): the images are not made, as when video memory runs out
     const char *tf = cfg_get("NX2SARIA_FSR3FG_TEST_FAIL");
     const int test_fail = tf && !strcmp(tf, "1");
     if (test_fail || !make_ctx(x, w, h, fmt, mw, mh)) {
-        // another try after the GPU is idle (images it still held may have gone), then off
         idle_device();
         if (test_fail || !make_ctx(x, w, h, fmt, mw, mh)) {
             char what[160];
@@ -622,15 +568,13 @@ void vk_fsr3fg_release(void) {
     free_ctx(&G.ctx);
     destroy_global();
     G.st.vram = 0;
-    __atomic_store_n(&G.state, -1, __ATOMIC_RELEASE);   // a new device makes everything again
+    __atomic_store_n(&G.state, -1, __ATOMIC_RELEASE);
 }
 
 void vk_fsr3fg_stats(VkFsr3fgStats *s) {
     *s = G.st;
     if (G.st.gpu_samples) s->gpu_ms_of = G.gpu_of_sum / G.st.gpu_samples, s->gpu_ms_fi = G.gpu_fi_sum / G.st.gpu_samples;
 }
-
-// ---- recording
 
 static const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, XF = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
 static const VkAccessFlags2 CS_RW = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT;
@@ -664,7 +608,6 @@ static void to_general(VkCommandBuffer cb, const VkImage *img, int n) {
     vkCmdPipelineBarrier2(cb, &d);
 }
 
-// SPD's work groups (64 x 64 pixels each) and mips over w x h, as AMD's ffxSpdSetup gives them (mips < 0: from the size)
 static void spd_setup(uint32_t w, uint32_t h, int mips, uint32_t groups[2], uint32_t *count, uint32_t *nmips) {
     groups[0] = (w - 1) / 64 + 1, groups[1] = (h - 1) / 64 + 1;
     *count = groups[0] * groups[1];
@@ -672,7 +615,7 @@ static void spd_setup(uint32_t w, uint32_t h, int mips, uint32_t groups[2], uint
         *nmips = (uint32_t)mips;
     } else {
         uint32_t big = w > h ? w : h, m = 0;
-        while (big >>= 1) m++;   // floor(log2(max(w, h)))
+        while (big >>= 1) m++;
         *nmips = m > 12 ? 12 : m;
     }
 }
@@ -680,12 +623,12 @@ static void spd_setup(uint32_t w, uint32_t h, int mips, uint32_t groups[2], uint
 typedef struct {
     VkCommandBuffer cb;
     uint32_t slot;
-    VkImageView v[U_FIRST + (B_FIRST - U_FIRST)];   // the image of each slot this dispatch
+    VkImageView v[U_FIRST + (B_FIRST - U_FIRST)];
     VkBuffer cnt;
-    VkDeviceSize base;   // this call's slot of the ring
-    int k_of;            // which optical flow block C_OF names (K_OF or a level's)
-    int k_pyr;           // which pyramid block C_PYR names
-    int n;               // dispatches so far
+    VkDeviceSize base;
+    int k_of;
+    int k_pyr;
+    int n;
 } Rec;
 
 static void dispatch(Rec *r, int p, uint32_t gx, uint32_t gy, uint32_t gz) {
@@ -722,7 +665,6 @@ static void dispatch(Rec *r, int p, uint32_t gx, uint32_t gy, uint32_t gz) {
     }
 }
 
-// The per-dispatch timestamps of the call RING calls ago in this slot (NX2SARIA_FSR3FG_PASS_TIMES)
 static void pt_collect(uint32_t slot) {
     uint32_t n = G.pt_n[slot];
     G.pt_n[slot] = 0;
@@ -738,7 +680,6 @@ static void pt_collect(uint32_t slot) {
     }
 }
 
-// Writes the dump the slot holds, if any (NX2SARIA_FSR3FG_DUMP): its three pictures as PPM images.
 static void dump_collect(uint32_t slot) {
     if (!G.dump_pending || G.dump_slot != slot) return;
     G.dump_pending = 0;
@@ -764,7 +705,6 @@ static void dump_collect(uint32_t slot) {
     G.dumps++;
 }
 
-// Records this call's dump copies when one is due (NX2SARIA_FSR3FG_DUMP, 8-bit pictures only).
 static void dump_record(VkCommandBuffer cb, uint32_t slot, const Ctx *x, const VkNgxImage *bb, const VkNgxImage *out) {
     const char *dir = cfg_get("NX2SARIA_FSR3FG_DUMP");
     if (!dir || G.dump_pending || G.dumps >= 20) return;
@@ -804,10 +744,8 @@ int vk_fsr3fg_pass_ms(int i, const char **name, double *ms, uint64_t *count) {
     return 1;
 }
 
-// Each frame by the game's state for the periodic line (vk_fg_stats.h), the one the Windows paths write too: counted on
-// the present path (gfx_present.c ng_record) as vk_fsr3fg_evaluate and vk_fsr3fg_paused see the frames.
 static FgStats S;
-static uint64_t S_presents;   // the presenter's presents so far (vk_fsr3fg_presents)
+static uint64_t S_presents;
 
 static void stats_frame(FgsOutcome o) {
     uint64_t now = plat_now_ns();
@@ -820,16 +758,15 @@ void vk_fsr3fg_presents(uint64_t n) { S_presents = n; }
 
 void vk_fsr3fg_paused(int menu) { stats_frame(menu ? FGS_MENU : FGS_NO_SCENE); }
 
-// The timestamps of the call RING calls ago in this slot, if the GPU wrote them: the averages of the stats.
 static void ts_collect(uint32_t slot) {
     if (!G.ts_on || !G.ts_written[slot]) return;
-    uint64_t t[TS_PER * 2];   // value and availability
+    uint64_t t[TS_PER * 2];
     VkResult r = vkGetQueryPoolResults(vk_ctx()->device, G.ts, slot * TS_PER, TS_PER, sizeof t, t, 2 * sizeof(uint64_t),
                                        VK_QUERY_RESULT_64_BIT | VK_QUERY_RESULT_WITH_AVAILABILITY_BIT);
     G.ts_written[slot] = 0;
     if (r != VK_SUCCESS || !t[1] || !t[3] || !t[5] || t[2] < t[0] || t[4] < t[2]) return;
     double of = (double)(t[2] - t[0]) * G.ts_period_ns / 1e6, fi = (double)(t[4] - t[2]) * G.ts_period_ns / 1e6;
-    if (of > 1000 || fi > 1000) return;   // a wrapped counter
+    if (of > 1000 || fi > 1000) return;
     G.gpu_of_sum += of, G.gpu_fi_sum += fi, G.st.gpu_samples++;
     fgs_gpu(&S, of + fi);
 }
@@ -844,7 +781,7 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
         return 0;
     }
     if (hudless && (!hudless->view || hudless->w != bb->w || hudless->h != bb->h || hudless->fmt != bb->fmt))
-        hudless = NULL;   // the interpolation compares it with bb pixel by pixel
+        hudless = NULL;
     const uint32_t W = bb->w, H = bb->h, rw = in->depth.width, rh = in->depth.height;
     if (!W || !H || !rw || !rh) return 0;
     Ctx *x = ctx_for(W, H, bb->fmt, rw, rh);
@@ -854,13 +791,11 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     int reset = in->reset || G.want_reset || x->fresh || !x->have_prev;
     G.want_reset = 0;
 
-    // the picture's rectangle, inside the image
     int rx = 0, ry = 0, rwid = (int)W, rhei = (int)H;
     if (rect && rect[2] > 0 && rect[3] > 0 && rect[0] >= 0 && rect[1] >= 0 && rect[0] + rect[2] <= (int)W &&
         rect[1] + rect[3] <= (int)H)
         rx = rect[0], ry = rect[1], rwid = rect[2], rhei = rect[3];
 
-    // the ring slot: its timestamps of RING calls ago first
     const uint32_t slot = G.ring_next;
     G.ring_next = (slot + 1) % RING;
     ts_collect(slot);
@@ -875,16 +810,14 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
         vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, G.ts, slot * TS_PER);
     }
 
-    // what drew the inputs and the picture, and the last call's reads of what this one writes, come first
     barrier(cb, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT, XF | CS,
             VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_TRANSFER_READ_BIT | CS_RW);
-    if (x->fresh) {   // every image cleared once, so nothing reads what memory held before
+    if (x->fresh) {
         to_general(cb, x->img, I_N);
         for (int i = 0; i < I_N; i++) clear_u(cb, x->img[i], 0);
         vkCmdFillBuffer(cb, x->cnt, 0, VK_WHOLE_SIZE, 0);
         x->fresh = 0;
     }
-    // the optical flow starts again with the interpolation: its pictures, histograms and scene change result cleared
     if (reset) {
         for (int i = I_LUMA_A; i < I_LUMA_A + 2 * OF_LEVELS; i++) clear_u(cb, x->img[i], 0);
         clear_u(cb, x->img[I_SCD_OUT], 0), clear_u(cb, x->img[I_SCD_HIST], 0), clear_u(cb, x->img[I_SCD_PREV], 0);
@@ -893,12 +826,10 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     } else {
         x->of_frame++;
     }
-    // the reconstructed depths start at the far value (the bits of 1.0f; depth not inverted)
     clear_u(cb, x->img[I_RPREV], 0x3f800000u);
     clear_u(cb, x->img[I_RINTERP], 0x3f800000u);
     barrier(cb, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT, CS, CS_RW);
 
-    // ---- constants
     const VkDeviceSize base = (VkDeviceSize)slot * K_N * G.block;
     uint8_t *at = G.ring_map + base;
     const VkFfxCamera *cam = &in->cam;
@@ -912,14 +843,14 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     k.cam_near = znear, k.cam_far = zfar;
     k.upscaler_target[0] = rwid, k.upscaler_target[1] = rhei;
     k.reset = reset;
-    {   // view depth from device depth (not inverted, finite far plane), in metres, and the projection's scales
+    {
         float lo = fminf(znear, zfar), hi = fmaxf(znear, zfar), q = hi / (lo - hi);
         float aspect = (float)rw / (float)rh, cot = cosf(0.5f * fov_y) / sinf(0.5f * fov_y);
         k.device_to_view[0] = -q;
         k.device_to_view[1] = q * lo * meters;
         k.device_to_view[2] = aspect / cot;
         k.device_to_view[3] = 1.0f / cot;
-        k.tan_half_fov = tanf(fov_y / 2) * aspect;   // tan of half the horizontal angle
+        k.tan_half_fov = tanf(fov_y / 2) * aspect;
     }
     float dt = in->dt_ms;
     k.delta_time = dt > 0 && dt < 1000 ? dt : 16.67f;
@@ -929,9 +860,9 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     k.of_block = OF_BLOCK;
     k.max_render[0] = (int32_t)x->mw, k.max_render[1] = (int32_t)x->mh;
     k.rect_base[0] = rx, k.rect_base[1] = ry, k.rect_size[0] = rwid, k.rect_size[1] = rhei;
-    k.transfer_function = 0;   // sRGB-encoded SDR
+    k.transfer_function = 0;
     k.jitter[0] = in->jx, k.jitter[1] = in->jy;
-    k.mv_scale[0] = 1.0f / (float)rw, k.mv_scale[1] = 1.0f / (float)rh;   // render pixels to UV
+    k.mv_scale[0] = 1.0f / (float)rw, k.mv_scale[1] = 1.0f / (float)rh;
     memcpy(at + K_FI * G.block, &k, sizeof k);
     uint32_t gpyr_groups[2], dpyr_groups[2], lpyr_groups[2];
     {
@@ -959,10 +890,9 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     VkImageView *v = r.v;
     const VkImageView cur_src = hudless ? hudless->view : bb->view;
 
-    // ---- optical flow, on the pictures without the HUD
     const int odd = x->of_odd;
     x->of_odd = !odd;
-    const int lumA = odd ? I_LUMA_B : I_LUMA_A, lumB = odd ? I_LUMA_A : I_LUMA_B;   // this frame's, the last one's
+    const int lumA = odd ? I_LUMA_B : I_LUMA_A, lumB = odd ? I_LUMA_A : I_LUMA_B;
     v[S_COLOR] = cur_src;
     for (int l = 0; l < OF_LEVELS; l++) v[U_LUMA0 + l] = x->view[lumA + l];
     dispatch(&r, P_OF_LUMA, (((W + 1) / 2) + 15) / 16, (((H + 1) / 2) + 15) / 16, 1);
@@ -994,7 +924,6 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     }
     if (G.ts_on) vkCmdWriteTimestamp2(cb, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, G.ts, slot * TS_PER + 1);
 
-    // ---- frame interpolation: the preparation from this frame's depth and motion
     v[S_IN_DEPTH] = in->depth.view, v[S_IN_MV] = in->mv.view;
     v[S_DMV] = v[U_DMV] = x->view[I_DMV];
     v[S_DDEPTH] = v[U_DDEPTH] = x->view[I_DDEPTH];
@@ -1011,7 +940,6 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     v[S_DIST] = x->view[I_DIST];
     const uint32_t rgx = (rw + 7) / 8, rgy = (rh + 7) / 8, dgx = (W + 7) / 8, dgy = (H + 7) / 8;
     dispatch(&r, P_FI_DILATE, rgx, rgy, 1);
-    // ---- the interpolation
     dispatch(&r, P_FI_SETUP, rgx, rgy, 1);
     if (!reset) {
         dispatch(&r, P_FI_RPREV, rgx, rgy, 1);
@@ -1027,17 +955,15 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
     dispatch(&r, P_FI_PYR, dpyr_groups[0], dpyr_groups[1], 1);
     dispatch(&r, P_FI_INPAINT, dgx, dgy, 1);
 
-    // ---- the picture the next frame interpolates from
     barrier(cb, CS, VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_SHADER_READ_BIT, XF,
             VK_ACCESS_2_TRANSFER_READ_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT);
     if (!reset) dump_record(cb, slot, x, bb, out);
-    barrier(cb, XF, VK_ACCESS_2_TRANSFER_READ_BIT, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT);   // the dump read it first
+    barrier(cb, XF, VK_ACCESS_2_TRANSFER_READ_BIT, XF, VK_ACCESS_2_TRANSFER_WRITE_BIT);
     VkImageCopy cp = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                       .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .extent = {W, H, 1}};
     vkCmdCopyImage(cb, hudless ? hudless->img : bb->img, VK_IMAGE_LAYOUT_GENERAL, x->img[I_PREV_SRC],
                    VK_IMAGE_LAYOUT_GENERAL, 1, &cp);
     x->have_prev = 1;
-    // the presenter's copy of out, and the next present's writes of bb, come after these
     barrier(cb, CS | XF, VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT,
             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT);
     if (G.ts_on) {
@@ -1067,7 +993,7 @@ int vk_fsr3fg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImag
     G.last_ns = now;
     if (!vk_dlaa_fg_inputs(&in.depth, &in.mv, &in.jx, &in.jy, &in.reset) || !vk_dlaa_fg_views(&dv, &mvv)) {
         G.st.no_inputs++;
-        G.want_reset = 1;   // the next frame has no valid frame before it
+        G.want_reset = 1;
         stats_frame(fgs_classify(0, vk_dlaa_fg_scene(), 0, 1, 1, 0));
         return 0;
     }
@@ -1075,8 +1001,6 @@ int vk_fsr3fg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImag
     if (!vk_dlaa_ffx_camera(&in.cam)) memset(&in.cam, 0, sizeof in.cam);
     const uint64_t cuts = G.st.cuts;
     int made = vk_fsr3fg_record(cb, bb, hudless, out, rect, &in);
-    // these passes generate without the picture without the HUD too (bb stands in, counted in vk_fsr3fg_stats): a frame
-    // that made none started a history, or failed as logged (counted as one without its inputs)
     stats_frame(made ? FGS_GENERATED : G.st.cuts != cuts ? FGS_CUT : FGS_NO_INPUTS);
     return made;
 }

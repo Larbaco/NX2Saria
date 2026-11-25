@@ -1,18 +1,3 @@
-// --probe-fsr3fg: AMD FSR 3.1 frame generation with the runtime's passes (vk_fsr3fg.c) on a synthetic scene, no game
-// files and no window. The picture (1280x720, RGBA8 like an SDR swapchain image) is a textured background (blocks of
-// noise over a gradient, which the optical flow can follow) with a yellow square moving right by 16 pixels a frame, a
-// HUD bar (a green rectangle) drawn over it in the picture with the HUD and left out of the picture without it, black
-// bars above and below the picture's rectangle; the depth (D32F, 0 near) and the motion vectors (R16G16F, render
-// pixels, current to previous) are at half the size, 640x360, the square nearer than the background. Each frame is
-// uploaded and generated as gfx_present.c's presenter records it; after 12 frames the generated frame (between the
-// last two) is read back.
-// Checks: the first frame and a reset show no generated frame and every other does; the square's centre in the
-// generated frame is within 2 pixels of halfway between the two frames' (not at either end); the HUD bar is the picture
-// with the HUD's to within 2 of 255; the black bars stay black; no validation error from the passes (with
-// NX2SARIA_VK_VALIDATION=1). The same run with the motion vectors' sign reversed is reported (the optical flow alone may
-// still place the square). Then the GPU time of one generated frame at 2560x1080 from 1920x810 (the 21:9 1080p of the
-// bench) and at 1920x1080 from 1280x720, from the passes' own timestamps, and vk_fsr3fg_idle freeing the images.
-// NX2SARIA_FSR3FG_PROBE_PPM=<dir> writes the last two pictures and the generated one as PPM images.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -81,10 +66,8 @@ static uint16_t f2h(float f) {
     return u;
 }
 
-// ---- the scene
-
-#define SQ 64          // the square's side, picture pixels
-#define BAR_TOP 60     // black bars of this height above and below the picture's rectangle
+#define SQ 64
+#define BAR_TOP 60
 static const uint8_t SQ_RGB[3] = {255, 220, 40}, HUD_RGB[3] = {40, 255, 40};
 
 static uint32_t hash(uint32_t x) {
@@ -92,7 +75,6 @@ static uint32_t hash(uint32_t x) {
     return x;
 }
 
-// The square's left edge at frame i
 static float sq_x(int i, float vx) { return 100.0f + vx * (float)i; }
 
 typedef struct {
@@ -106,7 +88,6 @@ typedef struct {
 
 static int in_hud(uint32_t x, uint32_t y) { return x >= 24 && x < 224 && y >= BAR_TOP + 16 && y < BAR_TOP + 56; }
 
-// Frame i's pictures (with and without the HUD), depth and motion vectors; mvsign -1 reverses the vectors.
 static void fill(Frame *f, int i, float vx, float mvsign) {
     const uint32_t W = f->W, H = f->H;
     uint8_t *bb = f->up_bb.map, *hl = f->up_hl.map;
@@ -118,7 +99,7 @@ static void fill(Frame *f, int i, float vx, float mvsign) {
                 p[0] = p[1] = p[2] = 0;
             } else if (x >= x0 && x < x0 + SQ && y >= y0 && y < y0 + SQ) {
                 p[0] = SQ_RGB[0], p[1] = SQ_RGB[1], p[2] = SQ_RGB[2];
-            } else {   // 8x8 blocks of noise over a gradient: blue-grey, never the square's or the HUD's colour
+            } else {
                 uint32_t n = hash((x / 8) * 7919u + (y / 8) * 104729u) & 63;
                 p[0] = (uint8_t)(40 + (x * 60) / W + n), p[1] = (uint8_t)(50 + (y * 60) / H + n / 2);
                 p[2] = (uint8_t)(110 + n);
@@ -135,7 +116,6 @@ static void fill(Frame *f, int i, float vx, float mvsign) {
             float px = ((float)x + 0.5f) * sx, py = ((float)y + 0.5f) * sy;
             int on = px >= x0 && px < x0 + SQ && py >= y0 && py < y0 + SQ;
             z[(size_t)y * f->rw + x] = on ? 0.5f : 0.95f;
-            // current to previous: the square was vx picture pixels to the left, vx / sx render pixels
             mv[2 * ((size_t)y * f->rw + x)] = f2h(on ? -mvsign * vx / sx : 0.0f);
             mv[2 * ((size_t)y * f->rw + x) + 1] = f2h(0.0f);
         }
@@ -245,7 +225,6 @@ static void write_ppm(const char *dir, const char *name, const uint8_t *rgba, ui
     fclose(fp);
 }
 
-// The square's centre (x) and its pixel count in an RGBA8 picture
 static double square_x(const uint8_t *p, uint32_t W, uint32_t H, long *count) {
     double sx = 0;
     long n = 0;
@@ -259,14 +238,12 @@ static double square_x(const uint8_t *p, uint32_t W, uint32_t H, long *count) {
 }
 
 typedef struct {
-    int shown_ok;        // the first frame and the reset showed nothing, every other frame showed one
-    double cx, expect;   // the square's centre in the generated frame and halfway
-    long px;             // its pixels there
-    int hud_diff, bars;  // the largest HUD difference; bar pixels that are not black
+    int shown_ok;
+    double cx, expect;
+    long px;
+    int hud_diff, bars;
 } Result;
 
-// One run of `frames` frames at W x H from rw x rh, panning vx picture pixels a frame; the generated frame between the
-// last two is read back. A reset at frame `reset_at`.
 static int run(VkCtx *c, uint32_t W, uint32_t H, uint32_t rw, uint32_t rh, int frames, float vx, float mvsign,
                int reset_at, Result *res, const char *ppm, const char *tag) {
     Frame f;
@@ -275,7 +252,7 @@ static int run(VkCtx *c, uint32_t W, uint32_t H, uint32_t rw, uint32_t rh, int f
         frame_free(c, &f);
         return 0;
     }
-    vk_fsr3fg_reset();   // a new run: a new history
+    vk_fsr3fg_reset();
     int ok = 1, shown_ok = 1;
     for (int i = 0; i < frames && ok; i++) {
         fill(&f, i, vx, mvsign);
@@ -290,8 +267,7 @@ static int run(VkCtx *c, uint32_t W, uint32_t H, uint32_t rw, uint32_t rh, int f
         res->shown_ok = shown_ok;
         res->cx = square_x(o, W, H, &res->px);
         res->expect = sq_x(frames - 2, vx) + vx / 2 + SQ / 2;
-        // the HUD: as in the picture with it; the bars: black
-        const uint8_t *b = f.up_bb.map;   // the last frame's picture with the HUD
+        const uint8_t *b = f.up_bb.map;
         for (uint32_t y = 0; y < H; y++)
             for (uint32_t x = 0; x < W; x++) {
                 size_t k = 4 * ((size_t)y * W + x);
@@ -363,13 +339,10 @@ int probe_fsr3fg(void) {
         printf("probe-fsr3fg: the scene still: square centre %.2f (at %.2f), %ld px\n", rz.cx, rz.expect, rz.px);
         if (!(fabs(rz.cx - rz.expect) <= 1.0)) printf("probe-fsr3fg: FAIL a still square moved\n"), bad = 1;
     }
-    // GPU time at the bench's 21:9 1080p and at 1080p, from the passes' timestamps
     static const uint32_t sizes[2][4] = {{2560, 1080, 1920, 810}, {1920, 1080, 1280, 720}};
     for (int s = 0; s < 2; s++) {
         VkFsr3fgStats a, b;
         Result t;
-        // a call's timestamps are read RING (8) calls later: a first run reads the last run's and warms this size up,
-        // and the second one's 40 frames read 40 timed frames of this size
         int ok = run(c, sizes[s][0], sizes[s][1], sizes[s][2], sizes[s][3], 40, 12.0f, 1.0f, -1, &t, NULL, "time");
         vk_fsr3fg_stats(&a);
         if (!ok || !run(c, sizes[s][0], sizes[s][1], sizes[s][2], sizes[s][3], 40, 12.0f, 1.0f, -1, &t, NULL, "time")) {
@@ -384,7 +357,7 @@ int probe_fsr3fg(void) {
                "generated frame (%llu frames); %.1f MiB\n", sizes[s][0], sizes[s][1], sizes[s][2], sizes[s][3], of, fi,
                of + fi, (unsigned long long)n, b.vram / 1048576.0);
     }
-    {   // with NX2SARIA_FSR3FG_PASS_TIMES=1: each pass's share
+    {
         const char *name;
         double ms;
         uint64_t n;
@@ -398,7 +371,7 @@ int probe_fsr3fg(void) {
            "generated, %llu history starts\n", st.vram / 1048576.0, (unsigned long long)st.frames,
            (unsigned long long)st.generated, (unsigned long long)st.cuts);
     if (st.vram) printf("probe-fsr3fg: FAIL the images were not freed\n"), bad = 1;
-    {   // last, as it is for the rest of a run: images that cannot be made turn frame generation off, nothing worse
+    {
         cfg_set("NX2SARIA_FSR3FG_TEST_FAIL", "1");
         Result t;
         int ran = run(c, W, H, rw, rh, 3, vx, 1.0f, -1, &t, NULL, "fail");

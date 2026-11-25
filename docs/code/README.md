@@ -40,7 +40,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 16 | `tools/` | [tools.md](tools.md) | extracted; `tools/cheats.py`, `tools/exefs_patches.py` and `tools/mod_files.py` keep their comments until a change next alters the lift key of a game folder with mod code ([The checks](#the-checks)) |
 | 17 | `tests/` | [tests.md](tests.md): one line per test, without repeating [building.md](../building.md#checks) | extracted |
 | 18 | `runtime/shaders/` (not `ffx/`, `ffx3/` and `smaa.glsl`) | [shaders.md](shaders.md) | extracted |
-| 19-22 | `runtime/vk/` | [vk-pipeline.md](vk-pipeline.md), `vk-exec.md`, `vk-memory.md`, `vk-texture.md`, `vk-upscalers.md` | started: the RADV releases the mesh path avoids (`vk_mesh_path.h`); the rest not yet extracted |
+| 19-22 | `runtime/vk/` | [vk-pipeline.md](vk-pipeline.md), [vk-exec.md](vk-exec.md), [vk-memory.md](vk-memory.md), [vk-texture.md](vk-texture.md), [vk-upscalers.md](vk-upscalers.md) | extracted |
 
 When an area is done, its row gets a link to the page and the status "extracted".
 
@@ -55,7 +55,7 @@ extracts a page may move a file to another one, and the page lists the files it 
 | [vk-exec.md](vk-exec.md) | the device, the replay of the game's command buffers and the synchronisation: `vk.h`, `vk_backend.c`, `vk_device.c`, `vk_caps.c`, `gpu_choice.h`, `vk_exec.c`, `vk_exec.h`, `vk_exec_draw.c`, `vk_exec_xfer.c`, `vk_exec_probe.c`, `vk_rec.c`, `vk_rec.h`, `vk_sync.c`, `vk_sync_hw.h`, `vk_pass_hooks.h`, `vk_index_rewrite.h`, `vk_oq_hold.h`, `vk_target_frames.h`, `vk_frame_owed.h`, `vk_evo_peek.h`, `vk_usnap.c`, `vk_gpa.c`, `vk_gpa.h`, `vk_dump.c`, `vk_crumbs.c` |
 | [vk-memory.md](vk-memory.md) | memory and buffers: `vk_memory.c`, `vk_mem_heap.h`, `vk_vma.cpp`, `vk_vma_budget.c`, `vk_headroom.c`, `vk_scratch_lru.h`, `vk_up_defer.h` |
 | [vk-texture.md](vk-texture.md) | images, formats and texture decoding: `vk_texture.c`, `vk_formats.c`, `vk_astc.c`, `vk_color.c`, `vk_tex_compact.h`, `vk_tex_detail.h`, `vk_tex_release.h` |
-| `vk-upscalers.md` | upscalers, anti-aliasing, frame generation and the passes after the game's frame: `vk_fsr.c`, `vk_fsr3.c`, `vk_fsr3.h`, `vk_fsr3fg.c`, `vk_fsr3fg.h`, `fsr3_probe.c`, `fsr3fg_probe.c`, `vk_ffx.cpp`, `vk_ffx.h`, `vk_ffx4.cpp`, `vk_ffx4_api.h`, `vk_fg.cpp`, `vk_fg.h`, `vk_fg4.cpp`, `vk_fg_pose.inc`, `vk_fg_reset.h`, `vk_fg_stats.h`, `vk_fg_time.c`, `vk_fg_time.h`, `vk_dlaa.c`, `vk_dlaa.h`, `vk_dlssg.c`, `vk_dlssg.h`, `vk_dlssg_device.h`, `vk_aa.c`, `vk_contact.c`, `vk_tonemap.c`, `vk_hdr.c`, `vk_mvcheck.c`, `vk_mvprev.c`, `vk_mvsurvey.c`, `vk_skin_motion.inc`, `skin_pair.h` |
+| [vk-upscalers.md](vk-upscalers.md) | upscalers, anti-aliasing, frame generation and the passes after the game's frame: `vk_fsr.c`, `vk_fsr3.c`, `vk_fsr3.h`, `vk_fsr3fg.c`, `vk_fsr3fg.h`, `fsr3_probe.c`, `fsr3fg_probe.c`, `vk_ffx.cpp`, `vk_ffx.h`, `vk_ffx4.cpp`, `vk_ffx4_api.h`, `vk_fg.cpp`, `vk_fg.h`, `vk_fg4.cpp`, `vk_fg_pose.inc`, `vk_fg_reset.h`, `vk_fg_stats.h`, `vk_fg_time.c`, `vk_fg_time.h`, `vk_dlaa.c`, `vk_dlaa.h`, `vk_dlssg.c`, `vk_dlssg.h`, `vk_dlssg_device.h`, `vk_aa.c`, `vk_contact.c`, `vk_tonemap.c`, `vk_hdr.c`, `vk_mvcheck.c`, `vk_mvprev.c`, `vk_mvsurvey.c`, `vk_skin_motion.inc`, `skin_pair.h` |
 
 ## A page
 
