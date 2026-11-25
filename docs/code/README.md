@@ -51,7 +51,7 @@ extracts a page may move a file to another one, and the page lists the files it 
 
 | Page | Files |
 |---|---|
-| `vk-pipeline.md` | pipelines, their caches and the shader modules: `vk_pipeline.c`, `vk_cache_file.h`, `vk_cache_stamp.h`, `vk_build_gate.h`, `vk_play_gate.h`, `vk_warm_hint.h`, `vk_save_retry.h`, `boot_warm.h`, `nvidia_cache.h`, `vk_mesh_fb.c`, `vk_mesh_fb.h`, `vk_mesh_path.h` |
+| [vk-pipeline.md](vk-pipeline.md) | pipelines, their caches and the shader modules: `vk_pipeline.c`, `vk_cache_file.h`, `vk_cache_stamp.h`, `vk_build_gate.h`, `vk_play_gate.h`, `vk_warm_hint.h`, `vk_save_retry.h`, `boot_warm.h`, `nvidia_cache.h`, `vk_mesh_fb.c`, `vk_mesh_fb.h`, `vk_mesh_path.h`. Extracted; `vk_pipeline.c` keeps eight comments that five tests cut the source at, until those tests cut at code |
 | `vk-exec.md` | the device, the replay of the game's command buffers and the synchronisation: `vk.h`, `vk_backend.c`, `vk_device.c`, `vk_caps.c`, `gpu_choice.h`, `vk_exec.c`, `vk_exec.h`, `vk_exec_draw.c`, `vk_exec_xfer.c`, `vk_exec_probe.c`, `vk_rec.c`, `vk_rec.h`, `vk_sync.c`, `vk_sync_hw.h`, `vk_pass_hooks.h`, `vk_index_rewrite.h`, `vk_oq_hold.h`, `vk_target_frames.h`, `vk_frame_owed.h`, `vk_evo_peek.h`, `vk_usnap.c`, `vk_gpa.c`, `vk_gpa.h`, `vk_dump.c`, `vk_crumbs.c` |
 | `vk-memory.md` | memory and buffers: `vk_memory.c`, `vk_mem_heap.h`, `vk_vma.cpp`, `vk_vma_budget.c`, `vk_headroom.c`, `vk_scratch_lru.h`, `vk_up_defer.h` |
 | `vk-texture.md` | images, formats and texture decoding: `vk_texture.c`, `vk_formats.c`, `vk_astc.c`, `vk_color.c`, `vk_tex_compact.h`, `vk_tex_detail.h`, `vk_tex_release.h` |

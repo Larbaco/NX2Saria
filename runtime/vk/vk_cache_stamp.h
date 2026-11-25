@@ -1,49 +1,21 @@
-// The translator stamp of the pipeline cache files (vk_pipeline.c cache_stamp_check): what a start does with
-// pipeline-cache.bin and pipeline-cache-play.bin given the translator that wrote them. Own header so
-// tests/cache_stamp_check.c checks it without Vulkan or files.
-//
-// A pipeline is made from the SPIR-V of a translation, and every translator release makes other SPIR-V, so the
-// entries a cache holds from an earlier translator are never asked for again once nothing serves that translator's
-// translations any more. The files only grow (vk_pipeline.c cache_save_one, and the fold in cache_load): without a
-// stamp a 650 MB file read and held twice at every boot is mostly dead entries. pipeline-cache.id names the translator
-// whose entries the files hold (its base identity, gfx_shader.c xlate_identity, as in the shader cache's
-// identities.txt; the host options mixed into the shader keys are not part of it, so a change of those alone keeps the
-// files):
-// - the same translator: the files are read;
-// - another translator whose translations the shader cache still serves (gfx_shader.c "Carry": a shader the current
-//   translator has not translated yet uses the previous one's for the whole session): the files are read, since the
-//   pipelines of those carried shaders are in them, and the stamp keeps naming the earlier translator, so the files are
-//   dropped at the first start after the carry pass has removed its translations;
-// - another translator, not carried, or any other translator in a preparation (--prepare-shaders and the like, which
-//   translate everything under the current translator and carry nothing): the files are deleted before they are read
-//   and the stamp names the current one;
-// - no stamp (files from before the stamp, or none at all): the files are read and the stamp names the current one.
-// The cost: what the runs under a carry compiled for the current translator went into the same files, and goes with
-// them at the deletion. The carry pass usually ends in the first session after an update, so that is what that one
-// session compiled, and the driver's own cache mostly still has it: the run that deletes the files takes those
-// pipelines from there and writes pipeline-cache.bin again at its exit (cache_base_at_exit below), so the start after
-// it reads them from the file once more. What the driver no longer has is compiled again. A deletion is not a driver
-// change: the start that follows builds in the background as any other (vk_pipeline.c bf_decide), as it did when the
-// files were read and none of their pipelines matched the new translator's SPIR-V.
 #pragma once
 
 #include <stdint.h>
 #include <string.h>
 
 enum {
-    CACHE_STAMP_NONE = 0,     // no stamp file, or one that names no identity
-    CACHE_STAMP_MATCHES = 1,  // the stamp names the current translator
-    CACHE_STAMP_DIFFERS = 2,  // it names another one
+    CACHE_STAMP_NONE = 0,
+    CACHE_STAMP_MATCHES = 1,
+    CACHE_STAMP_DIFFERS = 2,
 };
 
 enum {
-    CACHE_STAMP_READ = 0,       // read the files; the stamp stays as it is
-    CACHE_STAMP_READ_STAMP = 1, // read the files, then write the current translator into the stamp
-    CACHE_STAMP_CARRY = 2,      // read the files for the carried shaders; the stamp keeps the earlier translator
-    CACHE_STAMP_DROP = 3,       // delete the files before reading them, then write the current translator into the stamp
+    CACHE_STAMP_READ = 0,
+    CACHE_STAMP_READ_STAMP = 1,
+    CACHE_STAMP_CARRY = 2,
+    CACHE_STAMP_DROP = 3,
 };
 
-// 1 when c is a hex digit; its value in *v.
 static inline int cache_stamp_hexval(char c, int *v) {
     if (c >= '0' && c <= '9') return *v = c - '0', 1;
     if (c >= 'a' && c <= 'f') return *v = c - 'a' + 10, 1;
@@ -51,8 +23,6 @@ static inline int cache_stamp_hexval(char c, int *v) {
     return 0;
 }
 
-// The identity a stamp file's text names (n bytes, not terminated): 64 hex digits at its start, then nothing but
-// whitespace. 1 and the 32 bytes in id when it names one; 0 for any other text (a cut write, an empty file).
 static inline int cache_stamp_parse(const char *text, size_t n, uint8_t id[32]) {
     if (!text || n < 64) return 0;
     for (int i = 0; i < 32; i++) {
@@ -65,21 +35,17 @@ static inline int cache_stamp_parse(const char *text, size_t n, uint8_t id[32]) 
     return 1;
 }
 
-// The text a stamp file holds for id: 64 lowercase hex digits and a line end, 65 bytes, terminated (out[66]).
 static inline void cache_stamp_format(const uint8_t id[32], char out[66]) {
     static const char hex[] = "0123456789abcdef";
     for (int i = 0; i < 32; i++) out[2 * i] = hex[id[i] >> 4], out[2 * i + 1] = hex[id[i] & 15];
     out[64] = '\n', out[65] = 0;
 }
 
-// The stamp file's state against the current identity cur. text NULL: no file.
 static inline int cache_stamp_state(const char *text, size_t n, const uint8_t cur[32], uint8_t stamped[32]) {
     if (!cache_stamp_parse(text, n, stamped)) return CACHE_STAMP_NONE;
     return memcmp(stamped, cur, 32) ? CACHE_STAMP_DIFFERS : CACHE_STAMP_MATCHES;
 }
 
-// What the start does. carried: the stamped translator's translations are still served (the shader cache's carry
-// is on and lists it among the previous translators). prep: the start is a preparation, which carries nothing.
 static inline int cache_stamp_action(int state, int carried, int prep) {
     switch (state) {
     case CACHE_STAMP_MATCHES: return CACHE_STAMP_READ;
@@ -88,26 +54,12 @@ static inline int cache_stamp_action(int state, int carried, int prep) {
     }
 }
 
-// Whether the run writes pipeline-cache.bin at its exit (vk_pipeline.c P.base_at_exit). In play only the play file is
-// saved, and a pipeline the driver's own cache gives enters the cache of pipeline-cache.bin in memory only, so after a
-// start that finds no pipeline-cache.bin (the stamp has just deleted it, or the run that started without it ended
-// before its exit) every start would ask the driver again for the same pipelines, about 5 ms each against 0.1 ms from
-// the file (RADV, 2026-11-17), until a fold. Such a run writes the file once, at its exit, with what it took from the
-// driver's cache and built for that cache: a write at every autosave would copy all of it again each time, which is
-// what the play file is there to avoid. A run that ends without that save leaves the file missing, and the next start
-// does the same. base_size: the file's size after the stamp's check, -1 when there is none. prep: a preparation,
-// which builds into that file alone and writes it at every save anyway.
 static inline int cache_base_at_exit(int prep, int64_t base_size) { return !prep && base_size <= 0; }
 
-// Whether a save writes pipeline-cache.bin (vk_pipeline.c cache_save). play: the run has a play cache (without one
-// everything goes into the one cache, written at every save); fold: the play file was merged into it at the start and
-// is written once; base_at_exit: cache_base_at_exit's answer for this run; exiting: the save as the process ends.
 static inline int cache_save_writes_base(int play, int fold, int base_at_exit, int exiting) {
     return !play || fold || (base_at_exit && exiting);
 }
 
-// path with its ".bin" replaced by suffix into out (cap bytes): pipeline-cache.bin gives pipeline-cache.id and
-// pipeline-cache-play.bin. A path without ".bin" at its end gets suffix after the whole of it. Cut to cap.
 static inline void cache_stamp_sibling(const char *path, const char *suffix, char *out, size_t cap) {
     if (!cap) return;
     size_t n = strlen(path), k = strlen(suffix);
@@ -119,7 +71,6 @@ static inline void cache_stamp_sibling(const char *path, const char *suffix, cha
     out[n + k] = 0;
 }
 
-// The words the log line gives a state and an action.
 static inline const char *cache_stamp_state_name(int state) {
     return state == CACHE_STAMP_MATCHES ? "matches" : state == CACHE_STAMP_DIFFERS ? "differs" : "none";
 }
