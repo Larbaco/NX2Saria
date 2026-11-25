@@ -3,8 +3,8 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/toolchain.py`,
-`launcher/winsys.py`, and `launcher/build.py`.
+names. These files still keep their comments until their notes are here: `launcher/winsys.py`, and
+`launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -2177,6 +2177,100 @@ called by the window's timer (`launcher/ui/app.py` `App.tick()`), calls `done(re
 `launcher/jobs.py` `BackgroundUpdate.poll()` hands the window a staging's end. `Reporter.post()` never raises;
 anything else that does must not lose `done()`, so it becomes a "no connection" result. `Tasks.wait()` is for tests:
 it polls until no request runs.
+
+## `launcher/toolchain.py`
+
+The build tools, installed on the player's PC: MSYS2's UCRT64 clang and the libraries `tools/make_game.py` links (the
+packages `README-BuildKit.md` lists), and the zbic Python package ([launcher.md](../launcher.md#installing)).
+
+No MSYS2 shell and no pacman: the packages and everything they depend on are read from the repository's database,
+downloaded, checked against the sha256 the database (or the release's lock) names, and unpacked into
+`toolchain/msys64/ucrt64` as pacman would lay them out. A release pins the exact package files in
+`toolchain.lock.json` (`make_lock()`, written by `tools/make_launcher.py`), so every player builds with the compiler
+the release was tested with; the repository keeps old package files. A checkout without a lock resolves the newest
+packages instead.
+
+Beside it goes the clang of MSYS2's CLANG64 environment (`toolchain/msys64/clang64`), the same LLVM release built with
+profile-guided optimisation: it compiles the lifted code about a fifth faster into the same objects, reading UCRT64's
+headers (`tools/make_game.py` `fast_clang()`). Only `clang.exe`, the DLLs it loads and its own headers are unpacked.
+
+zbic (GPL-2.0) unpacks the game's compressed program files. The release does not carry it: the launcher downloads the
+wheel for its own Python from PyPI and unpacks it into `pydeps/`, as `pip install zbic` would.
+
+- `ROOTS` has `lld` because the game links several times faster with it than with GNU ld.
+- The CLANG64 package list is exactly the packages `clang.exe` loads DLLs from, not the dependency closure, which adds
+  the linker, the LLVM tools and the CLANG64 C runtime the lifted code does not use. They come from repo.msys2.org
+  (`FAST_REPO`), with mirror.msys2.org as the second of `FAST_MIRRORS`.
+
+### `zstd_missing()`
+
+Why this Python cannot read zstd files, or empty when it can. The MSYS2 packages and the game's files are zstd: Python
+3.14 reads them with `compression.zstd`, an older Python needs the zstandard package. The release's Python has both;
+a checkout runs under whatever Python started it, and without either the build stopped at its first unpack with
+nothing but "No module named 'zstandard'".
+
+### `_open_tar()`
+
+A tarfile over a `.tar.zst` (or plain or gzip tar) file or bytes.
+
+### `parse_db()`
+
+`{name: desc}` for a pacman sync database (`ucrt64.db`): each `desc` is `{FIELD: [lines]}`.
+
+### `resolve()`
+
+Every package the roots need, roots first; names a package provides resolve to the package.
+
+### `make_lock()`
+
+The lock a release ships: the resolved package files of the repository's current database. With `fast_repo`
+(`FAST_REPO`), also CLANG64's clang, when that repository has the same clang version as UCRT64's.
+
+### `load_lock()`
+
+The release's `toolchain.lock.json`, or a lock resolved from the live database in a checkout.
+
+### `_wanted()`
+
+Whether a package member is unpacked: UCRT64's files without the documentation; of CLANG64's, `clang.exe`, the DLLs
+and clang's own headers.
+
+### `_members()`
+
+The members of a `.pkg.tar.zst` (or plain tar), read as a stream, member by member, so a 350 MB package never sits in
+memory whole. Yields `(tarfile, member)`.
+
+### `_extract_package()`
+
+Unpacks one package into `dest` (the `msys64` folder): the members `_wanted()` keeps. A wanted hard link needs its
+target on disk, and a stream cannot go back for it: a selective unpack (`env`) first reads the headers for the targets
+of the wanted links (CLANG64's `clang.exe` is one) and unpacks them too.
+
+### `install()`
+
+Downloads and unpacks the lock's packages into `toolchain/msys64` (through `msys64.new`, swapped in at the end).
+`progress(phase, done, total)` is called with the phase `download` (bytes) or `unpack` (packages).
+
+- Room for the downloads and for the unpacked tools beside the ones in use (`msys64.new`) is asked before the first
+  download: a disk that fills while a package unpacks otherwise ends the step with an error that names no cause. A
+  package's installed size is in the lock; of a CLANG64 package only a few files are unpacked (`_wanted()`), for which
+  its download size stands in.
+- `NoSpace` of `launcher/net.py` ends the step at once: another server has the same file for the same full disk.
+- Files kept from an earlier download are checked against their sha256 too.
+
+### `wheel_tag()`
+
+The wheel platform tags this interpreter loads, best first.
+
+### `zbic_ok()`
+
+Whether zbic loads from `pydeps/` in the interpreter the build runs with. It asks a fresh process, because this one may
+have cached that `pydeps/` did not exist; on Windows the process is started with `CREATE_NO_WINDOW` (`0x08000000`).
+
+### `ensure_zbic()`
+
+A member of the wheel is refused when it would land outside `pydeps/`; the check is on the resolved path, so a sibling
+such as `pydeps2` does not pass either.
 
 ## `launcher/ui/__init__.py`
 
