@@ -1,5 +1,13 @@
 # needs: clang
-"""The count of recording copies whose control memory the game reused (runtime/nvn/nvn_api_cmd.c, NX2SARIA_COPY_RETIRE):
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+import runtime_include
+
+DESCRIPTION = """The count of recording copies whose control memory the game reused (runtime/nvn/nvn_api_cmd.c, NX2SARIA_COPY_RETIRE):
 builds ctl_fingerprint, retire_visit, retire_queue and retire_pass, cut from nvn_api_cmd.c by their text, with a stub
 table of live copies and stub guest memory, and checks that
 
@@ -18,13 +26,6 @@ table of live copies and stub guest memory, and checks that
 
 No game files. Usage: python tests/copy_sweep_check.py [--cc <clang>]
 """
-import argparse
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
-import runtime_include
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -157,7 +158,7 @@ def cut(text, start, end_marker):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

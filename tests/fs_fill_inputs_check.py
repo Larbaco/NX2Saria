@@ -1,5 +1,14 @@
 # needs: clang, glslangValidator, spirv-val
-"""Fragment inputs that no mesh output feeds (runtime/vk/vk_pipeline.c spirv_mesh_outputs, spirv_fs_fill_inputs): builds
+import argparse
+import os
+import shutil
+import struct
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+DESCRIPTION = """Fragment inputs that no mesh output feeds (runtime/vk/vk_pipeline.c spirv_mesh_outputs, spirv_fs_fill_inputs): builds
 the two functions, cut from vk_pipeline.c by their text, and runs them on modules glslang makes here:
 
   - a mesh shader that draws points and writes no generic output, and one that draws triangles and writes location 1;
@@ -11,14 +20,6 @@ location 1 as an Input; and that every rewritten module passes spirv-val. No gam
 
 Usage: python tests/fs_fill_inputs_check.py [--cc <clang>]
 """
-import argparse
-import os
-import shutil
-import struct
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -111,7 +112,7 @@ def inputs_and_builtins(spv):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__)
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

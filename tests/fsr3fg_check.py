@@ -1,6 +1,10 @@
 # needs: exe, gpu
 # args: {exe}
-"""Run the game executable's --probe-fsr3fg with Vulkan's validation on (runtime/vk/fsr3fg_probe.c: FSR 3.1 frame
+import os
+import subprocess
+import sys
+
+USAGE = """Run the game executable's --probe-fsr3fg with Vulkan's validation on (runtime/vk/fsr3fg_probe.c: FSR 3.1 frame
 generation with the runtime's own passes, runtime/vk/vk_fsr3fg.c, on a synthetic scene, without a window or the game).
 
 The probe checks that the generated frame puts a moving square halfway between the two frames it is made from, keeps
@@ -14,14 +18,11 @@ generates the frames there), the probe says SKIP and so does this test.
 
 Usage: fsr3fg_check.py PATH_TO_GAME_EXE
 """
-import os
-import subprocess
-import sys
 
 
 def main():
     if len(sys.argv) != 2:
-        print(__doc__)
+        print(USAGE)
         return 2
     env = dict(os.environ)
     env['NX2SARIA_VK_VALIDATION'] = '1'

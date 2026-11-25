@@ -1,5 +1,12 @@
 # needs: clang
-"""The shake key swings the right stick by the game's updates, not by the clock (runtime/input/input.c shake_stick): builds
+import argparse
+import os
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+DESCRIPTION = """The shake key swings the right stick by the game's updates, not by the clock (runtime/input/input.c shake_stick): builds
 shake_stick, cut from input.c by its text, with stand-ins for the clock and the present count
 (frame_rate.c frame_step_presents), and checks that
 
@@ -10,12 +17,6 @@ shake_stick, cut from input.c by its text, with stand-ins for the clock and the 
 
 No game files, no SDL. Usage: python tests/shake_key_check.py [--cc <clang>]
 """
-import argparse
-import os
-import subprocess
-import sys
-import tempfile
-from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
@@ -108,7 +109,7 @@ def cut(text, start, end_marker):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--cc', help='the C compiler (default: MSYS2 UCRT64 clang on Windows, clang elsewhere)')
     args = ap.parse_args()
     win = os.name == 'nt'

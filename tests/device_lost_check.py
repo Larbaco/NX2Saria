@@ -1,6 +1,10 @@
 # needs: exe, gpu
 # args: {exe}
-"""Run the game executable's --probe-devlost and check how a run ends when the GPU device is lost
+import subprocess
+import sys
+import time
+
+USAGE = """Run the game executable's --probe-devlost and check how a run ends when the GPU device is lost
 (runtime/vk/vk_device.c vk_device_lost_check, runtime/vk/vk_sync.c vk_sync_probe_devlost).
 
 The probe needs a Vulkan device and opens no window. It does not lose the device: it marks it lost, and then has four
@@ -16,16 +20,13 @@ What a driver answers after a real loss is not covered.
 
 Usage: device_lost_check.py PATH_TO_GAME_EXE
 """
-import subprocess
-import sys
-import time
 
 LOST_EXIT = 72
 
 
 def main():
     if len(sys.argv) != 2:
-        print(__doc__)
+        print(USAGE)
         return 2
     p = subprocess.Popen([sys.argv[1], '--probe-devlost'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, errors='replace')
