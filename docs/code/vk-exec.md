@@ -1723,7 +1723,7 @@ number of allocations made.
 - These two need features that are not enabled (multiview, primitive fragment shading rate).
 - Mesh queries for two diagnoses: `NX2SARIA_GPU_PASSES` (`runtime/vk/vk_crumbs.c`) and the dump's primitive counts
   (`runtime/vk/vk_dump.c` `vk_dump_mesh_begin()`), which also need pipeline statistics and host query reset.
-- `}`: vkGetDeviceFaultInfoEXT needs the feature, not just the extension.
+- vkGetDeviceFaultInfoEXT needs the feature, not just the extension.
 - `mesh_fallback`: auto, 1 (on every device) or 0 (`runtime/vk/vk_mesh_path.h` says when auto takes it, and why on AMD's
   driver for RDNA 1 and 2 and on Intel's; the RADV releases it takes it on, and the `vk: mesh path:` lines this function
   writes for them, are on [vk-pipeline.md](vk-pipeline.md)). Without mesh shaders the mesh emulation
@@ -4364,7 +4364,7 @@ descriptor commands.
 ### `rs_list()`
 
 - `if ((nd += cnt) > MAX_DESC) { ok = 0; break; }`: the build stops on it.
-- `}`: slot 1: the program (`bind_sig`); others: the zero buffer.
+- Slot 1: the program (`bind_sig`); others: the zero buffer.
 - `} else if (b->kind == GFX_RES_SSBO)`: every descriptor of the binding is the same range.
 - `if (r->ptr || (!direct && ubo_ptr_res(r)))`: an address read from memory: `bind_sig` reads it again.
 
@@ -4929,8 +4929,8 @@ unchanged, `*changed` 0); 0: none, the draw keeps this frame's block there.
   nothing moves (the check's per-draw line: about 120 such draws a frame changed in c9 alone), the object scale the
   picture shows is 0.6-0.8 of theirs, and with Link stopped against a cliff 40-77 % of the picture got 1-3 px of motion
   that flipped direction, three times the warp error of the camera's vectors. With c9 kept too, the turning run is as
-  good (object warp error 0.46 of the camera's). Why their copies are wrong is not known. `NX2SARIA_MVPREV_SKIP=<hex
-  bank mask>` (test) replaces the default a00 (bit n: cn).
+  good (object warp error 0.46 of the camera's). Why their copies are wrong is not known.
+  `NX2SARIA_MVPREV_SKIP=<hex bank mask>` (test) replaces the default a00 (bit n: cn).
 - `if (how == MVPREV_SELF) return 1`: bound at the same address last frame: not written again.
 - `static long trust = -2`: `NX2SARIA_MVPREV_TRUST=<hex bank mask>` (test): the copy found is taken without the check.
 
@@ -5431,11 +5431,11 @@ pasted G-buffer normals and intermediates over the picture. Kept per program ser
 `NX2SARIA_NATIVE_TENSOR=1`: tensor-core programs run their translation (HMMA, LDSM and MOVM lowered to warp shuffles in
 `tools/xlate/AmpereLowering.cs` Hmma, Ldsm, Movm). The lowering gives the hardware's results: its SPIR-V, run by the
 driver, matches what the same SM86 kernels compute natively, bit for bit, on single instructions and on a network pass
-over four warps (a check named `tensor_gpu_check.py`, which `tests/` does not hold). The infinities and noise the scene upscaler wrote came from its input
-picture, not from the arithmetic (`net_binding`). Still off by default: no game run has confirmed the picture since, and
-each network pipeline takes the driver tens of seconds and about 100 MiB of device memory to build
-(`runtime/vk/vk_pipeline.c`, compute pipeline prebuild). While off, the programs take the fallback below as untranslated
-ones do.
+over four warps (a check named `tensor_gpu_check.py`, which `tests/` does not hold). The infinities and noise the scene
+upscaler wrote came from its input picture, not from the arithmetic (`net_binding`). Still off by default: no game run
+has confirmed the picture since, and each network pipeline takes the driver tens of seconds and about 100 MiB of device
+memory to build (`runtime/vk/vk_pipeline.c`, compute pipeline prebuild). While off, the programs take the fallback below
+as untranslated ones do.
 
 ### `log_cs_bindings_locked()`
 
@@ -6075,7 +6075,7 @@ one).
 
 ### `copy_t2t()`
 
-- `} else`: scaled or converting copy: nearest, or linear when asked for (colour only).
+- Otherwise a scaled or converting copy: nearest, or linear when asked for (colour only).
 
 ### Buffer to buffer
 
