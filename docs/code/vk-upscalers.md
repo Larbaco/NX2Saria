@@ -113,8 +113,7 @@ images alternate between calls.
 Contexts (`ctx_for()`): one per render size and output size, or with the game's dynamic resolution one per output size
 for every render size up to it, at most `CTX_MAX`; one no upscale used for 90 seconds goes, and all of them go while the
 upscaler is off (`vk_fsr3_release_idle()`). A context that goes is let go of (`retire_ctx()`) and its images are
-destroyed once the GPU is past the submission of its last upscale (`g_dead`; the list is `runtime/vk/vk_dlaa.c`
-`upd_put()`'s), as `runtime/vk/vk_ffx.cpp` does with the library's contexts. The constants live in a host-visible ring
+destroyed once the GPU is past the submission of its last upscale (`g_dead`, a list of `runtime/vk/vk_up_defer.h`), as `runtime/vk/vk_ffx.cpp` does with the library's contexts. The constants live in a host-visible ring
 of `RING` (256) slots, each one `Consts`, `SpdConsts` and the RCAS words; a slot is reused `RING` calls later, after the
 GPU passed the submission that last read it.
 
@@ -3342,11 +3341,12 @@ The upscaler this frame runs with, as `vk_dlaa_frame()` read it. The menu can se
 and `evaluate()`; read again there while NGX is not up (DLSS starts only after a restart), it sent `evaluate()` to
 DLSS's path with NGX's functions not loaded, a call to address 0 (issue #325).
 
-### @@ before idle_free
+### `idle_free()`
 
-`feat_released`: Which features may stay alive when another is made (`NX2SARIA_DLSS_IDLE_FREE`). A feature made while
-one with a larger input size is alive leaves that larger one drawing alternating bands of rows black or noise from then
-on, for as long as it is used; seen for the pause screen's feature (the picture's size in and out), in two ways:
+Which features may stay alive when another is made (`NX2SARIA_DLSS_IDLE_FREE`; `feat_released` counts the releases since
+the last creation). A feature made while one with a larger input size is alive leaves that larger one drawing
+alternating bands of rows black or noise from then on, for as long as it is used; seen for the pause screen's feature
+(the picture's size in and out), in two ways:
 
 - A pause of 3,600 frames frees the gameplay feature (`stale_sizes()`) and the unpause makes it again: every later pause
   was striped, in each of 8 scripted runs of pause, unpause, pause in which it had been freed and in none of 12 in which
@@ -3361,13 +3361,14 @@ of them (`release_kept()`); their images stay and each is made again when its si
 build, each way with the rule and with 2: the long pause and the mode change were striped without it and clean with it.
 The input size may not be what matters: in every striped case the feature made was of another model (performance's or
 ultra performance's) than the pause screen's, and the one run in which balanced's feature, of the pause screen's model,
-was made again beside it without the rule was clean. The rule covers both readings. 1 (default)  idle features are freed
-0            idle features are never freed (about 0.5 GB more video memory after the first pause) 2            idle
-features are freed and nothing is released when a feature is made (as before; shows the fault).
+was made again beside it without the rule was clean. The rule covers both readings. The values of
+`NX2SARIA_DLSS_IDLE_FREE`:\n\n- 1 (default): idle features are freed;\n- 0: idle features are never freed (about 0.5 GB
+more video memory after the first pause);\n- 2: idle features are freed and nothing is released when a feature is made
+(as before; shows the fault).
 
 ### `vk_upscaler_device_idle()`
 
-The upscalers' waits for the device to be idle before they free what the GPU may still use (`runtime/vk/vk_dlaa.c`,
+The upscalers' waits for the device to be idle before they free what the GPU may still use (this file,
 `runtime/vk/vk_ffx.cpp`, `runtime/vk/vk_ffx4.cpp`), with the queue lock held: the present's flip, the completion
 thread's hold release and every upload submit wait as long. `NX2SARIA_TRACE=perf` names them "upscaler GPU waits" on a
 slow frame's line, together with `vk_upscaler_gpu_wait()`'s timeline waits after a refused creation, which touch no
@@ -3379,6 +3380,8 @@ A DLSS feature's release, timed as "upscaler releases" (`NX2SARIA_TRACE=perf`).
 
 ### What the upscalers let go of while the GPU may still use it
 
+The lists of `runtime/vk/vk_up_defer.h` (`upd_put()`, `upd_take()`), here and in the FSR files.
+
 A size's images and feature (a third scene size, a DLSS model change, a size unused for `SIZE_STALE` evaluations), the
 features `release_kept()` and `stale_sizes()` release, a snapshot of the reactive mask, the HUD-less picture of another
 size, prebloom's images, what `retire_idle()` gives back, and FSR 3.1's and FSR 4's contexts (`runtime/vk/vk_ffx.cpp`,
@@ -3387,34 +3390,36 @@ thread with the queue lock held: the present's flip, the completion thread's hol
 as long, at each pause-screen size, reload, window size, dynamic resolution step or mode change (16 to 45 ms in play
 together with a DLSS feature's create). Nothing waits for them now:
 
-- Images only the replay uses go to `runtime/vk/vk_memory.c`'s deferred destruction (`vk_defer_image`, `vk_defer_view`),
-  stamped with the submission being recorded, which comes after every submission that can name them;
-- A DLSS feature goes into dead with the fence of the last submission that created or evaluated it (`feat_fence`) and is
-  released once the GPU is past it, which is what NGX asks of a feature's release; on this thread, which makes every NGX
-  call (NGX is not thread safe);
-- An image frame generation can read at a present (a size's motion vectors, the HUD-less picture) goes into dead behind
-  a present gate (`FG_LATE_PRESENTS`), and from there to the deferred destruction;
+- Images only the replay uses go to `runtime/vk/vk_memory.c`'s deferred destruction (`vk_defer_image()`,
+  `vk_defer_view()`), stamped with the submission being recorded, which comes after every submission that can name them;
+- A DLSS feature goes into `dead` with the fence of the last submission that created or evaluated it (`feat_fence`) and
+  is released once the GPU is past it, which is what NGX asks of a feature's release; on this thread, which makes every
+  NGX call (NGX is not thread safe);
+- An image frame generation can read at a present (a size's motion vectors, the HUD-less picture) goes into `dead`
+  behind a present gate (`FG_LATE_PRESENTS`), and from there to the deferred destruction;
 - FSR contexts go into lists of their own in `runtime/vk/vk_ffx.cpp` and `runtime/vk/vk_ffx4.cpp` (outside Windows FSR
-  3.1's in `runtime/vk/vk_fsr3.c`, through `vk_ffx_dead_take`), taken at the same points.
+  3.1's in `runtime/vk/vk_fsr3.c`, through `vk_ffx_dead_take()`), taken at the same points.
 
-The lists are taken at every evaluation (evaluate), at every pass while none runs (`retire_idle()`), and where something
-is let go of (`vk_upscaler_let_go()`). What still waits: a feature or context creation refused while ones let go of are
-in flight waits for the GPU to pass those (`vk_upscaler_gpu_wait()`), and a full list for the device
+The lists are taken at every evaluation (`evaluate()`), at every pass while none runs (`retire_idle()`), and where
+something is let go of (`vk_upscaler_let_go()`). What still waits: a feature or context creation refused while ones let
+go of are in flight waits for the GPU to pass those (`vk_upscaler_gpu_wait()`), and a full list for the device
 (`vk_upscaler_settle()`). `NX2SARIA_UPSCALER_IDLE_WAIT=1` waits for the device wherever something is let go of, as up to
 0.10.1, but does not bring 0.10.1 back exactly: what was let go of still goes through these lists and the deferred
 destruction, an image a present reads keeps its present gate, what the submission being recorded names stays until it is
 done, and a refused DLSS creation with features let go of still listed waits and tries again, where 0.10.1 turned DLAA
 off.
 
-- `enum { UPD_FEAT = 1, UPD_IMG, UPD_VIEW }`: dead's kinds: a DLSS feature, an image with its allocation (aux), a view.
-- `dead`: DLAA's hook thread only (`vk_dlaa_pass()` and what it runs), as evaluate's state.
+`dead` is this file's list; only DLAA's hook thread touches it (`vk_dlaa_pass()` and what it runs), as the state of
+`evaluate()`. Its kinds: `UPD_FEAT`, a DLSS feature; `UPD_IMG`, an image with its allocation (`aux`); `UPD_VIEW`, a
+view.
 
-A `runtime/vk/vk_dlaa.c` image frame generation can read at a present goes this many presents after it was let go of.
-`present_image` (`runtime/vk/vk_backend.c`) calls `vk_dlaa_frame()` before it waits for the present thread to take the
-job before it, so 3 presents on, the present job that last read it has been submitted and flipped; 1 more for a present
-from another thread than the submitting one; and 4 more for frame generation that reads it during the flip on queues of
-its own (`runtime/vk/vk_dlssg.c`: inputs valid until the present), which no timeline value of ours covers. The deferred
-destruction then stamps it with the submission being recorded, which comes after those presents.
+`FG_LATE_PRESENTS` (8): an image of this file that frame generation can read at a present goes this many presents after
+it was let go of. `present_image()` (`runtime/vk/vk_backend.c`) calls `vk_dlaa_frame()` before it waits for the present
+thread to take the job before it, so 3 presents on, the present job that last read it has been submitted and flipped; 1
+more for a present from another thread than the submitting one; and 4 more for frame generation that reads it during the
+flip on queues of its own (`runtime/vk/vk_dlssg.c`: inputs valid until the present), which no timeline value of the
+runtime covers. The deferred destruction then stamps it with the submission being recorded, which comes after those
+presents.
 
 ### `presents_now()`
 
@@ -3426,34 +3431,35 @@ destruction then stamps it with the submission being recorded, which comes after
 
 ### `dead_release()`
 
-One entry of dead, as `upd_take` hands it out, timed as "upscaler releases". teardown (`vk_dlaa_release()`: the device
-is idle and about to go): images and views are destroyed at once.
+One entry of `dead`, as `upd_take()` hands it out, timed as "upscaler releases". At teardown (`vk_dlaa_release()`: the
+device is idle and about to go): images and views are destroyed at once.
 
 ### `upscalers_drain()`
 
 What the upscalers let go of goes once the GPU is past it: DLSS's here, FSR's in `runtime/vk/vk_ffx.cpp`,
 `runtime/vk/vk_ffx4.cpp` and `runtime/vk/vk_fsr3.c`.
 
-- `vk_ffx_dead_take(done)`: returns at once with both of its lists empty.
+`vk_ffx_dead_take()` returns at once with both of its lists empty.
 
 ### `vk_upscaler_settle()`
 
 A wait for the device, then everything the upscalers let go of that a submission made so far names goes. An image a
 present can read keeps its present gate: the device's idle does not cover a present still to come.
 
-- `const uint64_t issued = vk_sync_issued()`: read before the wait: every submission up to it is done after it.
+The count of submissions issued is read before the wait: every submission up to it is done after it.
 
 ### `vk_upscaler_gpu_wait()`
 
-- `if (v > issued) v = issued`: a submission still being recorded cannot finish while this thread records it.
-- `vk_queue_lock(), vk_queue_unlock()`: the replay's held submissions go to the queue (`runtime/gfx/gfx_present.c`
+- The value waited for is at most the submissions issued: a submission still being recorded cannot finish while this
+  thread records it.
+- The queue lock is taken and released first: the replay's held submissions go to the queue (`runtime/gfx/gfx_present.c`
   `vk_queue_lock()`).
 - A wait on the timeline from the host touches no queue, so no queue's lock is needed (unlike the device's idle).
 
 ### `dead_put()`
 
-- Full, which the GPU's progress and the presents do not let happen: room after a wait for the device, and if a present
-  gate still holds every entry, they all go as before this list, the device idle.
+The list full, which the GPU's progress and the presents do not let happen: room after a wait for the device, and if a
+present gate still holds every entry, they all go as before this list existed, the device idle.
 
 ### `retire_size()`
 
@@ -3461,13 +3467,12 @@ A size let go of while the GPU may still use it: the images only the replay uses
 vectors (frame generation's, `D.fg_mv`) behind the present gate, the feature once the GPU is past its last create or
 evaluation. The entry is free at once.
 
-- `dead_put(UPD_VIEW, e->mv_view, NULL, 0, gate)`: a view before its image: `upd_take` and `runtime/vk/vk_memory.c` keep
-  the order.
+A view is put before its image: `upd_take()` and `runtime/vk/vk_memory.c` keep the order.
 
 ### `retire_feat()`
 
 A size's feature alone (`release_kept()`, `stale_sizes()`), released once the GPU is past its last create or evaluation.
-count: it counts as a release for `release_kept()`'s next call (`feat_released`).
+`count`: it counts as a release for `release_kept()`'s next call (`feat_released`).
 
 ### `destroy_size()`
 
@@ -3488,48 +3493,47 @@ runs on the DLSS mode's (`range_host()`); the least recently used goes for a new
 
 ### Timing
 
-`NX2SARIA_DLAA_TIMES=1`.
+`NX2SARIA_DLAA_TIMES=1`: GPU timestamps around the camera motion dispatch, the per-object motion pass and DLSS's
+evaluation, and the CPU time of NGX's call and of draining the recorder before it, summed and logged every
+`TIMES_SUMMARY` frames:
 
-GPU timestamps around the camera motion dispatch, the per-object motion pass and DLSS's evaluation, and the CPU time of
-NGX's call and of draining the recorder before it, summed and logged every `TIMES_SUMMARY` frames: dlaa times: gpu
-camera motion a ms, object motion b ms, DLSS c ms (frames timed); cpu: recorder drain d ms, NGX evaluate e ms, motion
-pass recording f ms Each frame takes its own slot of `TIMES_SLOTS`; a slot's results are read when it comes round again
-(by then the GPU is long done with it; not ready: that frame is left out).
+```
+dlaa times: gpu camera motion a ms, object motion b ms, DLSS c ms (frames timed); cpu: recorder drain d ms, NGX evaluate
+e ms, motion pass recording f ms
+```
 
-`T`:
+Each frame takes its own slot of `TIMES_SLOTS`; a slot's results are read when it comes round again (by then the GPU is
+long done with it; not ready: that frame is left out).
+
+The state, `T`:
 
 - `on`: -1 not read.
 - `used`: the slot holds a frame's timestamps (all `T_N` written).
 - `gpu`: ms summed: camera motion, object motion, DLSS.
-- `frames`, `cpu_drain`, `cpu_ngx`, `cpu_mv`: ns summed.
+- `cpu_drain`, `cpu_ngx`, `cpu_mv`: ns summed.
 
 ### `times_begin()`
 
 At the start of a frame's timing (`mv_pass()`): the slot's last results are read and it is reset.
 
-- `double ns = vk_ctx()->props.limits.timestampPeriod / 1e6`: ticks to ms.
+The device's `timestampPeriod` takes ticks to ms.
 
 ### Motion vectors
 
 The camera's motion first (`runtime/shaders/dlaa_mv.comp`): this frame's scene camera block is copied out of the
-replay's uniform snapshot (`runtime/vk/vk_usnap.c`, as of the submit call) into one slot of camb, last frame's stays in
-the other, and the compute pass reprojects every pixel's depth through the two (inv4 and `mv_pass()` below). Then the
-per-object pass (`runtime/vk/vk_exec_draw.c`, `vk_mvobj_execute`) writes the motion of whatever moves on its own over
+replay's uniform snapshot (`runtime/vk/vk_usnap.c`, as of the submit call) into one slot of `camb`, last frame's stays
+in the other, and the compute pass reprojects every pixel's depth through the two (`inv4()` and `mv_pass()`). Then the
+per-object pass (`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`) writes the motion of whatever moves on its own over
 it.
 
-- `CAM_BYTES` (256u): vec4 rows 0-15: view, view-projection (3-6), projection, inverse view.
-- `CAM_BLOCK` (0x940u): the whole block, kept for the per-object motion pass's vertex shaders
+- `CAM_BYTES` (256): vec4 rows 0-15: view, view-projection (3-6), projection, inverse view.
+- `CAM_BLOCK` (0x940): the whole block, kept for the per-object motion pass's vertex shaders
   (`runtime/vk/vk_exec_draw.c`).
-- `CAM_SLOT` (0xa00u): camb slot stride.
-- `MVM_SLOTS` (16u): frames the GPU may still be reading the reprojection blocks of.
+- `CAM_SLOT` (0xa00): the stride of a `camb` slot.
+- `MVM_SLOTS` (16): frames the GPU may still be reading the reprojection blocks of.
 
-`MvPush`: `runtime/shaders/dlaa_mv.comp`'s push constants in its layout (std430: dz at offset 32).
-
-- `dz`: the projection's [2][2], [2][3], [3][2], [3][3].
-
-### `mv_init()`
-
-- `if (m) vkDestroyShaderModule(c->device, m, NULL)`: made before a later step failed.
+`MvPush`: `runtime/shaders/dlaa_mv.comp`'s push constants in its layout (std430: `dz` at offset 32); `dz` is the
+projection's [2][2], [2][3], [3][2], [3][3].
 
 ### `inv4()`
 
@@ -3548,15 +3552,14 @@ view-projection is rows 7-10 times rows 0-2.
 
 ### `fg_store()`
 
-Frame generation's camera (`vk_dlaa_fg_camera()`) from the the game block: the projection is rows 7-10, the view rows
-0-2 (rows: right, up, back; the camera looks down -z), m the reprojection from this frame's clip space to last frame's.
-Each matrix is handed out transposed, for row vectors.
+Frame generation's camera (`vk_dlaa_fg_camera()`) from the game's block: the projection is rows 7-10, the view rows 0-2
+(rows: right, up, back; the camera looks down -z), m the reprojection from this frame's clip space to last frame's. Each
+matrix is handed out transposed, for row vectors.
 
 ### `plane_dist()`
 
 The view distance in front of the camera at which the projection P (row-major, column vectors, looking down -z) gives
-clip depth `z_ndc` = k: (`P[10]` z + `P[11]`) / (`P[14]` z + `P[15]`) = k, solved for z. INFINITY where no distance
-gives it.
+clip depth `z_ndc` = k: `(P[10] z + P[11]) / (P[14] z + P[15]) = k`, solved for z. INFINITY where no distance gives it.
 
 ### `proj_planes()`
 
@@ -3564,34 +3567,33 @@ What the depth buffer's 0 and 1 stand for, from the frame's projection and the d
 `NEAR_IS_MINUS_W` (clip depth -w..w, which the pipelines keep through `negativeOneToOne`, `runtime/vk/vk_pipeline.c`) a
 fragment stores `z_ndc` \* 0.5 + 0.5, so 0 is `z_ndc` = -1; with `NEAR_IS_ZERO` it stores `z_ndc`. Both are 0..1 in the
 D32F target (the viewport's depth range, `runtime/vk/vk_exec_draw.c`), and the -w..w mapping stores exactly what a 0..w
-projection with the same planes would: (f / (f - n)) (1 - n / distance), the convention DLSS, Streamline and FSR take.
+projection with the same planes would: `(f / (f - n)) (1 - n / distance)`, the convention DLSS, Streamline and FSR take.
 The game's planes are not fixed: in Hyrule Field its z row is (-1.00001, -0.200001), near 0.1 and far about 25,000 (the
 view's units are metres), and the camera before it had far about 1,000. Taken as 0.1 and 1e8 (no far plane), a distance
-d reads as (f - n) d / (f - d): 1,000 as 1,042, 10,000 as 16,650, and the far plane's neighbourhood without bound. So
+d reads as `(f - n) d / (f - d)`: 1,000 as 1,042, 10,000 as 16,650, and the far plane's neighbourhood without bound. So
 the planes come from the projection every frame; a projection whose stored 0 is not in front of the camera keeps the
 last frame's planes.
 
-- `double at0 = plane_dist(P, minus_w ? -1.0 : 0.0), at1 = plane_dist(P, 1.0)`: the distances stored as 0 and 1.
-- `int inverted = !(at0 < at1)`: reversed depth: the near plane is stored as 1.
+- The distances stored as 0 and 1 are taken (`plane_dist()`); when the first is not the smaller the depth is reversed:
+  the near plane is stored as 1.
 - One line at the start and whenever the planes change (the first 20 times).
 
 ### `fg_camera()`
 
-- The position: -R^T t, R the view's 3x3 and t its last column.
-- `if (!(c->znear > 0)) c->znear = 0.1f, c->zfar = VK_DLAA_FAR_INFINITE, c->infinite = 1`: until a projection gives
-  them.
+- The position is `-R^T t`, R the view's 3x3 and t its last column.
+- Until a projection gives the planes: near 0.1 and no far plane.
 - `NX2SARIA_MOUSE_TRACE=1` (test runs, `runtime/input/mouse_direct.c`): the camera's direction each frame.
 
 ### Frames without a camera
 
-Frames without a camera (`dlaa_cam_keep`, `NX2SARIA_DLAA_CAM_KEEP`; 1 by default, 0 restores the old handling). Measured
-in Kokiri Forest during dialogue (Saria, dlss = performance): about 1 frame in 20 had no camera, and each started a new
-history twice, on that frame and on the next (nothing to reproject from): 24 to 26 resets per 300 frames. Those were
-frames the event order held past their present (`runtime/vk/vk_exec.c`), which then ran in a submission without a
-uniform copy (the present thread's empty one), so the lookup at DLSS found nothing. With the change: no camera reset
-there in 3600 frames but the first. Two things change:
+`dlaa_cam_keep` (`NX2SARIA_DLAA_CAM_KEEP`; 1 by default, 0 restores the old handling). Measured in Kokiri Forest during
+dialogue (Saria, dlss = performance): about 1 frame in 20 had no camera, and each started a new history twice, on that
+frame and on the next (nothing to reproject from): 24 to 26 resets per 300 frames. Those were frames the event order
+held past their present (`runtime/vk/vk_exec.c`), which then ran in a submission without a uniform copy (the present
+thread's empty one), so the lookup at DLSS found nothing. With the change: no camera reset there in 3600 frames but the
+first. Two things change:
 
-- The game's camera rows are taken from the bytes the scene draws themselves read (`vk_dlaa_draw()`, `views[]`.cam), not
+- The game's camera rows are taken from the bytes the scene draws themselves read (`vk_dlaa_draw()`, `views[].cam`), not
   looked up again in the uniform copy of the submission DLSS runs in, which on some frames has none or lost the block to
   a GPU write.
 - A frame that has no camera at all keeps DLSS's history: its vectors are zero (the camera taken as still) and last
@@ -3605,55 +3607,55 @@ scene context was seen in and why the evaluating one lacks it, and what was done
 
 ### Camera cuts
 
-Camera cuts (`NX2SARIA_DLAA_CUT`, default 1; 0: off). Only a lost camera (`mv_pass()`), another scene size or another
-target started a new history, so DLSS and frame generation (`vk_dlaa_fg_inputs()`) carried their history across a camera
-that jumped: an area load or a spawn moves it 5 to 180 m in one frame. Such a frame now starts a new history, as
-NVIDIA's DLSS guide asks for a camera cut: a move over 5 m, or a turn over 10 degrees together with a move over 0.5 m,
-both per 60 Hz frame and scaled by the time since the last camera. Camera traces of play in the Fire Temple
-(`NX2SARIA_MOUSE_TRACE`) had a median of 0.05 m and 0.08 degrees a frame. A turn alone (the mouse camera, which orbits
-about 3 m from Link) does not count, and the turn with a move counts only from `CUT_TURN` degrees: a quick swing of the
-orbiting camera turns 11 to 18 degrees and moves 0.9 to 1.4 m a frame, and taken for a cut at 10 degrees it started a
-new history at every frame of the swing (nine in a row in Hyrule Field), which at FSR's or DLSS's smaller modes showed
-the scene at its render size for those frames, blocky and flickering. Its motion vectors carry it as well as any other
-turn. Each cut is logged, up to 24.
+`NX2SARIA_DLAA_CUT` (default 1; 0: off). Only a lost camera (`mv_pass()`), another scene size or another target started
+a new history, so DLSS and frame generation (`vk_dlaa_fg_inputs()`) carried their history across a camera that jumped:
+an area load or a spawn moves it 5 to 180 m in one frame. Such a frame now starts a new history, as NVIDIA's DLSS guide
+asks for a camera cut: a move over 5 m, or a turn over 10 degrees together with a move over 0.5 m, both per 60 Hz frame
+and scaled by the time since the last camera. Camera traces of play in the Fire Temple (`NX2SARIA_MOUSE_TRACE`) had a
+median of 0.05 m and 0.08 degrees a frame. A turn alone (the mouse camera, which orbits about 3 m from Link) does not
+count, and the turn with a move counts only from `CUT_TURN` degrees: a quick swing of the orbiting camera turns 11 to 18
+degrees and moves 0.9 to 1.4 m a frame, and taken for a cut at 10 degrees it started a new history at every frame of the
+swing (nine in a row in Hyrule Field), which at FSR's or DLSS's smaller modes showed the scene at its render size for
+those frames, blocky and flickering. Its motion vectors carry it as well as any other turn. Each cut is logged, up to
+24.
 
 ### `cam_cut()`
 
-v: the the game scene context's rows 0-2, the view (`fg_camera()`).
+`v`: rows 0-2 of the game's scene context, the view (`fg_camera()`).
 
-- `double k = (now - D.cut_ns) / 1e6 / (1000.0 / 60)`: 60 Hz frames since the last camera.
+The thresholds are scaled by the 60 Hz frames since the last camera.
 
 ### `mv_pass()`
 
 The pass, recorded through the recorder like the replay's own commands. 0: no camera this frame (the vectors stay zero
-and DLSS starts a new history); 2: no camera, but the history is kept (the vectors stay zero, `dlaa_cam_keep`). bias > 0
-with this frame's G-buffer classes (`D.ids`) also writes `e->mask`, the bias mask (`runtime/shaders/dlaa_mv.comp`);
+and DLSS starts a new history); 2: no camera, but the history is kept (the vectors stay zero, `dlaa_cam_keep`). `bias` >
+0 with this frame's G-buffer classes (`D.ids`) also writes `e->mask`, the bias mask (`runtime/shaders/dlaa_mv.comp`);
 `*masked` says whether it did.
 
-- `int view = -1`: The game: the `views[]` entry of the camera.
+- `view` is the `views[]` entry of the camera.
 - This frame's view-projection as the scene draws read it (the game, `dlaa_cam_keep`) or as the snapshot holds it, for
   the reprojection; kept as last frame's for the next.
-- `if (D.cam_size == CAM_BLOCK)`: the whole block, for the per-object motion pass (the deferred engine's only).
-- `if (!had_prev || !have_m)`: nothing to reproject into: zero motion, new history.
-- `float *blk = (float *)(D.mvm_map + (size_t)ms * 2 * CAM_BYTES)`: rows 3-6 of each block are read.
+- A camera block of `CAM_BLOCK` bytes is kept whole, for the per-object motion pass (the deferred engine's only).
+- Without last frame's camera there is nothing to reproject into: zero motion, new history.
+- The shader reads rows 3-6 of each of the two blocks.
 - The class mask needs the G-buffer at the scene size; otherwise bindings 4-7 get the mask images as stand-ins (the
   shader returns before reading them with bias 0).
 - The depth check (`runtime/shaders/dlaa_mv.comp`, `depth_prev`) where nothing else gives characters their own motion:
   the game's frame, which has neither the per-object pass nor the class buffer. Its distances take the projection's
   depth terms from rows 7-10 of the scene context (`ocam_vp()`). `NX2SARIA_DLAA_ZFIT=0` (test): the camera's motion
   alone, as before.
-- `vk_mvcheck_camera(cb, e->mv, w, h, jx, jy)`: `NX2SARIA_MV_CHECK` (test).
-- The characters' own motion over the camera's (`runtime/vk/vk_exec_draw.c`, per-object motion).
-- Not on a frame that starts a new history, nor on the first frame of another render size (`D.stepped`, evaluate): that
-  frame was left out before the history could stay across a size, and it still is.
-- `if (T.on > 0) T.used[T.slot] = 1`: the DLSS marks follow in evaluate.
+- `NX2SARIA_MV_CHECK` (test) gets the motion image here (`runtime/vk/vk_mvcheck.c` `vk_mvcheck_camera()`).
+- The characters' own motion over the camera's (`runtime/vk/vk_exec_draw.c` `vk_mvobj_execute()`).
+- Not on a frame that starts a new history, nor on the first frame of another render size (`D.stepped`, `evaluate()`):
+  that frame was left out before the history could stay across a size, and it still is.
+- With timing on, the DLSS marks follow in `evaluate()`.
 
 ### `vk_dlaa_prev_camera()`
 
 Last frame's camera block for the per-object motion pass, recorded before this frame's `mv_pass()`: that pass writes
 this frame's into slot `cam_slot` and leaves the other slot, last frame's, as it is. 0: none (no history).
 
-- `if (D.cam_size != CAM_BLOCK) return 0`: the per-object pass knows the deferred engine's block only.
+The per-object pass knows the deferred engine's block only: another size gives 0.
 
 ### Reactive mask
 
@@ -3665,21 +3667,17 @@ copied when the transparents start (the pass that arms DLAA, `vk_dlaa_pass()`) a
 (`runtime/dlaa_mask_spv.h`, `tools/make_dlaa_mask.py`): the share of a pixel's colour that changed, from `MASK_THR` on,
 times `MASK_GAIN`. Off by default (`NX2SARIA_DLSS_REACTIVE=1` turns it on, `NX2SARIA_DLAA_MASKDEBUG=1` shows the mask
 instead of the picture): the pass that arms also draws the sky and blended fog layers over the solid scene, and the mask
-covered the sky, sunlit trees and roofs and a wide fog region besides the particles (seen with MASKDEBUG at 19:45 in the
-first save), where DLSS would give up its anti-aliasing. It needs the particle draws alone (drawn again into the mask,
-like the motion draws) before it can be on. In the upscaling modes the light target DLSS reads also holds the bloom by
-then; the copy would have to be compared at the end of the scene instead.
+covered the sky, sunlit trees and roofs and a wide fog region besides the particles (seen with `NX2SARIA_DLAA_MASKDEBUG`
+at 19:45 in the first save), where DLSS would give up its anti-aliasing. It needs the particle draws alone (drawn again
+into the mask, like the motion draws) before it can be on. In the upscaling modes the light target DLSS reads also holds
+the bloom by then; the copy would have to be compared at the end of the scene instead.
 
-`R`:
+The state, `R`:
 
 - `Snap`: per light target size and format: its copy at arming, and the mask.
 - `cur`: this frame's copy, NULL: none.
-- `ok`, `knob`: ok: -1 not built, 0 failed, 1 ready; knob: -1 not read.
+- `ok`: -1 not built, 0 failed, 1 ready; `knob`: -1 not read.
 - `made`, `missed`: frames with a mask; frames DLSS ran without the copy.
-
-### `mask_init()`
-
-- `if (m) vkDestroyShaderModule(c->device, m, NULL)`: made before a later step failed.
 
 ### `destroy_snap()`
 
@@ -3692,11 +3690,12 @@ The same for a snapshot the GPU may still use (only the replay reads it): to the
 
 ### `free_snap()`
 
-- `retire_snap(s)`: a fourth size: the evicted images may still be in flight.
+A fourth size: the evicted snapshot's images may still be in flight, so it is retired.
 
 ### `snap_for()`
 
-- `destroy_snap(e)`: what was made of the pair, never used (an evicted one's images went above).
+What was made of a pair that could not be finished is destroyed at once: the GPU never used it (an evicted one's images
+went before).
 
 ### `mask_snapshot()`
 
@@ -3704,41 +3703,42 @@ At arming: the light target as it is before the transparents, outside any pass.
 
 ### `mask_pass()`
 
-Before DLSS: the mask from the copy and the light target (view cv). NULL: none this frame.
+Before DLSS: the mask from the copy and the light target (view `cv`). NULL: none this frame.
 
-### Teardown
+### `hl_destroy()`
 
 The HUD-less picture's images, a half-made pair too. The device must be idle, or the images not yet used.
 
 ### `retire_hl()`
 
 The same for a HUD-less picture the GPU may still use: `D.hl`, which a present copies for frame generation
-(`runtime/gfx/gfx_present.c` `hudless_record()`), behind the present gate; the `sRGB` copy, which only the replay uses,
-to the deferred destruction.
+(`runtime/gfx/gfx_present.c` `hudless_record()`), behind the present gate; the sRGB copy, which only the replay uses, to
+the deferred destruction.
 
-### The device is idle here
+### The free camera's view of the ground
 
-- `dbg_freecam_flying()`: The device is idle here. Release NGX features and parameters before their Vulkan resources,
-  then shut down NGX even if initialization succeeded but the layout check failed. The Linux core's Shutdown1 takes an
-  extra output pointer compared with the SDK's public wrapper; it reports the number of devices still using NGX. ----
-  the free camera's view of the ground (`runtime/diag/debug_tools.c` `dbg_pad()`, ground avoidance). While it flies with
-  that on, nine of the view distances `mv_pass()` wrote (a grid over the lower part of the view, where the ground is) go
-  back to the host, which works out how far below the camera the ground is (`ground_under`). A slot is read `FC_SLOTS`
-  evaluations after its copy, when the GPU has long been past it.
-- `dbg_freecam_flying()`: `runtime/diag/debug_tools.c`.
+`runtime/diag/debug_tools.c` `dbg_pad()`, ground avoidance: while the free camera flies with that on, nine of the view
+distances `mv_pass()` wrote (a grid over the lower part of the view, where the ground is) go back to the host, which
+works out how far below the camera the ground is (`ground_under()` there). A slot is read `FC_SLOTS` evaluations after
+its copy, when the GPU has long been past it.
 
 ### `fcam_probe()`
 
-- `if (!dbg_freecam_flying() || !e->dist_ok)`: `dist_ok`: `mv_pass()` wrote this frame's distances (the game's frame).
+- It needs `dist_ok`: `mv_pass()` wrote this frame's distances (the game's frame).
 - The replay's viewports have negative heights: row 0 is the top of the view.
 
 ### `vk_dlaa_release()`
 
-- `upd_take_all(&dead, dead_release, (void *)1)`: what was let go of: the features before NGX goes, the images at once.
-- `if (FG.feat) N.release(FG.feat)`: frame generation's feature and parameters (`vk_ngxfg_evaluate()`), before NGX goes.
-- `if (D.mvm) vmaDestroyBuffer(c->vma, D.mvm, D.mvm_mem)`: mapped for good: the destroy unmaps it.
-- `if (!N.device) return`: NGX never came up on this device: DLAA off, FSR 3.1, or its init failed.
-- `vk_queue_lock()`: NGX may wait for the device itself.
+The device is idle here. It releases the NGX features and parameters before their Vulkan resources, then shuts NGX down
+even if initialization succeeded but the layout check failed. The Linux core's Shutdown1 takes an extra output pointer
+compared with the SDK's public wrapper; it reports the number of devices still using NGX.
+
+- First what was let go of: the features before NGX goes, the images at once.
+- Frame generation's feature and parameters (`vk_ngxfg_evaluate()`) go before NGX does.
+- The reprojection blocks' buffer is mapped for good: the destroy unmaps it.
+- Without `N.device`, NGX never came up on this device (DLAA off, FSR 3.1, or its init failed), and there is nothing to
+  shut down.
+- The shutdown runs with the queue lock held: NGX may wait for the device itself.
 
 ### Jitter
 
