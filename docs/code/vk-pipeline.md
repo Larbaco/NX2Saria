@@ -885,6 +885,668 @@ unless a file cannot be read or written.
 - The hash is FNV-1a of the words `make_module()` got, as `vk_dump` hashes a shader's SPIR-V; it differs from the
   translation's only where the pipeline patched the module first (added vertex outputs).
 
+### Descriptor layouts
+
+`Bindings`:
+
+- `int pool`: a stage indexes the texture or sampler pool (set 2, not in b / pb).
+
+### `mesh_libs()`
+
+1 when a mesh pipeline entered now is linked from stage libraries (comment at `mesh_lib_init()`): it then gets a
+stage-independent layout (`pipe_miss()`), which is how the rest of the file tells (`no_libs()`).
+
+### `no_libs()`
+
+1 for a mesh pipeline of layout l that has no stage libraries and so no fast link: every build of it is its whole build.
+A vertex pipeline is never one (`gpl_link()` itself refuses the shared layout the probe can give it).
+
+### `origin_name()`
+
+Where a shader's translation came from (`gfx_shader_origin`), for the log.
+
+### `crash_note()`
+
+The shaders of the pipeline this thread builds, for the crash notes (`runtime/platform/platform.h`
+`plat_crash_context()`): the first 8 bytes of each cache key, as `runtime/gfx/gfx_shader.c` names its cache files.
+
+### `binding_span()`
+
+One past the highest binding a shader uses (1 with no resources: binding 0 is the support buffer).
+
+### `add_stage()`
+
+Adds a stage's resources with bindings b >= 1 moved by off; binding 0 (support buffer) is shared.
+
+- `if (r[i].pool)`: set 2 (`spirv_pool_rebind()`), bound by the replay from the pools.
+
+### `module_binding_missing()`
+
+The first binding a module's resource variables use that the binding list b[0..n) lacks (module bindings >= 1 moved by
+off), or -1. A reflection that misses a resource would otherwise hand the driver an invalid layout. The module's Binding
+decorations come from the list the shader keeps (`gfx_shader_bindings`), not from its SPIR-V: this runs on the drawing
+thread at every pipeline miss (`pipe_miss()`), where a compressed module would be decoded.
+
+- `int pooled = 0`: a pool array: set 2, not in this layout (`spirv_pool_rebind()`).
+- `if (tr[t].pool && tr[t].binding == (bind[i] & 0xffff)) pooled = 1`: `GfxShaderRes.binding` is 16 bits.
+
+### `layout_covers()`
+
+Checks both stages of a graphics pipeline against its layout; 0 with why filled when one uses a missing binding.
+
+### `make_tpl_bp()`
+
+The update template of a set whose bindings are b[0..n): one entry per binding, in order, over the packed array the
+replay fills from the set's first descriptor, a `VkDescSlot` per descriptor. The bind point follows the stages (compute
+layouts hold the compute stage only). `VK_NULL_HANDLE` when templates are off, for an empty set, for a push set without
+`vkCmdPushDescriptorSetWithTemplateKHR` or when creation fails: the replay then writes the set with write structs.
+
+### `bindings_sort()`
+
+Finds or creates the layout of a binding list (sorted here); NULL on failure. Caller holds `P.lock`. Sorts a binding
+list by binding and hashes it into `*h`; the descriptor total, or -1 when a binding repeats.
+
+- `for (uint32_t i = 1; i < B->n; i++)`: insertion sort by binding; the lists are short.
+
+### `layout_get()`
+
+- `VkDescriptorSetLayout sets3[3] = {l->set, vk_empty_set_layout(), vk_pool_set_layout()}`: set 2: the pools.
+
+### `mesh_emu_on()`
+
+`NX2SARIA_MESH_EMULATION` (GPUs without `VK_EXT_mesh_shader`): the layout of an emulated mesh pipeline. The task and
+mesh stages' bindings are visible to the compute stage (they run as compute pipelines of this layout), the fragment
+stage's stay; push constants (`MESH_EMU_PC_BYTES`) for the compute stages and the generated vertex shader; set 0 gets a
+template per bind point. Caller holds `P.lock`.
+
+Decided with the mesh fallback at device creation (`runtime/vk/vk_mesh_path.h`).
+
+### `emu_bucket()`
+
+`MeshEmuEnt`: The compute pipelines of an emulated mesh pipeline, per (mesh, task, layout): made by the pipeline's build
+(`create_graphics()`, any thread) and found by its draws. ok 0: the stages could not be converted or built.
+
+Each draw of an emulated mesh pipeline looks its entry up (`vk_pipeline_mesh_emu()`), so the lookup takes no lock: an
+entry is complete before it is published at its bucket's head (release) and is never removed. `emu_lock` only orders the
+publishing. The build (two compute pipelines, up to seconds each in the driver on a first run) is done outside it: held
+across the build, as before, it stopped every draw of the replay that looked up any entry meanwhile, 2.5 s of the replay
+thread's samples in a first 0.8.0 run in Kokiri Forest on an RX 580 (2026-11-11).
+
+### `emu_get()`
+
+- `uint32_t *r = c && toff ? spirv_rebind(c, cn, toff) : NULL`: the task stage's bindings follow the fragment stage's.
+- `MeshEmuEnt *had = emu_find(*head, ms, ts, layout)`: another build of the same stages published first: keep that.
+
+### `layout_pair()`
+
+Independent layouts (`P.indep`): the vertex stage's bindings in set 0, the fragment stage's in set 1 (empty without a
+fragment shader), each with its own support buffer at binding 0, the pipeline layout created with
+`VK_PIPELINE_LAYOUT_CREATE_INDEPENDENT_SETS_BIT_EXT` so stage libraries can use it. Only the `P.push_stage` set is a
+push-descriptor set (a layout holds one), when it fits `maxPushDescriptors`; the other is allocated per draw from the
+command buffer's pools. On success `*B` holds both lists, set 0 first, `VkPipeBinding.set` filled in. Caller holds
+`P.lock`.
+
+### `vs_outs()`
+
+Adds fs's inputs (packed ones excepted) to vs's union; returns the union, types in io (the first type met wins).
+
+Vertex outputs with independent layouts: each vertex shader declares the union of the inputs of every fragment shader
+met with it (`pipeline-keys.bin` at the prewarm, then each pipeline built), so its module does not depend on the
+fragment shader of one pipeline. Unwritten ones read (0, 0, 0, 1) as before. `NX2SARIA_VS_OUTS=all` declares all 32.
+
+- `if (!VO.vs[j] && VO.n + 1 >= VS_OUTS_CAP * 3 / 4)`: full: this pair alone.
+
+### `mesh_outs()`
+
+What a mesh module writes (`spirv_mesh_outputs()`), kept per mesh shader: the library keys of a mesh pipeline need it at
+every lookup (`lib_keys()`), and reading it walks the module's declarations with two tables of its id bound.
+
+- `const uint32_t *w = gfx_shader_spirv_pin(ms, &n)`: once per mesh shader: decoded here if it is compressed.
+- `mask = w ? spirv_mesh_outputs(w, n, points) : ~0u`: as `create_graphics()` takes a module it cannot read.
+- `if (!MSO.ms[j] && MSO.n + 1 < MESH_OUTS_CAP * 3 / 4)`: a full table: read again next time.
+
+### `mesh_fill()`
+
+The inputs of fragment shader fs that mesh shader ms does not write, which the fragment module of their pipeline gets
+filled in (`spirv_fs_fill_inputs()`; `create_graphics()` works the same mask out for a whole build), and in `*points`
+whether they are filled as a point sprite's. 0 and no points when nothing is filled.
+
+### Pipeline cache table
+
+### `pipe_add()`
+
+Stores a result (a failed one too, so it is not retried every draw). Caller holds `P.lock`.
+
+### Graphics pipelines
+
+`GKey`:
+
+- `typedef struct`: normalized: zero where the state is dynamic or unused.
+- `const GfxShader *vs, *fs, *ts`: ts: the task stage of a mesh draw.
+- `uint32_t color[8], depth, stencil`: `VkFormat`.
+- `uint8_t clamp, poly_mode, a2c, logic_op`: `logic_op`: `VkLogicOp` + 1 when enabled.
+- `uint8_t blend_en, dsb, fbl, pad`: dsb: an enabled target blends with a SRC1 factor; fbl: `VkPipeState.feedback`.
+- `uint8_t blend[8][6]`: src, dst, op, src alpha, dst alpha, alpha op (`VkBlendFactor` / `VkBlendOp`).
+- `uint8_t rate[17]`: per binding: 0 unused, 1 vertex, 2 instance.
+- `uint8_t indep`: `P.indep` when built: the probe draws through both layouts.
+
+### `is_src1()`
+
+SRC1 blend factors read the fragment shader's second output (dual-source blending); the pipeline then needs a fragment
+module whose output 1 is Location 0, Index 1 (`spirv_dual_source()`).
+
+Runs per draw (`gkey_fill()`, `target_wmask()`): only the blend factors of blend-enabled targets are read until one is
+SRC1, which NX2Saria never sets (0 of 876 pipelines in the field and fight saves).
+
+### `noopt_flag_for()`
+
+`NX2SARIA_VK_NOOPT=1`: pipelines built without the driver's optimiser, for a driver whose shader compiler crashes on one
+(the test switch for such a report); slower shaders, the same picture. mesh: only pipelines with task and mesh stages,
+the terrain's and the foliage's. 0: none.
+
+Unset: mesh on AMD's Windows driver for RDNA 1 and 2 (`vk_caps.amd_sc`), 0 elsewhere. That driver loses the device ("No
+fault detected", a timeout) minutes into play on RX 6600 to RX 6950 XT cards in every version from 0.6.0 to 0.9.2, with
+the pipeline library on or off and the lazy write-back on or off. Where the reports' pass marks name a pass the GPU was
+in, twelve logs of five reporters, it is a pass whose first draw is a mesh pipeline (mesh shader ba4302f1 with fragment
+shader f64a96dd in nine, the one-draw pass of 1bbdb17e with 6cc3a476 in three). The logs of 0.9.1 and 0.9.2 end with the
+game's dispatch of cs d7566eb1 finished and nothing after it marked: the group of draws that followed was recorded by
+the replay workers, whose passes have no marks, so which draw of it hung is not known. No reporter ran with the
+optimiser off, so that it is the cause is not shown: it costs shader speed in those pipelines and not the picture, and
+`NX2SARIA_VK_NOOPT=0` gives the optimised ones back. The flag is part of what the driver's cache keys a pipeline by, so
+those pipelines are built once more after the change.
+
+Since then that driver draws mesh programs through the mesh fallback by default (`runtime/vk/vk_mesh_path.h`), and no
+mesh pipeline is built there: this applies with `mesh_fallback` = 0 alone, as the 0.10.x way to compare against.
+
+### Pipeline creation feedback
+
+`NX2SARIA_PIPE_FEEDBACK`, default 1; 0 off.
+
+Each pipeline, library and compute build asks the driver whether `pipeline-cache.bin` (`P.cache`) held it
+(`VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT`) and how long the create took. The counts appear
+with the prewarm, the stage library prebuild and every cache save, so a log tells whether a slow boot compiled or read
+its pipelines: on NVIDIA the driver's own disk cache is kept per executable, so a renamed or new exe gets nothing from
+it, and only `pipeline-cache.bin` can make its first boot quick. =2 also logs every compute build with a hash of its
+final module, and every graphics pipeline build with the hashes of its final modules and of its fixed state, so two runs
+can be compared for a module or a state that changes between them.
+
+### `fb_chain()`
+
+Chains fb into a create info's `pNext` (next: its current `pNext`). Returns what the create info's `pNext` becomes.
+
+### `fb_log()`
+
+One line: per kind, builds that came from `pipeline-cache.bin` of all builds so far, with the average time of each.
+
+### `target_wmask()`
+
+Colour write mask of target i: NVN's channel mask, zero for a target outside the fragment shader's output map (SPH
+omap). Maxwell leaves such a target untouched; Vulkan writes undefined values, and on AMD they lit grass in front of
+Link as flat lime. Zeros are wrong too: the game's half-res transparency pass binds its linear depth (R32F) as target 7,
+samples it in the same draws and writes only targets 0-2, 4 and 5; zeroed, the depth that later passes rebuild from it
+was 0 in tiles, and the fog over distant geometry showed rectangles of clear sky.
+
+The same holds per component: a shader that writes a target's RGB and not its alpha leaves the alpha alone on Maxwell,
+while Vulkan writes undefined values, and AMD's driver writes whatever its export registers held (NaN and saturated
+pixels the bloom then spreads). Components outside the shader's omap are masked out, where it is known.
+
+- `if (i == 1 && s->fs && P.f_dual_src && uses_src1(s)) m = 0`: output 1 is the second blend source
+  (`spirv_dual_source()`).
+
+### `gkey_fill()`
+
+- Mesh draws: no vertex input, the mesh stage declares its primitives (emulated point meshes draw point lists).
+
+### `vs_union_missing()`
+
+Independent layouts: the outputs the vertex shader lacks from its union with `s->fs`'s inputs added (`vs_outs()`), types
+in fin. The vertex module (and its pre-rasterization library) depends on the vertex shader and this mask only.
+
+- `if (s->fs)`: a location another fragment shader reads as another type: this pair's type (rare).
+
+### Water corrections
+
+[water-projective.md](../water-projective.md); `NX2SARIA_WATER_PROJECTIVE`, default 1; 0: the translations as built.
+
+Two of the game's water translations are built from an edited module (`runtime/gfx/spirv_water.c`):
+
+- The coordinate pair (mode 1). The vertex stage worked out each vertex's place on the screen (x / w and y / w, scaled
+  to 0..1) and the fragment stage read it interpolated without perspective, to sample the scene behind the water. A
+  triangle with a corner behind the camera has no such place for that corner, and the scene was sampled elsewhere: a
+  rectangle of water over solid ground at the Hyrule Castle moat and the Castle Town canal. The pair now hands x, y and
+  w down undivided and the fragment stage divides. Both stages change, or neither.
+- The absorption material (mode 2): its distance through the water could come out negative, which turned the dimming
+  into a gain (a red beam). The distance stored is at least 0.
+
+The translations are known by the FNV-1a of their SPIR-V, one profile per translator output (the host options of AMD's
+and NVIDIA's drivers give different modules); every other module is built as it is. The edited modules are made at their
+first use and kept. Modes go into the stage libraries' keys (PrKey, FsKey), so a library of an edited module is never
+linked with one of the original.
+
+`WaterProfile`:
+
+- `uint64_t vs, fs, fs_set1`: the coordinate pair: vertex, fragment, the fragment in its set 1 form.
+- `uint64_t mat, mat_set1`: the absorption material, and in its set 1 form.
+- `uint32_t mat_pointer, mat_distance`: the ids of the store its distance goes through.
+
+`water_mods`: The edited modules, by the hash of the module each stands for as it is built: a vertex translation, or a
+fragment module in its set 1 form. state: 0 empty, 1 made, -1 the edit refused the module (it is built as it is).
+
+### `water_module()`
+
+The edited module that stands for the module of hash `key`, or NULL. src: the translation it is made from at the first
+call (NULL: only look), whose SPIR-V is pinned for the edit only; a fragment translation is first put into its set 1
+form, which must be the module `key` names, as it is the form the pipeline builds.
+
+### `water_projective_pair()`
+
+The water mode of a pipeline's shaders: 1 a coordinate pair whose two edited modules exist, 2 the absorption material
+whose edited module exists, else 0. The drawing thread asks it for every pipeline it links (`lib_keys()`): the modules'
+hashes are the ones the shaders keep (`gfx_shader_spirv_fnv`), and the SPIR-V is read only to make an edited module,
+once per profile.
+
+- The absorption correction is independent of the coordinate pair.
+
+### `water_pair_module()`
+
+The fragment module of a pipeline in water mode `mode` (`water_mode()`): the edited one for the module as it is built
+(in its set 1 form), else the module itself.
+
+### `water_pair_vertex()`
+
+The vertex stage of a coordinate pair (mode 1): the edited module for the translation itself, taken before the outputs
+the vertex shader's union adds (`spirv_add_outputs()`), which differ from one install to the next and are added to the
+edited module as to any other. NULL in every other case. The module stays the table's.
+
+### `water_mode()`
+
+`water_projective_pair()` for a pipeline of key k. A coordinate pair blended with dual-source factors keeps its original
+modules: `spirv_dual_source()` changes the fragment module before its set 1 form, which is then none the table holds.
+
+### Line width
+
+`NX2SARIA_LINE_WIDTH`, default 1; 0: every line 1 pixel wide, as before.
+
+The game sets a width for its lines (`nvnCommandBufferSetLineWidth`, recorded as `OP_BIND_STATE` kind 7): 4.5 pixels for
+two line draws a frame into a 144x144 R8 target, which were drawn 1 pixel wide. A pipeline of the line topology class
+lists the width as dynamic state, in its whole build and in its pre-rasterization library (`PrKey.lines`), and each draw
+of lines records the width the game set, held to the device's range. Pipelines of the other classes are built as before,
+so their entries in the pipeline caches and the driver's stay the ones in use. A polygon mode that draws triangles as
+lines keeps 1 pixel: the mode can be dynamic state, which no pipeline key tells apart.
+
+### `vk_pipeline_line_width()`
+
+- `if (w != 1.0f && w != logged)`: one line for each width in a row: the game uses one or two.
+
+### `task_off()`
+
+What a mesh pipeline's task stage bindings are moved by in layout l: past the mesh stage's in a stage-independent
+layout, where the two share set 0 (`mesh_pair_layout()`), and past the fragment stage's in the shared set
+(`pipe_miss()`).
+
+### `mesh_dyn()`
+
+The dynamic states of a mesh pipeline into out (room for `P.n_dyn` + 1): `P.dyn` without the vertex input, its strides,
+the topology and primitive restart, which a pipeline with a mesh stage must not list, and with the fragment shading rate
+where the device sets one per draw (`runtime/vk/vk_exec_draw.c` `mesh_shading_rate()`). Returns their number.
+
+### `create_graphics()`
+
+- `uint64_t vw, fw, vm_hash = 0, fm_hash = 0`: the hashes: of the final modules, for the `PIPE_FEEDBACK` 2 line.
+- The stages' translations, pinned until the pipeline is made (`runtime/gfx/gfx.h` `gfx_shader_spirv_pin()`): vcode and
+  fcode become patched copies on the way, vplain and fplain stay the translations.
+- The water pair's vertex edit is for a translated vertex stage: an emulated mesh draw's generated one has none.
+- `int wmode = mesh || !l->set1 ? 0 : water_mode(s, k)`: the edited fragment modules are in their set 1 form.
+- `if (emu)`: `NX2SARIA_MESH_EMULATION`: the task and mesh stages as compute pipelines, a generated vertex shader here.
+- `mesh = 0`: a vertex pipeline from here on.
+- `if (mesh && s->ts)`: the task stage's bindings follow another stage's in its set (`task_off()`).
+- `if (l->set1 && !mesh)`: independent layouts: outputs from the vertex shader's union, not from this fragment shader.
+- A mesh stage's outputs from its module (`spirv_mesh_outputs()`): the translation reflects none; an emulated one
+  (`mesh_emu`) writes what the fragment stage reads.
+- `if (missing && mesh && fcode)`: inputs no mesh output feeds read as Maxwell gives them (`spirv_fs_fill_inputs()`).
+- A bound colour target outside the shader's output map gets write mask 0 (`target_wmask()`).
+- `if (!emu) pin_subgroup32(&stages[0], &rqv, vplain, vw0)`: vcode may be a patched copy that is freed by now.
+- NVN's default is the last vertex (SetProvokingVertexMode, `runtime/nvn/nvn_ext.c`); Vulkan's is the first.
+- `if (!mesh && key_lines(k))`: lines take the game's width per draw (`vk_pipeline_line_width()`).
+- A compiler that gives up on a pipeline (AMD's Windows driver answers `VK_ERROR_UNKNOWN`) may still build it without
+  its optimiser: one more try that way, slower shaders for that pipeline instead of a draw left out.
+- `perf_end(PERF_PIPE, p0)`: counts on the render thread only, so background builds stay out of it.
+- `if (P.feedback >= 2)`: the state hash: what the create info takes from the key besides the modules.
+- `if (!P.dyn_vi)`: the vertex layout is pipeline state then (zero in a mesh pipeline's key).
+
+### Graphics pipeline library
+
+`vk_caps.gpl`.
+
+A pipeline is linked from four libraries, each cached by the part of the pipeline key it depends on: vertex input
+(topology class, vertex attributes without dynamic vertex input), pre-rasterization (vertex shader, the outputs its
+union adds, static rasterization state), fragment shader (fragment shader, dual-source rewrite, samples) and fragment
+output (targets, blend, samples). With independent layouts each stage's set depends on its shader alone, so the
+pre-rasterization library uses {set 0, null} and the fragment shader library {null, set 1}. The fast link runs on the
+thread of the draw that needs it (no link-time optimisation); the optimised pipeline is the job `pipe_miss()` queued (a
+monolithic build with the same modules), which replaces the fast one in the Pipe when done. Libraries and fast pipelines
+live until `vk_pipeline_shutdown()`. No library is made to be optimised at its link: the optimised pipeline is that
+whole build, so the links take what the libraries hold as it is.
+
+A mesh pipeline is linked from three of them, its pre-rasterization library holding the task and mesh stages (comment at
+`mesh_lib_init()`).
+
+Background build signalling, both with `P.lock`: `work_cv` wakes the pipeline workers, `done_cv` wakes threads waiting
+for a pipeline or a stage library to be published.
+
+- `static PlatCond lib_cv = PLAT_COND_INIT`: wakes the library workers (`lib_worker()`): `work_cv`'s signal must reach a
+  pool worker.
+
+`libs`: pre: built by the boot prebuild ("stage library prebuild" below); used: a draw's link found it; building: a
+thread builds it or job holds it queued (pipe not set yet); entries live until `libs_destroy()`.
+
+`PrKey`:
+
+- `uint8_t lines`: `key_lines()`: the library lists the line width as dynamic state.
+- `const GfxShader *ts`: a mesh pipeline's library (vs is its mesh stage): its task stage, or NULL.
+
+`FsKey`: fill, points, vrs: zero for a vertex pipeline. A mesh pipeline's: the inputs filled in the module and whether
+as a point sprite's (`mesh_fill()`), and 1 when the library lists the fragment shading rate as dynamic state
+(`mesh_dyn()`).
+
+`FoKey`:
+
+- `uint8_t blend[8][6]; } FoKey`: fbl: `GKey.fbl`, the feedback loop flags of the library (`gpl_feedback()`).
+
+### `lib_create()`
+
+Builds one library from the pipeline's state; key is the library's key (PrKey: fin holds the added outputs).
+
+- `int mesh = is_mesh(s)`: the libraries of a mesh pipeline (comment at `mesh_lib_init()`).
+- `if (kind == LIB_PR && mesh)`: what a whole mesh pipeline lists: as `create_graphics()`.
+- `} else if (kind == LIB_PR && ((const PrKey *)key)->lines)`: the rasterization state is this library's: as
+  `create_graphics()`.
+- The shading rate is part of the pre-rasterization and of the fragment shader state: a mesh pipeline's libraries of
+  both kinds list it as dynamic state, as a state dynamic in one library has to be in every other library that holds it.
+  Such a library is a mesh pipeline's alone, so it takes that pipeline's list.
+- `VkPipelineShaderStageCreateInfo mst[2]`: a mesh pipeline's pre-rasterization stages: mesh, then task.
+- `const GfxShader *pinned[2] = {NULL, NULL}`: the shaders whose SPIR-V is pinned until out (`gfx_shader_spirv_pin`).
+- The task and mesh stages as `create_graphics()` builds them: the mesh module as translated, the task module with its
+  bindings moved past the mesh stage's (`task_off()` in a stage-independent layout); the mesh stage alone takes the
+  subgroup pin there, so here too. No vertex outputs are added: what a fragment shader reads and the mesh stage does not
+  write is filled in the fragment module (`FsKey.fill`).
+- `if (fk->fill && fcode)`: a mesh pipeline's: before the other rewrites, as `create_graphics()`.
+- Whether the pipeline may sample an attachment it renders to is part of the fragment output state: the flags go on this
+  library alone, and a pipeline linked from it has them (`gpl_feedback()`).
+- `if (pipe && (kind == LIB_PR || kind == LIB_FS)) fb_note(FB_LIBRARY, &fb)`: the shader libraries: the others compile
+  nothing.
+
+### `lib_find()`
+
+The cached library for key. Caller holds `P.lock`. build 0: lookup only (`VK_NULL_HANDLE` and `*miss` when absent);
+build 1: a missing one is built with `P.lock` released (a failed build is cached too).
+
+The library entry for key, NULL when absent. Caller holds `P.lock`.
+
+### `lib_put()`
+
+Enters a library built with `P.lock` released; another thread's entry made meanwhile wins and pipe is destroyed. Returns
+the entered handle. Caller holds `P.lock`.
+
+- `if (b && b->building)`: another thread's build publishes the entry.
+
+### `lib_new()`
+
+A building entry for key, NULL when out of memory. Caller holds `P.lock` and found none.
+
+`LibJob`: Shader libraries a waiting draw needs (`lib_wait()`, `link_queue()`): queued here ahead of every pipeline job,
+so an idle worker builds each at once and the vertex and fragment libraries of one draw build in parallel. A job no
+worker took is built by the first thread that needs its library (`lib_get()`; `lib_wait()` only without library
+workers). A job with p is a waiting draw's fast link of p (after its library jobs), run on a worker so the drawing
+thread only waits. Under `P.lock`.
+
+`U`:
+
+- `int idle`: workers asleep on `work_cv`.
+- `int running`: jobs workers are building.
+- `int on`: `NX2SARIA_PIPE_WAIT`: 1 workers (default), 0 the drawing thread builds them (draw); set by
+  `vk_pipeline_async_enable()`, before the replay runs.
+- `int lib_workers`: workers that take only these jobs (`lib_worker()`), started with the pool.
+
+### `lib_build()`
+
+Builds b (building, not queued) with `P.lock` released and publishes it; a failed build is entered as `VK_NULL_HANDLE`.
+
+- `int mesh = is_mesh(s) && (kind == LIB_PR || kind == LIB_FS)`: a mesh pipeline's shader library.
+- A shader library that took this long was not in the driver's cache; why not, for the first 32 of a run.
+
+### `lib_steal()`
+
+Takes b's queued job out of the queue and builds it on this thread. Caller holds `P.lock`.
+
+### `lib_get()`
+
+- `while (have && have->building)`: being built (wait) or queued (build it here).
+- `Lib *b = lib_new(h, key, size)`: entered first, so other threads wait for this build instead of repeating it.
+- `if ((have = lib_find(h, key, size)) && !have->building)`: another thread built it meanwhile.
+
+### `lib_keys()`
+
+The four library keys of pipeline s (key k). A mesh pipeline (one with stage libraries: `no_libs()` is 0) has no use for
+the first, and what tells its two shader libraries from a vertex pipeline's is here: the pre-rasterization key names the
+mesh stage and the task stage and adds no outputs (a mesh shader is in no vertex output union), the fragment key carries
+what is filled in the module and the dynamic shading rate (FsKey). Neither takes a water correction, as
+`create_graphics()` gives a mesh pipeline none.
+
+### `gpl_feedback()`
+
+`NX2SARIA_GPL_FEEDBACK` (default 1; 0 = as before): a pipeline whose fragment shader samples an attachment of its own
+pass (`VkPipeState.feedback`: soft particles and water reading the depth buffer, decals, full-screen passes that read
+the target they write) gets a fast link like any other. The feedback loop flags belong to the fragment output state, so
+they are part of that library's key (`FoKey.fbl`) and of nothing else; the shader libraries are the ones the same
+shaders use without a loop. Before, such a pipeline had no fast link at all and its draws waited for, or were skipped
+during, the whole optimised build. On a first visit to Kokiri Forest (RTX 5090, every stage library in the driver's
+cache, DLSS Frame Generation on, so no frame is held back) full-screen draws of such pipelines waited 267 ms at the
+area's first frame and 410 ms in the middle of a walk; linked, 3 ms.
+
+### `gpl_link()`
+
+A fast-linked pipeline for s from its stage libraries. Caller holds `P.lock`. build 0 (drawing thread): links only when
+the shader libraries exist (vertex input and fragment output libraries, which hold no shader, are built here); `*final`
+0 = not yet, a worker builds them. build 1 (worker): builds the missing libraries and links with `P.lock` released.
+`VK_NULL_HANDLE` with `*final` 1 when GPL cannot express the pipeline (shared layout, which is also a mesh pipeline's
+without stage libraries; a feedback loop with `NX2SARIA_GPL_FEEDBACK=0`) or a build failed.
+
+A mesh pipeline is linked from three libraries: the pre-rasterization one with its task and mesh stages, the fragment
+shader one and the fragment output one. It has no vertex input state, and a complete pipeline needs that state only
+where its pre-rasterization state holds a vertex shader. The link names no state of its own and no dynamic state: what
+is dynamic is what the libraries were made with.
+
+- `lib[1] = lib_get(LIB_PR, s, k, l, &pk, sizeof pk, build, &miss)`: shader libraries first: no work when absent.
+- `char what[160]`: the parts that differ between links: a link that crashes the driver names its case.
+- `double ms = ms_since(t1)`: the link alone: library builds are counted apart.
+
+### Background graphics pipeline builds
+
+`vk_pipeline_async_enable()`.
+
+A miss in `vk_pipeline_graphics_async()` enters the Pipe as building and queues a job; the replay skips draws with it
+until a worker publishes the handle. The job holds copies of the state and the key. What they point to outlives it:
+shaders (`gfx_shader_get` results) live for the process (`gfx_shader_drop_memory` is the shader probe's, which builds no
+pipelines), layouts until `vk_pipeline_shutdown()`, which drains the queue first. Workers call
+`vkCreateGraphicsPipelines` without `P.lock`: `P.cache` is created without
+`VK_PIPELINE_CACHE_CREATE_EXTERNALLY_SYNCHRONIZED_BIT`, so the driver synchronises builds into it; only the copy of its
+data in `cache_save()` is kept apart from them (`cache_rw`). Compute pipelines stay synchronous: a skipped dispatch can
+change what the game computes.
+
+Two queues: draws' misses (`A.head`) and the boot prebuild (`A.low`, see "pipeline keys" below). Workers take the low
+queue only when the other is empty and run its jobs at `PLAT_PRIO_BELOW_NORMAL`, so guest threads win. A draw that finds
+a prebuild job still queued moves it to the draw queue; one that finds it running raises its worker.
+
+`Job`:
+
+- `struct Job *next, *prev`: prev: low queue only.
+- `uint8_t low`: in the low queue, or running at below-normal priority.
+- `uint8_t prebuild, demanded`: from the key file; a draw asked for it before it was ready.
+- `uint8_t rested`: counted as held back by the play gate (`low_held()`).
+- `int worker`: running on `A.thread[worker]`; -1 queued; `JOB_ON_DRAW` on the thread that waits for it.
+
+`A`:
+
+- `int on`: set once by `vk_pipeline_async_enable()`, before the replay runs.
+- `uint8_t prio_low[MAX_WORKERS]`: worker runs below normal (under `P.lock`).
+- `Job *head, *tail`: draws' misses.
+- `Job *low, *low_tail`: prebuild.
+- `uint32_t inflight`: queued or running, both queues.
+- `int low_running`: pool workers running a job taken from the low queue.
+- `int gate_shut`: pool workers the memory gate has refused a low job since it last admitted one.
+- `uint64_t first, taken`: waited-for jobs moved to the head of the draw queue; built by the waiting thread.
+- `PlatCond idle`: with `P.lock`: no job queued or running.
+
+### Pipeline keys
+
+`pipeline-keys.bin` next to the pipeline cache.
+
+Every graphics pipeline built in a game run appends a KeyRec: the `VkPipeState` it was built from with the shader
+pointers zeroed and the shaders named by their `gfx_shader` input ids instead, which do not depend on the translator, so
+the record rebuilds the pipeline without guest memory. At the next boot `vk_pipeline_prewarm()` (`rt_boot`, before the
+guest runs; `NX2SARIA_PIPE_PREBUILD=0` skips it) loads each record's shaders, translating the ones not cached under the
+current translator from their stored inputs (`gfx_shader_prewarm`; a record whose shader has neither is dropped), enters
+each Pipe as building under the key a draw would compute, queues it to the low queue and builds the queue on every core.
+Records are deduplicated by a hash of their bytes; they are collected under `P.lock` by the worker that built the
+pipeline and appended by the present thread (`vk_pipeline_autosave()`) or at exit (`vk_pipeline_save()`). A file with
+another magic, version or record size is ignored and rewritten; a version 3 file (no task stage) is converted and
+rewritten. Bump `KEYS_VERSION` when `VkPipeState` or the record changes meaning without changing size.
+
+- `#define KEYS_VERSION 4`: 3: shaders named by input id (`runtime/gfx/gfx_shader.c`); 4: mesh pipelines, with their
+  task stage.
+
+`KeyRec`:
+
+- `uint8_t vs[32], fs[32], ts[32]`: `gfx_shader_input_id` of each stage (vs: the mesh stage of a mesh pipeline); fs all
+  zero with `has_fs` 0, ts with `has_ts` 0.
+- `VkPipeState s`: vs, fs, ts zero.
+
+`K`:
+
+- `int header_ok`: the file exists with our header: append.
+- `uint64_t *seen`: open addressing set of record hashes (0 empty).
+- `KeyRec *pend`: records not written yet.
+- `uint8_t *file`: the file as read at boot, until the prewarm is done with it.
+- `size_t file_n`: records in it.
+- `size_t own_n`: of them, the first ones: this install's own (`keys_open()`); the shared list's follow.
+- `PlatMutex io`: one writer.
+- Prebuild progress (under `P.lock`).
+- `int loading`: the prewarm still queues records.
+- `int warm`: `vk_pipeline_prewarm()` owns the file (`prebuild_start()` leaves it).
+- `uint32_t left`: prebuild jobs queued or running.
+- `uint32_t gate_ended`: boot builders the memory gate ended (`warm_builder()`).
+- `double t0`: `now_ms()` when the prebuild started.
+- `int prep`: t0 is the preparation's start (`seed_pipelines()`), not the ready device's.
+- `double until`: `now_ms()` after which the boot builders stop (comment at `prewarm_run()`); 0 none.
+
+### `seen_add()`
+
+1 if h was new. Caller holds `P.lock`.
+
+### `rec_fill()`
+
+- `r->s.prim_restart = 0`: dynamic state: the same pipeline either way.
+
+### `keys_note()`
+
+A pipeline was built for a draw: queue its record for the file. Caller holds `P.lock`.
+
+- `if (s->fs && !memcmp(gfx_shader_input_id(s->fs), none, 32)) return`: the runtime's own shader (`gfx_shader_own`).
+- `if (!memcmp(gfx_shader_input_id(s->vs), none, 32)) return`: the mesh fallback's vertex stage
+  (`runtime/vk/vk_exec_draw.c` `mfb_vs_get()`).
+
+### `keys_flush()`
+
+Appends the pending records (present thread or exit; never the render thread).
+
+- `if (ok) ok = plat_file_sync(f)`: appended records on the disk before the next append.
+
+### `seen_has()`
+
+Caller holds `P.lock`.
+
+### `keys_open_seed()`
+
+The shared pipeline list as recorded pipelines (`NX2SARIA_PIPE_SEED`, default 1; 0: this install's own records only).
+`seed-pipeline-keys.bin` next to the game holds the list's records (`tools/prepare_shaders.py` writes it). Before, the
+boot built only what this install drew, so a new install met every pipeline in play: in Hyrule Field one 600-frame
+stretch of a first visit had 1,769 draws wait 461 ms in all for their pipelines, the longest frame 88 ms. The list's
+records now follow the install's own in `K.file`, so the prewarm counts their pairs in the vertex output unions (and the
+pipelines it builds from them are the ones draws ask for) and builds them as it builds the install's: the boot for at
+most `PREWARM_PIPE_MS`, the pool workers the rest. The preparation builds the same list into the caches
+(`seed_pipelines()`, `NX2SARIA_PREPARE_PIPELINES=all`), so that boot finds them there. They are not added to the set or
+the file: `pipeline-keys.bin` keeps what this install drew, and a pipeline a draw builds that the prewarm did not still
+goes into it. A list in another record layout is left out, as the preparation leaves it.
+
+- `for (size_t i = 0; i < n; i++)`: after the install's own: those met first in play keep coming first.
+
+### `keys_open_own()`
+
+Reads the key file into `K.file` and its record hashes into the set, then adds the shared list's records
+(`keys_open_seed()`). Caller holds `P.lock` (`ensure_init()`).
+
+- `gfx_shader_record_at(K.path)`: `shader-answers.bin` next to it (`runtime/gfx/gfx_shader.c`).
+- `if (len != (long)(sizeof h + n * sizeof(KeyRec)))`: a torn append: rewrite the file from what was read.
+- The vertex pipelines of a version 3 file keep their prewarm: each record without a task stage, and the file rewritten
+  in this version below (`header_ok` 0).
+- `if (!K.header_ok && K.file_n)`: keep the whole records of a torn file.
+
+### `ready_note()`
+
+Caller holds `P.lock`. p, which a draw missed, has its first usable pipeline: how long that took is how long its draws
+were skipped or waited. fast 0: it had no fast link and this is the optimised build. Caller holds `P.lock`.
+
+The summary (`save_with()`) counts what a slow one can be: a mesh pipeline (its task and mesh library is the largest to
+compile, and without stage libraries, `no_libs()`, this is its whole build), one the key file names whose prebuild had
+not come to it, one with a shader translated in this session (nothing of it was prepared, so its libraries compile
+cold). The first `READY_LOGS` that took `READY_SLOW_MS` or longer get a line each with those facts, so a log says which
+pipelines left their draws out of the picture and for which reason. The mesh pipelines are also counted by themselves:
+how many became usable through a fast link, and after how long.
+
+- A pipeline goes into `pipeline-keys.bin` once a draw can use it, so at its fast link too: recorded only when its
+  optimised build had finished (`job_build()`), the pipelines met in the last seconds of a session were lost. A session
+  of 2026-11-13 met 46 late pipelines in adult Kokiri Forest and ended about 2 s later; 23 of them never reached the
+  file, and with it the shared pipeline list (`tools/pipeline_list.py` `merge()`). `keys_note()` takes each record once.
+  s is the state the caller built p from: a job whose optimised build failed is gone (`job_build()` clears `p->job` and
+  records nothing) before a queued fast link makes p usable, and that link is recorded from s.
+
+### `u_run()`
+
+Runs a waiting draw's job taken from U on a worker: a library build or, for a job with p, p's fast link (`gpl_link()`
+build 1 builds a library still missing and waits for one another worker builds). Releases `P.lock` while building.
+
+- `VkPipeline f = gpl_link(&lj->s, &lj->k, lj->l, 1, &final)`: releases `P.lock` while linking.
+- `job_lower(p->job)`: its job now only does the optimised build.
+- `vkDestroyPipeline(P.device, f, NULL)`: the job published one meanwhile.
+
+### `fast_workers()`
+
+`NX2SARIA_PIPE_FAST_WORKERS` (default 1; 0 = as before): the library workers also take the fast link of a draw-queue job
+(`fast_take()`). A draw that is skipped rather than waiting leaves its pipeline to the pool, where a job is first
+fast-linked and then goes back in the queue for its optimised build. The pool keeps one worker out of optimised builds,
+so with the others inside one (about 100 ms each with the driver's cache warm, 350 ms cold) that single worker linked
+every new pipeline of a burst, one after another at 5 to 10 ms each. On a first visit to Kokiri Forest (RTX 5090,
+libraries in the driver's cache) 180 of the 444 pipelines draws missed took over 50 ms to become usable, the longest 1.3
+s, and their draws were missing from every frame until then; with the library workers linking, 23 did, 19 of them mesh
+pipelines, which had no fast link then (they have one with `mesh_libs()`).
+
+### `fast_take()`
+
+The first draw-queue job whose pipeline still lacks its fast link, taken out of the queue; NULL when there is none.
+Caller holds `P.lock`.
+
+### `lib_worker()`
+
+A worker for stage libraries and fast links only: a waiting draw's jobs (U) first, so a draw that waits finds one free
+even while the pool builds pipelines and the drawing thread never builds a library itself; then the fast link of a
+draw-queue job (`fast_take()`), whose optimised build goes on to the pool.
+
+- `p->fast_tried = 1`: no other thread links it meanwhile; a draw that waits for it waits for this link.
+- `VkPipeline f = gpl_link(&j->s, &j->k, p->lay, 1, &final)`: releases `P.lock` while building.
+- `if (p->info.pipeline)`: the optimised build: ahead of the prebuild, behind other draws' misses.
+- `} else`: no fast link for this one: its whole build, next in the draw queue.
+
 ## `runtime/vk/vk_cache_file.h`
 
 Reads `pipeline-cache.bin` into memory for `runtime/vk/vk_pipeline.c` `cache_load()`, with 64-bit sizes on every
