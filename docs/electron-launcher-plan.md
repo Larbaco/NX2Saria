@@ -232,7 +232,10 @@ The first owner Windows attempt exposed a mismatch between the worker's imports 
 export used by inspection or Play in the 0.24.0-rc.1 and 0.25.0 archives. The packaged worker uses its own
 launcher modules and loads the selected release's tools. The compatibility path uses the older helper's
 `Shortener` so paths included in reports remain shortened regardless of the local log setting.
-The Windows regression uses the app and runtime archives published for each tested version in isolated folders.
+The replacement ZIP passed inspection, synthetic Play and the forced-privacy checks in Windows installations
+built from the published app and runtime archives of 0.24.0-rc.1, 0.25.0 and 0.26.0-rc.1. This establishes
+the startup and privacy behavior with those archives. The owner's retest with the installed game is still
+pending.
 
 ### Worker implementation: handshake and inspection
 

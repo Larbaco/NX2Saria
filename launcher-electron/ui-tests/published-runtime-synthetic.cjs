@@ -34,17 +34,22 @@ async function testRelease(version) {
   const game = path.join(root, 'game');
   const resources = path.join(path.dirname(process.env.NX2_TEST_PORTABLE), 'resources');
   const python = path.join(root, 'python', 'python.exe');
-  const env = { ...process.env, LOCALAPPDATA: base, USERPROFILE: 'C:\\Users\\Synthetic Player', NX2SARIA_LOG_SHORT_PATHS: '0' };
+  const env = { ...process.env, LOCALAPPDATA: base };
+  const privacyEnv = { ...env, USERPROFILE: 'C:\\Users\\Synthetic Player', NX2SARIA_LOG_SHORT_PATHS: '0' };
   await fs.mkdir(path.join(root, 'data'), { recursive: true });
   await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
   assert.equal((await fs.readFile(path.join(root, 'app', 'current.txt'), 'utf8')).trim(), version);
   await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: false, warn_low_commit: false }));
   await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: version, steps: { compile: {} } }));
   await fs.copyFile(process.env.NX2_TEST_FAKE_GAME, path.join(game, 'ocarina.exe'));
-  execFileSync(python, ['-I', '-B', '-c', privacyCheck, resources, publishedApp, game], { env, timeout: 15000 });
+  execFileSync(python, ['-I', '-B', '-c', privacyCheck, resources, publishedApp, game], { env: privacyEnv, timeout: 15000 });
   await fs.rename(path.join(game, 'logs'), path.join(base, 'privacy-logs'));
 
-  const app = await _electron.launch({ executablePath: process.env.NX2_TEST_PORTABLE, env });
+  const app = await _electron.launch({
+    executablePath: process.env.NX2_TEST_PORTABLE,
+    args: ['--user-data-dir=' + path.join(base, 'electron-profile')],
+    env,
+  });
   const log = path.join(root, 'data', 'logs', 'launcher.log');
   try {
     const page = await app.firstWindow();
