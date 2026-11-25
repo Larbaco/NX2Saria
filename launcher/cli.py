@@ -1,16 +1,3 @@
-"""The launcher without its window, for scripts, tests and anyone who prefers a console:
-
-    python -m launcher.cli check                       is there a newer release?
-    python -m launcher.cli update                      download and stage it, then finish in the new version
-    python -m launcher.cli tools                       install the build tools and zbic
-    python -m launcher.cli install --dump F --game D   build the game (the window's Begin Installation)
-    python -m launcher.cli rebuild [--game D]          rebuild after an update (the window's Rebuild the Game)
-    python -m launcher.cli fonts [--dump F]            decode the game's font for the window
-    python -m launcher.cli continue-update OLD         what the new version runs after `update`
-
-In an installed launcher: python\\python.exe app\\<version>\\launcher\\cli.py <command> (this file puts the release
-folder on sys.path itself, as start.pyw does). Exit code 0 on success, 1 on failure, 3 when cancelled.
-"""
 import argparse
 import os
 import subprocess
@@ -25,13 +12,14 @@ from . import build, gamefiles, jobs, locks, versions  # noqa: E402
 from .context import Context  # noqa: E402
 from .paths import Layout  # noqa: E402
 
+DESCRIPTION = 'The launcher without its window, for scripts, tests and anyone who prefers a console:'
+
 
 def follow(job):
-    """Run a job here, printing each step's state as it changes."""
     seen = {}
     job.start()
     while job.result is None:
-        with job.locked():   # each step as one change of the worker left it
+        with job.locked():
             steps = [(s.id, s.label, s.state, s.value, s.fraction, s.detail) for s in job.steps]
         for sid, label, state, value, fraction, detail in steps:
             key = (state, value if state != jobs.RUNNING else int(fraction * 20))
@@ -48,7 +36,7 @@ def follow(job):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(prog='launcher.cli', description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(prog='launcher.cli', description=DESCRIPTION)
     ap.add_argument('--root', help='the launcher folder (default: this release\'s, or build/launcher-dev)')
     sub = ap.add_subparsers(dest='cmd', required=True)
     sub.add_parser('check')
@@ -66,11 +54,8 @@ def main(argv=None):
     p.add_argument('old')
     a = ap.parse_args(argv)
     ctx = Context(Layout(root=a.root) if a.root else None, echo=False)
-    if a.cmd == 'check':   # reads the feed and changes nothing: it runs beside an open launcher
+    if a.cmd == 'check':
         return run(a, ctx, None)
-    # Every other command changes the launcher's folder or the game's, as the window's jobs do: it holds the folder's
-    # lock (launcher/locks.py) from before it writes the settings until it ends, and is refused while the window or
-    # another command holds it
     try:
         held = locks.FileLock(ctx.layout.instance_lock, f'"{a.cmd}" from the command line', where=ctx.layout.root)
     except locks.Busy as e:
@@ -83,7 +68,6 @@ def main(argv=None):
 
 
 def run(a, ctx, held):
-    """One command. held: the launcher folder's lock, which `update` lets go of before the new version takes over."""
     s = ctx.settings
 
     if a.cmd == 'check':
@@ -101,8 +85,6 @@ def run(a, ctx, held):
         return 0
 
     if a.cmd == 'update':
-        # The new version rebuilds the game (ContinueUpdateJob), which cannot replace a running exe: refused here
-        # before anything is downloaded, as the window's Updates row refuses (ui/app.py App.start_update)
         gd = s.get('game_dir')
         if gd and build.game_running(gd):
             print('error: the game is running: close it first, the update rebuilds it', file=sys.stderr)
@@ -118,7 +100,7 @@ def run(a, ctx, held):
         new = ctx.layout.apps / versions.display(check.release.version)
         cli = new / 'launcher' / 'cli.py'
         print(f'finishing in {versions.display(check.release.version)}', flush=True)
-        held.release()   # the new version's command takes the lock itself
+        held.release()
         return subprocess.call([ctx.layout.python_for_builds(), str(cli), '--root', str(ctx.layout.root),
                                 'continue-update', ctx.version])
 
