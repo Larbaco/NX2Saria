@@ -3,8 +3,9 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/winsys.py`, and
-`launcher/build.py`.
+names. `launcher/build.py` still keeps its comments until its notes are here. `launcher/platform/udmabuf_fix.sh` and
+`launcher/native/app.manifest` are not read by the comment check and keep their comments. A `# noqa` line stays in the
+code with whatever follows it on the line.
 
 ## `launcher/__init__.py`
 
@@ -3253,3 +3254,182 @@ A pre-release's order as semver 2.0.0 gives it: dot-separated identifiers compar
 `parse()` gives `(numbers, pre-release)` for comparing; a pre-release sorts before its release, and a malformed
 version raises `ValueError`. `newer()` is true when version `a` is newer than version `b`. `display()` is the version
 without build metadata.
+
+## `launcher/winsys.py`
+
+What the launcher needs from the operating system: crisp drawing on scaled displays, the game's fonts for this process
+only, starting the game and the stub, shortcuts, the uninstall entry and a gamepad. Windows first; the other branches
+exist so the window can be developed and tested on Linux, and call into `launcher/platform/linux.py`.
+
+`OWNED` is what the launcher puts in its folder (`launcher/paths.py`, plus the stub's `python.next` and
+`python.old-<n>`). Uninstall deletes only these: the default game folder is `<root>\game`, and a folder given to the
+setup with `--dest` may hold other things.
+
+The lines `os.startfile(path)` of `open_path()` and the `explorer` call of `reveal()` keep their `# noqa` comments.
+
+### `dpi_aware()`
+
+Draw at the display's real resolution instead of letting Windows stretch a 96-dpi window (blurry).
+
+### `app_id()`
+
+Groups the window under the launcher's own taskbar icon rather than Python's.
+
+### `_hwnd()`
+
+The Win32 window of a Tk toplevel (the wrapper around Tk's child window).
+
+### `_post()`
+
+Queues a message for the window instead of sending it. A sent message runs the window's handler inside this ctypes
+call, which has released Python's lock; when that handler dispatches Tk events (the move loop of a title bar drag
+does), Tk calls back into Python without the lock and Python aborts. A posted message is handled by Tk's own event
+loop, where calling back into Python is allowed.
+
+### `frameless()`
+
+Windows: drops the system title bar (the window draws its own), but keeps a taskbar button, Alt+Tab, minimise from the
+taskbar and Alt+F4. False elsewhere, where the window keeps its frame. The window is withdrawn and shown again 10 ms
+later: the taskbar takes a changed window style only when the window is shown again.
+
+### `minimize()`
+
+Tk refuses to iconify a window without a frame, so Windows is asked (`ShowWindowAsync` with `SW_MINIMIZE`, 6);
+asynchronously, for the reason given under `_post()`.
+
+### `start_drag()`
+
+Windows: lets the system move the window from the mouse's current press (as on a title bar, with snapping), by
+posting `WM_NCLBUTTONDOWN` (`0x00A1`) with `HTCAPTION` (2). False elsewhere: the caller moves the window itself.
+
+### `set_window_icon()`
+
+Windows: the window's and the taskbar button's icon, straight from an `.ico`, in the large and the small size:
+`ICON_BIG` at `SM_CXICON` x `SM_CYICON` (metrics 11, 12) and `ICON_SMALL` at `SM_CXSMICON` x `SM_CYSMICON` (49, 50),
+loaded with `LoadImageW` (`IMAGE_ICON`, `LR_LOADFROMFILE`) and set by posting `WM_SETICON` (`0x0080`).
+
+### `register_font()` and `unregister_font()`
+
+`register_font()` makes a font file usable by this process only (`AddFontResourceExW` with `FR_PRIVATE`, `0x10`); Tk
+then finds it by family name. True on success. `unregister_font()` gives up a font file it added, so the file can be
+written again: Windows keeps a registered font file open, and writing it then fails with "Permission denied".
+
+### `reveal()`
+
+Shows a file in its folder, selected in Explorer (a file to drag into a bug report); elsewhere it opens the folder.
+
+### `known_folder()`
+
+The folder the desktop keeps for a name (`downloads`, `desktop`, `documents`, `pictures`): on Windows the shell's,
+also when the player moved it to another drive; on Linux the one `user-dirs.dirs` names, translated on a desktop set
+up in another language (`launcher/platform/linux.py` `user_dir()`). `None` when there is none. The Windows branch uses
+private handles of `ole32` and `shell32`, so the argument types it sets stay there.
+
+### `pick()`
+
+A file (`kind` `file`) or folder (`folder`) the player chooses, or empty when they cancel. On Linux it is the
+desktop's chooser (zenity or kdialog, `launcher/platform/linux.py` `pick_path()`), which has the desktop's places and
+bookmarks and reaches the drives under `/mnt` and `/media`; Tk's own, a bare list of folders, only where neither is
+installed. On Windows it is Tk's, which is the system's. `mustexist`: Tk's folder chooser takes only a folder that
+exists (the desktop's always do). One line goes into the log: which chooser, and what it gave.
+
+### `system_commit_info()`, `page_file_is_system_managed()` and `page_files_system_managed()`
+
+- `system_commit_info()`: the system-wide commit used, the current limit and the physical RAM in MiB. `None` off
+  Windows.
+- `page_file_is_system_managed()`: true for a system-managed page file, false for a fixed-size or disabled one, `None`
+  when Windows cannot say.
+- `page_files_system_managed()`: classifies the `PagingFiles` entries as `runtime/platform/win32.c` does; `None` means
+  malformed or unknown. An empty value means the value exists and Windows has no page files configured: false.
+
+### `confirm_play()`
+
+Yes plays anyway, No cancels. Steam calls it without a parent window. The box is
+`MB_YESNO | MB_ICONWARNING | MB_SETFOREGROUND` (`0x4 | 0x30 | 0x10000`), with Yes as the default button; the answer
+`IDNO` is 7.
+
+### `start_game()`
+
+Starts the game from its own folder and returns the process to watch. `ocarina.exe` is a console program and the
+launcher has no console, so without `CREATE_NO_WINDOW` Windows opened an empty console window beside the game, titled
+with the executable's path. With it the game still has a console (hidden), which its restarts inherit. On Linux the
+launcher becomes a child subreaper first, so that the Restart's copy becomes its own to wait for
+(`launcher/platform/linux.py` `child_subreaper()`).
+
+### `GameCopy`
+
+A process of the game this launcher did not start, held by a handle so that its exit code can still be read once it
+has ended (`game_copy()`). It has `poll()`, `returncode` and `pid` as `subprocess.Popen` has them; `ended` is true
+once it has ended, also when its code could not be read (`returncode` then stays `None`).
+
+### `game_finished()`
+
+The run of the game is over (`launcher/game_session.py` `GameRun.running()`): on Linux the launcher stops adopting
+orphans and waits for the copies of the game it adopted that ended before it looked (`launcher/platform/linux.py`
+`child_subreaper()` and `ended_copies()`), whose exit codes it returns, the latest last. Nothing to do elsewhere: an
+empty list.
+
+### `game_copy()`
+
+Windows: the running process whose image is the file `exe`, other than the process id `skip`, as a `GameCopy`; `None`
+when there is none or it cannot be opened. The game's own Restart (`runtime/gfx/gfx_present.c` `gfx_window_closed()`)
+starts the executable again (`runtime/platform/win32.c` `plat_restart()`) and ends the process before it with code 0:
+following the copy is how the launcher learns the code the game really ended with. The image is compared as a file,
+not as a name, so the game of another install is not taken for this one.
+
+### `restart()` and `stub_run()`
+
+`restart()` starts the launcher again through its stub (which swaps in a staged Python and starts the version of
+`app/current.txt`). False in a checkout, which has no stub. `stub_run()` runs the stub for one of its own commands
+(shortcuts); true when it succeeded.
+
+### `background_thread()`
+
+Windows: puts the calling thread in background mode (`SetThreadPriority` with `THREAD_MODE_BACKGROUND_BEGIN`), which
+lowers its processor, disk and memory priority, so work done beside the game takes only what the game leaves. False
+where that is not possible. It uses a private handle of `kernel32`: the argument types set there touch no other
+caller.
+
+### `uninstall_plan()`
+
+`(paths to delete with all they hold, folders to delete only when that left them empty)`, in order. A kept game folder
+stays whether or not it lies inside the launcher's folder. A toolchain outside the launcher's folder (it went to
+`C:\NX2Saria`, `launcher/paths.py` `ansi_safe()`) is deleted too, and its parent when that left it empty.
+
+### `uninstall_script()`
+
+The `cmd.exe` line that deletes them once the launcher has exited: a file with `del`, a folder with `rmdir /s`, the
+folders that must be empty with a plain `rmdir` (which leaves a folder that still holds something). A path holding `%`
+is left out: `cmd.exe` expands `%NAME%` even inside quotes, so a folder named `C:\%HOMEPATH%` would delete another.
+
+### `uninstall()`
+
+Removes the shortcuts, the uninstall entry and, once this process has exited, what the launcher put in its folder (and
+the game folder when `remove_game` names it; [launcher.md](../launcher.md#uninstalling)). A kept game folder and its
+saves stay, also when it lies inside the launcher's folder. `keep`: on Linux, paths that stay whatever folder holds
+them (the game folder when it is not removed, the dump).
+
+- The script is passed as one command line, as `cmd.exe` reads it: a list would have its quotes escaped as `\"`,
+  which `cmd.exe` does not understand, and no `rmdir` would find its folder.
+- On Linux it is the AppImage's install that is deleted, by `sh` once this process has gone
+  (`launcher/platform/linux.py` `uninstall_plan()`).
+
+### `in_front()`
+
+Whether the window the user is typing into belongs to this process. XInput reads the pad whichever window is in front,
+so without this check the launcher, left open behind the game, took the presses meant for the game: A activated its
+focused row (it started the game five times in five minutes and tried a rebuild), the stick moved its focus and Y
+checked for updates. Elsewhere Tk knows whether one of its windows has the keyboard focus, which the window manager
+gives the window in front (SDL3 reads the pad there whichever window is in front too). True where it cannot tell.
+
+- Steam's Game Mode (`GAMESCOPE_WAYLAND_DISPLAY` or `SteamDeck` set) shows one window at a time, and the pad is the
+  only input there: always true.
+- On Windows, no window in front (the desktop is switching, a lock screen) means nothing is meant for the launcher:
+  false.
+
+### `_WindowsGamepad` and `Gamepad`
+
+`_WindowsGamepad` polls the first XInput pad; `poll()` returns the buttons pressed since the last call (edges), the
+left stick counted as the d-pad. `poll(False)` still reads the pad but returns nothing: a button held while another
+window was in front does not count as pressed when this one comes back. `Gamepad` is the stable surface over both:
+XInput on Windows and the SDL3 game controller on Linux.
