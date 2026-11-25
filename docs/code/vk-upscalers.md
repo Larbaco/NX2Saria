@@ -1100,3 +1100,502 @@ The upscaler is off (`runtime/vk/vk_ffx.cpp` `vk_ffx_release_idle()`): every con
 
 FSR 4's upscaling contexts that exist and their video memory, for the memory report (`runtime/vk/vk_ffx.cpp`
 `vk_ffx_vram()`).
+
+## `runtime/vk/vk_fg.h`
+
+What `runtime/vk/vk_fg.cpp` promises `runtime/gfx/gfx_present.c`, whose swapchain AMD's frame generation swapchain
+replaces.
+
+- `vk_fg_wanted()`: `NX2SARIA_FRAMEGEN` = fsr3 (live), where FSR 3.1 loads, with any upscaler or none.
+- `vk_fg_queue_count()`: graphics-family queues the device creates.
+- `vk_fg_queues()`: called by `runtime/vk/vk_device.c` after the device exists: the queues AMD's swapchain presents and
+  acquires on, and their families (the graphics family's own where it has three queues, else queues of another family:
+  AMD's Windows driver gives one).
+- `vk_fg_has_queues()`: `vk_fg_queues()` got a present queue: frame generation can run here.
+- `vk_fg_active()`: the frame generation swapchain exists. `vk_fg_generating()`: and the last frame had generation on
+  (not paused for the menu).
+- `vk_fsr3fg_generating()`: FSR 3.1's frame generation through the runtime's passes (`runtime/vk/vk_fsr3fg.c`, every
+  build but the Windows one): a generated frame was made in the last 250 ms, so the screen shows two frames for each the
+  game draws (`runtime/pacing/frame_rate.c` `generated_factor()`). 0 while off, paused for the menu, or between
+  histories for longer than that. Any thread.
+- `vk_fg_create_swapchain()`, `vk_fg_destroy_swapchain()`, `vk_fg_get_images()`, `vk_fg_acquire()`, `vk_fg_present()`:
+  `runtime/gfx/gfx_present.c`'s swapchain calls while `vk_fg_wanted()`: the first create makes AMD's swapchain context,
+  later ones (window resizes) its swapchain again. Non-success from the first: the plain swapchain path stays. The
+  present is on the game's queue, its lock held by the caller.
+- `vk_fg_frame()`: each present, before its command buffer is submitted: configures generation for this frame and
+  records its preparation (the frame's depth and motion vectors, `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()`) into cb.
+  hudless: this frame's picture without the HUD at the swapchain's size and format, in GENERAL (`VK_NULL_HANDLE`: none),
+  from which generation tells the HUD apart and keeps it out of the generated frames. pic: the picture's rectangle in
+  the swapchain {x, y, w, h} (black bars around it when the window has another shape); frames are generated inside it
+  only.
+- `vk_fg_presents()`: frames the swapchain presented, generated ones included (0: off).
+- `vk_fg_hdr_metadata_fn()`: AMD's replacement for `vkSetHdrMetadataEXT` while active, else NULL.
+- `vk_fg_vram()`: the frame generation context's video memory, FSR 3.1's or FSR 4's; 0 none or not told.
+
+The `vk_fg4_*` functions are the same through AMD's FSR SDK 2.4 (`runtime/vk/vk_fg4.cpp`), for `runtime/vk/vk_fg.cpp`
+alone: it takes that path while FSR 4 is the upscaler, and every call above goes to these while that path holds the
+swapchain.
+
+- `vk_fg4_available()`: its libraries are beside the executable and list a frame generation for the device.
+- `vk_fg4_failed()`: it failed in this run: FSR 3.1's library generates the frames.
+- `vk_fg4_name()`: the frame generation version the loader lists first for the device ("3.1.6"), "" unknown.
+
+## `runtime/vk/vk_fg.cpp`
+
+Frame generation with AMD FSR 3.1 (`NX2SARIA_FRAMEGEN` = fsr3, live: `runtime/gfx/gfx_present.c`
+`window_settings_live()` makes the swapchain again; a run whose device was made for DLSS Frame Generation waits for a
+restart, `vk_fg_wanted()`): AMD's frame generation swapchain (`amd_fidelityfx_vk.dll`, which `runtime/vk/vk_ffx.cpp`
+loads) takes the place of `runtime/gfx/gfx_present.c`'s swapchain. Every frame the game presents, the swapchain presents
+a generated frame between it and the one before, on its own present queue and pacing threads, so the screen shows twice
+the game's frame rate.
+
+The generated frame is built from the presented picture and the scene's depth and camera motion vectors, which
+`runtime/vk/vk_dlaa.c` makes for DLSS and FSR 3.1 upscaling, and without an upscaler for frame generation alone
+(`runtime/vk/vk_dlaa.c` `fg_only_frame()`: the same pass at the scene's size, no jitter). The HUD is kept out through
+the picture without it (`runtime/vk/vk_dlaa.c` `hudless()`); the menu is not generated, since generation pauses while it
+is open. The device creates two more queues for it (`runtime/vk/vk_device.c` `create_device()`, which asks
+`vk_fg_queue_count()` here): of the graphics family where it has them; else the present queue comes from another family
+that can present, and the acquire queue is a second queue of that family or of any other, or the present queue itself
+when there is none.
+
+The state, `F`:
+
+- `pfam`, `afam`: the queue families of the present and acquire queues.
+- `sc`, `fg`: the swapchain context and the frame generation context.
+- `fg_max`: the context's largest render size.
+- `generated`: generation callbacks: frames AMD's swapchain generated.
+- `st`: each frame by the game's state (`runtime/vk/vk_fg_stats.h`), for the periodic line.
+- `timed`, `gen_timed`: GPU time measured (`runtime/vk/vk_fg_time.h`), and the generation's with it.
+- `on`: the last configured frame had generation on (`vk_fg_generating()`).
+- `cuts`: each frame id's camera cut, for the generation callback (`runtime/vk/vk_fg_reset.h`).
+- `prepared`: the last frame was prepared (generation on with its inputs).
+- `vram`: the frame generation context's video memory as the library reported it, 0 not told.
+
+### `submit_game()`
+
+Takes the queue lock: the game's queue is shared with the recorder and the present path.
+
+### `generate()`
+
+The swapchain's own reset (a frame id that did not follow the last) stays; a cut `vk_fg_frame()` noted is added. The
+generation's GPU time is taken here, with the preparation's (`runtime/vk/vk_fg_time.h`).
+
+### `use4()`
+
+`NX2SARIA_FSR4_FG` (default 0, live): 1 takes the SDK 2.4's frame generation with FSR 4. FSR 4 is the upscaler only
+while one is set (dlaa): without an upscaler the FSR 3.1 library's runs.
+
+### `vk_fg_wanted()`
+
+Follows the setting: `runtime/gfx/gfx_present.c` `window_settings_live()` remakes the swapchain when this stops matching
+`vk_fg_active()`.
+
+- With or without an upscaler (`runtime/vk/vk_dlaa.c` makes the motion vectors either way, `fg_only_frame()`), and with
+  the FSR 3.1 library: a build without it keeps the plain swapchain whatever the setting says, with one line in the log.
+  Outside Windows there is no AMD library: `runtime/gfx/gfx_present.c`'s presenter runs the runtime's passes
+  (`runtime/vk/vk_fsr3fg.c`).
+- Not on a device made through Streamline's proxies (NVIDIA's frame generation set at the start, `vk_dlssg_dpa`): AMD's
+  swapchain there crashed in NVIDIA's driver when the menu switched from NVIDIA's frame generation to AMD's. That switch
+  waits for a restart, as the menu says (`runtime/ui/menu.cpp` `row_framegen()`).
+- Not after a failure (`fail()`): the present code then takes AMD's swapchain down as it does for a switch in the menu,
+  and a plain one follows.
+- Not without a queue to present on besides the game's (`runtime/vk/vk_device.c` `create_device()` says why): the plain
+  swapchain stays.
+- Two libraries can make the swapchain: the FSR 3.1 library, here, or AMD's FSR SDK 2.4 (`runtime/vk/vk_fg4.cpp`) where
+  the setting asks for it while FSR 4 is the upscaler (`use4()`). The swapchain in place is wanted only while its
+  library is still the one to use: a change of that setting or of the upscaler between FSR 3.1 and FSR 4, or a failure
+  of the SDK 2.4 path, takes it down as switching frame generation off does, and the next present makes it with the
+  other library.
+
+### `vk_fg_queue_count()`
+
+Always the three queues: the setting can be switched on during a run, and idle queues cost nothing.
+
+### `vk_fg_active()`
+
+AMD's swapchain is in place: the window's swapchain handle is AMD's object, and every swapchain call has to go through
+AMD's functions. That holds after a failure too, until the present code has replaced the swapchain (`vk_fg_wanted()`):
+the plain Vulkan calls must never get that handle.
+
+### `vk_fg_create_swapchain()`
+
+- The SDK 2.4 path may fail before its swapchain exists, and says so (`use4()` is 0 from then on): the FSR 3.1 library's
+  swapchain is made instead.
+- A swapchain context whose swapchain did not come is destroyed, and with it the swapchain it made: nothing was handed
+  out yet.
+
+### `vk_fg_hdr_metadata_fn()`
+
+The HDR10 metadata goes to AMD's swapchain through its own call (`runtime/vk/vk_hdr.c` `vk_hdr_metadata()`).
+
+### `hdr_format()`
+
+An HDR10 swapchain (10-bit PQ or 16-bit float): frame generation is told its inputs are HDR.
+
+### `vk_fg_frame()`
+
+- `vk_dlaa_hudless_wanted` is set: the upscaling pass keeps a copy of the picture before the HUD (`runtime/vk/vk_dlaa.c`
+  `hudless()`).
+- The menu first: its frames were counted as frames without depth and motion before, since the inputs were taken first
+  (the menu stops the game's frames). They are not taken while it is open; the first frame after it is a cut. `got` says
+  the inputs reached this present.
+- The context's largest render size covers the depth and motion vectors it is given. They have the scene's size (with an
+  upscaler or without), which DLAA and the widescreen pictures make larger than the window, and a context made for the
+  window's size alone wrote past its own resources: a crash in `amd_fidelityfx_vk.dll`, device faults, striped frames.
+  The scene is never larger than the picture (`runtime/patches/widescreen.c` `wide_picture()`), so the context is made
+  for that once; remaking it while the swapchain still generated from the old one hung the present. A frame with a
+  larger depth anyway is not generated.
+- A new window size: the context is made for its display size, after a wait for the device; the GPU is idle then, and
+  frames whose generation never ran are let go (`fgt_idle()`).
+- The HUD-less picture has the swapchain's format (`runtime/gfx/gfx_present.c` `hudless_record()`).
+- No infinite-depth flag: the game's far plane is finite, and each preparation gives it.
+- The context's memory is asked for the memory report (`vk_fg_vram()`); 0 when the provider does not say.
+- Only with the picture without the HUD: generated from the presented picture alone, the HUD would be warped along with
+  the scene behind it and trail when the camera turns. A frame without that picture is shown as it is.
+- A cut: DLSS started a new history, or without an upscaler the same cases did (`vk_dlaa_fg_inputs()`), or the frame
+  before was not prepared (generation off for the menu, no inputs), so the frame between the two would be made from a
+  stale depth and motion.
+- Each frame by the game's state (`runtime/vk/vk_fg_stats.h`): the menu first, then a frame without a scene (the title,
+  a movie, a load), then why a gameplay frame was not generated. The line every 600 gameplay frames gives that period's
+  counts, the swapchain's presents over its time (the overlay's frame rate) and the GPU time a generated frame took.
+- The picture's rectangle: with black bars beside or below it (a window of another shape) a generation over the whole
+  swapchain warped the picture's edges into the bars.
+- The motion vector scale is 1: render pixels, current to previous (`runtime/vk/vk_dlaa.c` `mv_pass()`), as FSR takes
+  them.
+- The frame's camera (`runtime/vk/vk_dlaa.c` `proj_planes()`), as the upscaler gets it (`runtime/vk/vk_ffx.cpp`).
+
+### `vk_fg_release()`
+
+- The HUD-less picture is made for frame generation alone: a frame generator that runs again asks for it again
+  (`vk_fg_frame()` sets `vk_dlaa_hudless_wanted`); left set, it was made and copied every frame after frame generation
+  went off, and kept.
+- AMD's contexts are gone and the device idle: nothing records into the timestamps, which are released
+  (`fgt_release()`).
+- The next swapchain counts its presents from 0: the period of the statistics starts again, the run's totals stay.
+
+### `vk_fg_vram()`
+
+The frame generation contexts' video memory, FSR 3.1's and FSR 4's (`vk_fg4_vram()`), for the memory report
+(`runtime/vk/vk_ffx.cpp` `vk_ffx_vram()`). The swapchain's own images are counted with the swapchain
+(`runtime/gfx/gfx_present.c`).
+
+## `runtime/vk/vk_fg4.cpp`
+
+Frame generation through AMD's FSR SDK 2.4: `amd_fidelityfx_loader_vk.dll` (`runtime/vk/vk_ffx4.cpp` loads it) with
+`amd_fidelityfx_framegeneration_vk.dll` next to the executable. `runtime/vk/vk_fg.cpp` takes this path instead of the
+FSR 3.1 library's where the setting asks for it while FSR 4 is the upscaler (`runtime/vk/vk_fg.cpp` `use4()`,
+`NX2SARIA_FSR4_FG`), and its functions here are called by `runtime/vk/vk_fg.cpp` alone. The loader picks the frame
+generation and the swapchain for the card: the machine-learned FSR Frame Generation 4.x on Radeon RX 9000 cards with
+Windows 11, FSR Frame Generation 3.1.x on every other. The log names both versions.
+
+What happens each frame is what `runtime/vk/vk_fg.cpp` does (the configuration, then the preparation from the frame's
+depth and motion vectors, then the generation from the swapchain's callback at present, the order FSR Frame Generation 4
+requires), in this SDK's layouts and with what it adds: the camera's position and axes in the preparation, which FSR
+Frame Generation 4 needs, and the version each context is made for.
+
+The swapchain's life differs from the FSR 3.1 library's:
+
+- A new size remakes the swapchain in place: its create function takes the swapchain's own handle, and the handle stays.
+  `vk_fg4_destroy_swapchain()` therefore does nothing while the swapchain context lives.
+- Taking it down (`vk_fg4_release()`) waits for its presents, destroys the frame generation context, then the swapchain
+  context, and calls its destroy function last, as the SDK asks.
+
+AMD publishes the SDK's libraries for Windows only: in any other build this path is never available. The file defines
+`VK_FFX_NO_API` before it includes `runtime/vk/vk_ffx.h`, as `runtime/vk/vk_ffx4.cpp` does.
+
+The state, `F`, is `runtime/vk/vk_fg.cpp`'s with these:
+
+- `handle`: the swapchain the context made: remade in place, destroyed after the context.
+- `sc_desc` to `fg_pin`: what the contexts were made from: the API asks that it stays until the
+  context is destroyed.
+- `prepared`: the last frame was prepared (a frame after one that was not starts a history).
+- `on`: the last configured frame had generation on (`vk_fg4_generating()`).
+
+The probe's state:
+
+- `g_lock`: the menu asks from its thread, the present from its own.
+- `g_avail`: -1 not asked yet; 0 this path does not run here; 1 it does.
+- `g_sc_list`: the swapchain versions the loader listed, for the log.
+- `g_fg_name`: the frame generation version a context gets: the one asked for, else the first listed.
+- `g_fg_pin`, `g_sc_pin`: `NX2SARIA_FG4_VERSION`, `NX2SARIA_FG4_SWAPCHAIN` (tests): the version asked for by its id; 0
+  the loader's choice.
+
+### `submit_game()`, `generate()`
+
+As in `runtime/vk/vk_fg.cpp`: the queue lock for the game's queue, and the generation's GPU time with the preparation's
+(`runtime/vk/vk_fg_time.h`).
+
+### `fail()`
+
+After this the FSR 3.1 library generates the frames: `runtime/vk/vk_fg.cpp` `vk_fg_wanted()` stops wanting this
+swapchain, the present code takes it down as it does for a switch in the menu, and the next one is made by the other
+path.
+
+### `list_versions()`
+
+The list the loader gives for one kind of context, as text, and the id of the version a test asks for by the start of
+its name (0: none asked, or not listed).
+
+### `provider()`
+
+The version a context runs, as its provider names it ("3.1.6"); "?" when it does not say.
+
+### `hdr_format()`
+
+An HDR10 swapchain (10-bit PQ or 16-bit float): frame generation is told its inputs are HDR.
+
+### `wait_presents()`
+
+The swapchain's own presents are done before it is remade or taken down.
+
+### `vk_fg4_available()`
+
+The loader and its frame generation library are beside the executable and list a frame generation and a swapchain for
+the device. Asked once, with the device; 0 before it exists. It is asked several times a frame, so the answer is an
+atomic read. A build that does not ship `amd_fidelityfx_framegeneration_vk.dll` beside it answers 0.
+
+The menu's name for it (`vk_fg4_name()`) is the first of the list, which the loader takes when none is asked for (a
+test's version changes the context, not this name); a version the driver brings carries a star.
+
+### `vk_fg4_active()`
+
+The SDK's swapchain is in place: the window's swapchain handle is its object, and every swapchain call has to go through
+its functions, after a failure too, until the present code has taken it down.
+
+### `vk_fg4_create_swapchain()`
+
+- A new size: the swapchain is remade in place and keeps its handle.
+- The version this code was built against, which the SDK asks for with every context, and a test's version.
+- The swapchain the driver brings (listed with a star, the loader's choice where it is listed) hands out no destroy
+  function: its context's destruction is the swapchain's too (`vk_fg4_release()`).
+- A swapchain made whose context then failed is destroyed through that function: nothing was handed out yet.
+
+### `vk_fg4_destroy_swapchain()`
+
+Nothing while the swapchain context lives: a new size remakes the swapchain in place (`vk_fg4_create_swapchain()`), and
+`vk_fg4_release()` destroys it after its context.
+
+### `vk_fg4_frame()`
+
+- `vk_dlaa_hudless_wanted` is set: the upscaling pass keeps a copy of the picture before the HUD (`runtime/vk/vk_dlaa.c`
+  `hudless()`).
+- The menu is asked first, and the inputs are not taken while it is open (`runtime/vk/vk_fg.cpp` `vk_fg_frame()`).
+- The context's largest render size covers the depth and motion vectors it is given: the picture's size, which the scene
+  never exceeds (`runtime/vk/vk_fg.cpp` `vk_fg_frame()` has the history of this rule).
+- A new window size: the context is made for its display size, after a wait for the device; frames whose generation
+  never ran are let go (`fgt_idle()`).
+- The HUD-less picture has the swapchain's format (`runtime/gfx/gfx_present.c` `hudless_record()`).
+- Only with the picture without the HUD: generated from the presented picture alone, the HUD would be warped along with
+  the scene behind it and trail when the camera turns. A frame without that picture is shown as it is.
+- Each frame by the game's state, and the periodic line (`runtime/vk/vk_fg.cpp` `vk_fg_frame()`).
+- The picture's rectangle: with black bars beside or below it (a window of another shape) a generation over the whole
+  swapchain warped the picture's edges into the bars.
+- The motion vector scale is 1: render pixels, current to previous (`runtime/vk/vk_dlaa.c` `mv_pass()`), as FSR takes
+  them.
+- The game's projection: near 0.1, far at infinity (`runtime/vk/vk_ffx.cpp`).
+- `viewSpaceToMetersFactor` is 1: the game's world is taken to be in metres (its near plane is at 0.1). With 0.01 here,
+  the value `runtime/vk/vk_fg.cpp` gives the FSR 3.1 library, frame generation 3.1.6 drew grey translucent shapes into
+  the sky of its frames while the camera turned, and with 0 it smeared them; with 1 its frames were clean in the same
+  camera sweep.
+- The camera in the world: the game's own, or one at the origin looking down -z on a frame without it.
+
+### `vk_fg4_release()`
+
+The next swapchain counts its presents from 0 (`runtime/vk/vk_fg.cpp` `vk_fg_release()`).
+
+### `vk_fg4_vram()`
+
+The frame generation context's video memory, for the memory report (`runtime/vk/vk_fg.cpp` `vk_fg_vram()`).
+
+## `runtime/vk/vk_fg_pose.inc`
+
+Included by `runtime/vk/vk_dlaa.c`: the final submitted pose inputs for owned player models. Replay workers change
+history under the motion-list lock; the submitting thread selects and consumes it after the group finishes. Model and
+shape identities come from producer-side ownership records, never from a mesh fingerprint.
+
+`POSE_BANKS` (5): the uniform banks c3 through c7.
+
+### `pose_owner()`
+
+- Only vertex resources consumed by this shader can establish identity. Stale unused bindings cannot.
+- The per-shape record is required even for skinned meshes; one palette can serve several pieces.
+
+### `pose_match()`
+
+The caller holds the motion-list lock while parallel replay workers record draws.
+
+### `pose_previous()`
+
+- The same mesh is drawn into several depth targets. Only the resolve knows which view supplies FG.
+- Unused bindings retain the previous draw's values. Only the shader's vertex inputs identify this mesh.
+- The same instance can be submitted again in the same pass. A second instance of this mesh can use another palette, or
+  rewrite a palette at the same address between submissions.
+
+### `pose_rotation_trace_limit()`
+
+C6 holds a part's submitted transform. Translation is deliberately excluded: a fast jump does not itself make a vector
+unreliable. Only a positively identified sharp rotation opts in.
+
+- The threshold is `NX2SARIA_MOTION_GUARD_DEGREES`, `motion_guard_degrees` in the settings file too.
+
+### `pose_matrix_sharp()`
+
+Two 3x4 matrices (rows of four floats) of one part or bone, this frame's and last frame's: 1 when both are plain
+rotations and the turn between them is past the guard threshold. `runtime/vk/vk_skin_motion.inc` asks it for each bone
+of a palette.
+
+- trace(R1 \* transpose(R0)) = 1 + 2 cos(angle). The selected threshold controls when this part needs visibility
+  filtering; equipment retains its separate raw policy.
+
+### `pose_select()`
+
+- Selection preserves each part independently. No six-frame hold and no queue-wide drop: a risky body triangle cannot
+  suppress the shield, sword, or another well-behaved part.
+
+### `pose_status()`
+
+The motion status line, every 120 frames with motion vectors: the player's parts (ownership records), then the other
+skinned draws (`runtime/vk/vk_skin_motion.inc` `skin_status()`).
+
+## `runtime/vk/vk_fg_reset.h`
+
+Camera cuts for FSR 3.1 frame generation (`runtime/vk/vk_fg.cpp`). DLSS starts a new history on a cut, another scene
+size or another target, and `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()` hands that out with the frame's depth and
+motion vectors. FSR 3.1 takes it only in the generation callback (`ffxDispatchDescFrameGeneration.reset`), which its
+swapchain calls later, on its own present thread, for the frame id the configuration gave. So `runtime/vk/vk_fg.cpp`
+`vk_fg_frame()` notes each frame's cut here under its id, and the callback looks it up. Without it every generated frame
+of a cut was blended from two unrelated pictures: an area load or a cutscene's cut flashed a frame of both.
+
+A ring of `FGR_SLOTS` frames; each slot holds the frame id and its cut as one atomic word, so a slot being rewritten
+never pairs an old id with a new frame's answer. An id the ring no longer holds (the callback fell that far behind, or
+the slot was never written) counts as a cut: a lost history costs one plain frame, a wrong one blends two. Own header so
+`tests/fg_reset_check.c` checks it without a GPU.
+
+`FgrRing`: a `slot` is (frame id << 1) | cut, written by `vk_fg_frame()`; 0 never matches (ids start at 1). Frame ids
+above `FGR_MAX_ID` do not fit beside the cut bit; they always count as a cut.
+
+## `runtime/vk/vk_fg_stats.h`
+
+What happened to each of the game's frames under frame generation, by the state the game was in, for the log line both
+FSR 3.1 paths write (`runtime/vk/vk_fg.cpp` and `runtime/vk/vk_fg4.cpp` through AMD's libraries on Windows,
+`runtime/vk/vk_fsr3fg.c` through the runtime's passes elsewhere). One counter a frame, in one of three states:
+
+- Gameplay: the game drew a scene for the frame (`runtime/vk/vk_dlaa.c` armed it). Generated, or why not: a history that
+  starts at this frame (a camera cut, a new size, the first frame after a pause), no depth and motion vectors for it, no
+  picture without the HUD, or a scene larger than the generation context;
+- Menu: the settings menu was open (generation pauses), whether a scene was drawn behind it or not;
+- No scene: the game drew no scene (the title, a movie, a load, a fade to black, the file menu), so there was nothing to
+  generate from.
+
+The counters before this were one total from the start of the run, and the frames of the title, the opening movie and
+the file menu, about 4600 at 60 fps, came first: a log read at 21600 frames said 13719 generated, 63%, while the same
+log's gameplay periods generated 600 of 600. The settings menu's frames were counted as frames without depth and motion,
+since the inputs were tested before the menu.
+
+A line is due after `FGS_PERIOD` gameplay frames, or after `FGS_IDLE` frames of any kind (a long movie or menu still
+reports), and gives that period's counts, the presents the screen got in it and its time (presents over seconds is the
+frame rate the performance overlay shows with frame generation, `runtime/gfx/gfx_present.c` `output_rate()`), the GPU
+time a generated frame took, and the run's totals. The first `FGS_LINES` lines are all written, then one period in
+`FGS_EVERY`, each with the totals, so a long session neither floods the log nor loses a count.
+
+Own header so `tests/fg_stats_check.c` checks it without a GPU.
+
+- `FGS_PERIOD` (600): gameplay frames a line.
+- `FGS_IDLE` (3600): frames of any kind a line, when gameplay is rare.
+- `FGS_LINES` (60): lines written before only one period in `FGS_EVERY` is.
+
+`FgsOutcome`:
+
+- `FGS_GENERATED`: gameplay: prepared with generation on, from this frame's inputs.
+- `FGS_CUT`: gameplay: prepared, but the history starts here (no frame between it and the one before).
+- `FGS_NO_INPUTS`: gameplay: the scene was drawn, but no depth and motion vectors reached the present.
+- `FGS_NO_HUDLESS`: gameplay: no picture without the HUD.
+- `FGS_TOO_LARGE`: gameplay: the scene is larger than the generation context.
+- `FGS_MENU`: the settings menu was open.
+- `FGS_NO_SCENE`: the game drew no scene.
+
+`FgStats`:
+
+- `n`: this period.
+- `total`: the run.
+- `presents0`: the screen's presents when the period started (`FgsLine.presents` is the difference).
+- `t0_ns`: when the period started.
+- `gpu_ms`: GPU time of the generated frames timed in this period, and how many.
+- `periods`: periods ended.
+- `lines`: lines written.
+
+### `fgs_classify()`
+
+The frame's outcome, in this order: the menu first (whatever the frame had behind it), then whether the game drew a
+scene, then why a scene's frame was not generated. scene: the game drew a scene for this frame; have: its depth and
+motion vectors reached the present; fits: they fit the context; hudless: the picture without the HUD did; cut: the
+history starts at this frame.
+
+- Inputs without the scene flag: the scene was drawn, and the frame is counted as gameplay.
+
+### `fgs_count()`
+
+`presents`: the screen's presents so far (generated frames included); `now_ns`: the time.
+
+- First frame, or a new swapchain whose present count went back to 0: the period's presents and time start here.
+
+### `fgs_gpu()`
+
+The GPU time one generated frame took (its preparation and its generation).
+
+### `fgs_line()`
+
+When a line is due: writes it into out (name: the log's prefix, "fg", "fg4", "fsr3fg") and starts the next period.
+Returns 1 when the line is to be logged, 0 when it is due but this period is one of those skipped, -1 when none is due.
+
+## `runtime/vk/vk_fg_time.h`
+
+The GPU time of a generated frame through AMD's libraries (`runtime/vk/vk_fg.cpp`, `runtime/vk/vk_fg4.cpp`), for frame
+generation's log line (`runtime/vk/vk_fg_stats.h`): timestamps around the frame's preparation, in the present's command
+buffer on the game's queue, and around its generation, in the command list AMD's swapchain hands its generation callback
+on its own thread. A frame counts once both are in: `prepare_end` - `prepare_begin` plus `generate_end` -
+`generate_begin`.
+
+A ring of `FGT_SLOTS` frames, four timestamps each, reset on the host after they are read (`hostQueryReset`), so nothing
+is recorded into AMD's command list but the two timestamps. A slot's state moves free -> prepared -> generated on the
+two threads by compare-and-swap; a slot still busy when its frame comes round again leaves that frame untimed, and a
+prepared frame AMD never generated (generation off before its present) is let go `FGT_SLOTS` / 2 frames later.
+`NX2SARIA_FG_GPU_TIME=0` turns it off; without `hostQueryReset` or timestamps on the game's queue it stays off, and the
+generation is timed only where the present queue's family has timestamps too.
+
+- `fgt_init()`: after the device exists: `present_family` is the family of the queue AMD's swapchain presents on. 1 when
+  frames are timed, `*gen` whether their generation is (else the preparation alone). Logs one line the first time.
+- `fgt_prepare_begin()`, `fgt_prepare_end()`: timestamps around the preparation of frame `id` in cb; begin returns 0
+  when this frame is not timed (end is then skipped).
+- `fgt_generate_begin()`, `fgt_generate_end()`: the same around its generation, in the callback's command list (any
+  thread); a frame not prepared with timing is skipped.
+- `fgt_poll()`: frames whose times are in: up to `max` of them into `ms[]`, their slots free again. `now_id`: the newest
+  frame id.
+- `fgt_idle()`: the GPU idle (a context made again): slots whose timestamps will never all come (a generation AMD did
+  not run) are let go; one being recorded on another thread is left for its owner.
+- `fgt_release()`: the device idle.
+
+## `runtime/vk/vk_fg_time.c`
+
+The GPU time of frame generation through AMD's libraries: `runtime/vk/vk_fg_time.h` says what is timed and how.
+
+### `fgt_init()`
+
+- The state is zeroed at the first use, or after `fgt_release()`.
+- The generation runs on a queue AMD's swapchain picks: the game's or the present queue, timed where both have
+  timestamps.
+
+### `fgt_prepare_begin()`
+
+A slot not free is still in use by a frame `FGT_SLOTS` ago: this frame is not timed.
+
+### `fgt_poll()`
+
+- Generated only where the generation is timed; a prepared frame not generated after half the ring is let go once its
+  preparation is done (nothing writes its slot any more).
+- A generation recorded but not done yet waits: its queries may still be written, so they are never reset early.
+
+### `fgt_release()`
+
+After AMD's contexts are destroyed (`runtime/vk/vk_fg.cpp` `vk_fg_release()`), with the device idle: nothing records
+into the pool.
