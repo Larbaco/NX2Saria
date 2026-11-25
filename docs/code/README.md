@@ -32,7 +32,7 @@ areas are cleaned; `tools/xlate/`, the vendored code and the third-party code ar
 | 8 | `runtime/nvn/` | [nvn.md](nvn.md) | extracted |
 | 9 | `runtime/patches/` | [patches.md](patches.md) | extracted |
 | 10 | `runtime/diag/` | [diag.md](diag.md) | extracted |
-| 11 | `launcher/` | [launcher.md](launcher.md) | extracted but for `launcher/build.py`, which keeps its comments until its notes are on the page |
+| 11 | `launcher/` | [launcher.md](launcher.md) | extracted |
 | 12 | `runtime/ui/` | [ui.md](ui.md) | extracted |
 | 13 | `runtime/` top level | [runtime.md](runtime.md) | extracted; `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h` keep their comments until a change next rebuilds the lifted code ([The checks](#the-checks)) |
 | 14 | `runtime/gfx/` | [gfx.md](gfx.md) | extracted |
