@@ -1,10 +1,4 @@
 # needs: py:numpy, py:lz4
-"""recomp/gen.py's chunking on made-up numbers: estimate_costs, partition (own files for costly functions, the chunk
-cost and function count limits, a --limit slice, every function in exactly one chunk), the per-function sizes and
-switch flags chunk_text reports, and remove_stale's chunk names. No game files; run with the .venv (numpy).
-
-Run: .venv/bin/python tests/gen_partition_test.py
-"""
 import sys
 import tempfile
 import unittest
@@ -20,7 +14,6 @@ import gen  # noqa: E402
 
 
 def covers(chunks, n):
-    """True if the [i0, i1) ranges are contiguous, non-empty and cover [0, n) exactly once."""
     pos = 0
     for i0, i1 in chunks:
         if i0 != pos or i1 <= i0:
@@ -35,7 +28,7 @@ class EstimateCostsTest(unittest.TestCase):
         with_br = np.array([False, True, True, False])
         cost = gen.estimate_costs(size, with_br)
         self.assertEqual(cost.tolist(), [1000, 1000 + 1000 * 1000 // gen.COST_Q, 980_000, 980_000])
-        self.assertEqual(cost[2], 2 * 490_000)   # at COST_Q the switch doubles the cost
+        self.assertEqual(cost[2], 2 * 490_000)
 
     def test_large_values_do_not_overflow(self):
         cost = gen.estimate_costs(np.array([5_000_000]), np.array([True]))
@@ -48,14 +41,13 @@ class PartitionTest(unittest.TestCase):
                          [(0, 1), (1, 2), (2, 3)])
 
     def test_big_fn_is_exclusive(self):
-        # a cost equal to big_fn stays in a chunk; one above gets its own
         self.assertEqual(gen.partition(np.array([10, 300_000, 10]), 3000, 3_000_000, 300_000), [(0, 3)])
         self.assertEqual(gen.partition(np.array([300_001, 300_001]), 3000, 3_000_000, 300_000), [(0, 1), (1, 2)])
 
     def test_chunk_cost_limit(self):
         cost = np.array([100, 100, 100, 100, 100])
         self.assertEqual(gen.partition(cost, 3000, 250, 1000), [(0, 2), (2, 4), (4, 5)])
-        self.assertEqual(gen.partition(cost, 3000, 200, 1000), [(0, 2), (2, 4), (4, 5)])   # reaching it is allowed
+        self.assertEqual(gen.partition(cost, 3000, 200, 1000), [(0, 2), (2, 4), (4, 5)])
         self.assertEqual(gen.partition(cost, 3000, 199, 1000), [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5)])
 
     def test_max_fns(self):
@@ -83,11 +75,8 @@ class PartitionTest(unittest.TestCase):
 
 
 class FakeEmitter:
-    """What chunk_text uses of an Emitter: function() returns (lines, referenced starts) and counts its switches in
-    stats as the real one does (jump_tables per resolved table, all_label_fallbacks per unresolved computed br)."""
-
     def __init__(self, kinds):
-        self.kinds = kinds   # {entry: 'table' | 'fallback' | 'dispatch' | 'plain'}
+        self.kinds = kinds
         self.stats = Counter()
         self.uses_patches = False
 
@@ -95,7 +84,7 @@ class FakeEmitter:
         kind = self.kinds[entry]
         lines = [f'void f_{entry:x}(Cpu *c) {{', f'    FN_ENTER(0x{entry:x}ull);']
         if kind == 'table':
-            self.stats['jump_tables'] += 2   # two tables in one function count once
+            self.stats['jump_tables'] += 2
             lines.append('    switch (x8) { case 0x10ull: goto L_10; default: break; }')
         elif kind == 'fallback':
             self.stats['all_label_fallbacks'] += 1
@@ -119,7 +108,7 @@ class ChunkTextTest(unittest.TestCase):
         self.assertEqual([n for n, _ in sizes], [len(b) for b in bodies])
         self.assertTrue(text.endswith('\n\n'.join(bodies) + '\n'))
         self.assertIn('void f_999(Cpu *c);\n', text)
-        self.assertEqual(gen.chunk_text('mod', 0, FakeEmitter(kinds), fns), text)   # sizes is optional
+        self.assertEqual(gen.chunk_text('mod', 0, FakeEmitter(kinds), fns), text)
 
 
 class RemoveStaleTest(unittest.TestCase):

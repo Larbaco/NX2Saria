@@ -1,7 +1,7 @@
 # NX2Saria telemetry server
 
-A Cloudflare Worker with a D1 database that receives the launcher's session reports and player comments and shows
-the results on a password-protected admin page.
+A Cloudflare Worker with a D1 database that receives the launcher's session reports, player comments and the crash
+logs a player chose to send, and shows the results on a password-protected admin page.
 What players are told about it is in [docs/telemetry.md](../docs/telemetry.md).
 
 - No analytics service of anyone else, no R2, no runtime dependencies: `src/` is all the code that runs.
@@ -18,7 +18,7 @@ What players are told about it is in [docs/telemetry.md](../docs/telemetry.md).
 - A report's `patches` list is kept only as far as it names the port's own patch sets (`src/patch_sets.ts`, every
   `set` line of `recomp/patches-v*.txt`); a name the server does not know is dropped, not stored. After adding a
   patch set, update that list (`tests/telemetry_patch_sets_check.py` fails until then) and deploy again.
-- Sessions and comments are deleted after 180 days by a daily cron.
+- Sessions, comments and crash logs are deleted after 180 days by a daily cron.
 
 ## Files
 
@@ -41,10 +41,10 @@ What players are told about it is in [docs/telemetry.md](../docs/telemetry.md).
 | Method and path | Answer |
 |---|---|
 | `POST /v1/session` | Body `{"launcher_version", "summary"}`, at most 8 KB. `201 {"ok":true}` |
-| `POST /v1/feedback` | Body `{"launcher_version", "text", "summary", "log_tail"}`, at most 40 KB. `201 {"ok":true}` |
+| `POST /v1/feedback` | Body `{"launcher_version", "text", "summary", "log_tail"}` and the optional keys `"kind"` and `"log_head"`, at most 96 KB. `201 {"ok":true}`. See [Comments and crash logs](#comments-and-crash-logs) |
 | `GET /v1/admin` | Admin page; filters `?days=7\|30\|180` (default 30) and `?version=` |
-| `GET /v1/admin/sessions.csv`, `GET /v1/admin/feedback.csv` | CSV exports with the same filters (newest 100 000 rows) |
-| `GET /v1/admin/feedback/<id>/log` | The log tail attached to a comment, as `text/plain` |
+| `GET /v1/admin/sessions.csv`, `GET /v1/admin/feedback.csv` | CSV exports with the same filters (newest 100 000 rows). `feedback.csv` also takes `?kind=comment\|crash`; without it, it holds both, told apart by its `kind` column |
+| `GET /v1/admin/feedback/<id>/log` | The log lines of a comment or of a crash log, as `text/plain`. A crash log's start and end come under one title line each |
 
 Errors are JSON `{"error": "..."}`:
 
@@ -60,16 +60,34 @@ Errors are JSON `{"error": "..."}`:
   not set, so the panel is never open by mistake.
 - `404` for an unknown path, `405` (with `Allow`) for a wrong method.
 
+### Comments and crash logs
+
+Both arrive at `POST /v1/feedback` and are rows of the `feedback` table, told apart by `kind`:
+
+| `kind` | `text` | `log_tail` | `log_head` |
+|---|---|---|---|
+| `comment`, also when the key is absent | required, 1 to 4000 characters | optional: at most 200 lines and 24 KB | refused |
+| `crash` | may be empty, at most 4000 characters | required: at most 200 lines and 56 KB | optional: at most 100 lines and 16 KB |
+
+- A body without `kind` is a comment, so a launcher older than the crash logs keeps working unchanged. A launcher
+  that sends `kind` or `log_head` to a server older than them gets `400` (an unknown key).
+- `log_head` is the start of the game's log (the lines up to `patches:`), which the last lines of a long session no
+  longer hold. 200 of the game's log lines weigh about 46 KB (measured over 184 logs: median 46 KB, largest 58 KB),
+  which is why a crash log's end may be 56 KB; a comment's 24 KB holds about 107 of them.
+- The field limits are checked after the body is parsed, by kind; the 96 KB of the body is 56 + 16 KB of log lines,
+  the summary, the text and the room JSON escapes take.
+
 The exact schema of `summary` is in [docs/telemetry.md](../docs/telemetry.md) and in `SUMMARY_SPEC` in
 `src/validate.ts`.
 
 ### Admin panel
 
 Open `https://<worker>/v1/admin` in a browser; any user name, the password is `ADMIN_TOKEN`. It shows the number of
-sessions and of comments, the share of sessions that did not end normally; counts by version, GPU,
+sessions, of comments and of crash logs sent, the share of sessions that did not end normally; counts by version, GPU,
 OS, preset, aspect ratio, upscaler, frame generation, mods (none, without code, with code) and patch set on; median
-`fps_mean`, median `fps_low_1pct` and p95 `worst_ms` by version and by GPU; the most common fatal lines with numbers and addresses replaced by `#`; and the 50 newest
-comments with links to their logs. The statistics read at most the newest 50 000 sessions of the period.
+`fps_mean`, median `fps_low_1pct` and p95 `worst_ms` by version and by GPU; the most common fatal lines with numbers and addresses replaced by `#`; the 50 newest
+comments with links to their logs; and, in a list of their own so that they do not bury the comments, the 50 newest
+crash logs with the session's end, its fatal line and a link to the log. The statistics read at most the newest 50 000 sessions of the period.
 
 Every value is HTML-escaped. Pages are sent with `Content-Security-Policy: default-src 'none'; style-src
 'unsafe-inline'`, `X-Content-Type-Options: nosniff` and `Cache-Control: no-store`. CSV cells are always quoted and a
@@ -87,7 +105,7 @@ text cell starting with `=`, `+`, `-`, `@`, tab or carriage return gets a leadin
 
 Crons (UTC): `17 * * * *` refreshes the `releases` table from
 `https://api.github.com/repos/<RELEASES_REPO>/releases?per_page=100` (drafts skipped, the tag's `v` removed; releases
-no longer in that listing stay accepted). `43 3 * * *` deletes sessions and comments older than 180 days.
+no longer in that listing stay accepted). `43 3 * * *` deletes sessions, comments and crash logs older than 180 days.
 
 ## Deploy
 
@@ -132,6 +150,15 @@ panel answers 503.
 `wrangler deploy` prints the URL, `https://nx2saria-telemetry.<your-subdomain>.workers.dev`. That URL goes into the
 launcher's `TELEMETRY_URL`. To check it: `curl <url>/v1/session` answers
 `{"error":"method not allowed"}`, and `<url>/v1/admin` asks for the password.
+
+### Deploying a version with a new migration
+
+`deploy.sh` applies the migrations before it deploys the Worker, which is the order every migration here needs.
+Migration `0004` adds `feedback.kind` (`comment` for every row there already is) and `feedback.log_head`: the Worker
+before it never names either column, so it keeps working between the two steps, while the Worker after it fails on
+every `POST /v1/feedback` without them. By hand: `npx wrangler d1 migrations apply ... --remote` first, then
+`npx wrangler deploy`. A launcher that offers crash logs must not be released before this Worker is deployed: until
+then each crash log it sends is refused with `400`.
 
 ### Turning reports off
 

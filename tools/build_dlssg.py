@@ -1,20 +1,3 @@
-"""Build nx2navi_dlssg.dll (runtime/dlssg/nx2_sl.cpp, DLSS Frame Generation through NVIDIA Streamline) with MSVC.
-
-    python tools/build_dlssg.py --sl <Streamline SDK folder with include/> [--out build/dlssg]
-    python tools/build_dlssg.py --check <nx2navi_dlssg.dll>
-
-Streamline's C++ types have MSVC's ABI, so this one DLL is built with Visual Studio's compiler (the Build Tools are
-enough; vswhere finds them), against the SDK's headers, which stay where they are. The Vulkan headers are MSYS2's.
-A launcher release and the build kit ship the DLL ready-made beside Streamline's own runtime DLLs
-(tools/make_launcher.py and tools/make_kit.py --dlssg, with the Streamline files tools/streamline_pin.py pins), and
-tools/make_game.py place_dlssg puts them beside the game.
-
-The built DLL must export every function runtime/dlssg/nx2_sl.h declares (each PFN_nx2sl_<name> is the export
-nx2sl_<name>), or the build fails naming the ones it lacks: the runtime takes a missing optional export for an older
-DLL and leaves its feature out without an error. --check makes the same check of a DLL built before, such as the one
-a release is about to ship; tools/make_launcher.py and tools/make_kit.py make it on their --dlssg DLL first and stop
-on one that fails.
-"""
 import argparse
 import os
 import re
@@ -24,6 +7,9 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+DESCRIPTION = ('Build nx2navi_dlssg.dll (runtime/dlssg/nx2_sl.cpp, DLSS Frame Generation through NVIDIA '
+               'Streamline) with MSVC.')
 
 ROOT = Path(__file__).resolve().parents[1]
 HEADER = ROOT / 'runtime' / 'dlssg' / 'nx2_sl.h'
@@ -43,13 +29,11 @@ def vcvars():
 
 
 def declared_exports(header=HEADER):
-    """The exports nx2_sl.h declares: nx2sl_<name> for each function pointer type PFN_nx2sl_<name>."""
     text = Path(header).read_text(encoding='utf-8')
     return {'nx2sl_' + name for name in re.findall(r'\(\s*\*\s*PFN_nx2sl_(\w+)\s*\)', text)}
 
 
 def pe_exports(path):
-    """The names a PE file (PE32 or PE32+) exports: its export directory's name table. Empty without one."""
     d = Path(path).read_bytes()
     pe = struct.unpack_from('<I', d, 0x3C)[0]
     if d[pe:pe + 4] != b'PE\0\0':
@@ -57,7 +41,6 @@ def pe_exports(path):
     nsec, opt = struct.unpack_from('<H', d, pe + 6)[0], struct.unpack_from('<H', d, pe + 20)[0]
     magic = struct.unpack_from('<H', d, pe + 24)[0]
     sec = pe + 24 + opt
-    # data directory 0, the exports: 112 bytes into a PE32+ optional header, 96 into a PE32 one
     rva = struct.unpack_from('<I', d, pe + 24 + (112 if magic == 0x20b else 96))[0]
 
     def off(r):
@@ -79,18 +62,15 @@ def pe_exports(path):
 
 
 def missing_exports(dll, header=HEADER):
-    """The exports header declares that dll lacks, sorted."""
     return sorted(declared_exports(header) - pe_exports(dll))
 
 
 def check(dll):
-    """Exit naming the exports nx2_sl.h declares that dll lacks, or saying that dll is missing or no PE file.
-    tools/make_launcher.py and tools/make_kit.py run it on their --dlssg DLL before anything is downloaded or built."""
     if not Path(dll).is_file():
         sys.exit(f'{dll} is missing')
     try:
         missing = missing_exports(dll)
-    except (ValueError, TypeError, struct.error) as e:   # pe_exports: no PE signature, or a table outside the file
+    except (ValueError, TypeError, struct.error) as e:
         sys.exit(f'{dll} is no DLL that can be read ({e})')
     if missing:
         sys.exit(f'{dll} lacks exports runtime/dlssg/nx2_sl.h declares: {", ".join(missing)} '
@@ -98,7 +78,7 @@ def check(dll):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--sl', type=Path, help='the Streamline SDK folder (holds include/sl.h)')
     ap.add_argument('--vulkan', type=Path, default=Path(r'C:\msys64\ucrt64\include'), help='folder holding vulkan/vulkan.h')
     ap.add_argument('--out', type=Path, default=ROOT / 'build' / 'dlssg')
@@ -113,7 +93,6 @@ def main():
     if not (a.sl / 'include' / 'sl.h').is_file():
         sys.exit(f'{a.sl / "include" / "sl.h"} is missing')
     a.out.mkdir(parents=True, exist_ok=True)
-    # only the Vulkan headers: MSYS2's own C library headers must not shadow MSVC's
     inc = a.out / 'include'
     for d in ('vulkan', 'vk_video'):
         if (a.vulkan / d).is_dir():
@@ -123,7 +102,6 @@ def main():
            f'/I"{a.sl / "include"}" /I"{inc}" /I"{src.parent}" "{src}" /Fo"{a.out}\\\\" '
            f'/Fe"{a.out / "nx2navi_dlssg.dll"}" /link /NOLOGO')
     with tempfile.NamedTemporaryFile('w', suffix='.cmd', delete=False) as f:
-        # vcvars64.bat runs vswhere itself and needs it on PATH
         f.write('@echo off\r\nset "PATH=%PATH%;' + str(VSWHERE.parent) + '"\r\n' + cmd + '\r\n')
         script = f.name
     try:

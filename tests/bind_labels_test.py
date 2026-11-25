@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Check the bind action catalog in all menu languages and its narrow-row fallback."""
 
 import re
 from pathlib import Path
@@ -68,9 +67,6 @@ require('ellipsis && tw > room' in ROWS and 'memcpy(shortened + n, "…"' in ROW
         'ImVec4 clip(x0, y, x1, y + h)' in ROWS,
         "the action line is not ellipsized and clipped to the label column")
 
-# Captured menu images show that this column fits about 16 Latin/Cyrillic characters and 7 full-width
-# Chinese characters at 1280x720. The previous L labels visibly ellipsized at these limits, so this
-# deliberately checks the complete text against the capture-calibrated budgets, not fit_text's clipping.
 lane_char_budget = {"en": 16, "pt-BR": 17, "ru": 14, "zh-Hans": 7}
 for lang, array in expected_languages.items():
     start = TEXT.index(f"static const char *const {array}[UI_TEXT_COUNT]")

@@ -1,6 +1,13 @@
 # needs: exe, gpu
 # args: {exe}
-"""Run the game executable's --probe-ffx-cache twice on pipeline cache files of the test's own
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+USAGE = """Run the game executable's --probe-ffx-cache twice on pipeline cache files of the test's own
 (runtime/vk/vk_ffx.cpp vk_ffx_probe_cache: one FSR 3.1 upscaling context, without a window or the game).
 
 FSR 3.1's library creates its pipelines itself and names no pipeline cache; the runtime hands it pipeline creates that
@@ -15,13 +22,6 @@ does this test. The pipeline cache files go to build/test/ffx_cache, never besid
 
 Usage: ffx_cache_check.py PATH_TO_GAME_EXE
 """
-import os
-import re
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-
 ROOT = Path(__file__).resolve().parents[1]
 LINE = re.compile(r'probe-ffx-cache: context (created|not created) in \d+ ms; pipelines made through the runtime\'s '
                   r'creates: (\d+) \(from the pipeline caches (\d+), compiled into the play cache (\d+), through the '
@@ -29,7 +29,6 @@ LINE = re.compile(r'probe-ffx-cache: context (created|not created) in \d+ ms; pi
 
 
 def run(game, cache, setting):
-    """One probe run -> (exit code, last probe line, the counts or None)."""
     env = dict(os.environ)
     env['NX2SARIA_PIPELINE_CACHE'] = str(cache)
     env.pop('NX2SARIA_PIPE_BINARIES', None)
@@ -47,7 +46,7 @@ def run(game, cache, setting):
 
 def main():
     if len(sys.argv) != 2:
-        print(__doc__)
+        print(USAGE)
         return 2
     game = sys.argv[1]
     work = ROOT / 'build' / 'test' / 'ffx_cache'

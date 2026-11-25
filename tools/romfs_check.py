@@ -1,24 +1,3 @@
-"""Checks every file of a player's packed game data, and stands in for the damaged textures it can.
-
-    python tools/romfs_check.py --game FOLDER [--romfs FOLDER] [--mods FOLDER] [--jobs N]
-
-A dump can hold files whose first pages are zeros, with a container checksum that still passes because the damage was
-packed along with them. The game then cannot decompress such a file, opens it over and over and gives up on everything
-that needs it: one damaged normal map left a whole room without walls. Nothing during play looks for this, so the game
-build runs this once for each copy of the game data (tools/make_game.py step_scan).
-
-Every .zs file of <game>/romfs (index.json and romfs.bin, as tools/make_game.py writes them; --romfs names another) is
-decompressed in full, with the dictionary its frame names from Pack/ZsDic.pack.zs. A file of any other kind that is
-nothing but zeros is reported too. The result goes to <game>/romfs-check.json.
-
-A damaged Tex/<name>.bntx.zs is replaced by a stand-in: an undamaged texture of the same kind, the closest name with the
-same length, with the name inside it changed, so the game loads it and what uses it appears. It is another texture, not
-the original, and only a clean dump restores the original. The stand-ins are an ordinary mod folder (--mods, default
-<game>/mods) named STANDIN_MOD that the Mods menu can turn off; it is removed again when nothing is damaged. They are
-built from the player's own files on the player's machine and never enter the repository.
-
-Needs zstandard (tools/requirements-launcher.txt).
-"""
 import argparse
 import concurrent.futures
 import json
@@ -32,20 +11,16 @@ from pathlib import Path
 
 import zstandard
 
+DESCRIPTION = "Checks every file of a player's packed game data, and stands in for the damaged textures it can."
+
 STANDIN_MOD = 'Damaged file stand-ins'
 DICTIONARIES = 'Pack/ZsDic.pack.zs'
 ZSTD_MAGIC = b'\x28\xb5\x2f\xfd'
-# How much of a file the decompressor is given at a time. Each call returns its output as one bytes object, which
-# the library grows as the output comes: with 4 MiB of input a call's output is tens of MiB, grown by copying, and
-# the copying holds the interpreter's lock, so the worker threads wait on each other. Measured on 32 MiB frames
-# with 12 threads: about 120 MB/s of packed data with 4 MiB pieces, about 2,500 MB/s with 64 KiB pieces; files
-# smaller than a piece are the same either way.
 PIECE = 1 << 16
 TEXTURE = re.compile(r'Tex/([^/]+)\.bntx\.zs')
 
 
 def sarc_members(blob):
-    """Name -> (start, end) of the files of a SARC archive."""
     header = struct.unpack_from('<H', blob, 4)[0]
     data = struct.unpack_from('<I', blob, 12)[0]
     count = struct.unpack_from('<H', blob, header + 6)[0]
@@ -59,8 +34,6 @@ def sarc_members(blob):
 
 
 class Image:
-    """The packed game data; each thread reads through its own handle."""
-
     def __init__(self, folder):
         self.path = Path(folder) / 'romfs.bin'
         self.index = json.loads((Path(folder) / 'index.json').read_text(encoding='utf-8'))
@@ -83,7 +56,6 @@ class Image:
         return f.read(entry['size'])
 
     def decompressor(self, dict_id):
-        """One per thread and dictionary: a decompressor is not for two threads at once."""
         cache = getattr(self.local, 'z', None)
         if cache is None:
             cache = self.local.z = {}
@@ -99,7 +71,6 @@ class Image:
 
 
 def problem(image, entry):
-    """Why the file is damaged, or None. A frame naming a dictionary the game does not have cannot be judged: None."""
     data = image.read(entry)
     if len(data) != entry['size']:
         return 'shorter than the index says'
@@ -115,7 +86,7 @@ def problem(image, entry):
         size = 0
         for at in range(0, len(data), PIECE):
             size += len(out.decompress(data[at:at + PIECE]))
-            if out.eof:   # the frame is whole: bytes after it are not the frame's, whichever piece they fall in
+            if out.eof:
                 break
     except zstandard.ZstdError as e:
         return f'does not decompress ({e})'
@@ -125,7 +96,6 @@ def problem(image, entry):
 
 
 def donors(image, damaged, name):
-    """Undamaged textures whose names have this one's length, most alike first; the same last word is worth most."""
     words = name.split('_')
     found = []
     for path in image.by_path:
@@ -138,7 +108,6 @@ def donors(image, damaged, name):
 
 
 def stand_in(image, damaged, path):
-    """A compressed stand-in for the damaged texture at path, or None when no undamaged texture can be renamed to it."""
     name = TEXTURE.fullmatch(path)[1]
     for donor in donors(image, damaged, name):
         try:
@@ -152,7 +121,7 @@ def stand_in(image, damaged, path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--game', type=Path, required=True, help='the game folder')
     ap.add_argument('--romfs', type=Path, help='the folder of index.json and romfs.bin (default <game>/romfs)')
     ap.add_argument('--mods', type=Path, help='the mods folder (default <game>/mods)')

@@ -44,8 +44,8 @@ import tkinter as tk
 import tkinter.font as tkfont
 from pathlib import Path
 
-from .. import (NAME, build, commit, feed, gameini, gamefiles, game_session, jobs, locks, mods, saves, steam, telemetry, versions,
-               winsys, play as play_core)
+from .. import (NAME, build, commit, crash_offer, feed, gameini, gamefiles, game_session, jobs, locks, mods, saves, steam,
+               telemetry, versions, winsys, play as play_core)
 from ..build import FATAL_TAIL, game_log_path, last_fatal  # noqa: F401 (FATAL_TAIL: tests)
 from ..context import Context, shorten
 from ..game_session import (ASKED_SIGNALS, EXIT_CODES, FATAL_CODES, FATAL_SHOWN, GameEnd, GameRun, LOG_CUT_LINE,
@@ -73,7 +73,7 @@ if os.name != 'nt':
 SPARKS = 22                     # the dust drifting over the backdrop
 DEPTH = {'first_run': 0, 'home': 0, 'job': 1, 'saves': 1, 'settings': 1, 'customize': 1, 'uninstall': 2,
          'color': 2, 'mods': 1, 'mod_order': 2, 'udmabuf': 2, 'reports': 2, 'consent': 1, 'sent_view': 3,
-         'comment': 3}
+         'comment': 3, 'crash_offer': 1}
 MODS_PAGE = 7     # mods on a page of the Mods screen, beside its other rows
 ORDER_PAGE = 10   # ... of the Load Order screen
 # the Custom scheme's picker (draw_picker), logical pixels: its box (x, top, width, height), the colour square and
@@ -255,6 +255,12 @@ class App:
         self.question_deadline = None   # time.monotonic() at which the open question turns reports on; None: stopped
         self.question_left = None       # the seconds its countdown last drew
         self.reports_started = False
+        self.offer = None
+        self.offer_opened = 0.0
+        self.offers = crash_offer.Offers()
+        if telemetry.enabled():
+            crash_offer.log_state(self.settings, ctx.log)
+        self.sent_note = ''
         self.sent_return = 'home'       # ... and See What Is Sent
         self.sent_text = ''             # the text See What Is Sent shows: the bytes a report sends
         self.sent_example = False       # ... made from an example, as the game has written no summary yet
@@ -637,7 +643,7 @@ class App:
 
     def activate(self):
         r = self.focused()
-        if not r or not r.enabled:
+        if not r or not r.enabled or self.offer_guarded():
             return
         if r.kind == 'toggle':
             self.sounds.play('select')
@@ -663,10 +669,14 @@ class App:
         if self.screen == 'comment' and self.typing:   # B or Esc first leaves the comment's box
             self.leave_comment_box()
             return
+        if self.offer_guarded():
+            return
         if self.screen in ('settings', 'uninstall', 'saves', 'customize', 'job', 'color', 'mods', 'mod_order',
-                           'udmabuf', 'reports', 'consent', 'sent_view', 'comment'):
+                           'udmabuf', 'reports', 'consent', 'sent_view', 'comment', 'crash_offer'):
             self.sounds.play('back')
-        if self.screen == 'consent':   # Esc or B closes the question, which turns reports on as the screen says
+        if self.screen == 'crash_offer':
+            self.offer_end('closed')
+        elif self.screen == 'consent':   # Esc or B closes the question, which turns reports on as the screen says
             self.question_end('closed')
         elif self.screen == 'sent_view':
             self.show(self.sent_return, self.return_focus(self.sent_return, 'See What Is Sent'))
@@ -800,6 +810,10 @@ class App:
             self.question, self.question_deadline = None, None
             self.reporter.answer_question('closed')
             self.set_waiting_aside()
+        if self.offer and signalled is None:
+            self.offer_end('closed', leave=True)
+        if self.offers.shown:
+            self.ctx.log(f'telemetry: crash log offers in {self.offers.counts()}')
         busy = (f'; {self.job.task or self.job.title or type(self.job).__name__} cancelled'
                 if self.job and self.job.result is None else '')
         late = f', {time.monotonic() - signalled:.2f} s after the signal' if signalled is not None else ''
@@ -890,6 +904,8 @@ class App:
             if after:
                 self.ctx.log(f'telemetry: the question opens after {after}, without its countdown')
             self.open_question(countdown=not after)
+        else:
+            self.offer_crash_log()
 
     def open_screen(self, name):
         """--screen: one of the session reports' screens at once, for looking at it or taking its picture
@@ -901,6 +917,8 @@ class App:
             self.open_sent('home')
         elif name == 'consent':
             self.open_question(preview=True)
+        elif name == 'crash':
+            self.open_crash_offer_preview()
         elif name in ('reports', 'comment'):
             self.show(name)
 
@@ -2064,11 +2082,13 @@ class App:
             end = game_session.finish_game(run, self.ctx.log)
             if end.message:
                 self.message = end.message
+            crash_offer.game_ended(self.settings, run.game_dir, run.kind, run.asked, end.message, self.ctx.log)
         if self.install_staged('the game exited'):
             return
         if self.after_game_reports() is True:
             return
         self.show('home', self.focus)
+        self.offer_crash_log()
 
     def open(self, path):
         try:
@@ -2348,6 +2368,109 @@ class App:
             if how in ('closed', 'timeout'):   # said now, and once more at the next start (start_reports)
                 self.message = REPORTS_ON_NOTICE
         self.show('home', 0)
+        if was == 'ask':
+            self.offer_crash_log()
+
+    def offer_guarded(self):
+        return (self.screen == 'crash_offer' and self.offer is not None
+                and time.monotonic() - self.offer_opened < crash_offer.GUARD_SECONDS)
+
+    def offer_crash_log(self):
+        gd = self.settings.get('game_dir')
+        log = self.ctx.log
+        if self.offer or self.question or self.screen != 'home' or not gd or not telemetry.enabled():
+            return False
+        if self.game_run or saves.game_running(gd):
+            return False
+        data = crash_offer.pending(gd, self.settings, log)
+        if data is None:
+            return False
+        if self.offers.refused:
+            crash_offer.forget(gd)
+            log(f'telemetry: crash log offer: not shown: the server refused one in this run (end: {data["kind"]})')
+            return False
+        sending = crash_offer.prepare(self.reporter, gd)
+        if isinstance(sending, telemetry.Result):
+            crash_offer.forget(gd)
+            log(f'telemetry: crash log offer: not shown: {sending.reason} (end: {data["kind"]})')
+            return False
+        self.offers.shown += 1
+        log(f'telemetry: crash log offer: shown (end: {data["kind"]}; {sending.head_lines} + {sending.tail_lines} '
+            f'lines, {sending.log_bytes} bytes of log)')
+        self.offer = {'kind': data['kind'], 'message': data['message'], 'sending': sending, 'preview': False}
+        self.offer_opened = time.monotonic()
+        self.show('crash_offer')
+        return True
+
+    def open_crash_offer_preview(self):
+        self.offer = {'kind': 'device_lost', 'preview': True, 'sending': crash_offer.example(self.reporter),
+                      'message': 'The game ended with a fatal error (code 72): vk: the graphics device was lost '
+                                 f'(VK_ERROR_DEVICE_LOST). {LOG_WHERE}'}
+        self.offer_opened = 0.0
+        self.show('crash_offer')
+
+    def offer_end(self, how, leave=False):
+        offer, self.offer = self.offer, None
+        if offer is None:
+            return
+        gd = self.settings.get('game_dir')
+        if offer['preview']:
+            if not leave:
+                self.show('home', 0)
+            return
+        crash_offer.forget(gd)
+        if how == 'send':
+            sending = offer['sending']
+            self.message = 'Sending the log…'
+
+            def done(answer):
+                got = crash_offer.finish(self.reporter, self.offers, sending, answer)
+                self.message = ('The log was sent. Thank you.' if got.ok
+                                else f'The log could not be sent: {got.reason}.')
+                if self.screen == 'home':
+                    self.show('home', self.focus)
+            self.tasks.start(lambda: self.reporter.post(sending.request), done)
+        else:
+            self.offers.declined += 1
+            self.ctx.log(f'telemetry: crash log offer: declined ({how}; end: {offer["kind"]}; '
+                         f'{self.offers.counts()})')
+        if leave:
+            return
+        if how == 'comment':
+            self.comment_log, self.comment_message = True, ''
+            self.show('comment')
+        else:
+            self.show('home', 0)
+
+    def crash_offer_desc(self):
+        offer = self.offer or {}
+        return {'title': 'Send the log of this crash?',
+                'text': [(offer.get('message') or 'The game ended with an error.').replace(' ' + LOG_WHERE, '')],
+                'fine': [crash_offer.what_goes(offer['sending']) if offer else '',
+                         'Nothing is sent unless you choose Send the Log. Settings > Session Reports turns this '
+                         'question off.']}
+
+    def rows_crash_offer(self):
+        return [
+            Row('action', 'Send the Log', on=lambda: self.offer_end('send'), height=44, desc=self.crash_offer_desc),
+            Row('action', "Don't Send", on=lambda: self.offer_end("don't send"), height=44,
+                desc=self.crash_offer_desc),
+            Row('divider'),
+            Row('value', 'See What Is Sent', '', 'arrow', on=self.open_offer_sent, desc=self.crash_offer_desc),
+            Row('value', 'Write a Comment', '', 'arrow', on=lambda: self.offer_end('comment'),
+                desc=self.crash_offer_desc),
+        ]
+
+    def open_offer_sent(self):
+        sending = self.offer['sending']
+        self.sent_example = bool(self.offer['preview'])
+        self.sent_text = sending.request.data.decode('utf-8')
+        self.sent_note = ('An example: yours has the lines of your own log.' if self.sent_example else
+                          f'{sending.head_lines + sending.tail_lines} lines of the game\'s log'
+                          + (' and the report of that session' if sending.summary else '')
+                          + ', exactly as they are sent.')
+        self.sent_return = 'crash_offer'
+        self.show('sent_view')
 
     def question_line(self):
         left = telemetry.QUESTION_SECONDS if self.question == 'preview' else self.question_seconds()
@@ -2387,6 +2510,7 @@ class App:
         self.sent_example = summary is None
         data = telemetry.payload(summary or telemetry.example_summary(), self.ctx.version)
         self.sent_text = telemetry.body(data).decode('utf-8')
+        self.sent_note = ''
         self.sent_return = came_from
         self.show('sent_view')
 
@@ -2398,6 +2522,11 @@ class App:
             self.reporter.set_consent(self.settings.get('telemetry') != 'on')
             if self.settings.get('telemetry') == 'on':
                 self.send_pending()
+
+        def ask(v):
+            self.settings[crash_offer.SETTING] = 'on' if v else 'off'
+            self.settings.save()
+            crash_offer.log_state(self.settings, self.ctx.log)
         closed = self.reporter.closed()
         return [
             Row('enum', 'Session Reports', options=tuple(REPORT_VALUES.values()),
@@ -2415,6 +2544,11 @@ class App:
             Row('value', 'Send a Comment', '', 'arrow', on=lambda: self.show('comment'),
                 desc=('Write to the project: a problem, an idea. It goes when you select Send, also with session '
                       'reports off.',)),
+            Row('toggle', 'Ask After a Crash', on=ask, get=lambda: crash_offer.on(self.settings),
+                desc=('On: when the game ends with an error or a crash, the launcher asks whether to send the '
+                      f"start and the end of the game's log to the project (up to {crash_offer.HEAD_LINES} and "
+                      f'{crash_offer.TAIL_LINES} lines).',
+                      'Nothing is sent unless you choose Send the Log there, also with session reports off.')),
             Row('divider'),
             Row('action', 'Back', on=self.back, height=40, desc=('Back to Settings.',)),
         ]
@@ -2558,8 +2692,8 @@ class App:
         bx, by, bw, bh = self.side_box()
         self.text(X(bx + 26), X(by + 34), 'Example of What Is Sent' if self.sent_example else 'What Is Sent',
                   self.f['heading'], P['text_bright'])
-        line = ('No report from the game yet: yours has these fields, with your values.'
-                if self.sent_example else 'The report of your last session, exactly as it is sent.')
+        line = self.sent_note or ('No report from the game yet: yours has these fields, with your values.'
+                                  if self.sent_example else 'The report of your last session, exactly as it is sent.')
         self.text(X(bx + 26), X(by + 56), line, self.f['small'], P['muted'], anchor='nw', width=X(bw - 52))
         self.text(X(bx + 26), X(SENT_BOX[3] + 6), 'Up and down scroll; B or Esc goes back.', self.f['small'],
                   P['muted'], anchor='nw', width=X(bw - 52))
@@ -3400,7 +3534,7 @@ def parse_args(argv):
     ap.add_argument('--root', help='the launcher folder (tests)')
     ap.add_argument('--selftest', action='store_true', help='draw every screen and close')
     ap.add_argument('--shots', help='with --selftest: save a PNG of each screen into this folder')
-    ap.add_argument('--screen', choices=('consent', 'sent', 'comment', 'reports'),
+    ap.add_argument('--screen', choices=('consent', 'sent', 'comment', 'reports', 'crash'),
                     help='open this screen of the session reports at once (looking at it, screenshots)')
     ap.add_argument('--play', action='store_true',
                     help='start the game without the window and wait for it (the Steam shortcut, launcher/steam.py)')
@@ -3480,10 +3614,12 @@ def play_only(ctx):
     # since the box waits for OK and Steam may end this process meanwhile.
     end = run.end()
     ctx.log(f'play from Steam: {end.log}')
+    kind, asked = game_session.end_kind(run.code(), end), game_session.end_asked(gd, run.code())
     if telemetry.enabled():
         telemetry.synthesize_crash(gd, ctx.log)   # before the note ends the log's run; the window sends it when it opens
     if end.note:
         note_exit_in_log(gd, end.note)
+    crash_offer.game_ended(ctx.settings, gd, kind, asked, end.message, ctx.log)
     if end.alarm:
         tell(end.message)
     return 0

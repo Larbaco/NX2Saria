@@ -1,9 +1,3 @@
-// runtime/patches/action_prompt.c: the action prompt's diamond of face buttons laid out by label. The layout file here is made
-// by the test from the format as action_prompt.c's header comment describes it, with the values the game's 1.1.1
-// DoCommand_00.buil holds (A right, B bottom, X top, Y left), so the reader is checked against a writer of its own;
-// the archives and zstd dictionaries are made here too. No game files. Given romfs.bin and the offsets and sizes of
-// the layout archive and Pack/ZsDic.pack.zs in it, it also checks the game's own archive (game_archive). Built and
-// run by tests/action_prompt_check.py; prints each failed check and exits 1 on any.
 #include <math.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -28,7 +22,6 @@ static int fails;
         }                                                                                                              \
     } while (0)
 
-// ---- what action_prompt.c reaches in the runtime
 static char last_log[512];
 void rt_log(const char *fmt, ...) {
     va_list ap;
@@ -38,10 +31,9 @@ void rt_log(const char *fmt, ...) {
 }
 uint64_t plat_now_ns(void) { return (uint64_t)((double)clock() / CLOCKS_PER_SEC * 1e9); }
 
-// ---- a BFFH layout as the game's DoCommand_00.buil has it
 enum { SIZE = 0x8000, PANE_REC = 0x44 };
 static uint8_t file[SIZE];
-static size_t top;   // the next free byte
+static size_t top;
 
 static uint64_t alloc(size_t n) {
     top = (top + 7) & ~(size_t)7;
@@ -78,7 +70,7 @@ static uint64_t str(const char *s) {
     return at;
 }
 
-#define Z (-2.842171e-14f)   // the game stores some zeros so
+#define Z (-2.842171e-14f)
 static const struct {
     const char *name;
     float x, y, sx, sy;
@@ -97,7 +89,6 @@ static const struct {
     {"P_X_03", Z, 80, 1, 1, 0x0255508b},     {"N_BtnY_00", -80, 0, 1, 1, 0x0255500b},
     {"W_BaseY_00", 80, 0, -1, 1, 0x02554889}, {"W_BaseYDecide_00", 80, 0, -1, 1, 0x02554889},
     {"T_GuideY_00", -68, 0, 1, 1, 0x02555909},
-    // left as they are: A's and L's bubbles, A's Decide null
     {"W_BaseA_00", -80, 0, 1, 1, 0x02554889}, {"N_BaseADecide_00", -80, 0, 1, 1, 0x02555002},
     {"T_GuideL_00", 66, 0, 1, 1, 0x02554909},
 };
@@ -110,17 +101,15 @@ static const char *const textures[][2] = {{"DoCommandCrossBase_A_00", "DoCommand
                                           {"DoCommandCrossBase_A_00", "DoCommandCrossBaseGrd_A_00"},
                                           {"DoCommandSubBase_00", "DoCommandSubBaseGrd_00"}};
 enum { NMATS = sizeof materials / sizeof *materials };
-static uint64_t binding_at[NMATS][2];   // where each material's first two texture name offsets are
-static uint64_t name_a[2], name_b[2];   // the offsets of the A and B pictures' names
+static uint64_t binding_at[NMATS][2];
+static uint64_t name_a[2], name_b[2];
 
 static size_t make_layout(void) {
     memset(file, 0, sizeof file);
     top = 0x240;
     memcpy(file, "BFFH", 4);
-    // the names first, A's and B's pictures shared as the game shares them
     name_a[0] = str(textures[0][0]), name_a[1] = str(textures[0][1]);
     name_b[0] = str(textures[1][0]), name_b[1] = str(textures[1][1]);
-    // panes
     uint64_t names = alloc(8 * NPANES), records = alloc(8 * NPANES);
     for (int i = 0; i < NPANES; i++) {
         uint64_t r = alloc(PANE_REC);
@@ -131,7 +120,6 @@ static size_t make_layout(void) {
         pane_at[i] = r;
     }
     w64(0x118, names), w64(0x120, records), w32(0x130, NPANES), w32(0x134, 8);
-    // materials and their texture blocks
     uint64_t mnames = alloc(8 * NMATS), mrecords = alloc(8 * NMATS), blocks = alloc(8 * NMATS);
     for (int i = 0; i < NMATS; i++) {
         uint64_t m = alloc(0x40), block = alloc(0x40), bindings = alloc(3 * 8);
@@ -162,7 +150,6 @@ static int pane(const char *name) {
 }
 static float px(const uint8_t *p, const char *name, int off) { return rf(p, pane_at[pane(name)] + off); }
 
-// 1 when a differing byte at `at` is one the layout by label may change.
 static int may_change(uint64_t at) {
     static const char *const moved[] = {"P_B_00", "P_X_00", "P_Y_00", "N_BtnA_00", "P_A_00", "P_X_02", "P_Y_02",
                                         "N_BtnB_00", "P_A_02", "P_B_03", "P_Y_04", "N_BtnX_00", "P_A_01", "P_B_02",
@@ -180,9 +167,8 @@ static int may_change(uint64_t at) {
     return 0;
 }
 
-// ---- a SARC: one other member, then the given layouts in order, each named `name`
 enum { MAX_COPIES = 17 };
-static size_t member_at[MAX_COPIES];   // where each layout copy starts in the last archive made
+static size_t member_at[MAX_COPIES];
 
 static size_t make_sarc(uint8_t *out, size_t cap, const uint8_t *const *layouts, int copies, size_t n,
                         const char *name) {
@@ -220,7 +206,6 @@ static size_t make_sarc(uint8_t *out, size_t cap, const uint8_t *const *layouts,
     return total;
 }
 
-// Points copy c of an archive make_sarc made (its SFAT entry c + 1) at s[at..at + size).
 static void set_range(uint8_t *s, int c, size_t at, size_t size) {
     uint32_t data, lo, hi;
     memcpy(&data, s + 12, 4);
@@ -229,7 +214,6 @@ static void set_range(uint8_t *s, int c, size_t at, size_t size) {
     memcpy(s + 0x20 + 16 * (size_t)(c + 1) + 12, &hi, 4);
 }
 
-// A zstd dictionary with the id `id`, its content and samples taken from src[0..n); its size, 0 when it cannot be made.
 static size_t make_dict(uint8_t *out, size_t cap, unsigned id, const uint8_t *src, size_t n) {
     enum { SAMPLES = 32 };
     size_t sizes[SAMPLES];
@@ -239,7 +223,6 @@ static size_t make_dict(uint8_t *out, size_t cap, unsigned id, const uint8_t *sr
     return ZDICT_isError(r) ? 0 : r;
 }
 
-// ---- the game's own archive, read from romfs.bin
 static uint8_t *read_part(const char *path, const char *off, const char *size, size_t *n) {
     long long at = strtoll(off, NULL, 10);
     *n = (size_t)strtoull(size, NULL, 10);
@@ -255,8 +238,6 @@ static uint8_t *read_part(const char *path, const char *off, const char *size, s
     return ok ? p : NULL;
 }
 
-// The .zs file z[0..zn) unpacked with the dictionary it names from the unpacked dictionaries dics[0..dn); NULL when it
-// does not unpack.
 static uint8_t *unpack(const void *z, size_t zn, const uint8_t *dics, size_t dn, size_t *n) {
     unsigned id = ZSTD_getDictID_fromFrame(z, zn);
     unsigned long long rn = ZSTD_getFrameContentSize(z, zn);
@@ -277,9 +258,6 @@ static uint8_t *unpack(const void *z, size_t zn, const uint8_t *dics, size_t dn,
     return raw;
 }
 
-// By label: made once, with the game's dictionary and unpacked size, and byte for byte the archive laid out by label,
-// which differs from the game's only inside its four copies of the layout; then nothing more to make by label, nothing
-// to make by position on the game's own, and by position again on the one by label.
 static void game_archive(char **argv) {
     size_t an, dn, pn = 0, rn = 0, on = 0, bn = 0;
     uint8_t *a = read_part(argv[1], argv[2], argv[3], &an), *d = read_part(argv[1], argv[4], argv[5], &dn);
@@ -348,7 +326,6 @@ int main(int argc, char **argv) {
     static uint8_t before[SIZE], p[SIZE];
     memcpy(before, file, n);
 
-    // By label: every place, cross, flip and bubble the game's diamond needs, and nothing else.
     memcpy(p, before, n);
     int changed = action_prompt_lay_out(p, n, 1, why, sizeof why);
     CHECK(changed == 52, "fields changed by label: %d (%s)", changed, changed < 0 ? why : "");
@@ -361,7 +338,6 @@ int main(int argc, char **argv) {
         CHECK(px(p, places[i].pane, 0x1c) == places[i].x && px(p, places[i].pane, 0x20) == places[i].y,
               "%s at %g %g, expected %g %g", places[i].pane, px(p, places[i].pane, 0x1c), px(p, places[i].pane, 0x20),
               places[i].x, places[i].y);
-    // The crosses: A lit down (picture B), B right (A), X left (A flipped in x), Y up (B flipped in y).
     CHECK(r64(p, binding_at[0][0]) == name_b[0] && r64(p, binding_at[0][1]) == name_b[1], "A's cross is not picture B");
     CHECK(r64(p, binding_at[1][0]) == name_a[0] && r64(p, binding_at[1][1]) == name_a[1], "B's cross is not picture A");
     CHECK(r64(p, binding_at[2][0]) == name_a[0] && r64(p, binding_at[2][1]) == name_a[1], "X's cross is not picture A");
@@ -369,7 +345,6 @@ int main(int argc, char **argv) {
     CHECK(px(p, "P_BaseA_00", 0x10) == 1 && px(p, "P_BaseA_00", 0x14) == 1, "A's cross flipped");
     CHECK(px(p, "P_BaseX_00", 0x10) == -1 && px(p, "P_BaseX_00", 0x14) == 1, "X's cross not flipped in x only");
     CHECK(px(p, "P_BaseY_00", 0x10) == 1 && px(p, "P_BaseY_00", 0x14) == -1, "Y's cross not flipped in y only");
-    // X's bubble opens to the left, Y's to the right; the text origin follows.
     CHECK(px(p, "W_BaseX_00", 0x10) == -1 && px(p, "W_BaseX_00", 0x1c) == 80, "X's bubble");
     CHECK(px(p, "W_BaseXDecide_00", 0x10) == -1 && px(p, "W_BaseXDecide_00", 0x1c) == 80, "X's Decide bubble");
     CHECK(px(p, "T_GuideX_00", 0x1c) == -68 && r32(p, pane_at[pane("T_GuideX_00")] + 0x38) == 0x02555909, "X's name");
@@ -381,11 +356,9 @@ int main(int argc, char **argv) {
         if (p[i] != before[i] && !may_change(i)) stray++;
     CHECK(!stray, "%d bytes changed outside the diamond's fields", stray);
 
-    // Laid out by label already: nothing changes, and it says so.
     uint8_t *again = malloc(n);
     memcpy(again, p, n);
     CHECK(action_prompt_lay_out(again, n, 1, why, sizeof why) == 0 && !memcmp(again, p, n), "a second run changed it");
-    // And back by position: the game's file again, its stored -2.8e-14 zeros now plain zeros.
     changed = action_prompt_lay_out(again, n, 0, why, sizeof why);
     CHECK(changed == 52, "fields changed back by position: %d (%s)", changed, changed < 0 ? why : "");
     uint8_t *expect = malloc(n);
@@ -394,7 +367,6 @@ int main(int argc, char **argv) {
         if (panes[i].x == Z && strncmp(panes[i].name, "P_Base", 6)) set_f(expect, pane_at[i] + 0x1c, 0.0f);
     CHECK(!memcmp(again, expect, n), "by label and back is not the game's layout");
 
-    // A file that is not the expected one is refused before anything is written.
     struct { const char *pane; int off; float v; } wrong[] = {
         {"P_Y_04", 0x20, 1.0f}, {"N_BtnA_00", 0x20, -80.0f}, {"P_BaseY_00", 0x10, 1.0f}, {"T_GuideY_00", 0x1c, -60.0f}};
     for (size_t i = 0; i < sizeof wrong / sizeof *wrong; i++) {
@@ -404,12 +376,10 @@ int main(int argc, char **argv) {
         int r = action_prompt_lay_out(p, n, 1, why, sizeof why);
         CHECK(r == -1 && !memcmp(p, again, n) && strstr(why, wrong[i].pane), "%s changed: %d, %s", wrong[i].pane, r, why);
     }
-    // Half laid out (A moved, the rest not): refused, untouched.
     memcpy(p, before, n);
     set_f(p, pane_at[pane("N_BtnA_00")] + 0x1c, 0), set_f(p, pane_at[pane("N_BtnA_00")] + 0x20, -80);
     memcpy(again, p, n);
     CHECK(action_prompt_lay_out(p, n, 1, why, sizeof why) == -1 && !memcmp(p, again, n), "half laid out: %s", why);
-    // A cross with another picture, a missing pane, a missing material: refused.
     memcpy(p, before, n);
     memcpy(p + binding_at[0][0], &name_b[0], 8);
     CHECK(action_prompt_lay_out(p, n, 1, why, sizeof why) == -1 && strstr(why, "P_BaseA_00"), "cross picture: %s", why);
@@ -418,10 +388,9 @@ int main(int argc, char **argv) {
     p[s] = 'Q';
     CHECK(action_prompt_lay_out(p, n, 1, why, sizeof why) == -1 && strstr(why, "P_X_03"), "missing pane: %s", why);
     memcpy(p, before, n);
-    memset(p + 0x150, 0, 4);   // no materials
+    memset(p + 0x150, 0, 4);
     CHECK(action_prompt_lay_out(p, n, 1, why, sizeof why) == -1 && strstr(why, "P_BaseA_00"), "no materials: %s", why);
 
-    // Offsets out of the file, a cut file and a wrong magic: refused, never read past the end.
     memcpy(p, before, n);
     uint64_t far = (uint64_t)n + 100;
     memcpy(p + 0x118, &far, 8);
@@ -435,18 +404,14 @@ int main(int argc, char **argv) {
     CHECK(action_prompt_lay_out(p, 3, 1, why, sizeof why) == -1, "a 3-byte file");
     p[0] = 'X';
     CHECK(action_prompt_lay_out(p, n, 1, why, sizeof why) == -1 && strstr(why, "BFFH"), "wrong magic: %s", why);
-    // A label other than 1 counts as by label.
     memcpy(p, before, n);
     CHECK(action_prompt_lay_out(p, n, 2, why, sizeof why) == 52 && px(p, "N_BtnA_00", 0x20) == -80, "label 2: %s", why);
-    // Both bubbles of X on one record, their values the same in both layouts: laid out, the record moved once.
     memcpy(p, before, n);
     uint64_t shared = pane_at[pane("W_BaseX_00")];
     memcpy(p + r64(p, 0x120) + 8 * (uint64_t)pane("W_BaseXDecide_00"), &shared, 8);
     changed = action_prompt_lay_out(p, n, 1, why, sizeof why);
     CHECK(changed == 52 && px(p, "W_BaseX_00", 0x10) == -1 && px(p, "W_BaseX_00", 0x1c) == 80,
           "bubbles on one record: %d (%s)", changed, why);
-    // P_B_00's record laid over P_BaseA_00's material, its x on the material's block index (0 as x is 0.0): the file
-    // reads as expected, but moving the dot would lose A's cross. Refused, and every byte as it was.
     memcpy(p, before, n);
     uint64_t mat = r64(p, r64(p, 0x140)), over = mat + 0x14 - 0x1c;
     memcpy(p + r64(p, 0x120) + 8 * (uint64_t)pane("P_B_00"), &over, 8);
@@ -455,8 +420,6 @@ int main(int argc, char **argv) {
     changed = action_prompt_lay_out(p, n, 1, why, sizeof why);
     CHECK(changed == -1 && !memcmp(p, again, n) && strstr(why, "overlaps"), "a pane on a material: %d, %s", changed,
           why);
-    // Random damage, mostly to the header's tables: a refusal or a layout, never a crash. Each copy is an allocation
-    // of its own, so that AddressSanitizer, where the runner has it, sees a read past its end.
     srand(1);
     for (int t = 0; t < 20000; t++) {
         uint8_t *q = malloc(n);
@@ -469,8 +432,6 @@ int main(int argc, char **argv) {
         free(q);
     }
 
-    // The archive, holding the layout four times as the game's does: every copy changes, nothing else; one copy
-    // that is not the expected layout leaves all of them as they were; without the layout, refused.
     static uint8_t sarc[SIZE * 20], sarc2[SIZE * 20];
     const uint8_t *four[MAX_COPIES] = {before, before, before, before};
     size_t sn = make_sarc(sarc, sizeof sarc, four, 4, n, "DoCommand_00.buil");
@@ -480,7 +441,6 @@ int main(int argc, char **argv) {
     action_prompt_lay_out(p, n, 1, why, sizeof why);
     CHECK(changed == 4 * 52 && !memcmp(sarc2, sarc, member_at[0]), "archive: %d", changed);
     for (int c = 0; c < 4; c++) CHECK(!memcmp(sarc2 + member_at[c], p, n), "copy %d not laid out by label", c);
-    // Two copies laid out already and two not (an archive half laid out by hand): the other two are laid out.
     const uint8_t *mixed[MAX_COPIES] = {p, before, p, before};
     sn = make_sarc(sarc2, sizeof sarc2, mixed, 4, n, "DoCommand_00.buil");
     changed = action_prompt_archive(sarc2, sn, 1, why, sizeof why);
@@ -497,7 +457,6 @@ int main(int argc, char **argv) {
     sn = make_sarc(sarc2, sizeof sarc2, four, 1, n, "DoCommand_01.buil");
     CHECK(action_prompt_archive(sarc2, sn, 1, why, sizeof why) == -1 && strstr(why, "DoCommand_00.buil"),
           "archive without the layout: %s", why);
-    // More copies than it lays out: refused, not the first 16 laid out.
     const uint8_t *many[MAX_COPIES];
     for (int c = 0; c < MAX_COPIES; c++) many[c] = before;
     sn = make_sarc(sarc2, sizeof sarc2, many, MAX_COPIES, n, "DoCommand_00.buil");
@@ -505,7 +464,6 @@ int main(int argc, char **argv) {
     CHECK(sn && action_prompt_archive(sarc2, sn, 1, why, sizeof why) == -1 && !memcmp(sarc, sarc2, sn) &&
               strstr(why, "more than"),
           "archive with %d copies: %s", MAX_COPIES, why);
-    // Copies that share their bytes are laid out once; copies that share some of them, refused.
     sn = make_sarc(sarc2, sizeof sarc2, four, 4, n, "DoCommand_00.buil");
     set_range(sarc2, 1, member_at[0], n);
     changed = action_prompt_archive(sarc2, sn, 1, why, sizeof why);
@@ -516,7 +474,6 @@ int main(int argc, char **argv) {
     CHECK(action_prompt_archive(sarc2, sn, 1, why, sizeof why) == -1 && !memcmp(sarc, sarc2, sn) &&
               strstr(why, "overlap"),
           "archive with overlapping copies: %s", why);
-    // A copy that runs past the archive's end: damaged, refused.
     sn = make_sarc(sarc2, sizeof sarc2, four, 4, n, "DoCommand_00.buil");
     set_range(sarc2, 2, member_at[2], sn);
     memcpy(sarc, sarc2, sn);
@@ -525,7 +482,6 @@ int main(int argc, char **argv) {
           "archive with a copy past its end: %s", why);
     sn = make_sarc(sarc, sizeof sarc, four, 4, n, "DoCommand_00.buil");
 
-    // The zstd file without a dictionary: made once, then nothing to make; a damaged frame refused.
     size_t cap = ZSTD_compressBound(sn), zn;
     uint8_t *z = malloc(cap);
     zn = ZSTD_compress(z, cap, sarc, sn, 3);
@@ -548,9 +504,6 @@ int main(int argc, char **argv) {
           "build on a cut frame: %s", last_log);
     free(out);
 
-    // The zstd file with a dictionary, as the game's: the pack of dictionaries holds two (ids 1234 and 77) beside a
-    // member that is not one; the archive's frame names 1234. Made, with that dictionary named again; a frame that
-    // names one the pack does not hold (4321), refused.
     enum { DICT_CAP = 8192 };
     static uint8_t dicts[3][DICT_CAP];
     static const unsigned ids[3] = {1234, 77, 4321};

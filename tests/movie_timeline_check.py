@@ -1,9 +1,4 @@
 # needs: clang, py:unicorn
-"""Compare both movie timestamp patches with Unicorn and their lifted C.
-
-Requires Unicorn and a C compiler (--cc or CC). No game files or GPU are used.
-Generated harness files stay in build/test/movie_timeline.
-"""
 import argparse
 import ctypes
 import os
@@ -23,9 +18,15 @@ from patches import load
 from tools.check_content import GENERATED_MARKER
 import runtime_include
 
+DESCRIPTION = """Compare both movie timestamp patches with Unicorn and their lifted C.
+
+Requires Unicorn and a C compiler (--cc or CC). No game files or GPU are used.
+Generated harness files stay in build/test/movie_timeline.
+"""
+
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument('--cc', default=os.environ.get('CC', 'clang'))
     args = parser.parse_args()
     table = load(ROOT / 'recomp/patches-v111.txt', [('main', 0x7000000000, 0x4ea0000)])
@@ -58,7 +59,6 @@ def main():
                     *([] if os.name == 'nt' else ['-fPIC']), str(source), '-o', str(library)], check=True)
     dll = ctypes.CDLL(str(library))
 
-    # One synthetic layer -> controller -> player -> video surface chain for both engines.
     arena = ctypes.create_string_buffer(0x4000)
     address = ctypes.addressof(arena)
     image = bytearray(0x4000)
@@ -75,11 +75,9 @@ def main():
     samples = [-2**63, -1, 0, 1, 8_333_333, 8_333_334, 16_000_000, 17_000_000,
                33_000_000, 154_000_000_000, 3_600_000_000_000]
     samples += [rng.randrange(12 * 3600 * 10**9) for _ in range(256)]
-    # The selected 60 Hz video's millisecond-rounded PTS at different redraw rates.
-    # Pauses/repeated pictures and skipped pictures must follow PTS, never redraw count.
     for rate in [30, 60, 120, 144, 240]:
         samples += [((render * 60 // rate) * 1000 + 30) // 60 * 1_000_000 for render in range(rate * 2)]
-    samples += [1_000_000_000] * 100 + [0, 17_000_000]  # hold, then a new movie
+    samples += [1_000_000_000] * 100 + [0, 17_000_000]
 
     for i, sequence in enumerate(words):
         native = getattr(dll, f'movie_tick_{i}')

@@ -118,19 +118,21 @@ export function insertSession(db: D1Database, launcherVersion: string, now: numb
 
 export function insertFeedback(
   db: D1Database,
-  row: { launcherVersion: string; text: string; summary: Summary | null; logTail: string | null; now: number },
+  row: { kind: string; launcherVersion: string; text: string; summary: Summary | null; logTail: string | null; logHead: string | null; now: number },
 ): D1PreparedStatement {
   const s = row.summary;
   return db
     .prepare(
-      `INSERT INTO feedback (launcher_version, text, summary_json, log_tail, received_at, version, gpu_name, gpu_vendor, os_family)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO feedback (kind, launcher_version, text, summary_json, log_tail, log_head, received_at, version, gpu_name, gpu_vendor, os_family)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .bind(
+      row.kind,
       row.launcherVersion,
       row.text,
       s === null ? null : JSON.stringify(s),
       row.logTail,
+      row.logHead,
       row.now,
       s?.version ?? null,
       s?.gpu.name ?? null,

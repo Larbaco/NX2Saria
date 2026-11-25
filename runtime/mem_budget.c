@@ -1,8 +1,3 @@
-// The room the card and the system have, as a level per side (mem_budget.h): sampled every MEM_BUDGET_PERIOD_MS on the
-// "mem budget" thread, logged when a level changes, read by the owners of memory that can be given back (gfx_shader.c
-// "SPIR-V at rest" compresses sooner when the system is tight) and shown in the memory report (vk_memory.c system_log).
-// A sample is one driver query (vk_mem_vram) and two system calls (plat_commit_info, plat_mem_info): well under a
-// millisecond, never on a drawing thread.
 #include <stdio.h>
 
 #include "cfg.h"
@@ -14,9 +9,9 @@
 
 static struct {
     PlatOnce once;
-    PlatMutex vram_lock;               // held over a video memory sample: mem_budget_vram(0) waits for it
-    int vram_on;                       // the device is up (under vram_lock)
-    uint64_t test_mb[MEM_SIDES];       // MEM_BUDGET_TEST_VRAM_MB, MEM_BUDGET_TEST_RAM_MB; 0 off
+    PlatMutex vram_lock;
+    int vram_on;
+    uint64_t test_mb[MEM_SIDES];
     volatile int32_t level[MEM_SIDES];
     volatile int32_t known[MEM_SIDES];
     volatile uint32_t free_pm[MEM_SIDES];
@@ -25,8 +20,6 @@ static struct {
 
 static const char *const side_name[MEM_SIDES] = {"video memory", "system memory"};
 
-// The video memory's room: the driver's budget (at most MEM_BUDGET_TEST_VRAM_MB) less this process's use. 0 while the
-// device is not up or the driver gives no figure.
 static int sample_vram(MemRoom *r, char *what, size_t cap, uint64_t *used_mb, uint64_t *limit_mb) {
     uint64_t used = 0, budget = 0;
     int exact = 0, ok = 0;
@@ -43,8 +36,6 @@ static int sample_vram(MemRoom *r, char *what, size_t cap, uint64_t *used_mb, ui
     return 1;
 }
 
-// The system's room: the lower of the commit's headroom and the physical memory free; with MEM_BUDGET_TEST_RAM_MB
-// that many MiB less this process's commit.
 static int sample_ram(MemRoom *r, char *what, size_t cap) {
     double proc, used, limit;
     float pused, ptotal, pws;
@@ -79,7 +70,7 @@ static void budget_main(void *arg) {
                                    : sample_ram(&r, what, sizeof what)))
                 continue;
             int known = __atomic_load_n(&B.known[side], __ATOMIC_RELAXED), was = B.level[side];
-            int now = mem_level_next(known ? was : MEM_ROOMY, r);   // the first sample: its level as it is
+            int now = mem_level_next(known ? was : MEM_ROOMY, r);
             __atomic_store_n(&B.free_pm[side], r.free_pm, __ATOMIC_RELAXED);
             __atomic_store_n(&B.level[side], now, __ATOMIC_RELAXED);
             __atomic_store_n(&B.known[side], 1, __ATOMIC_RELEASE);

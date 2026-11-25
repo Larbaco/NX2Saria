@@ -1,17 +1,4 @@
-// What the log keeps so that a stall, a freeze or a lost device can be traced to the minute afterwards.
-//
-// The log had one wall-clock line, the window's focus change with its date (gfx_present.c). A report of a stall, or of
-// a GPU that stopped, was matched against the system's journal and kernel log by an estimate (about 2 s off at best), and
-// three things hid how often an event happened:
-// the lines of the presenter's failed acquires and of its watchdog stop after 5 and 3, and the physical memory map's
-// refusals (a session had 132 of them) wrote one line each. Nothing said whether the machine was short of memory or
-// waiting for its disk while the frames stopped. This file gives each of those one place:
-// - log_stamp: the local time, "hh:mm:ss", of a line that marks an event;
-// - log_event / log_events_text: a count for each limited event, and the one line the frame-time summary writes with
-//   the counts of its minute and, at the end of the run, of the whole run;
-// - log_pressure_text: the memory and I/O stall times of the minute (Linux pressure stall information), the memory
-//   available and the swap free, or on Windows the memory available and the commit.
-#define LOG_STALL_IMPL   // log_stall.h: this file defines what its stand-ins stand for
+#define LOG_STALL_IMPL
 #include "log_stall.h"
 
 #include <stdarg.h>
@@ -30,22 +17,20 @@ void log_stamp(char *out, size_t cap, uint64_t mono_ns) {
         snprintf(out, cap, "--:--:--");
 }
 
-// ---- events
 static const struct { const char *name; uint64_t lines; } ev_info[LS_N] = {
     [LS_ACQUIRE_FAILED] = {"presenter acquire failed", 5},
     [LS_FG_WATCHDOG] = {"frame generation watchdog fired", 3},
     [LS_MAP_PHYS_FAILED] = {"MapPhysicalMemory failed", 1},
     [LS_UNMAP_PHYS_FAILED] = {"UnmapPhysicalMemory failed", 1},
 };
-static uint64_t ev_total[LS_N];   // every count of the run
-static uint64_t ev_seen[LS_N];    // the totals the previous window line counted from
+static uint64_t ev_total[LS_N];
+static uint64_t ev_seen[LS_N];
 
 int log_event(LsEvent e) {
     if ((unsigned)e >= LS_N) return 0;
     return __atomic_add_fetch(&ev_total[e], 1, __ATOMIC_RELAXED) <= ev_info[e].lines;
 }
 
-// Appends to out at *n, never past cap.
 static void put(char *out, size_t cap, size_t *n, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
 static void put(char *out, size_t cap, size_t *n, const char *fmt, ...) {
     if (*n >= cap) return;
@@ -77,9 +62,8 @@ int log_events_text(char *out, size_t cap, int whole) {
     return (int)n;
 }
 
-// ---- pressure
 static PlatMutex pr_lock = PLAT_MUTEX_INIT;
-static PlatPressure pr_prev;   // pr_lock: the sample the next line is made against
+static PlatPressure pr_prev;
 static uint64_t pr_prev_ns;
 static int pr_have;
 
@@ -87,7 +71,6 @@ static double ms_between(uint64_t from_us, uint64_t to_us) { return to_us > from
 
 typedef struct { double some10, full10; uint64_t some_us, full_us; } Psi;
 
-// One resource's text: the average of the last 10 s and, with a sample to compare (prev), what the totals gained since it.
 static void psi_text(char *out, size_t cap, size_t *n, const char *name, const Psi *now, const Psi *prev, double secs) {
     put(out, cap, n, "%sPSI %s avg10 some %.1f%% full %.1f%%", *n ? "; " : "", name, now->some10, now->full10);
     if (prev)
@@ -95,8 +78,6 @@ static void psi_text(char *out, size_t cap, size_t *n, const char *name, const P
             ms_between(prev->some_us, now->some_us), ms_between(prev->full_us, now->full_us));
 }
 
-// The text from a sample, the sample before it (NULL: none) and the seconds between them; hms is the time of the sample.
-// Linux: PSI memory and io, MemAvailable and SwapFree. Windows: the memory available and the commit.
 static int pressure_format(char *out, size_t cap, const PlatPressure *now, const PlatPressure *prev, double secs,
                            const char *hms) {
     size_t n = 0;
@@ -119,7 +100,7 @@ static int pressure_format(char *out, size_t cap, const PlatPressure *now, const
     if (linux_like)
         put(body, sizeof body, &b, "%sMemAvailable %.0f of %.0f MB; SwapFree %.0f of %.0f MB", b ? "; " : "", now->avail_mb,
             now->total_mb, now->swap_free_mb, now->swap_total_mb);
-    else if (now->avail_mb >= 0)   // Windows
+    else if (now->avail_mb >= 0)
         put(body, sizeof body, &b, "%sphysical memory available %.0f of %.0f MB; commit %.0f of %.0f MB", b ? "; " : "",
             now->avail_mb, now->total_mb, now->commit_used_mb, now->commit_limit_mb);
     if (!b) return 0;

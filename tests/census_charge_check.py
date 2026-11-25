@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/census_charge_check.c: runtime/diag/perf_census.h, which charges the part of a frame that an
-address-space walk of NX2SARIA_MEM_CENSUS overlapped to the frame's census part (perf.c ft_frame): from the replay part
-first, then from the unattributed part, never more than the overlap and never past the frame.
-
-No GPU, no game files, any Python.
-
-Usage: census_charge_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -19,7 +11,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH (as tests/diff/common.py picks it, without its Unicorn)."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():

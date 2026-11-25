@@ -1,11 +1,3 @@
-"""tools/pipeline_list.py on made-up game folders: records folded once, a key whose shader the folder's answers do not
-name left out, the compute variants taken, a list made before as an input, --mesh-only, a folder of another record
-layout left out, the file read back, and what
-tools/prepare_shaders.py takes from a list for its seed. Also tools/check_content.py refusing such files in a commit.
-No game files; stdlib only.
-
-Run: python tests/pipeline_list_test.py
-"""
 import hashlib
 import struct
 import sys
@@ -18,7 +10,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import check_content  # noqa: E402
 import pipeline_list as pl  # noqa: E402
 
-REC = 464          # a KeyRec of the runtime that wrote the test's files: three ids, two flags, the state
+REC = 464
 VS, FS, CS, TS, MS = 0, 4, 5, 6, 7
 
 
@@ -27,7 +19,6 @@ def h(seed):
 
 
 def answer(seed, stage, salt=0):
-    """A shader-answers.bin record: stage, code hash, input id, 147 bytes of answers, the pad byte."""
     return struct.pack('<I', stage) + h('code ' + seed) + h('id ' + seed) + bytes([salt]) * 147 + b'\0'
 
 
@@ -60,7 +51,7 @@ class PipelineList(unittest.TestCase):
         a = folder(self.root, 'a', [key('v1', 'f1'), key('m1', 'f2', 't1'), key('v1', 'f1', state=1)],
                    [answer('v1', VS), answer('f1', FS), answer('m1', MS), answer('f2', FS), answer('t1', TS)])
         b = folder(self.root, 'b', [key('v1', 'f1'), key('m2', 'f1'), key('v9', 'f1')],
-                   [answer('v1', VS), answer('f1', FS), answer('m2', MS)])   # v9's answers are not recorded there
+                   [answer('v1', VS), answer('f1', FS), answer('m2', MS)])
         header, keys, answers = self.merge([a, b])
         self.assertEqual(header, (b'NX2NPKEY', 4, REC))
         self.assertEqual(keys, [key('v1', 'f1'), key('m1', 'f2', 't1'), key('v1', 'f1', state=1), key('m2', 'f1')])
@@ -77,12 +68,12 @@ class PipelineList(unittest.TestCase):
     def test_compute_variants_and_a_list_as_input(self):
         a = folder(self.root, 'a', [key('v1', 'f1')], [answer('v1', VS), answer('f1', FS), answer('c1', CS), answer('f9', FS)])
         header, keys, answers = self.merge([a])
-        self.assertEqual({x[36:68] for x in answers}, {h('id ' + s) for s in ('v1', 'f1', 'c1')})   # f9: no key names it
+        self.assertEqual({x[36:68] for x in answers}, {h('id ' + s) for s in ('v1', 'f1', 'c1')})
         self.assertIn('1 compute variants new', self.log[0])
         lst = self.root / 'first.bin'
         lst.write_bytes(pl.pack(header, keys, answers))
         b = folder(self.root, 'b', [key('v1', 'f1'), key('v2', 'f1')],
-                   [answer('v2', VS), answer('f1', FS), answer('c1', CS), answer('c2', CS)])   # v1's answers: the list's
+                   [answer('v2', VS), answer('f1', FS), answer('c1', CS), answer('c2', CS)])
         header, keys, answers = self.merge([lst, b])
         self.assertEqual(keys, [key('v1', 'f1'), key('v2', 'f1')])
         self.assertEqual({x[36:68] for x in answers}, {h('id ' + s) for s in ('v1', 'f1', 'c1', 'v2', 'c2')})
@@ -107,22 +98,20 @@ class PipelineList(unittest.TestCase):
         data = pl.pack(header, keys, answers)
         got_answers, image = pl.unpack(data)
         self.assertEqual(got_answers, answers)
-        self.assertEqual(image, (a / 'pipeline-keys.bin').read_bytes())   # the layout the runtime reads as it is
+        self.assertEqual(image, (a / 'pipeline-keys.bin').read_bytes())
         self.assertEqual(pl.read_keys(image)[3], keys)
         self.assertIsNone(pl.unpack(data[:-1]))
         self.assertIsNone(pl.unpack(b'NX2NPKEY' + data[8:]))
         self.assertIsNone(pl.unpack(b''))
 
     def test_seed_variants(self):
-        """prepare_shaders.list_variants: variants of shaders the game version has, once, with the id left to the
-        runtime."""
         try:
             import prepare_shaders as ps
-        except ImportError as e:   # its shader inventory needs Python 3.14's compression.zstd
+        except ImportError as e:
             self.skipTest(f'tools/prepare_shaders.py does not import here: {e}')
         recs = [answer('v1', VS), answer('f1', FS), answer('gone', FS), answer('v1', VS, salt=1)]
         have = {h('code v1'), h('code f1')}
-        seen = {(h('code f1'), bytes(147))}   # the seed has f1's variant already (its default one, say)
+        seen = {(h('code f1'), bytes(147))}
         out, absent = ps.list_variants(recs, have, seen)
         self.assertEqual(absent, 1)
         self.assertEqual(len(out), 2)
@@ -132,7 +121,7 @@ class PipelineList(unittest.TestCase):
             self.assertEqual(r[36:68], bytes(32))
             self.assertEqual(r[-1], ps.LIST_PRIORITY)
         self.assertEqual([r[68] for r in out], [0, 1])
-        self.assertEqual(ps.list_variants(recs, have, seen), ([], 1))   # all in the seed now
+        self.assertEqual(ps.list_variants(recs, have, seen), ([], 1))
 
     def test_refused_in_a_commit(self):
         a = folder(self.root, 'a', [key('v1', 'f1')], [answer('v1', VS), answer('f1', FS)])

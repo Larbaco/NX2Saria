@@ -1,17 +1,3 @@
-"""Package a built nx2saria.exe into a folder that runs from anywhere: build/<version>-portable by default.
-
-The folder holds the exe, its DLLs, the shader translator (NativeAOT: no .NET), the RomFS index and patches, the
-extracted ExeFS (the game code the exe loads), the shared fonts, the prepared shader and pipeline files. There is
-no config file: nx2saria.exe finds the exefs, romfs, profile and shared-fonts folders next to itself. Without --with-romfs
-the 16 GB RomFS image stays out; copy build/extracted/<version>/romfs/romfs.bin to <folder>/romfs/ or set NX2SARIA_ROMFS
-(a path, relative ones to the exe's folder).
-
-The folder contains game code and data derived from the game: for your own machines only, never publish or share it.
-Saves go to <folder>/profile.
-
-    .venv/Scripts/python tools/package_build.py [--version v121] [--build build/v121] [--exe PATH/nx2saria.exe]
-                                                [--out build/v121-portable] [--with-romfs] [--no-shader-cache]
-"""
 import argparse
 import os
 import shutil
@@ -19,12 +5,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+DESCRIPTION = 'Package a built nx2saria.exe into a folder that runs from anywhere: build/<version>-portable by default.'
 ROOT = Path(__file__).resolve().parent.parent
 EXE = '.exe' if os.name == 'nt' else ''
-# A Linux source build links the system's SDL3, Opus and libvpx: the other machine needs them installed
 DLLS = ('SDL3.dll', 'libopus-0.dll', 'libiconv-2.dll') if os.name == 'nt' else ()
-# Prepared state next to the exe: translator answers, programs, the prepared list, pipeline cache and its keys, and the
-# variant lists `nx2saria.exe --prepare-shaders` reads (the driver keys its library cache by exe path, so each copy runs it).
 STATE = ('romfs-index.bin', 'pipeline-cache.bin', 'pipeline-cache-play.bin', 'pipeline-cache.id', 'pipeline-keys.bin', 'shader-answers.bin',
          'shader-programs.bin', 'shader-prepared.bin', 'seed-answers.bin', 'seed-programs.bin')
 
@@ -49,7 +33,7 @@ def size_of(path):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--version', default='v121', help='game version (v121 or v143): the defaults below follow it')
     ap.add_argument('--build', type=Path, help='build dir with the prepared state (default build/<version>)')
     ap.add_argument('--exe', type=Path, help='nx2saria.exe to package (default: <build>/nx2saria.exe); its DLLs are taken from --build')
@@ -95,7 +79,7 @@ def main():
         else:
             print(f'package_build: {f} not in {build}, skipped')
     n = copy_tree(build / 'romfs-patches', out / 'romfs-patches')
-    for name in ('romfs-patches-xbox', 'romfs-patches-xbox-label'):   # prompts = xbox (make_romfs_patches.py --prompts)
+    for name in ('romfs-patches-xbox', 'romfs-patches-xbox-label'):
         if (build / name).is_dir():
             n += copy_tree(build / name, out / name)
     n += copy_tree(exefs, out / 'exefs')

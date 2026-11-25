@@ -1,15 +1,3 @@
-"""Start a test run from a bug capture (runtime/diag/bugcap.c, docs/bug-capture.md).
-
-    python tools/capture_run.py <capture folder or number> [--game DIR] [--set KEY=VALUE ...]
-
-The game starts on a throwaway profile holding the capture's save, with the capture's settings in place of the player's
-settings file (NX2SARIA_CAPTURE_REPLAY), in a window of the capture's size that does not take the focus. It loads the save, goes to
-the capture's area, walks Link to where he stood, puts the camera where it was and takes a capture of its own; this
-script then closes the game and prints both captures side by side: the positions, the distance between them, and how
-much the two pictures differ. The player's settings file and save are not written.
-
-One game at a time: the script refuses to start while a game is running.
-"""
 import argparse
 import hashlib
 import os
@@ -41,7 +29,6 @@ def find_exe(game):
 
 
 def read_capture(folder):
-    """capture.txt as a dict of its "key = value" lines (the first of a key wins)."""
     out = {}
     for line in (folder / 'capture.txt').read_text(encoding='utf-8', errors='replace').splitlines():
         key, sep, value = line.partition(' = ')
@@ -65,7 +52,6 @@ def find_capture(arg, game):
 
 
 def game_pids(exe):
-    """The ids of the processes running the game's executable, by its file name."""
     if WIN:
         out = subprocess.run(['tasklist', '/FI', f'IMAGENAME eq {exe.name}', '/FO', 'CSV', '/NH'], capture_output=True, text=True).stdout
         pids = []
@@ -83,8 +69,6 @@ def game_running(exe):
 
 
 def make_profile(profile, game, capture):
-    """A profile whose save is the capture's: the game's own profile without its saves, and the capture's save zip
-    as a waiting import (runtime/hle/fs_host.c import_pending), which the game makes the save at its start."""
     src = game / 'profile'
     profile.mkdir(parents=True)
     if src.is_dir():
@@ -118,11 +102,6 @@ def make_profile(profile, game, capture):
 
 
 def close_game(proc, exe, grace=30):
-    """Ask the game's windows to close, as the window's own button does (it then writes its exit lines); by force when
-    that does not end it. The game may be a child of the process this script started: at its start it runs itself
-    again when Windows has put something where its memory must go (runtime/platform/win32.c plat_reexec), and the
-    first process only waits for the second. No other game ran when this one started (main checks), so every process
-    of the executable is this run's."""
     if proc.poll() is not None and not game_pids(exe):
         return 'had ended'
     if WIN:
@@ -136,7 +115,7 @@ def close_game(proc, exe, grace=30):
             pid = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
             if pid.value in pids and user32.IsWindowVisible(hwnd):
-                user32.PostMessageW(hwnd, 0x10, 0, 0)   # WM_CLOSE
+                user32.PostMessageW(hwnd, 0x10, 0, 0)
             return True
         user32.EnumWindows(proto(each), 0)
     else:
@@ -157,7 +136,6 @@ def close_game(proc, exe, grace=30):
 
 
 def read_png(path):
-    """(width, height, bytes per pixel, rows) of an 8-bit RGB or RGBA PNG without interlacing, as the game writes."""
     data = path.read_bytes()
     if data[:8] != b'\x89PNG\r\n\x1a\n':
         raise ValueError('not a PNG')
@@ -203,7 +181,6 @@ def read_png(path):
 
 
 def picture_difference(a, b, step=4):
-    """The mean difference of the colour channels (0 to 255) over every step-th pixel of two pictures of one size."""
     wa, ha, bpa, ra = read_png(a)
     wb, hb, bpb, rb = read_png(b)
     if (wa, ha) != (wb, hb):

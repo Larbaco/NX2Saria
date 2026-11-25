@@ -1,11 +1,3 @@
-"""Read a NX2SARIA_FLIGHT dump (runtime/diag/flight.c): the frames around the worst interval, the frames whose counts stand out,
-and a contact sheet of the thumbnails with frame number and interval on each.
-
-    python tools/flight_view.py build/flight/<YYYYMMDD-HHMMSS>-f<frame> [--around FRAME] [--span 48] [--cols 12]
-
-The sheet goes to <dump>/contact.png (--out to change): --span frames each side of the trigger (or of --around),
-the worst frame boxed red, frames over 1.5x the median interval orange.
-"""
 import argparse
 import re
 import statistics
@@ -14,11 +6,18 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
+DESCRIPTION = """Read a NX2SARIA_FLIGHT dump (runtime/diag/flight.c): the frames around the worst interval, the frames whose counts stand out,
+and a contact sheet of the thumbnails with frame number and interval on each.
+
+    python tools/flight_view.py build/flight/<YYYYMMDD-HHMMSS>-f<frame> [--around FRAME] [--span 48] [--cols 12]
+
+The sheet goes to <dump>/contact.png (--out to change): --span frames each side of the trigger (or of --around),
+the worst frame boxed red, frames over 1.5x the median interval orange.
+"""
+
 BLOCKED = ['pace_ms', 'fence_ms', 'drain_ms', 'pipe_ms', 'xlate_ms', 'tex_ms', 'astc_ms', 'handoff_ms']
-# Counts that are 0 in a steady frame: any non-zero value is listed.
 RARE = ['shaders_xlated', 'pipe_built', 'pipe_waited', 'oneshot_waited', 'pipe_bg_used', 'draws_skip_pipe',
         'draws_skip_shader', 'tex_new', 'tex_alias', 'tex_up', 'tex_reup', 'wb_done', 'wb_skip']
-# Counts with a steady level: frames off the median by more than a quarter are listed.
 LEVEL = ['submits', 'passes', 'draws', 'draws_seen', 'clears', 'copies', 'dispatches']
 SHORT = {'interval_ms': 'ms', 'pace_ms': 'pace', 'fence_ms': 'fence', 'drain_ms': 'drain', 'pipe_ms': 'pipe',
          'xlate_ms': 'xlate', 'tex_ms': 'tex', 'astc_ms': 'astc', 'handoff_ms': 'handoff'}
@@ -38,7 +37,6 @@ def load(dump):
 
 
 def describe(f, cols):
-    """One line per frame: interval, blocked times over 1 ms, then every non-zero rare count."""
     parts = [f"f{f['frame']:<6} {f['interval_ms']:7.1f} ms"]
     blocked = [f"{SHORT[c]} {f[c]:.1f}" for c in BLOCKED if f.get(c, 0) >= 1]
     parts.append(('blocked: ' + ' '.join(blocked)) if blocked else '')
@@ -91,7 +89,7 @@ def sheet(dump, frames, centre, span, cols_n, out, worst, slow):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('dump', type=Path)
     ap.add_argument('--around', type=int, help='centre of the sheet and a second listing (default: the trigger)')
     ap.add_argument('--span', type=int, default=48, help='frames each side on the contact sheet (default 48)')

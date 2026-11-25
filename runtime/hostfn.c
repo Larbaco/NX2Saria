@@ -1,28 +1,19 @@
 // Contains code Copyright (c) 2026 Peiikai (MIT; see THIRD_PARTY_NOTICES.md).
-// Host functions at synthetic guest addresses: the HOST_OVERRIDE / HOST_OBSERVER
-// linker tables, the registry behind them, and the calls between host and guest (rt_call, rt_original).
-//
-// Every registered function dispatches through hostfn_entry, which counts the call, traces the first one
-// (NX2SARIA_TRACE=host) and tail-calls the real function. The registry is fixed by hostfn_seal, which builds the dispatch
-// table; guest threads start after that, so lookups need no lock.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "host.h"
 
-#define MAX_HOSTFN 4096   // dispatch.c holds HOST_CAP / 2 host functions
+#define MAX_HOSTFN 4096
 #define MAX_ADDED 64
 
 #ifdef _WIN32
-// PE/COFF: the linker sorts .ovr$a < .ovr$m (entries, host.h) < .ovr$z by the text after '$'.
 __attribute__((section(".ovr$a"), used)) static const RtHostEntry ovr_start[1];
 __attribute__((section(".ovr$z"), used)) static const RtHostEntry ovr_stop[1];
 __attribute__((section(".obs$a"), used)) static const RtHostEntry obs_start[1];
 __attribute__((section(".obs$z"), used)) static const RtHostEntry obs_stop[1];
 #else
-// ELF: the linker defines __start_<section> and __stop_<section> around a section named like a C identifier. Weak: a
-// build without observers has no such section, and both bounds are then NULL.
 extern const RtHostEntry __start_nx2navi_ovr[] __attribute__((weak)), __stop_nx2navi_ovr[] __attribute__((weak));
 extern const RtHostEntry __start_nx2navi_obs[] __attribute__((weak)), __stop_nx2navi_obs[] __attribute__((weak));
 #define ovr_start __start_nx2navi_ovr
@@ -34,9 +25,9 @@ extern const RtHostEntry __start_nx2navi_obs[] __attribute__((weak)), __stop_nx2
 typedef struct {
     const char *name;
     GuestFn fn;
-    uint64_t original;   // observers: the guest definition rt_original calls
+    uint64_t original;
     uint64_t calls;
-    int blocking;        // runs with the virtual core given up (hostfn_blocking)
+    int blocking;
 } Slot;
 static Slot slots[MAX_HOSTFN];
 static int nslots;
@@ -45,7 +36,7 @@ static int nadded;
 static int sealed;
 
 static GuestFn table_find(const RtHostEntry *start, const RtHostEntry *stop, const char *name) {
-    __asm__("" : "+r"(start), "+r"(stop));   // separate objects: keep the compiler from reasoning about them
+    __asm__("" : "+r"(start), "+r"(stop));
     for (const RtHostEntry *p = start; p < stop; p++)
         if (p->name && !strcmp(p->name, name)) return p->fn;
     return NULL;
@@ -59,7 +50,6 @@ GuestFn hostfn_override(const char *name) {
 
 GuestFn hostfn_observer(const char *name) { return table_find(obs_start, obs_stop, name); }
 
-// Linked HOST_OVERRIDE / HOST_OBSERVER entries (the loader reports how many it installed).
 int hostfn_table_size(int observers) {
     const RtHostEntry *p = observers ? obs_start : ovr_start, *e = observers ? obs_stop : ovr_stop;
     __asm__("" : "+r"(p), "+r"(e));
@@ -100,7 +90,6 @@ uint64_t hostfn_register(const char *name, GuestFn fn) {
     return a;
 }
 
-// Loader: an observer slot and the guest definition it wraps.
 uint64_t hostfn_register_observer(const char *name, GuestFn fn, uint64_t original) {
     uint64_t a = hostfn_register(name, fn);
     slots[(a - RT_HOSTFN_BASE) >> 4].original = original;
@@ -120,15 +109,11 @@ __attribute__((noinline, noreturn, cold)) static void bad_entry(Cpu *c) {
              ldr_describe(c->x[30], lr, sizeof lr));
 }
 
-// kern_host_track: the call counted in the thread's host depth. Not a tail call, so the host stack holds this frame
-// while fn runs; the jump out of fn (ExitThread) leaves the depth raised on a thread that ends.
 __attribute__((noinline)) static void hostfn_tracked(Cpu *c, GuestFn fn) {
     void *t = c->thread;
     int *d = kern_host_depth(t);
     __atomic_store_n(d, *d + 1, __ATOMIC_RELAXED);
     fn(c);
-    // fn may have switched fibers (SwitchToFiber is a host call) and this context may resume on another OS thread:
-    // the fiber switch moved this context's depth to that thread, whose RtThread the fiber's Cpu now names
     if (c->thread != t) {
         t = c->thread;
         d = kern_host_depth(t);
@@ -138,9 +123,6 @@ __attribute__((noinline)) static void hostfn_tracked(Cpu *c, GuestFn fn) {
     if (!n && kern_preempt_pending(t)) kern_host_left(t);
 }
 
-// nn::fs: the call waits for the disk and the OS, and on the Switch it is an IPC request that blocks its thread, so
-// the thread gives its virtual core up for it. NX2SARIA_CORE_DIAG found the game's loader threads (priority 58) holding
-// a core through CloseFile and CreateCacheStorage while job workers and better threads waited 2-6 ms for it.
 __attribute__((noinline)) static void hostfn_blocking(Cpu *c, GuestFn fn) {
     int away = kern_core_away();
     if (kern_host_track && c->thread) hostfn_tracked(c, fn);
@@ -168,14 +150,13 @@ static void hostfn_entry(Cpu *c) {
     __attribute__((musttail)) return s->fn(c);
 }
 
-// A guest jump to the rt_call return sentinel: guest code used x30 as data, which a lifted RET never does.
 static void return_sentinel(Cpu *c) {
     rt_fatal("guest code jumped to the host return address %#llx (x0 %#llx)", (unsigned long long)RT_RET_HOST,
              (unsigned long long)c->x[0]);
 }
 
 void hostfn_seal(void) {
-    static RtModule mods[16];   // kept by the dispatcher
+    static RtModule mods[16];
     if (sealed) return;
     rt_register_host(RT_RET_HOST, return_sentinel);
     sealed = 1;
@@ -214,7 +195,7 @@ uint64_t rt_call(Cpu *c, uint64_t fn, int n, ...) {
     uint64_t lr = c->x[30], pc = c->pc;
     c->x[30] = RT_RET_HOST;
     c->pc = fn;
-    rt_fpcr_sync(c);   // guest code may start here on a host thread or fiber that has not run it
+    rt_fpcr_sync(c);
     rt_dispatch(c);
     c->x[30] = lr;
     c->pc = pc;

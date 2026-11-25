@@ -1,50 +1,4 @@
-﻿// Shared game entry point: the standalone build names it nx2saria.exe; the launcher build retains ocarina.exe.
-// Reserves the guest address space, parses the command line and runs one mode.
-//
-//   <game executable> [--exefs DIR] [--romfs DIR] [--profile DIR] [--audio-device VALUE] [--monitor VALUE] <mode>
-//     --audio-device VALUE   play the sound on one output device: sets NX2SARIA_AUDIO_DEVICE before the settings are read, so
-//                       it wins over nx2saria.ini's `audio_device =` (or an existing nx2navi.ini). VALUE is default
-//                       (the system default device),
-//                       a 1-based index as --list-audio-devices prints it (devices sorted by name), or part of a device name, case-insensitive
-//     --list-audio-devices   print each playback device's index, name, channels and frequency, mark the system default and
-//                       show which device NX2SARIA_AUDIO_DEVICE picks; needs no game files
-//     --monitor VALUE   open the game window on one monitor: sets NX2SARIA_MONITOR before the settings are read, so it wins
-//                       over nx2saria.ini's `monitor =` (or an existing nx2navi.ini). VALUE is auto (default), primary,
-//                       a 1-based index as --list-monitors
-//                       prints it, or part of a monitor's name (on Windows also of its GDI device name, DISPLAY3),
-//                       case-insensitive. Wayland places a windowed window itself: only fullscreen opens on the monitor
-//     --list-monitors   print each monitor's index, name (on Windows also its GDI device name), desktop rectangle,
-//                       primary flag and DPI; needs no game files
-//     --selftest        layout, dispatch table and host-function registry; needs no game files
-//     --probe-mods      the mods folder scan, order and switches (mods.c); needs no game files
-//     --probe-loader    load and relocate the modules, check them against the measured 1.2.1 values
-//     --probe-kernel, --probe-ipc, --probe-services, --probe-fs    host probes
-//     --probe-discord  the Rich Presence IPC exchange; skips without a Discord client; no game files
-//     --probe-dpi       the process DPI awareness (per-monitor v2) and the primary monitor's size; no game files
-//     --probe-gfx-abi   NVN object layouts against nvn.h's reserved sizes; needs no game files
-//     --probe-nvn, --probe-nvn-tex, --probe-window, --probe-shader, --probe-vkmem, --probe-vkexec    graphics probes
-//     --probe-prewarm   the boot's pipeline stages from the caches next to the executable, the memory each leaves and
-//                       what a compute pipeline's first dispatch costs; skips without recorded shaders, runs no game
-//     --probe-ffx-cache one FSR 3.1 upscaling context and where its pipelines came from (the pipeline caches kept
-//                       across runs); skips without amd_fidelityfx_vk.dll, runs no game
-//     --probe-astc      the compute ASTC decoder against astc_decode_ldr; needs no game files
-//     --probe-meshfb    the mesh shader fallback: mesh programs drawn through VK_EXT_mesh_shader and through compute
-//                       passes, the pictures compared; needs no game files (mesh_fb_probe.c)
-//     --probe-fsr3      FSR 3.1 upscaling with the built-in passes (vk_fsr3.c) on a synthetic scene; no game files
-//     --probe-fsr3fg    FSR 3.1 frame generation with the built-in passes (vk_fsr3fg.c) on a synthetic scene
-//     --probe-zstd      host zstd streams (ov_zstd.c) on frames made here; needs no game files
-//     --probe-input     gamepad polls on a virtual gamepad, also while SDL's update takes long; needs no game files
-//     --probe-movie     the host movie decoders on one RomFS movie (VP9 movie::Decoder, AV1 movie::VideoDecoder); skips without game data
-//     --boot            run the game to the first NVN call
-//     --seconds S       run the game (implies --boot's start-up) until the world clock (game time since the loaded
-//                       save's first frame) passed S seconds, then exit 0 at that present
-//     --shot PNG        with --seconds: save that frame; env NX2SARIA_GPU=null|vulkan selects the back end
-//     (no mode)         run the game
-//
-// Also here: the runtime services the generated code calls besides rt_dispatch and rt_svc (rt_brk, rt_udf,
-// rt_ticks, the function profiler hook), logging, SHA-256, and the crash reporter (a vectored exception handler that
-// names the lifted function, the guest registers and the guest frame-pointer chain).
-#include <ctype.h>
+﻿#include <ctype.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -64,23 +18,8 @@
 
 #define MAX_MODULES 16
 
-// ---- logging, tracing, hashing
 unsigned rt_trace;
 
-// Log file. A game run whose stderr is not a file already (started from Explorer, a shortcut or a console) also
-// writes its log to logs\nx2saria.log next to the game executable; existing nx2navi.log files are left in place for
-// reports and older installs. run_game.py and `2> file` keep their own file. Each start rotates nx2saria.1.log ..
-// nx2saria.4.log. A file stops at 64 MiB
-// (NX2SARIA_TRACE can write that much). Lines from before log_open wait in a static buffer: mem_init runs first so that
-// nothing else lands in the guest address space, and an earlier open would put the CRT's heap there.
-// The end of the run still reaches a file past its cap: once the process is ending (rt_log_ending at the start of an
-// orderly end, gfx_present.c rt_exit_begin, of the frame-time summary, perf.c perf_summary_flush, of a fatal error,
-// dispatch.c fatal_end, of the crash report, crash_handler, of the lost device's watchdog, vk_device.c lost_wait_exit,
-// and in plat_exit, log_sync_ending), up to LOG_END_RESERVE more bytes are written, counted on their own. A
-// trace = perf session reaches the cap in about 90 minutes, and every line after it, the exit summary, "frametime:
-// exit", the stutter map and FATAL lines included, went to stderr only, which a game started from the launcher or
-// Explorer does not keep. rt_log_sync alone does not open the reserve: a bug capture calls it in play
-// (bugcap.c write_log_tail), and the play's lines after it would fill the reserve before the end came.
 #define LOG_KEEP 5
 #define LOG_CAP (64ull << 20)
 #define LOG_END_RESERVE (4ull << 20)
@@ -92,21 +31,13 @@ static char g_log_early[32768];
 static size_t g_log_early_n;
 static uint64_t g_log_bytes;
 
-// stderr's writes (log_sink). g_log_final: rt_log_sync has run: an exit, a fatal error, a crash report or a bug
-// capture (bugcap.c).
 static PlatMutex g_err_lock = PLAT_MUTEX_INIT;
 static volatile int32_t g_log_final;
-static volatile int32_t g_log_ending;   // rt_log_ending ran: the process is ending
-static uint64_t g_log_tail;             // bytes of the end the file was given past LOG_CAP
+static volatile int32_t g_log_ending;
+static uint64_t g_log_tail;
 
 void rt_log_ending(void) { __atomic_store_n(&g_log_ending, 1, __ATOMIC_RELEASE); }
 
-// The log's destinations: the file first, then stderr. logq.c calls it: from the log thread in a game run, else from
-// the thread that logs. A write to stderr can block for as long as its reader likes: a console window holds every write
-// back while a selection is made in it, and the log thread then stays in that write. The file has the lines by then, and
-// the lines of the process's end (rt_log_sync) skip stderr while another thread is stuck in a write to it, so the exit
-// and FATAL lines still reach the file. stderr goes through plat_stderr_write, which holds no lock of the C runtime's
-// stderr stream, so fflush(stderr) and plat_exit's fflush(NULL) do not wait for a stuck write either.
 static void log_sink(const char *p, size_t n) {
     int file = __atomic_load_n(&g_log_state, __ATOMIC_ACQUIRE) == LOG_FILE;
     if (file) {
@@ -114,7 +45,7 @@ static void log_sink(const char *p, size_t n) {
         if (at + n <= LOG_CAP) {
             plat_append_write(g_log_file, p, n);
         } else {
-            if (at <= LOG_CAP) {   // the first write past the cap says so, once
+            if (at <= LOG_CAP) {
                 static const char cut[] = "[host] log: the file reached 64 MiB, the rest of this run goes to stderr only, "
                                           "but for the lines of its end\n";
                 plat_append_write(g_log_file, cut, sizeof cut - 1);
@@ -130,7 +61,6 @@ static void log_sink(const char *p, size_t n) {
             }
         }
     }
-    // without the file stderr is the log (run_game.py, `2> file`), and it is waited for
     if (file && __atomic_load_n(&g_log_final, __ATOMIC_ACQUIRE)) {
         if (!plat_mutex_trylock(&g_err_lock)) return;
     } else {
@@ -145,25 +75,18 @@ void rt_log_sync(void) {
     logq_sync();
 }
 
-// plat_exit's first step in a game run (plat_exit_hook): the process ends here, so its last lines reach the file.
 static void log_sync_ending(void) {
     rt_log_ending();
-    if (log_privacy_on())   // how often log_privacy.c acted (the start's "log: personal folders" line said it is on)
+    if (log_privacy_on())
         rt_log("log: %llu lines and values had a personal folder written short this run", log_privacy_count());
     rt_log_sync();
 }
 
-// The console window was closed, or Ctrl+C or Ctrl+Break pressed in it (platform.h plat_console_setup): the end of a
-// closed game window, which writes the settings, the caches and the saves and logs the exit (gfx_present.c
-// gfx_window_closed). Left to Windows, a closed console ended the process with nothing saved.
 static void console_closed(const char *what) {
     rt_log("console: %s; the game ends as when its window is closed", what);
     gfx_window_closed();
 }
 
-// The window lost the focus (gfx_present.c gfx_window_focus_changed): a process ended from outside soon after lost the
-// lines the log thread was still gathering, and both unexplained ends of 2026-11-13 came seconds after one. The log
-// thread writes them at once, and the module list for the note of an ExitProcess is brought up to date.
 void rt_log_focus_lost(void) {
     logq_nudge();
     plat_exit_note_modules();
@@ -179,10 +102,6 @@ static void log_put(const char *p, size_t n) {
     logq_write(p, n);
 }
 
-// Every line of the log comes through here, and a personal folder in it is written short first (log_privacy.c), so the
-// file, stderr, the queue the exit note reads and the crash report all have the short form. A line without one, nearly
-// all of them, goes on as it is. One with one is copied on the stack; a piece larger than the copy (a debug string of
-// the game's, svc.c) goes on in parts.
 void rt_log_raw(const char *p, size_t n) {
     if (log_privacy_find(p, n) == n) {
         log_put(p, n);
@@ -224,8 +143,6 @@ const char *rt_log_path(void) {
     return __atomic_load_n(&g_log_state, __ATOMIC_ACQUIRE) == LOG_FILE ? g_log_path : NULL;
 }
 
-// Opens the log file for a game run (game = 1) and writes the buffered lines to it; anything else drops them. Runs on
-// the main thread before the boot starts other threads.
 static void log_open(int game) {
     logq_init(log_sink);
     char dir[PLAT_PATH_MAX * 3], from[PLAT_PATH_MAX * 3 + 16], to[PLAT_PATH_MAX * 3 + 16];
@@ -238,7 +155,7 @@ static void log_open(int game) {
     if (cut && (size_t)(cut - dir) + sizeof "/logs" <= sizeof dir) {
         strcpy(cut, "/logs");
         plat_file_mkdir_p(dir);
-        for (int i = LOG_KEEP - 1; i > 0; i--) {   // nx2saria.3.log -> nx2saria.4.log, ..., nx2saria.log -> nx2saria.1.log
+        for (int i = LOG_KEEP - 1; i > 0; i--) {
             if (i > 1) snprintf(from, sizeof from, "%s/nx2saria.%d.log", dir, i - 1);
             else snprintf(from, sizeof from, "%s/nx2saria.log", dir);
             snprintf(to, sizeof to, "%s/nx2saria.%d.log", dir, i);
@@ -257,13 +174,12 @@ static void log_open(int game) {
         __atomic_store_n(&g_log_state, LOG_FILE, __ATOMIC_RELEASE);
         rt_log("log: %s", g_log_path);
     }
-    if (game && g_log_file) {   // an ExitProcess nobody of ours asked for leaves a line in the file (platform.h)
+    if (game && g_log_file) {
         plat_exit_note_setup(g_log_file, logq_peek);
         plat_exit_note_modules();
     }
-    char zone[16];   // the first use of the time zone reads a file: a fatal error's report must not be the first (log_stall.c)
+    char zone[16];
     log_stamp(zone, sizeof zone, 0);
-    // A game run writes its log from the log thread (logq.c), whether the lines go to a log file or to stderr alone.
     const char *e = cfg_get("NX2SARIA_LOG_ASYNC");
     if (!game || (e && !strcmp(e, "0"))) return;
     plat_exit_hook = log_sync_ending;
@@ -272,7 +188,7 @@ static void log_open(int game) {
 }
 
 static void parse_trace(void) {
-    const char *e = cfg_get("NX2SARIA_TRACE");   // no default: nothing is traced when unset
+    const char *e = cfg_get("NX2SARIA_TRACE");
     if (!e) return;
     static const struct { const char *name; unsigned bit; } names[] = {
         {"svc", RT_TRACE_SVC}, {"host", RT_TRACE_HOSTCALL}, {"ipc", RT_TRACE_IPC}, {"fs", RT_TRACE_FS},
@@ -290,12 +206,10 @@ static void parse_trace(void) {
 
 void rt_sha256(const void *p, size_t n, uint8_t out[32]) { sha256(p, n, out); }
 
-// ---- configuration
 static RtConfig cfg;
 const RtConfig *rt_config(void) { return &cfg; }
 
-// ---- runtime services the generated code calls (cpu.h)
-volatile int g_fnprof = 0;   // resolution.c switches it on until the game sets its render size (res_fn_hit)
+volatile int g_fnprof = 0;
 void fnprof_hit(uint64_t addr, uint64_t lr, uint64_t x0) { (void)lr, res_fn_hit(addr, x0); }
 
 void rt_brk(Cpu *c, uint32_t imm, uint64_t pc) {
@@ -319,14 +233,12 @@ void rt_udf(Cpu *c, uint64_t pc) {
              ldr_describe(c->x[30], lr, sizeof lr));
 }
 
-// CNTPCT_EL0: the Switch counter runs at 19.2 MHz. The scale is set before main, so no thread reads it half written.
 static PlatScale tick_scale;
 
 __attribute__((constructor)) static void tick_scale_init(void) { tick_scale = plat_scale(19200000u, plat_counter_hz()); }
 
 uint64_t rt_ticks(void) { return plat_scaled(tick_scale, plat_counter()); }
 
-// ---- crash reporter
 typedef struct { uintptr_t host; uint64_t guest; } FnRev;
 static FnRev *fn_rev;
 static uint64_t fn_rev_n;
@@ -336,8 +248,6 @@ static int by_host(const void *a, const void *b) {
     return x < y ? -1 : x > y;
 }
 
-// The lifted function that contains a host code address, by the nearest function start below it; 0 outside the lifted
-// code.
 static uint64_t lifted_function(uintptr_t rip) {
     if (!fn_rev) {
         static RtModule mods[MAX_MODULES];
@@ -351,8 +261,6 @@ static uint64_t lifted_function(uintptr_t rip) {
                 fn_rev[fn_rev_n++] = (FnRev){(uintptr_t)mods[i].fns[k], mods[i].addrs[k]};
         qsort(fn_rev, fn_rev_n, sizeof *fn_rev, by_host);
     }
-    // The lifted code is one range with the host code outside it (kernel.c ap_init checks that); an address above the
-    // last function start is taken for host code, which costs only the last function's body.
     if (!fn_rev_n || rip > fn_rev[fn_rev_n - 1].host) return 0;
     uint64_t lo = 0, hi = fn_rev_n;
     while (lo < hi) {
@@ -365,13 +273,6 @@ static uint64_t lifted_function(uintptr_t rip) {
 
 static int readable(uint64_t a, uint64_t n) { return plat_mem_readable(a, n); }
 
-// A module another program put into the game's process: the Vulkan layer or the hook of a recorder, an overlay, a
-// capture tool or a post-processing injector, by the words such files carry in their names. A crash inside one is that
-// program's: one report was an access violation in a recorder's layer the moment the present mode changed and the
-// swapchain was made again, another an injector's layer reading a null pointer at the end of every shader
-// preparation. Vulkan layers are mostly named VkLayer_<name>.dll, and a recorder's Vulkan hook and a driver's capture
-// tool carry names of their own (the words below). The validation layer is left out: the game loads it itself when
-// NX2SARIA_VK_VALIDATION asks.
 static int foreign_hook(const char *module) {
     char low[160];
     size_t n = 0;
@@ -382,30 +283,17 @@ static int foreign_hook(const char *module) {
            strstr(low, "reshade") || strstr(low, "obs-vulkan") || strstr(low, "nvspcap");
 }
 
-// What the crash report says of the faulting module. A fault on the thread that hands the frame limit to RivaTuner
-// Statistics Server (rtss_limit.c, the "rtss" thread) is in the game's own calls of RTSS's library or around them,
-// whatever module it is in (the one such crash faulted in ntdll): the note names that and the setting that keeps the
-// game from calling it. On other threads RTSS's library is its overlay, which RTSS put there: foreign_hook's note.
 enum { CRASH_NOTE_NONE, CRASH_NOTE_FOREIGN, CRASH_NOTE_RTSS };
 static int crash_module_note(const char *module, int on_rtss_thread) {
     return on_rtss_thread ? CRASH_NOTE_RTSS : foreign_hook(module) ? CRASH_NOTE_FOREIGN : CRASH_NOTE_NONE;
 }
 
-// Set when main_run has returned: the mode's work is done and saved, and all that still runs is the C runtime's exit
-// and, inside ExitProcess, the detach call of every library in the process, the graphics driver's and those other
-// programs put there. A fault in one of them is not a failure of the run. On one PC an injector's Vulkan layer faulted
-// in its detach at the end of every `--warm-shaders` and `--prepare-shaders` (four runs over three versions): each
-// wrote a FATAL after "variants built into the driver cache" and ended with code 71, so the launcher took a finished
-// preparation for one that failed. crash_handler ends such a process with the code its mode returned. A fault in this
-// executable's own code on the way out (an atexit handler) is still reported.
 static volatile int32_t mode_done;
 static int mode_rc;
 
 static void crash_handler(const PlatCrash *x) {
-    // shared with the fatal error's end (dispatch.c rt_ending_enter): another thread's fault or fatal error waits there
-    // while this report is written; a fault inside this thread's own report ends the process at once
     if (!rt_ending_enter(71)) plat_exit(71);
-    rt_log_ending();   // the report reaches the log file past its cap (log_sink)
+    rt_log_ending();
     if (__atomic_load_n(&mode_done, __ATOMIC_ACQUIRE) && x->module) {
         rt_log("exit: %s (%#x) in %s while the process was ending, after its work was done and saved%s: the run ends "
                "with its own code %d", x->what, x->code, *x->module ? x->module : "code outside every module",
@@ -413,8 +301,8 @@ static void crash_handler(const PlatCrash *x) {
                mode_rc);
         plat_exit(mode_rc);
     }
-    vk_pipeline_crash_note();   // first: the next start tells a crash in the boot's builds from a stopped start by it
-    rt_log_sync();   // the lines before the crash, then the report, each written as it is made
+    vk_pipeline_crash_note();
+    rt_log_sync();
     char d[160];
     uintptr_t rip = x->rip;
     rt_logf("FATAL: %s (%#x) at host %p (", x->what, x->code, (void *)rip);
@@ -434,13 +322,10 @@ static void crash_handler(const PlatCrash *x) {
         rt_logf("  the fault is on the thread that hands the frame limit to RivaTuner Statistics Server (rtss_limit.c), "
                 "in the game's calls of its library or around them; rtss = 0 in nx2saria.ini keeps the game from calling "
                 "it\n");
-    // what the thread was doing (a pipeline build names its shaders): the stderr note crash_veh writes misses the log
     const char *note = plat_crash_context_get();
     if (note) rt_logf("  the thread was %s\n", note);
     uint64_t f = x->module ? 0 : lifted_function(rip);
     if (f) rt_logf("  in lifted function f_%llx = %s\n", (unsigned long long)f, ldr_describe(f, d, sizeof d));
-    // abort and invalid parameter: where the host code called it; a fault in another module: the host calls that led
-    // into it
     uintptr_t exe = plat_exe_base();
     for (int i = 0; i < x->nframes; i++) {
         uint64_t g = lifted_function(x->frames[i]);
@@ -464,23 +349,19 @@ static void crash_handler(const PlatCrash *x) {
     } else {
         rt_logf("  not on a guest thread\n");
     }
-    char at[16];   // after the report's body: the zone is read at the start (log_open), so this does not wait for a lock or a file
+    char at[16];
     log_stamp(at, sizeof at, 0);
     rt_log("fatal: at %s local time", at);
-    rt_fatal_notes();   // the card, its driver and the memory settings in effect (vk_device.c fatal_note)
+    rt_fatal_notes();
     kern_free_cores_note();
-    fs_save_crash_wait();   // a save the game already reported as done finishes first (bounded; fs_host.c)
-    // after the report: RivaTuner Statistics Server's profile goes back at the next start, from the line the run keeps
-    // for it in rtss-profile.txt (rtss_limit.c rtss_limit_crash), with no call into RTSS's library from a process that
-    // failed; only where that line could not be written is it put back here, and never from RTSS's own thread
+    fs_save_crash_wait();
     rtss_limit_crash();
-    rt_rumble_stop_bounded();   // a controller on HD rumble stops (dispatch.c: 300 ms at most, SDL may be the crash)
+    rt_rumble_stop_bounded();
     fflush(stderr);
-    prof_sampler_write();   // NX2SARIA_PROFILE: what was sampled until the crash (it gives up after 2 s if the sampler hangs)
+    prof_sampler_write();
     plat_exit(71);
 }
 
-// ---- self-test: layout, dispatch table, host-function registry, without game files
 static int failures;
 #define CHECK(cond, ...) do { if (!(cond)) { failures++; printf("  FAIL: " __VA_ARGS__); putchar('\n'); } } while (0)
 
@@ -489,7 +370,6 @@ static double now_s(void) { return (double)plat_now_ns() / 1e9; }
 static volatile int host_probe_hits;
 static void host_probe(Cpu *c) { host_probe_hits++; c->x[0] = 42; }
 
-// The instruction set build_game.py --cpu compiled for: v3 (AVX2/FMA/BMI2, the default) or v2 (SSE4.2/POPCNT).
 #ifndef RT_CPU_LEVEL
 #define RT_CPU_LEVEL 3
 #endif
@@ -507,7 +387,6 @@ static void check_cpu(void) {
 #endif
 }
 
-// Layout: ascending, no overlap, below 2^39, and inside the window mem_init reserved.
 static void check_layout(void) {
     const RtLayoutEntry *lay = rt_layout;
     int n = rt_layout_count;
@@ -535,8 +414,6 @@ static void check_layout(void) {
           "guest regions overlap");
 }
 
-// Every function start dispatches to its own function. The word after a start (unless that is a start too), a
-// misaligned address and the word below the module dispatch to nothing.
 static void check_modules(const RtModule *mods, int n) {
     uint64_t total = 0;
     for (int i = 0; i < n; i++) {
@@ -579,7 +456,6 @@ static void bench(const RtModule *mods, int n) {
     if (total) printf("lookup: %.1f ns per function start (address order)\n", dt * 1e9 / (double)total);
 }
 
-// Memory SVCs without modules: heap, physical memory in the alias region, a stack move, QueryMemory, GetInfo.
 static void check_memory(void) {
     const RtGuestLayout *g = mem_layout();
     RtMemoryInfo q;
@@ -617,7 +493,6 @@ static void check_memory(void) {
     CHECK(q.state == 0 && q.base == g->alias.base && q.size == g->alias.size, "QueryMemory on the free alias region");
     CHECK(mem_map_physical(a, 0x1000) == 0 && LD64(a + 0x10) == 0 && mem_unmap_physical(a, 0x1000) == 0,
           "remapped physical memory is not zeroed");
-    // One page more than the whole pool (GetInfo 6), so the request is over the limit whatever the title's pool is.
     mem_info(6, &v);
     CHECK(mem_map_physical(a, ((v + 0xFFFull) & ~0xFFFull) + 0x1000) == 0x10801,
           "MapPhysicalMemory beyond the pool is not LimitReached");
@@ -671,11 +546,6 @@ static int selftest(void) {
     return failures ? 1 : 0;
 }
 
-// --probe-crash-call and --probe-crash-null crash on purpose, to check the report of a fault outside this executable.
-// call: strlen in the C runtime library (ucrtbase.dll, libc.so.6) reads address 8, the way a driver faults inside a
-// call the host made; the report names the library and the host frames that called it. null: a call through a null
-// function pointer, which leaves rip at 0, outside every module. Both end with exit code 71 and a FATAL line in the
-// log.
 static size_t (*volatile probe_strlen)(const char *) = strlen;
 static void (*volatile probe_null)(void);
 
@@ -686,9 +556,6 @@ static int probe_crash(int null) {
     return 1;
 }
 
-// --probe-crash-exit: the fault of --probe-crash-call, made by an atexit handler after the mode has returned, the way
-// a library another program put into the process faults in its detach. The process must end with the mode's own code
-// (PROBE_EXIT_CODE) and an "exit:" line, with no FATAL (mode_done, crash_handler). tests/exit_fault_check.py runs it.
 #define PROBE_EXIT_CODE 3
 static void probe_exit_fault(void) { printf("%zu\n", probe_strlen((const char *)(uintptr_t)8)); }
 
@@ -707,9 +574,6 @@ static int usage(const char *argv0) {
     return 2;
 }
 
-// Paths for a copied folder (tools/package_build.py). Per path: NX2SARIA_EXEFS, NX2SARIA_ROMFS, NX2SARIA_PROFILE_DIR, else the
-// folder next to nx2saria.exe (exefs with main.npdm, romfs with romfs.bin, any profile folder) if it is there, else the
-// path baked in at build time. A relative value is relative to nx2saria.exe's folder.
 static char pp_exefs[PLAT_PATH_MAX * 2], pp_romfs[PLAT_PATH_MAX * 2], pp_profile[PLAT_PATH_MAX * 2];
 
 static const char *portable_path(const char *dir, const char *var, const char *sub, const char *must, char *out, size_t cap,
@@ -723,7 +587,7 @@ static const char *portable_path(const char *dir, const char *var, const char *s
     }
     char probe[PLAT_PATH_MAX * 3];
     snprintf(out, cap, "%s/%s", dir, sub);
-    if (!must) return plat_dir_exists(out) ? out : fallback;   // the folder itself is the sign
+    if (!must) return plat_dir_exists(out) ? out : fallback;
     snprintf(probe, sizeof probe, "%s/%s", out, must);
     return plat_file_exists(probe) ? out : fallback;
 }
@@ -747,9 +611,8 @@ static int main_run(int argc, char **argv);
 #define SDL_LIBRARY "libSDL3.so.0"
 #endif
 
-// The SDL this process loaded and where from, and the form SHA-256 runs in (lib_origin.h).
 static void log_libs(void) {
-    char sdl[PLAT_PATH_MAX * 2], exe[PLAT_PATH_MAX * 2], line[2048];   // rt_log's own line is 2048 bytes
+    char sdl[PLAT_PATH_MAX * 2], exe[PLAT_PATH_MAX * 2], line[2048];
     int built, loaded = input_sdl_version(&built);
     if (!plat_library_path(SDL_LIBRARY, sdl, sizeof sdl)) sdl[0] = 0;
     if (!plat_exe_path(exe, sizeof exe)) exe[0] = 0;
@@ -757,23 +620,18 @@ static void log_libs(void) {
     rt_log("libs: %s", line);
 }
 
-// A game run never comes back here: it ends in plat_exit (boot.c, gfx_present.c). Every other mode returns its code.
 int main(int argc, char **argv) {
-    plat_stack_guarantee();   // a stack overflow on the main thread still gets its crash report (platform.h)
+    plat_stack_guarantee();
     mode_rc = main_run(argc, argv);
-    __atomic_store_n(&mode_done, 1, __ATOMIC_RELEASE);   // from here on only the exit runs (mode_done, above)
-    plat_exit_orderly();   // the C runtime's exit ends the process with ExitProcess: no note of an end nobody asked for
+    __atomic_store_n(&mode_done, 1, __ATOMIC_RELEASE);
+    plat_exit_orderly();
     return mode_rc;
 }
 
-// 1 when the command line names the game itself: no mode, and every argument an option the game takes with its value
-// (--seconds and --shot run the game). mem_init needs it before the parse below, for the settings' start (cfg.h
-// cfg_start: only the game probes the GPU and writes the preset's state file); a command line the parse refuses counts
-// as a tool mode.
 static int game_run(int argc, char **argv) {
     static const char *const with_value[] = {"--exefs", "--romfs", "--profile", "--audio-device", "--monitor",
                                              "--seconds", "--shot"};
-    for (int i = 1; i < argc; i += 2) {   // an option and its value
+    for (int i = 1; i < argc; i += 2) {
         int option = 0;
         for (size_t k = 0; k < sizeof with_value / sizeof *with_value && !option; k++) option = !strcmp(argv[i], with_value[k]);
         if (!option) return 0;
@@ -803,35 +661,26 @@ static void tsan_probe(void) {
 #endif
 
 static int main_run(int argc, char **argv) {
-    log_privacy_init();   // the personal folders to write short in the log, from the environment, before its first line
-    // first: claim the guest address space before anything else can land there; reads the settings file
+    log_privacy_init();
     mem_init(game_run(argc, argv));
-    log_privacy_start();   // the switch (log_short_paths) and the line that says how paths are written
+    log_privacy_start();
     TSAN_PROBE();
-    // The build that wrote the log, at its top: an attached log from another install or version shows at a glance.
     rt_log("version: NX2Saria %s, game %d.%d.%d", rt_port_version, rt_game_version / 100, rt_game_version / 10 % 10,
            rt_game_version % 10);
     log_libs();
-    // A restart from the settings menu (gfx_present.c gfx_window_closed) starts this process while the one it replaces
-    // is still exiting: its log, RomFS and saves are free once it is gone.
     if (plat_restart_wait(30000) < 0) rt_log("restart: the previous process still runs after 30 s; starting anyway");
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     plat_crash_hook(crash_handler);
     parse_trace();
     prof_start();
-    // Timed guest waits (kernel.c block_inner) sleep in whole milliseconds; at the default 15.6 ms tick a 1 ms wait
-    // costs a full tick. NX2SARIA_TIMER_1MS=0 keeps the default for comparison.
     if (cfg_bool("NX2SARIA_TIMER_1MS")) plat_timer_1ms();
-    // Before any thread pool counts the usable processors. Not in the shader preparation modes: they translate and
-    // build on every processor the process was given, and the placement (perf.c cpu_placement) is for the game's own
-    // threads, so narrowing them to one die would only make the preparation take longer.
     int prepare = 0;
     for (int i = 1; i < argc; i++)
         if (!strcmp(argv[i], "--prepare-shaders") || !strcmp(argv[i], "--warm-shaders") ||
             !strcmp(argv[i], "--prepare-pipelines")) prepare = 1;
     if (!prepare) perf_cpu_start();
-    {   // NX2SARIA_POWER_FULL=0 leaves Windows' power throttling of an unfocused window in place (A/B runs)
+    {
         const char *pf = cfg_get("NX2SARIA_POWER_FULL");
         if (!(pf && !strcmp(pf, "0"))) {
             int got = plat_power_full();
@@ -842,7 +691,7 @@ static int main_run(int argc, char **argv) {
     }
     cfg = (RtConfig){.exefs = rt_default_exefs, .romfs = rt_default_romfs, .profile = rt_default_profile,
                      .gpu = cfg_get("NX2SARIA_GPU")};
-    portable_paths(&cfg);   // command-line paths below still win
+    portable_paths(&cfg);
     if (cfg.gpu && strcmp(cfg.gpu, "null") && strcmp(cfg.gpu, "vulkan")) {
         rt_logf("NX2SARIA_GPU must be null or vulkan, not '%s'\n", cfg.gpu);
         return 2;
@@ -855,16 +704,9 @@ static int main_run(int argc, char **argv) {
             if (++i == argc) return usage(argv[0]);
             *path = argv[i];
         } else if (!strcmp(argv[i], "--audio-device")) {
-            // Same approach as every setting: NX2SARIA_AUDIO_DEVICE is read from the environment first (cfg.c raw_get).
-            // cfg_init has read the settings by now, so the variable goes in through cfg_setenv, which makes the lookups
-            // read again. An empty value would remove the variable (plat_setenv) and hand the choice back to
-            // the settings file, so "default" is the spelling for the system default.
             if (++i == argc || !*argv[i]) return usage(argv[0]);
             cfg_setenv("NX2SARIA_AUDIO_DEVICE", argv[i]);
         } else if (!strcmp(argv[i], "--monitor")) {
-            // The settings read NX2SARIA_MONITOR from the environment first (cfg.c raw_get); cfg_setenv as above. An empty
-            // value would remove the variable (plat_setenv) and hand the choice back to the settings file, so "auto" is the
-            // spelling for "no monitor choice" on the command line.
             if (++i == argc || !*argv[i]) return usage(argv[0]);
             cfg_setenv("NX2SARIA_MONITOR", argv[i]);
         } else if (!strcmp(argv[i], "--seconds")) {
@@ -886,16 +728,15 @@ static int main_run(int argc, char **argv) {
     if (cfg.seconds && mode) return usage(argv[0]);
     log_open(!mode);
     if (!mode) {
-        // the console of a game started directly: no QuickEdit to stop the log, and its close saves (console_closed)
         if (plat_console_setup(console_closed))
             rt_log("console: QuickEdit off; closing the console ends the game as its window does");
-        mem_start_note(0);   // memory.c: a warning when the machine has less memory free than the game takes
-        session_summary_start();   // logs/session-summary.json at the end (session_summary.c); not in tool modes
-        hang_watch_start();   // a report in the log when the frames or the GPU stop (hang_watch.c); never in tool modes
-        cfg.boot = cfg.seconds > 0;   // --seconds starts the game like --boot, with its checkpoints
-        vk_driver_cache_env();   // before the threads below and rt_boot's, any of which may load the Vulkan driver
-        discord_init();   // the Rich Presence thread (discord_rpc.c); it reads the settings file itself and idles while off
-        tracker_api_init();   // a map tracker's read-only view of the game's memory (tracker_api.c); logs whether it is on
+        mem_start_note(0);
+        session_summary_start();
+        hang_watch_start();
+        cfg.boot = cfg.seconds > 0;
+        vk_driver_cache_env();
+        discord_init();
+        tracker_api_init();
         rt_boot();
         return 0;
     }
@@ -908,7 +749,7 @@ static int main_run(int argc, char **argv) {
     if (!strcmp(mode, "--probe-crash-exit")) return probe_crash_exit();
     if (!strcmp(mode, "--probe-cfg")) return probe_cfg();
 #ifdef _WIN32
-    if (!strcmp(mode, "--probe-dpi")) return probe_dpi();   // the Win32 DPI awareness of nx2saria.manifest
+    if (!strcmp(mode, "--probe-dpi")) return probe_dpi();
 #endif
     if (!strcmp(mode, "--probe-mods")) return probe_mods();
     if (!strcmp(mode, "--probe-discord")) return probe_discord();
@@ -931,7 +772,7 @@ static int main_run(int argc, char **argv) {
     if (!strcmp(mode, "--probe-input")) return probe_gamepad();
     if (!strcmp(mode, "--probe-vkdevice")) return probe_vkdevice();
     if (!strcmp(mode, "--probe-devlost")) return vk_sync_probe_devlost();
-    if (!strcmp(mode, "--probe-movie")) {   // the AV1 decoder tells the graphics back end of each frame it writes: none here
+    if (!strcmp(mode, "--probe-movie")) {
         cfg.gpu = "null";
         return probe_movie();
     }

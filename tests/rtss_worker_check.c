@@ -1,12 +1,3 @@
-// The real runtime/pacing/rtss_limit.c against a fake RivaTuner Statistics Server: the Win32 calls it makes go to the fakes
-// below (its folder in the registry, its hooks library with the profile calls, the profile files, the shared memory
-// RTSSSharedMemoryV2), and its worker thread polls when a scenario says so (plat_sleep_ms on that thread waits for the
-// next poll). Each scenario runs in a process of its own, since rtss_limit.c's state lasts the process, with the state
-// file (rtss-profile.txt) in a folder of its own beside this program; the kill scenarios run two more processes of it,
-// a run that is killed and the next start, which share the fake profile through a file there. Windows only; built and
-// run by tests/rtss_limit_check.py. Prints the log and each failed check, and exits 1 on any.
-//
-// rtss_worker_check <scenario>
 #include <windows.h>
 #include <stdarg.h>
 #include <stdint.h>
@@ -44,27 +35,24 @@ DWORD stub_GetCurrentProcessId(void);
 #define GetCurrentProcessId stub_GetCurrentProcessId
 
 #include "rtss_limit.c"
-#undef GetModuleFileNameA   // this program's own path (main), not the game's
+#undef GetModuleFileNameA
 
 static int fails;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// ---- the fake profiles: Global, and the game's own Profiles\ocarina.exe.cfg. LoadProfile copies one into the loaded
-// copy (Global for a name without its own), SaveProfile writes the loaded copy as the game's own. Each [Framerate] key
-// rtss_limit.c reads is a field; stamp is the file's write time, which every change moves on.
 typedef struct {
     int exists;
-    DWORD limit, denom;   // FramerateLimit and FramerateLimitDenominator: Limit and LimitDenominator in the file
+    DWORD limit, denom;
     int time, time_den, scan0, scan1, sync_display, reflex, passive;
     DWORD stamp;
 } Prof;
 static Prof global = {1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1}, own, loaded;
-static int no_denominator;   // an RTSS that does not know FramerateLimitDenominator
-static int readonly;         // SaveProfile does not reach the file (no administrator rights)
-static DWORD refuse_over;    // RTSS refuses a limit above this many frames a second (0: none refused)
-static int no_library;       // LoadLibraryA fails
+static int no_denominator;
+static int readonly;
+static DWORD refuse_over;
+static int no_library;
 static volatile LONG saves, deletes, updates, loads, created, removed;
-static volatile LONG calls;   // every call into the fake hooks library
+static volatile LONG calls;
 
 static void touch(Prof *p) { p->stamp++; }
 static void WINAPI f_load(LPCSTR name) {
@@ -72,7 +60,7 @@ static void WINAPI f_load(LPCSTR name) {
     calls++;
     loaded = own.exists ? own : global;
 }
-static void (*during_save)(void);   // runs inside the next SaveProfile, once
+static void (*during_save)(void);
 static void WINAPI f_save(LPCSTR name) {
     (void)name;
     calls++, saves++;
@@ -122,7 +110,6 @@ static Prof *file_of(const char *path) {
     return NULL;
 }
 
-// ---- the fake shared memory: the header and one application entry, this process's (listed) or another's
 static uint8_t shm[65536];
 static volatile LONG running = 1;
 enum { PID = 4242, ENTRY_AT = 0x100, ENTRY_SIZE = 1024 };
@@ -139,9 +126,6 @@ static void app_set(int listed, DWORD flags, DWORD t0, DWORD t1, DWORD frames) {
 static void app_flags(DWORD flags) { memcpy(shm + ENTRY_AT + 4 + MAX_PATH, &flags, 4); }
 static void app_frames(DWORD frames) { memcpy(shm + ENTRY_AT + 4 + MAX_PATH + 4 + 8, &frames, 4); }
 
-// RTSS's clock and the game's presents as rtss_limit.c reads them: each poll() comes 500 ms after the one before, RTSS
-// measures a new period of the game's frames at each (counting), and the game presents a millisecond before it unless
-// a scenario stops that (presenting).
 static uint64_t fake_now = 10000000000ull, hosted_at;
 static int counting = 1, presenting = 1;
 uint64_t kern_now_ns(void) { return fake_now; }
@@ -156,7 +140,6 @@ static void time_passes(void) {
     memcpy(shm + ENTRY_AT + 4 + MAX_PATH + 4, t, sizeof t);
 }
 
-// The registry and file calls the thread that asks for a limit makes itself: a present must make none.
 static DWORD present_tid;
 static volatile LONG present_calls, reg_calls;
 static int installed = 1;
@@ -248,10 +231,9 @@ DWORD stub_GetModuleFileNameA(HMODULE m, LPSTR out, DWORD n) {
 }
 DWORD stub_GetCurrentProcessId(void) { return PID; }
 
-// ---- host.h and platform.h, as far as rtss_limit.c uses them
 static char logged_lines[1 << 16];
 static size_t logged_at;
-static int quiet;   // the stress scenario: no lines kept or printed
+static int quiet;
 void rt_log(const char *fmt, ...) {
     if (quiet) return;
     char line[512];
@@ -268,11 +250,10 @@ void rt_log(const char *fmt, ...) {
 static int logged(const char *text) { return strstr(logged_lines, text) != NULL; }
 int rt_knob(const char *name, const char *def) { (void)name, (void)def; return 0; }
 
-// The state file next to the executable: here the scenario's folder.
 static char exe_dir[MAX_PATH];
-static int state_readonly;   // the state file cannot be written
-static int state_unreadable;   // the state file is there but does not read (another program holds it)
-static int no_exe_path;      // the executable's path is unknown: no state file at all
+static int state_readonly;
+static int state_unreadable;
+static int no_exe_path;
 int plat_exe_path(char *out, size_t cap) {
     int k = snprintf(out, cap, "%s\\ocarina.exe", exe_dir);
     return !no_exe_path && k > 0 && (size_t)k < cap;
@@ -313,7 +294,7 @@ int plat_file_exists(const char *path) {
 }
 uint32_t plat_thread_id(void) { return GetCurrentThreadId(); }
 static char state_text[4096];
-static const char *state(void) {   // the state file as it is now; "" when there is none
+static const char *state(void) {
     char path[MAX_PATH + 32];
     snprintf(path, sizeof path, "%s\\rtss-profile.txt", exe_dir);
     uint64_t n = 0;
@@ -326,7 +307,7 @@ static int state_has(const char *line) { return strstr(state(), line) != NULL; }
 
 static DWORD worker_tid;
 static HANDLE tick, done, at_lock, go;
-static volatile LONG pause_at_lock;   // the worker's next plat_mutex_lock stops before it takes the lock
+static volatile LONG pause_at_lock;
 
 void plat_mutex_lock(PlatMutex *m) {
     if (GetCurrentThreadId() == worker_tid && InterlockedExchange(&pause_at_lock, 0)) {
@@ -341,7 +322,7 @@ int plat_mutex_trylock(PlatMutex *m) { return TryAcquireSRWLockExclusive((PSRWLO
 static PlatThreadFn worker_fn;
 static HANDLE worker_thread;
 static volatile LONG spawned;
-static volatile LONG free_run;   // the worker polls without waiting
+static volatile LONG free_run;
 static volatile LONG64 polls;
 static DWORD WINAPI worker_main(void *arg) {
     worker_tid = GetCurrentThreadId();
@@ -362,11 +343,10 @@ void plat_sleep_ms(uint32_t ms) {
     }
     InterlockedIncrement64(&polls);
     if (free_run) return;
-    SetEvent(done);                      // a poll ended
-    WaitForSingleObject(tick, INFINITE);   // the next one starts when the scenario says
+    SetEvent(done);
+    WaitForSingleObject(tick, INFINITE);
 }
 
-// The fake profile kept across the processes of a kill scenario.
 static void prof_save(void) {
     char path[MAX_PATH + 16];
     snprintf(path, sizeof path, "%s\\own.bin", exe_dir);
@@ -383,22 +363,21 @@ static void prof_load(void) {
     }
 }
 
-// ---- the scenarios' steps
 static int wait_done(void) { return WaitForSingleObject(done, 5000) == WAIT_OBJECT_0; }
-static void poll(void) {   // one more poll of the worker, waited for
+static void poll(void) {
     time_passes();
     SetEvent(tick);
     CHECK(wait_done(), "the worker did not finish a poll");
 }
-static void ask(int64_t mhz) {   // a want at a present; the first one that starts the worker waits for its first poll
+static void ask(int64_t mhz) {
     int was = spawned;
     rtss_limit_want(mhz);
     if (spawned && !was) {
-        HANDLE h[2] = {done, worker_thread};   // or for its end, when it finds no RTSS
+        HANDLE h[2] = {done, worker_thread};
         CHECK(WaitForMultipleObjects(2, h, FALSE, 5000) != WAIT_TIMEOUT, "the worker did not finish its first poll");
     }
 }
-static void settle(int64_t mhz) {   // a new want, then the polls it takes to reach the profile (RTSS_SETTLE_POLLS)
+static void settle(int64_t mhz) {
     ask(mhz);
     poll();
     poll();
@@ -409,8 +388,6 @@ static void show(const char *what) {
            deletes, updates, loads);
 }
 
-// The exit puts the profile back (rtss_limit_restore) and the game presents on until the process ends: a want after it
-// never reaches the profile, and the pacer paces again.
 static void restore_race(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
@@ -421,7 +398,7 @@ static void restore_race(void) {
     show("after rtss_limit_restore");
     CHECK(!own.exists, "the profile the game created is gone after the restore");
     CHECK(!rtss_limit_active() && !rtss_limit_state(), "the game's limiter paces once the profile is back");
-    ask(60000);   // frame_step_cap_ns at a present after the restore
+    ask(60000);
     poll();
     poll();
     show("two polls later");
@@ -430,7 +407,6 @@ static void restore_race(void) {
     CHECK(!rtss_limit_active() && !rtss_limit_state(), "the game's limiter paces until the end");
 }
 
-// The same with the player's own profile: it keeps the player's limit.
 static void restore_player(void) {
     own = (Prof){1, 30, 1, 0, 0, 0, 0, 0, 0, 0, 1};
     app_set(1, 0xA, 1000, 2000, 60);
@@ -445,7 +421,6 @@ static void restore_player(void) {
     CHECK(own.exists && own.limit == 30 && own.denom == 1, "the profile keeps the player's limit");
 }
 
-// A want the worker read before the restore and takes the lock with after it: it must not reach the profile.
 static void restore_inflight(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
@@ -454,7 +429,7 @@ static void restore_inflight(void) {
     rtss_limit_want(144000);
     SetEvent(tick);
     CHECK(WaitForSingleObject(at_lock, 5000) == WAIT_OBJECT_0, "the worker did not reach its lock");
-    rtss_limit_restore();   // the worker read 144000 and waits for the lock
+    rtss_limit_restore();
     SetEvent(go);
     CHECK(wait_done(), "the worker did not finish the poll");
     show("the poll that read its want before the restore");
@@ -462,7 +437,6 @@ static void restore_inflight(void) {
     CHECK(created == 1, "the profile was created %ld times", created);
 }
 
-// An exit before the first want, and one while RTSS was kept out: a want after it does not reach the profile.
 static void restore_first(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     rtss_limit_restore();
@@ -483,8 +457,6 @@ static void restore_kept_out(void) {
     CHECK(!rtss_limit_active(), "the game's limiter paces");
 }
 
-// NX2SARIA_RTSS=0 with a limit set in RTSS's Global profile: the worker only reads, never loads the hooks library, and
-// tells of the two limiters until the player clears that limit.
 static void kept_two(void) {
     global.limit = 50;
     app_set(1, 0xA, 1000, 2000, 50);
@@ -505,8 +477,6 @@ static void kept_two(void) {
     CHECK(logged("RivaTuner Statistics Server no longer limits the game beside the game's limiter"), "logged once it ended");
 }
 
-// Low latency keeps RTSS out from the first present, with scanline sync set in the game's own profile (a negative line
-// counts from the bottom); once low latency is off, a limit starts RTSS's part as usual.
 static void kept_lowlat_then_limit(void) {
     own = (Prof){1, 0, 1, 0, 0, -40, 0, 0, 0, 0, 1};
     app_set(0, 0xA, 1000, 2000, 60);
@@ -529,7 +499,6 @@ static void kept_lowlat_then_limit(void) {
     CHECK(rtss_limit_state() == 1 && rtss_limit_active(), "RTSS limits the game from the next poll");
 }
 
-// Frame generation keeps RTSS out, with no limit of RTSS's own: one limiter, and the line names frame generation.
 static void kept_framegen(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(RTSS_OUT_FRAMEGEN);
@@ -540,11 +509,8 @@ static void kept_framegen(void) {
     CHECK(!loads && !saves, "kept out, the hooks library is never loaded");
 }
 
-// Frame generation switched on while the worker polls without pause: from the switch until the worker sees it, the
-// game's limiter paces, never RTSS's hold of the limit before (the worker's store for a want that changed after it
-// read it must not count for the new one).
 static void active_race(void) {
-    no_exe_path = 1;   // 400000 writes and removals of the state file would take minutes
+    no_exe_path = 1;
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
     poll();
@@ -571,9 +537,6 @@ static void active_race(void) {
     CHECK(!hits, "the game's limiter stood aside for a kept-out want %ld times", hits);
 }
 
-// Frame generation switched on while the worker writes the first limit: RTSS holds that limit, but the game's limiter
-// paces the kept-out want, so the log must not say RTSS does the limiting; the next poll logs the kept-out line. A
-// later limit is held and logged as usual.
 static void framegen_on(void) { rtss_limit_want(RTSS_OUT_FRAMEGEN); }
 static void active_logged(void) {
     app_set(1, 0xA, 1000, 2000, 60);
@@ -596,9 +559,6 @@ static void active_logged(void) {
     CHECK(rtss_limit_active() && logged("does the limiting; the game's own limiter stands aside"), "held and logged");
 }
 
-// A limit of a fractional monitor (display at 59.94 and 143.856 Hz): an RTSS that knows the denominator holds it as it
-// is, one that does not holds it rounded down to whole frames, never above the refresh, and the log says what the
-// profile holds, not what was asked.
 static void round_logged(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(59940);
@@ -622,7 +582,6 @@ static void round_logged_whole(void) {
     CHECK(logged("profile ocarina.exe limits to 60.000 fps\n"), "a whole limit as it is");
 }
 
-// The first want comes at a present: the worker, not the present, reads RTSS's registry key and looks for its files.
 static void start_off_present(void) {
     present_tid = GetCurrentThreadId();
     app_set(1, 0xA, 1000, 2000, 60);
@@ -634,7 +593,6 @@ static void start_off_present(void) {
     CHECK(!present_calls, "the presenting thread made %ld registry or file calls", present_calls);
 }
 
-// No RTSS: the worker says so and ends, the game's limiter paces, and the exit has nothing to put back.
 static void not_installed(void) {
     installed = 0;
     ask(60000);
@@ -646,8 +604,6 @@ static void not_installed(void) {
     CHECK(!loads && !saves && !own.exists, "nothing loaded or written");
 }
 
-// While RTSS lists the game, its settings for the game are logged once per change: Global's before the game has a
-// profile of its own, then the game's own with the limit it wrote, frame time limit, scanline sync and the modes.
 static int count(const char *text) {
     int n = 0;
     for (const char *p = logged_lines; (p = strstr(p, text)); p++) n++;
@@ -673,9 +629,6 @@ static void settings_logged(void) {
     CHECK(count("settings for the game") == 2, "once per change (%d)", count("settings for the game"));
 }
 
-// The decisions as they stand, pinned against the real worker (rtss_limit_check.c pins the same in rtss_decide.h).
-
-// Profiles under Program Files without administrator rights: the save does not stick, and RTSS is out for the run.
 static void readonly_run(void) {
     readonly = 1;
     app_set(1, 0xA, 1000, 2000, 60);
@@ -690,8 +643,6 @@ static void readonly_run(void) {
     CHECK(logged("RivaTuner Statistics Server's profile cannot be changed"), "logged");
 }
 
-// The same with a limit set in RTSS's Global profile: RTSS, out of the game's limit for the run, still holds the game
-// by its own setting, and the log tells of the two limiters; the menu keeps its administrator note.
 static void readonly_two(void) {
     readonly = 1;
     global.limit = 50;
@@ -716,7 +667,6 @@ static void readonly_two(void) {
     CHECK(rtss_limit_state() == 2, "the administrator note again");
 }
 
-// RTSS's hooks library does not load, with a limit set in RTSS's Global profile: the log tells of the two limiters.
 static void library_two(void) {
     no_library = 1;
     global.limit = 50;
@@ -730,8 +680,6 @@ static void library_two(void) {
           "the two-limiter line");
 }
 
-// RTSS refuses a limit out of its range: the game keeps that one, the earlier limit of this run is cleared to none,
-// and a limit in range goes to RTSS again at once.
 static void refused_run(void) {
     refuse_over = 200;
     app_set(1, 0xA, 1000, 2000, 60);
@@ -758,8 +706,6 @@ static void refused_run(void) {
     CHECK(!rtss_limit_active() && own.limit == 144, "240 stays with the game");
 }
 
-// RTSS lists the game but lets it run well over the limit: three fresh periods in a row over 1.05 times the limit, each
-// after a poll that stood aside, put the profile back and the game limits for the run.
 static void over_run(void) {
     app_set(1, 0xA, 1000, 2000, 144);
     ask(60000);
@@ -773,8 +719,6 @@ static void over_run(void) {
     settle(30000);
     CHECK(saves == 1 && rtss_limit_state() == 3, "out for the run");
 }
-// 1.05 times the limit is not caught; a period RTSS no longer moves (the limit lowered, then the window minimised)
-// counts neither way, and the game's limiter holds meanwhile; 1.15 times the limit is caught.
 static void over_slack_run(void) {
     app_set(1, 0xA, 1000, 2000, 63);
     ask(60000);
@@ -794,8 +738,6 @@ static void over_slack_run(void) {
     CHECK(rtss_limit_state() == 3, "1.15 times the limit is caught");
 }
 
-// RTSS lists the game before it has seen a Vulkan present, and asks the game to read its profile again after each
-// write: the game's limiter holds until both are done.
 static void api_run(void) {
     app_set(1, 0, 1000, 2000, 60);
     ask(60000);
@@ -814,9 +756,6 @@ static void api_run(void) {
     CHECK(rtss_limit_active() && saves == 1, "RTSS limits, no second write");
 }
 
-// RTSS lists the game with the limit and pictures go out, but it never reads the profile again (its update flag stays
-// set): after 30 s the profile goes back, the menu says RTSS does not limit the game, and the game's limiter holds for
-// the run.
 static void unproven_run(void) {
     app_set(1, 0xA | 0x10000000u, 1000, 2000, 60);
     ask(60000);
@@ -836,8 +775,6 @@ static void unproven_run(void) {
     CHECK(saves == 1 && !own.exists && rtss_limit_state() == 3, "out for the run");
 }
 
-// No picture goes out (a minimised window): RTSS has nothing to hold, and the game's limiter holds until pictures go
-// out again; the profile stays as it is.
 static void idle_run(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
@@ -862,7 +799,6 @@ static void over_unlimited_run(void) {
     CHECK(rtss_limit_active() && rtss_limit_state() == 0, "no limit, nothing to check");
 }
 
-// RTSS quits while it limits and comes back: the profile stays for its return, no write either way.
 static void quit_run(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
@@ -877,7 +813,6 @@ static void quit_run(void) {
     CHECK(rtss_limit_active() && saves == 1, "RTSS limits again with no new write");
 }
 
-// RTSS's hooks library does not load: the game limits for the run.
 static void library_run(void) {
     no_library = 1;
     app_set(1, 0xA, 1000, 2000, 60);
@@ -890,10 +825,6 @@ static void library_run(void) {
     CHECK(logged("RivaTuner Statistics Server's hooks library did not load"), "logged");
 }
 
-// Low latency switching on and off at every poll (the want flips between a limit and kept out, as at each swapchain
-// rebuild): a want acts on the profile only once it stayed two polls, so the flips write and remove nothing, and the
-// game's limiter holds each kept-out want at once. A want that stays two polls each time does act, and the log numbers
-// each creation and removal so a play-test can count them.
 static void churn_run(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
@@ -922,9 +853,7 @@ static void churn_run(void) {
           "the removed lines are numbered");
 }
 
-// The state file: the run's first write records the profile as it was, each later one the value written, and the exit's
-// restore removes the line and the file with it.
-static char line_at_save[4096];   // the state file as SaveProfile found it (keep_line)
+static char line_at_save[4096];
 static void keep_line(void) { snprintf(line_at_save, sizeof line_at_save, "%s", state()); }
 static void state_record(void) {
     app_set(1, 0xA, 1000, 2000, 60);
@@ -949,7 +878,7 @@ static void state_player(void) {
     ask(60000);
     poll();
     CHECK(own.limit == 60 && state_has("\nrtss1 1 30 1 60 1 60 1 ocarina.exe\n"), "recorded:\n%s", state());
-    settle(RTSS_OUT_LOWLAT);   // kept out: put back during the run, and the line goes with it
+    settle(RTSS_OUT_LOWLAT);
     CHECK(own.limit == 30 && !*state(), "put back, no line:\n%s", state());
     settle(60000);
     CHECK(own.limit == 60 && state_has("\nrtss1 1 30 1 60 1 60 1 ocarina.exe\n"), "recorded again:\n%s", state());
@@ -957,8 +886,6 @@ static void state_player(void) {
     CHECK(own.exists && own.limit == 30 && !*state(), "the player's 30 back, no line");
 }
 
-// The state file cannot be written: the run goes on as before it, with a line in the log, and a crash puts the profile
-// back as an orderly exit does.
 static void state_unwritable(void) {
     state_readonly = 1;
     app_set(1, 0xA, 1000, 2000, 60);
@@ -975,9 +902,6 @@ static void state_unwritable(void) {
     CHECK(!own.exists && !rtss_limit_active(), "the crash put the profile back");
 }
 
-// A put back during the run that does not land (the profile went read-only): the line and the values found at the
-// run's first write stay. A later limit is the run's first write again and keeps the player's 30 to put back, not the
-// game's 60 the profile still holds, and the exit puts 30 back.
 static void put_back_owed(void) {
     own = (Prof){1, 30, 1, 0, 0, 0, 0, 0, 0, 0, 1};
     app_set(1, 0xA, 1000, 2000, 60);
@@ -999,8 +923,6 @@ static void put_back_owed(void) {
     CHECK(own.exists && own.limit == 30 && !*state(), "the exit puts the player's 30 back:\n%s", state());
 }
 
-// The same where the run made the profile: a removal that does not land is no removal; the line stays, and the exit
-// removes the profile.
 static void put_back_undeleted(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
@@ -1017,8 +939,6 @@ static void put_back_undeleted(void) {
     CHECK(!own.exists && removed == 1 && !*state(), "the exit removes it:\n%s", state());
 }
 
-// The state file is there with another executable's line but does not read: it is left as it is, with that line, and
-// the run goes on as with a file that cannot be written.
 static void state_locked(void) {
     char path[MAX_PATH + 32];
     snprintf(path, sizeof path, "%s\\rtss-profile.txt", exe_dir);
@@ -1038,9 +958,6 @@ static void state_locked(void) {
     CHECK(!own.exists && !strcmp(state(), "rtss1 0 0 1 60 1 60 1 ocarina_dev.exe\n"), "still as it was:\n%s", state());
 }
 
-// A crash on RTSS's own thread, inside SaveProfile with the lock held, in a run whose state file could not be written:
-// rtss_limit_crash closes the run and returns at once, with no call into RTSS's library and no wait for the lock that
-// thread holds (rtss_limit_restore would try it for a second); nothing after it reaches the profile.
 static ULONGLONG crash_ms;
 static LONG crash_calls = -1;
 static void crash_on_worker(void) {
@@ -1067,8 +984,6 @@ static void crash_worker_thread(void) {
     CHECK(saves == s0, "nothing after the crash reaches the profile");
 }
 
-// A crash with the line in the state file: no call into RTSS's library, the profile and the line stay for the next
-// start, and nothing after it reaches the profile.
 static void crash_recorded(void) {
     app_set(1, 0xA, 1000, 2000, 60);
     ask(60000);
@@ -1085,14 +1000,6 @@ static void crash_recorded(void) {
     CHECK(saves == s0 && own.limit == 60, "a want after it changes nothing");
 }
 
-// A run killed while RTSS held its limit (kill_first), and the next start (kill_next): the profile as before the killed
-// run, then the next run's own limit, and back again at its close. variant 1: the player had a profile with 30/1;
-// variant 2: the player set 75 in RTSS between the two runs; variant 3: the next start has frame generation on, which
-// keeps RTSS out, and still puts the profile back (the hooks library loaded for that alone) with no write of its own;
-// variant 4: the next start has NX2SARIA_RTSS=0, which keeps the thread read-only: the log says what the file holds,
-// and the profile and the line stay for a start with RTSS let in; variant 5: the run is killed inside the save of its
-// second limit, after the line took 144 and before the profile did: the next start finds the 60 before it and removes
-// the profile.
 static int variant;
 static void kill_in_save(void) {
     CHECK(state_has("\nrtss1 0 0 1 144 1 60 1 ocarina.exe\n") && own.limit == 60, "the line before the profile:\n%s",
@@ -1109,12 +1016,12 @@ static void kill_first(void) {
     CHECK(own.exists && own.limit == 60 && state_has(variant == 1 ? "\nrtss1 1 30 1 60 1 60 1 ocarina.exe\n"
                                                                   : "\nrtss1 0 0 1 60 1 60 1 ocarina.exe\n"),
           "recorded:\n%s", state());
-    if (variant == 5) {   // killed inside the save of 144: the line has 144, the profile still 60
+    if (variant == 5) {
         during_save = kill_in_save;
         settle(144000);
         CHECK(0, "the run went on past the kill");
     }
-    prof_save();   // killed: no restore
+    prof_save();
 }
 static void kill_next(void) {
     prof_load();
@@ -1206,8 +1113,6 @@ static void kill_restart_framegen(void) { kill_restart_as(3); }
 static void kill_restart_setting(void) { kill_restart_as(4); }
 static void kill_restart_mid_write(void) { kill_restart_as(5); }
 
-// A movie at 60 under a limit of 144: the want stays 144 (frame_rate.c frame_step_cap_ns) and RTSS's profile keeps it
-// with no write, while the game's pacer holds the movie at its rate; RTSS holds the game again at its end.
 static void movie_run(void) {
     app_set(1, 0xA, 1000, 2000, 144);
     ask(144000);
@@ -1225,8 +1130,6 @@ static void movie_run(void) {
     CHECK(own.limit == 144 && rtss_limit_active() && saves == s0, "RTSS holds again, no write for the movie");
 }
 
-// The same under a limit of 40: the profile has no limit while the movie plays, so RTSS cannot space out the frames the
-// pacer sends at once after a late one, and gets 40 back at its end.
 static void movie_low_run(void) {
     app_set(1, 0xA, 1000, 2000, 40);
     ask(40000);
@@ -1299,7 +1202,7 @@ int main(int argc, char **argv) {
         for (size_t i = 0; i < sizeof scenarios / sizeof *scenarios; i++) printf("%s\n", scenarios[i].name);
         return 0;
     }
-    if (argc == 5 && !strcmp(argv[1], "--phase")) {   // a process of a kill scenario, in that scenario's folder
+    if (argc == 5 && !strcmp(argv[1], "--phase")) {
         variant = atoi(argv[3]);
         snprintf(exe_dir, sizeof exe_dir, "%s", argv[4]);
         printf(" phase %s\n", argv[2]);
@@ -1311,7 +1214,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; argc == 2 && i < sizeof scenarios / sizeof *scenarios; i++) {
         if (strcmp(argv[1], scenarios[i].name)) continue;
         printf("scenario %s\n", argv[1]);
-        char exe[MAX_PATH], *cut;   // the scenario's folder, emptied: rtss_state\<scenario> beside this program
+        char exe[MAX_PATH], *cut;
         GetModuleFileNameA(NULL, exe, sizeof exe);
         if ((cut = strrchr(exe, '\\'))) *cut = 0;
         snprintf(exe_dir, sizeof exe_dir, "%s\\rtss_state", exe);

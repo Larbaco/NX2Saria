@@ -1,11 +1,3 @@
-// A pool of persistent threads that runs one job at a time (par_jobs.h). The threads sleep on a condition variable
-// between jobs and cost nothing while the game does not use them. A job is n pieces claimed one by one from an atomic
-// counter by the caller and the workers alike, so a slow piece or a busy core evens out. One caller at a time: the
-// pool's busy lock is only tried, never waited for, so a second caller (or a piece that calls par_run) runs alone
-// rather than waiting, and no caller can wait for a pool that waits for it.
-//
-// Size: the usable hardware threads less two (the drawing thread and the game's main thread), at most PAR_MAX_THREADS
-// in all, the caller counted. NX2SARIA_PAR_JOBS=0 runs every job on its caller (cfg.c).
 #include <string.h>
 
 #include "cfg.h"
@@ -14,22 +6,22 @@
 #include "platform/platform.h"
 
 #define PAR_MAX_THREADS 8
-#define PAR_MEMCPY_MIN (1u << 20)   // below this, waking the pool costs about what the copy does
+#define PAR_MEMCPY_MIN (1u << 20)
 #define PAR_MEMCPY_PIECE (256u << 10)
 
 static struct {
     PlatOnce once;
-    PlatMutex busy;                   // held by the caller for its whole job
+    PlatMutex busy;
     PlatMutex lock;
     PlatCond work, done;
-    int threads;                      // workers, the caller not counted
+    int threads;
     int off;
-    uint64_t gen;                     // bumped per job; a worker takes part in each job once
-    int active;                       // workers that have not finished the current job
-    void (*fn)(void *arg, int i);     // the current job (written under lock before gen is bumped)
+    uint64_t gen;
+    int active;
+    void (*fn)(void *arg, int i);
     void *arg;
     int n;
-    volatile int32_t next;            // the first piece not yet claimed
+    volatile int32_t next;
 } J = {PLAT_ONCE_INIT, .lock = PLAT_MUTEX_INIT, .work = PLAT_COND_INIT, .done = PLAT_COND_INIT};
 
 static void claim(void) {

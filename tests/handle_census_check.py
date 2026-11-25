@@ -1,10 +1,4 @@
 # needs: windows, clang
-"""Build and run tests/handle_census_check.c: the census of the process's handles by kind (runtime/platform/win32.c
-plat_handle_census) sees 20 events and 5 sections made and closed, and its total agrees with the process's handle
-count. Windows only (elsewhere the program says it skipped). No game files, no GPU.
-
-Usage: handle_census_check.py
-"""
 import os
 import shutil
 import subprocess

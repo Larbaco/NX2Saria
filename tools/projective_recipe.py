@@ -1,20 +1,18 @@
-"""Opt-in source recipe for locally held modules; this file contains no game shader.
-
-Only the identified input hashes are accepted. Generated SPIR-V is private build
-output and must not be attached to an issue or committed to the repository.
-The recipe implements the tested coordinate representation, not its recorder.
-"""
 from pathlib import Path
 import argparse
 import json
 import struct
 
-# Known translator outputs: (vertex, fragment, descriptor-set-1 fragment).
+DESCRIPTION = """Opt-in source recipe for locally held modules; this file contains no game shader.
+
+Only the identified input hashes are accepted. Generated SPIR-V is private build
+output and must not be attached to an issue or committed to the repository.
+The recipe implements the tested coordinate representation, not its recorder.
+"""
 PAIRS = {
     'AMD': (0xF6D753852C47B0DE, 0xA39C3D09241441FA, 0x3D3A316AB4DA3BBA),
     'NVIDIA': (0x8D83E3705D790FED, 0x3C20CB98DBAEB257, 0x216BD323C6B48EE2),
 }
-# Exact material profiles: (original, descriptor-set-1 form, distance pointer/value).
 ABSORPTION = {
     'AMD': (0xE73DFC0F4C556DF8, 0xABFCCEA256824A78, 1965, 8490),
     'NVIDIA': (0x061318799D885BCF, 0xB3CEC6D0D78AC25A, 1969, 8826),
@@ -150,7 +148,6 @@ def fragment(data):
         raise ValueError('Expected GLSL extended instructions')
     local_pointer = mod.type(32, 7, vec)
     local = mod.new()
-    # Redirect only original accesses. The raw input load added below must remain an input load.
     count = 0
     for op, args in mod.ops:
         if op in (65, 66) and args[2] == varying:
@@ -240,8 +237,6 @@ def absorption(data):
         raise ValueError('Expected one GLSL extended-instruction import')
     zero = mod.constant(scalar, 0)
     guarded = mod.new()
-    # NMax(distance, 0): negative optical distance must not amplify attenuation.
-    # This targets the distance expression, never a red color or other material.
     mod.ops[stores[0]:stores[0] + 1] = [
         (12, [scalar, guarded, imports[0], 80, distance, zero]),
         (62, [pointer, guarded]),
@@ -251,7 +246,7 @@ def absorption(data):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument('--vertex', required=True, type=Path)
     parser.add_argument('--fragment', required=True, type=Path)
     parser.add_argument('--material', type=Path, help='Optional exact absorption material')

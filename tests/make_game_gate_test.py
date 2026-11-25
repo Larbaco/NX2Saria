@@ -1,15 +1,3 @@
-"""tools/make_game.py's compiles through the memory gate (tools/memgate.py):
-- compile_all starts the compiles in the order of their cost (a lifted chunk's from the lift's manifest, another
-  source's size), or of the seconds an earlier build measured, and the gate admits them in that order;
-- each successful compile's measured peak and time go into the estimates, which are saved, and a compile the gate held
-  for memory shows in its summary;
-- the lines the build prints about the gate;
-- chunk_costs reads "cost" and "switch_fn" from a module's manifest.json, "bytes" from an older one, and a file's size
-  when the manifest does not list it.
-No network, no game files; the compiler is a stand-in script.
-
-Run: python tests/make_game_gate_test.py
-"""
 import argparse
 import collections
 import contextlib
@@ -34,8 +22,6 @@ MIB = 1 << 20
 
 
 class RecordingGate(memgate.Gate):
-    """The gate, keeping the order in which compiles asked for it."""
-
     def __init__(self, *args, **kw):
         super().__init__(*args, **kw)
         self.asked = []
@@ -55,7 +41,6 @@ class CompileAllGateTest(unittest.TestCase):
         self.src.mkdir()
         self.obj.mkdir()
         self.cc = self.tmp / 'fakecc'
-        # writes the object and its dependency file after a short wait, so that compiles overlap
         self.cc.write_text(f'#!{sys.executable}\nimport sys, time\nargs = sys.argv[1:]\n'
                            'dep, out, s = args[args.index("-MF") + 1], args[args.index("-o") + 1], args[-1]\n'
                            'time.sleep(0.3)\n'
@@ -79,12 +64,10 @@ class CompileAllGateTest(unittest.TestCase):
                               plan=plan)
 
     def test_admits_in_cost_order_records_and_saves_the_peaks(self):
-        # big.c is the largest file but the cheapest chunk; rt.c is not lifted: its size is its cost
         srcs = self.sources([('big.c', 9000), ('dear.c', 100), ('mid.c', 2000), ('rt.c', 5000)])
         costs = {self.src / 'big.c': (1000, 0), self.src / 'dear.c': (50_000, 4000), self.src / 'mid.c': (3000, 0)}
         flip = threading.Event()
         held_log = []
-        # no free memory until flip: the first compile starts (min_jobs), the next is held for memory
         gate = RecordingGate(4, min_jobs=1, reserve=0, avail=lambda: 64 * GIB if flip.is_set() else 0,
                              poll=0.02, log=held_log.append)
         timer = threading.Timer(0.15, flip.set)
@@ -106,7 +89,7 @@ class CompileAllGateTest(unittest.TestCase):
             self.assertGreater(e['peak'], 0, name)
             self.assertGreater(e['seconds'], 0.2, name)
         self.assertEqual((saved['dear.o']['cost'], saved['dear.o']['switch_fn']), (50_000, 4000))
-        self.assertEqual(saved['rt.o']['cost'], 0)   # not a lifted chunk: kept out of the size model's scale
+        self.assertEqual(saved['rt.o']['cost'], 0)
         self.assertEqual(saved['rt.o']['src_bytes'], (self.src / 'rt.c').stat().st_size)
         self.assertEqual(sorted(m[0] for m in measured), ['big.o', 'dear.o', 'mid.o', 'rt.o'])
 
@@ -124,8 +107,6 @@ class CompileAllGateTest(unittest.TestCase):
         costs = {p: (c, 0) for (p, _), c in zip(srcs, (4000, 3000, 2000, 1000))}
         estimates = memgate.Estimates(self.obj / 'compile-memory.json')
         size = (self.src / 'a.c').stat().st_size
-        # measured last time: b.o 1 s, c.o 2 s, d.o 10 s; their median rate (c.o's, 1 s per 1000 bytes of cost) puts
-        # a.o, not built before, at 4 s
         for name, seconds, cost in (('b.o', 1.0, 3000), ('c.o', 2.0, 2000), ('d.o', 10.0, 1000)):
             estimates.record(name, 200 * MIB, seconds, size, cost)
         gate = RecordingGate(1, enabled=False)
@@ -138,7 +119,6 @@ class CompileAllGateTest(unittest.TestCase):
     def test_stop_ends_the_compiles_held_for_memory(self):
         srcs = self.sources([('a.c', 300), ('b.c', 200), ('c.c', 100)])
         stopped = threading.Event()
-        # b.o waits for memory that never comes; the stop ends its wait at once, and neither it nor c.o compiles
         gate = RecordingGate(3, min_jobs=1, reserve=0, avail=lambda: 0, poll=0.02, log=lambda line: None)
         timer = threading.Timer(0.1, stopped.set)
         timer.start()
@@ -160,18 +140,18 @@ class CompileAllGateTest(unittest.TestCase):
         srcs = self.sources([('a.c', 300), ('b.c', 200)])
         estimates = memgate.Estimates(self.obj / 'compile-memory.json')
         for src, dst in srcs:
-            estimates.record(dst.name, 64 * GIB, 1.0, src.stat().st_size, 0)   # far above any real peak
+            estimates.record(dst.name, 64 * GIB, 1.0, src.stat().st_size, 0)
         gate = RecordingGate(1, reserve=GIB, poll=0.02, log=lambda line: None)
 
-        def avail():   # below the 1 GiB reserve while a.o compiles, plenty while b.o does
+        def avail():
             return 0 if any(lease.name == 'a.o' for lease in list(gate._running)) else 64 * GIB
         gate._avail = avail
         try:
             self.assertEqual(self.go(srcs, gate, estimates, {})[2], [])
         finally:
             gate.close()
-        self.assertEqual(estimates.objects['a.o']['peak'], 64 * GIB)    # pressed: the higher record stays
-        self.assertLess(estimates.objects['b.o']['peak'], 64 * GIB)     # not pressed: the measured peak
+        self.assertEqual(estimates.objects['a.o']['peak'], 64 * GIB)
+        self.assertLess(estimates.objects['b.o']['peak'], 64 * GIB)
 
 
 class OrderTest(unittest.TestCase):
@@ -224,8 +204,8 @@ class LinesTest(unittest.TestCase):
         est = memgate.Estimates()
         est.need('a.o', 1000, 1000)
         est.need('b.o', 1000, 1000)
-        est.record('a.o', est._estimated['a.o'][1] // 2, 3.0, 1000, 1000)   # half the estimate
-        est.record('b.o', est._estimated['b.o'][1] * 2, 70.0, 1000, 1000)   # twice it
+        est.record('a.o', est._estimated['a.o'][1] // 2, 3.0, 1000, 1000)
+        est.record('b.o', est._estimated['b.o'][1] * 2, 70.0, 1000, 1000)
         lines = mg.compile_memory_lines(gate, est, [('a.o', GIB // 2, 3.0), ('b.o', int(0.92 * GIB), 78.4)])
         self.assertEqual(lines[2], 'compile memory: peak 5.5 GiB for all compiles together (at 42 s), least free '
                                    'memory 1.2 GiB')
@@ -246,7 +226,7 @@ class ChunkCostsTest(unittest.TestCase):
                 p.write_bytes(b'x' * size)
             (main / 'manifest.json').write_text(json.dumps({'chunk_info': [
                 {'file': 'main_0000.c', 'bytes': 500, 'cost': 9000, 'switch_fn': 300},
-                {'file': 'main_0001.c', 'bytes': 650}]}))   # a manifest from before cost
+                {'file': 'main_0001.c', 'bytes': 650}]}))
             costs = mg.chunk_costs(lift)
         self.assertEqual(costs, {main / 'main_0000.c': (9000, 300), main / 'main_0001.c': (650, 0),
                                  main / 'main_table.c': (700, 0), sdk / 'sdk_0000.c': (800, 0)})
@@ -263,12 +243,11 @@ class LifterEnvTest(unittest.TestCase):
             return mg.lifter_env()
 
     def test_the_gate_options_reach_the_lift(self):
-        """gen.py keeps the compiles' reserve and follows --no-mem-gate (recomp/gen.py lift_gate)."""
         e = self.env(['--mem-reserve', '2.5'])
         self.assertEqual(e[memgate.ENV_RESERVE], '2.5')
         self.assertNotIn(memgate.ENV_GATE, e)
         self.assertEqual(self.env(['--no-mem-gate'])[memgate.ENV_GATE], 'off')
-        e = self.env([], {memgate.ENV_RESERVE: '4'})   # without options the environment passes as it is
+        e = self.env([], {memgate.ENV_RESERVE: '4'})
         self.assertEqual(e[memgate.ENV_RESERVE], '4')
         self.assertNotIn(memgate.ENV_GATE, e)
         with mock.patch.object(mg, 'GATE_ARGS', None), mock.patch.dict(os.environ):

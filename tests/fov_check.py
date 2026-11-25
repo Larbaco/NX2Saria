@@ -1,5 +1,4 @@
 # needs: py:numpy, py:lz4
-"""Check the 1.1.1 lens patch through the normal lifter and code emitter."""
 import re
 import sys
 from pathlib import Path

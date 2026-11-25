@@ -1,11 +1,8 @@
-// runtime/input/motion_fusion.c on made-up sensor samples, 4 ms apart, with a stand-in for the log. Built and run by
-// tests/motion_fusion_check.py; prints a PASS or FAIL line per case and each failed check, and exits 1 on any.
 #include "motion_fusion.c"
 
 #include <stdarg.h>
 #include <stdio.h>
 
-// ---- the log: printed, and the lines kept for the checks
 enum { MAX_LINES = 512 };
 static char lines[MAX_LINES][LOG_LINE + 32];
 static int nlines;
@@ -26,9 +23,8 @@ void rt_fatal(const char *fmt, ...) {
     printf("\n");
     exit(2);
 }
-const char *cfg_env(const char *name);   // the platform layer's settings: none here
+const char *cfg_env(const char *name);
 const char *cfg_env(const char *name) { (void)name; return NULL; }
-// the lines since index `from` that contain `what`
 static int count_lines(int from, const char *what) {
     int n = 0;
     for (int i = from; i < nlines; i++) n += strstr(lines[i], what) != NULL;
@@ -48,14 +44,13 @@ static void end(const char *what) {
     fails += case_fails != 0;
 }
 
-// ---- the simulated controller: its true orientation T (controller -> world, z up), rotated by the true rate
 #define DEG (M_PI / 180)
 #define STEP_NS 4000000ull
 typedef struct {
     MotionFusion *m;
     uint64_t t;
     double T[3][3];
-    double bias[3], gyro_noise, acc_noise;   // rad/s, rad/s RMS per axis, G RMS per axis
+    double bias[3], gyro_noise, acc_noise;
 } Sim;
 static uint64_t rng = 0x9e3779b97f4a7c15ull;
 static double uniform(void) {
@@ -68,17 +63,16 @@ static void sim_new(Sim *s, const MotionOptions *o) {
     for (int i = 0; i < 3; i++) s->T[i][i] = 1;
     if (o) motion_set_options(s->m, o);
 }
-static void sim_pitch(Sim *s, double deg) {   // the true pose: turned about the controller's x by deg from flat
+static void sim_pitch(Sim *s, double deg) {
     double w[3] = {deg * DEG, 0, 0};
     rotate(s->T, w, 1);
 }
-// n samples turning at the true rate w (rad/s, controller axes); the sensors add the bias and the noise
 static void sim_run(Sim *s, const double w[3], int n) {
     for (int i = 0; i < n; i++) {
         rotate(s->T, w, STEP_NS / 1e9);
         double acc[3], gyro[3];
         for (int j = 0; j < 3; j++) {
-            acc[j] = -s->T[2][j] + s->acc_noise * gauss();   // gravity in controller axes, as an accelerometer reads it
+            acc[j] = -s->T[2][j] + s->acc_noise * gauss();
             gyro[j] = w[j] + s->bias[j] + s->gyro_noise * gauss();
         }
         motion_feed(s->m, acc, gyro, s->t += STEP_NS);
@@ -93,14 +87,12 @@ static MotionState newest(Sim *s) {
 static int near3(const float *v, double x, double y, double z, double tol) {
     return fabs(v[0] - x) < tol && fabs(v[1] - y) < tol && fabs(v[2] - z) < tol;
 }
-// the angle between the reported up (the reference z in controller axes) and the true one, degrees
 static double tilt_error_deg(Sim *s, const MotionState *st) {
     double est[3] = {st->dir[2], st->dir[5], st->dir[8]}, d = dot3(est, s->T[2]) / norm3(est);
     return acos(d > 1 ? 1 : d) / DEG;
 }
-static const MotionOptions RAW = {0, 0, 1, 1};   // no calibration, no dead zone: the sensor's own rate
+static const MotionOptions RAW = {0, 0, 1, 1};
 
-// 1. lying still with a bias and a little noise: learned, then the reported rate is none and the angle stops
 static void case_still_bias(void) {
     begin("1 still with a bias");
     int from = nlines;
@@ -110,7 +102,7 @@ static void case_still_bias(void) {
     memcpy(s.bias, b, sizeof b);
     s.gyro_noise = 0.05 * DEG, s.acc_noise = 0.002;
     int first_still = -1, learned_at = -1;
-    for (int i = 0; i < 1250; i++) {   // 5 s
+    for (int i = 0; i < 1250; i++) {
         sim_run(&s, zero3, 1);
         if (first_still < 0 && s.m->still_ms > 0) first_still = i;
         int ok = 1;
@@ -136,8 +128,6 @@ static void case_still_bias(void) {
     end("1 still with a bias: learned, reported rate 0, angle stops, one log line");
 }
 
-// 2. no calibration: the bias goes through without a dead zone; each dead zone level zeroes a rate just under it and
-// passes one just over it unchanged
 static void case_deadzone(void) {
     begin("2 calibration off and the dead zone levels");
     Sim s;
@@ -170,7 +160,6 @@ static void case_deadzone(void) {
     end("2 the bias passes with calibration off and no dead zone; each level holds just under and passes just over");
 }
 
-// 3. known rotations from lying flat: a quarter turn about up, a quarter pitch and back
 static void case_rotations(void) {
     begin("3 known rotations");
     Sim s;
@@ -201,16 +190,15 @@ static void case_rotations(void) {
     end("3 quarter turn about up, quarter pitch and back");
 }
 
-// 4. held in the hand: tremor and a slow pan are never still
 static void case_hand_held(void) {
     begin("4 hand tremor");
     int from = nlines;
     Sim s;
     sim_new(&s, NULL);
-    s.gyro_noise = 2 * DEG / sqrt(3), s.acc_noise = 0.01;   // 2 deg/s RMS in all
+    s.gyro_noise = 2 * DEG / sqrt(3), s.acc_noise = 0.01;
     double pan[3] = {0, 0, 3 * DEG};
     int ever_still = 0;
-    for (int i = 0; i < 8750; i++) {   // 35 s
+    for (int i = 0; i < 8750; i++) {
         sim_run(&s, pan, 1);
         ever_still |= s.m->still_ms > 0;
     }
@@ -222,7 +210,6 @@ static void case_hand_held(void) {
     end("4 hand tremor (2 deg/s RMS, with a slow pan) is never still: nothing learned, one hint to set it down");
 }
 
-// 5. re-learning: still with a bias, held, then still with a bias 0.3 deg/s off it
 static void case_relearn(void) {
     begin("5 re-learning");
     int from = nlines;
@@ -231,14 +218,14 @@ static void case_relearn(void) {
     const double A[3] = {0.5 * DEG, -0.4 * DEG, 0.3 * DEG};
     memcpy(s.bias, A, sizeof A);
     s.gyro_noise = 0.05 * DEG, s.acc_noise = 0.002;
-    sim_run(&s, zero3, 750);   // 3 s: still from about 0.8 s, so the period learns for the 1 s that logs it
+    sim_run(&s, zero3, 750);
     double after_a[3];
     memcpy(after_a, s.m->bias, sizeof after_a);
     s.gyro_noise = 2 * DEG / sqrt(3), s.acc_noise = 0.01;
     sim_run(&s, zero3, 500);
     s.gyro_noise = 0.05 * DEG, s.acc_noise = 0.002;
     s.bias[0] += 0.3 * DEG;
-    sim_run(&s, zero3, 1500);   // 6 s: past 2 s learned in all the bias follows with a 3 s time constant
+    sim_run(&s, zero3, 1500);
     printf("  bias after A %+.3f/%+.3f/%+.3f, after B %+.3f/%+.3f/%+.3f deg/s (learned %.0f ms)\n", after_a[0] / DEG,
            after_a[1] / DEG, after_a[2] / DEG, s.m->bias[0] / DEG, s.m->bias[1] / DEG, s.m->bias[2] / DEG,
            s.m->learned_ms);
@@ -251,7 +238,6 @@ static void case_relearn(void) {
     end("5 re-learning: the bias moves to B, a second learned line");
 }
 
-// 6. the bias of each controller comes back with it
 static void case_sources(void) {
     begin("6 source cache");
     int from = nlines;
@@ -287,7 +273,6 @@ static void case_sources(void) {
     snprintf(want, sizeof want, "motion: sensors of \"Pad one\": bias %+.2f/%+.2f/%+.2f deg/s restored (learned %u ms)",
              one[0] / DEG, one[1] / DEG, one[2] / DEG, (unsigned)one_ms);
     CHECK(find_line(mark, want), "no line '%s'", want);
-    // five more sources push the oldest out of the four kept
     for (uint64_t id = 3; id <= 7; id++) motion_source(s.m, id, "Pad more");
     motion_source(s.m, 1, "Pad one");
     CHECK(s.m->learned_ms == 0, "source 1 still cached after five others");
@@ -295,7 +280,6 @@ static void case_sources(void) {
     end("6 source cache: restored, new ones start empty, lines as specified");
 }
 
-// 7. the turn and tilt factors
 static void case_factors(void) {
     begin("7 turn and tilt factors");
     MotionOptions o = {0, 0, 2.0, 1.0};
@@ -332,7 +316,6 @@ static void case_factors(void) {
     st = newest(&v);
     CHECK(fabs(st.gyro[2] + 0.25) < 1e-6 && fabs(st.angle[2] + 0.25) < 0.002 && near3(st.dir, 0, -1, 0, 0.01),
           "turn -1: gyro %.4f, angle %.4f, x axis %.3f %.3f %.3f", st.gyro[2], st.angle[2], st.dir[0], st.dir[1], st.dir[2]);
-    // 1 and 1: the reported rate is the input's and the direction the filter's, bit for bit; back to 1/1 snaps to it
     MotionOptions one = {0, 0, 1.0, 1.0};
     motion_set_options(v.m, &one);
     double wmix[3] = {0.3, -0.7, 1.1};
@@ -349,16 +332,15 @@ static void case_factors(void) {
     end("7 turn 2 doubles the turn and leaves the tilt, tilt 0.5 halves the pitch, turn -1 inverts, 1/1 is exact");
 }
 
-// 8. the integral term: a constant bias about a horizontal axis that is never learned (calibration off), tilted 30 deg
 static double run_tilted(int with_ki) {
     Sim s;
     sim_new(&s, &RAW);
     sim_pitch(&s, 30);
     s.bias[0] = 1 * DEG;
     sim_run(&s, zero3, 1);
-    for (int i = 0; i < 15000; i++) {   // 60 s
+    for (int i = 0; i < 15000; i++) {
         sim_run(&s, zero3, 1);
-        if (!with_ki) memset(s.m->ei, 0, sizeof s.m->ei);   // the proportional term alone
+        if (!with_ki) memset(s.m->ei, 0, sizeof s.m->ei);
     }
     MotionState st = newest(&s);
     return tilt_error_deg(&s, &st);
@@ -372,7 +354,6 @@ static void case_integral(void) {
     end("8 the integral term takes up a bias the gravity can see");
 }
 
-// 9. the aggregate line after 60 s
 static void case_aggregate(void) {
     begin("9 aggregate line");
     int from = nlines;
@@ -402,7 +383,6 @@ static void case_aggregate(void) {
     end("9 one aggregate line after 60 s: raw drift the bias, reported none");
 }
 
-// 10. the quarter turn and restart runtime/hle/ov_probe.c probe_feedback checks
 static void case_probe(void) {
     begin("10 probe quarter turn and restart");
     MotionFusion *m = motion_new();
@@ -428,7 +408,6 @@ static void case_probe(void) {
     end("10 the probe's quarter turn and restart");
 }
 
-// a. larger biases lying still: learned too (the step rule waits until the bias has been learned for 2 s)
 static void case_large_bias(void) {
     begin("a large biases");
     const double sizes[2] = {3, 6};
@@ -438,7 +417,7 @@ static void case_large_bias(void) {
         const double b[3] = {sizes[k] * DEG, -sizes[k] / 2 * DEG, sizes[k] / 3 * DEG};
         memcpy(s.bias, b, sizeof b);
         s.gyro_noise = 0.05 * DEG, s.acc_noise = 0.002;
-        sim_run(&s, zero3, 1250);   // 5 s
+        sim_run(&s, zero3, 1250);
         int ok = 1;
         for (int j = 0; j < 3; j++) ok &= fabs(s.m->bias[j] - b[j]) < 0.05 * DEG;
         printf("  bias %.1f/%.1f/%.1f deg/s: learned %+.3f/%+.3f/%+.3f\n", b[0] / DEG, b[1] / DEG, b[2] / DEG,
@@ -451,9 +430,7 @@ static void case_large_bias(void) {
     end("a 3 and 6 deg/s biases lying still are learned within 0.05 deg/s");
 }
 
-// b. held pitched with a bias about the controller's z long enough for the integral to take part of it up, then set
-// down flat: once the bias is learned, the integral no longer turns the heading of the still controller
-static double heading_deg(const MotionState *st) { return atan2(st->dir[1], st->dir[0]) / DEG; }   // the x axis'
+static double heading_deg(const MotionState *st) { return atan2(st->dir[1], st->dir[0]) / DEG; }
 static void case_held_then_flat(void) {
     begin("b held pitched, then flat");
     Sim s;
@@ -461,15 +438,15 @@ static void case_held_then_flat(void) {
     s.bias[2] = 1 * DEG;
     s.gyro_noise = 2 * DEG / sqrt(3), s.acc_noise = 0.01;
     sim_pitch(&s, 60);
-    sim_run(&s, zero3, 30000);   // 120 s held
+    sim_run(&s, zero3, 30000);
     double ei_held[3];
     memcpy(ei_held, s.m->ei, sizeof ei_held);
     double back[3] = {-30 * DEG, 0, 0};
-    sim_run(&s, back, 500);   // 2 s to flat
+    sim_run(&s, back, 500);
     s.gyro_noise = 0.05 * DEG, s.acc_noise = 0.002;
-    sim_run(&s, zero3, 2500);   // 10 s still
+    sim_run(&s, zero3, 2500);
     MotionState a = newest(&s);
-    sim_run(&s, zero3, 12500);   // 50 s more
+    sim_run(&s, zero3, 12500);
     MotionState b = newest(&s);
     double drift = remainder(heading_deg(&b) - heading_deg(&a), 360);
     printf("  integral after holding %+.3f/%+.3f/%+.3f deg/s, bias learned flat %+.3f/%+.3f/%+.3f deg/s, heading drift "
@@ -480,10 +457,9 @@ static void case_held_then_flat(void) {
     end("b after holding pitched with a z bias, the still flat controller's heading holds");
 }
 
-// c. turn and tilt factors over closed and non-commuting paths: the reported orientation stays tied to the filter's
 static double reported_tilt_deg(const MotionState *st) { return acos(fmin(1, fmax(-1, st->dir[8]))) / DEG; }
 static double true_tilt_deg(const Sim *s) { return acos(fmin(1, fmax(-1, s->T[2][2]))) / DEG; }
-static void loops(Sim *s, int reverse) {   // five loops of 30 deg turns about the controller's x and y
+static void loops(Sim *s, int reverse) {
     double xp[3] = {30 * DEG, 0, 0}, xm[3] = {-30 * DEG, 0, 0}, yp[3] = {0, 30 * DEG, 0}, ym[3] = {0, -30 * DEG, 0};
     for (int k = 0; k < 5; k++) {
         sim_run(s, xp, 250);
@@ -524,7 +500,7 @@ static void case_factor_loops(void) {
     double p30[3] = {30 * DEG, 0, 0};
     sim_run(&y, p30, 250);
     MotionState a = newest(&y);
-    double up_rate[3] = {45 * DEG * y.T[2][0], 45 * DEG * y.T[2][1], 45 * DEG * y.T[2][2]};   // about the world's up
+    double up_rate[3] = {45 * DEG * y.T[2][0], 45 * DEG * y.T[2][1], 45 * DEG * y.T[2][2]};
     sim_run(&y, up_rate, 250);
     MotionState b = newest(&y);
     double turned = remainder(atan2(b.dir[4], b.dir[3]) / DEG - atan2(a.dir[4], a.dir[3]) / DEG, 360);
@@ -535,7 +511,6 @@ static void case_factor_loops(void) {
     end("c tilt 2 and turn 2 stay tied to the filter over loops; 10 deg pitch -> 20, 45 deg turn -> 90 at 30 deg pitch");
 }
 
-// d. a known limit: a smooth slow turn with little noise looks like a still controller with a bias
 static void case_smooth_pan(void) {
     begin("d smooth slow pan");
     Sim s;
@@ -552,7 +527,6 @@ static void case_smooth_pan(void) {
     end("d expected limit: a smooth 3 deg/s pan with sensor-level noise IS taken as still, its rate learned as bias");
 }
 
-// e. samples with values that are not finite move nothing and poison nothing
 static void case_not_finite(void) {
     begin("e samples that are not finite");
     Sim s;
@@ -575,7 +549,6 @@ static void case_not_finite(void) {
     end("e NaN and infinite samples leave the orientation and the statistics finite");
 }
 
-// f. a wrong bias (a smooth pan learned as one) is learned again once the controller lies truly still
 static void case_wrong_bias(void) {
     begin("f wrong bias relearned");
     int from = nlines;
@@ -583,9 +556,9 @@ static void case_wrong_bias(void) {
     sim_new(&s, NULL);
     s.gyro_noise = 0.05 * DEG, s.acc_noise = 0.002;
     double pan[3] = {0, 0, 3 * DEG};
-    sim_run(&s, pan, 875);   // 3.5 s
+    sim_run(&s, pan, 875);
     double wrong = s.m->bias[2];
-    sim_run(&s, zero3, 15000);   // 60 s still, no bias
+    sim_run(&s, zero3, 15000);
     MotionState a = newest(&s);
     sim_run(&s, zero3, 250);
     MotionState b = newest(&s);

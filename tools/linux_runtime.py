@@ -1,4 +1,3 @@
-"""Runtime identity shared by the Linux AppImage and release package."""
 import hashlib
 import subprocess
 

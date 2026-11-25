@@ -1,52 +1,3 @@
-"""Xbox, PlayStation, Steam Deck and keyboard-and-mouse button prompts for Ocarina of Time (Switch 2), drawn from button
-art on the player's machine.
-
-    python tools/pad_prompts.py --art FOLDER --game FOLDER [--style xbox|playstation|steamdeck|pc]
-                                [--layout position|label]
-                                [--binds nx2saria.ini]
-
---art is a folder of button art with the file names of STYLES (tools/prompt_art.py) and KEY_ART below: the Source
-folder of a button prompt art pack, which holds XGamepad/Default, XGamepad/Light, P5Gamepad/Default, P5Gamepad/Light,
-Keyboard_Mouse/Dark and Keyboard_Mouse/White (128x128 PNGs: a dark button or key with a white label, or a light one
-with a dark or coloured label), or a release's prompt-art folder, which holds the same files (tools/make_game.py runs
-this tool on it): by default the repository's prompt-art folder (tools/prompt_art.py REPO_ART, CC0 pictures whose
-SOURCE.md says where they came from). The art is read where it lies.
---game is the folder of the port's exe and romfs-index.bin. The RomFS is read from its romfs folder (index.json and
-romfs.bin, as the setup writes them); --romfs names another, which may also be a folder of extracted files. Each pad
-style and layout becomes the overlay folder <game>/romfs-patches-<style> (layout position) or
-<game>/romfs-patches-<style>-label (layout label), and the keyboard and mouse <game>/romfs-patches-pc, each with a
-manifest.tsv: runtime/hle/romfs.c overlay_init loads it in place of the game's files when nx2saria.ini (or a legacy nx2navi.ini) has prompts = xbox,
-playstation, steamdeck or pc (runtime/input/input_map.c input_prompts_folder). Without --style or --layout, every style or
-layout. The Steam Deck style has no art of its own: its buttons are named as an Xbox pad's face buttons and a
-PlayStation pad's shoulders and stick clicks, so it is drawn from those two pads' pictures (prompt_art.py STYLES).
---out writes a single style and layout elsewhere.
-
-The two pad layouts follow pad_layout (runtime/input/input_map.c). position, for pad_layout = nintendo: a pad is played by
-position, so Switch A is the right face button, labelled B on an Xbox pad and circle on a PlayStation pad; the prompts
-for A show that button (A as B or circle, B as A or cross, X as Y or triangle, Y as X or square). label, for
-pad_layout = xbox, playstation and auto: Switch A is the bottom face button, so A shows A or cross, B shows B or
-circle, X shows X or square and Y shows Y or triangle.
-pc shows the first key each button has (PC_KEYS, Ocarina's defaults, with the bind_ lines of --binds over them; by
-default <game>/nx2saria.ini, else an existing <game>/nx2navi.ini), the mouse buttons as a mouse, and for the right stick the mouse moving. A key bound
-later shows after the tool runs again.
-
-What changes, the rest of each file staying as it is:
-- Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs, the button font every prompt in text uses (dialogue, the button
-  guides, the controls screen): the glyphs of the buttons (U+E040 A, B, X, Y, L, R, ZL, ZR, the d-pad, Plus, Minus,
-  and the sticks and d-pad with their directions) become outlines traced from the art (trace), at the size of the
-  game's own face buttons; Power, Home, the console and the arrows stay. A .bfotf is a CFF OpenType font behind an
-  8-byte header and an XOR (tools/button_icons.py bfotf_decode); fontTools writes it again.
-- UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs, the shared interface textures: KeyTexFontA/B/X/Y_00,
-  the letter of the action prompt (DoCommand_00; 64x64 BC4 masks the layout tints), and OcarinaButtonA/B/X/Y/L/R_00,
-  the ocarina's note buttons (PaOcarinaSingleNote_00; 93x93 ASTC 4x4 sRGB, a white button with a dark letter). They are
-  painted again in place, in their own format, size and block-linear layout, so the archive keeps its size.
-- the resource size table (System/Resource/ResourceSizeTable.Product.<n>...rsizetable.zs): the font grows, and the
-  game sizes the buffer it loads a file into from the table, so the font's entry is raised by as much
-  (button_icons.grow_restbl).
-
-Needs fontTools, Pillow and zstandard (tools/requirements-py314.txt; the launcher's Python has them,
-tools/requirements-launcher.txt).
-"""
 import argparse
 import hashlib
 import io
@@ -60,6 +11,8 @@ from PIL import Image, ImageDraw, ImageFont
 from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
+DESCRIPTION = 'Xbox, PlayStation, Steam Deck and keyboard-and-mouse button prompts for Ocarina of Time (Switch 2), drawn from button'
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import button_icons  # noqa: E402  (bfotf_decode, bfotf_encode, redraw_font, grow_restbl)
 from prompt_art import BLANKS, KM, OPTIONS, SHARE, STYLES, overlay_folder  # noqa: E402  (the art, the folders)
@@ -68,8 +21,6 @@ FONT = 'Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs'
 TEXTURES = 'UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs'
 DICTIONARIES = 'Pack/ZsDic.pack.zs'
 
-# The Switch button each code point of the button font shows (the stick and d-pad glyphs name their directions).
-# U+E06A is the d-pad with three directions lit; the art has no such picture, so it shows the whole d-pad.
 GLYPHS = {
     0xE040: 'A', 0xE041: 'B', 0xE042: 'X', 0xE043: 'Y', 0xE044: 'L', 0xE045: 'R', 0xE046: 'ZL', 0xE047: 'ZR',
     0xE049: 'DPAD', 0xE04B: 'PLUS', 0xE04C: 'MINUS',
@@ -80,33 +31,25 @@ GLYPHS = {
     0xE060: 'DPAD_UP', 0xE061: 'DPAD_DOWN', 0xE062: 'DPAD_LEFT', 0xE063: 'DPAD_RIGHT',
     0xE064: 'DPAD_UPDOWN', 0xE065: 'DPAD_LEFTRIGHT', 0xE068: 'RSTICK_ROTATE', 0xE06A: 'DPAD',
 }
-# The face button that does each Switch face button, by its place on the pad.
 FACE = {'position': {'A': 'east', 'B': 'south', 'X': 'north', 'Y': 'west'},
         'label': {'A': 'south', 'B': 'east', 'X': 'west', 'Y': 'north'}}
 
 
-# The textures drawn again: the action prompt's letter masks and the ocarina's note buttons, by Switch button.
 MASKS = {'KeyTexFontA_00': 'A', 'KeyTexFontB_00': 'B', 'KeyTexFontX_00': 'X', 'KeyTexFontY_00': 'Y'}
 NOTES = {'OcarinaButtonA_00': 'A', 'OcarinaButtonB_00': 'B', 'OcarinaButtonX_00': 'X', 'OcarinaButtonY_00': 'Y',
          'OcarinaButtonL_00': 'L', 'OcarinaButtonR_00': 'R'}
 
 
 def pad_pictures(style, layout):
-    """(glyph, note) for a pad style: Switch button -> picture, the face buttons through FACE."""
     s = STYLES[style]
     glyph = {b: s['glyph'][FACE[layout].get(b, b)] for b in set(GLYPHS.values())}
     note = {b: s['note'][FACE[layout].get(b, b)] for b in NOTES.values()}
     return glyph, note
 
 
-# ---- keyboard and mouse (prompts = pc): every button shows the first key its bindings give it. The defaults are
-# runtime/input/input_map.c DEFAULT_KEYS; --binds takes the bind_ lines of a settings file over them. The right stick is the
-# camera, which the mouse turns, so its prompts show the mouse moving (its arrow keys, a second source, do not show).
 PC_KEYS = {'A': 'e', 'B': 'lctrl', 'X': 'space', 'Y': 'mouse_l', 'L': 'q', 'R': 'r', 'ZL': 'mouse_r', 'ZR': 'f',
            'PLUS': 'tab', 'MINUS': 'm', 'LEFT': '1', 'UP': '2', 'RIGHT': '3', 'DOWN': '4', 'LCLICK': 'v', 'RCLICK': 'c',
            'LSTICK_UP': 'w', 'LSTICK_LEFT': 'a', 'LSTICK_DOWN': 's', 'LSTICK_RIGHT': 'd'}
-# The art's name of each key (settings-file key names, runtime/input/input_map.c key_names); letters, digits and F keys are their
-# own. The art spells Ctrl as Crtl.
 KEY_ART = {'space': 'Space', 'tab': 'Tab', 'lshift': 'Shift', 'rshift': 'Shift', 'lctrl': 'Crtl', 'rctrl': 'Crtl',
            'lalt': 'Alt', 'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right', 'enter': 'Enter',
            'backspace': 'BackSpace', 'capslock': 'CapsLock', 'insert': 'Ins', 'delete': 'Del', 'home': 'Home',
@@ -114,14 +57,11 @@ KEY_ART = {'space': 'Space', 'tab': 'Tab', 'lshift': 'Shift', 'rshift': 'Shift',
            'num_add': 'Plus', 'num_mul': 'Asterisk', 'num_div': 'Slash', 'lbracket': 'Brackets_L',
            'rbracket': 'Brackets_R', 'semicolon': 'Semicolon', 'apostrophe': 'Quotation', 'slash': 'Slash',
            'grave': 'Tilde', 'mouse_l': 'Mouse_Left', 'mouse_r': 'Mouse_Right', 'mouse_m': 'Mouse_Middle'}
-# What a blank key shows for a key the art has no picture of (label_art); any other shows its name.
 KEY_LABELS = {'comma': ',', 'period': '.', 'equals': '=', 'num_decimal': '.', 'backslash': '\\', 'mouse_x1': 'M4',
               'mouse_x2': 'M5'}
 
 
 def pc_keys(ini_text=None):
-    """PC_KEYS with the first key of each bind_<button> line of a settings file over it. A line without a key
-    entry, or with key:default first, keeps the default (the prompt then shows a key the line took away)."""
     keys = dict(PC_KEYS)
     for line in (ini_text or '').splitlines():
         line = line.split('#')[0].split(';')[0].strip()
@@ -135,8 +75,6 @@ def pc_keys(ini_text=None):
 
 
 def key_picture(art, key, shade):
-    """The art of a key or mouse button in shade (Dark: a dark key with a white label; White: the other way round), or
-    a blank key with its name drawn on it when the art has none. The art names its dark 4 key T_3_Key_Dark-1."""
     stem = KEY_ART.get(key)
     if not stem:
         digit = key[3:] if key.startswith('num') and key[3:].isdigit() else key
@@ -148,8 +86,6 @@ def key_picture(art, key, shade):
 
 
 def pc_pictures(art, keys):
-    """(glyph, note) for the keyboard and mouse: Switch button -> picture, by the key each button has. A d-pad or a
-    stick with several directions shows their keys in a grid, as they sit on the keyboard."""
     def k(button, shade='Dark'):
         return key_picture(art, keys[button], shade)
 
@@ -176,7 +112,6 @@ def pc_pictures(art, keys):
     return glyph, note
 
 
-# ---- the RomFS: index.json and romfs.bin (each file's offset and size), or a folder of extracted files
 class Romfs:
     def __init__(self, root):
         self.root = Path(root)
@@ -213,7 +148,6 @@ class Romfs:
         return self.dicts[dict_id]
 
     def load(self, path):
-        """(contents, dictionary or None) of a RomFS file, a .zs file decompressed with the dictionary its frame names."""
         raw = self.raw(path)
         if not path.endswith('.zs'):
             return raw, None
@@ -222,18 +156,10 @@ class Romfs:
         return unpack(raw, d), d
 
 
-# How much of a packed file unpack gives the decompressor at a time.
 PIECE = 1 << 16
 
 
 def unpack(raw, dictionary=None):
-    """The contents of a zstd frame, with the dictionary it was packed with; bytes after the frame are left out.
-
-    The file goes to the decompressor in pieces of PIECE bytes and the pieces' outputs are joined once. Given the
-    whole file in one call, the library returns one bytes object that it grows by copying as the output comes: made-up
-    data of the size of the interface texture archive, 69 MB packed and 244 MB unpacked, took 21 s that way on a
-    fast PC against 0.3 s in pieces. Players' builds waited 44 to 52 s before this tool's first folder, most of
-    its minute."""
     out, parts = zstandard.ZstdDecompressor(dict_data=dictionary).decompressobj(), []
     for at in range(0, len(raw), PIECE):
         parts.append(out.decompress(raw[at:at + PIECE]))
@@ -243,7 +169,6 @@ def unpack(raw, dictionary=None):
 
 
 def sarc_members(data):
-    """name -> (absolute start, end) of every member of a SARC archive."""
     assert data[:4] == b'SARC'
     header, start = struct.unpack_from('<H', data, 4)[0], struct.unpack_from('<I', data, 12)[0]
     count = struct.unpack_from('<H', data, header + 6)[0]
@@ -256,13 +181,10 @@ def sarc_members(data):
 
 
 def compress(contents, dictionary, level):
-    """A zstd frame of contents with the dictionary the original used, so the game reads it the same way."""
     return zstandard.ZstdCompressor(level=level, dict_data=dictionary, threads=-1).compress(contents)
 
 
-# ---- art: a button as coverage, traced into outlines
 def load_art(art, rel):
-    """A picture as RGBA: a file under art, or one drawn from several (OPTIONS, ('grid', cells), ('label', key, shade))."""
     if rel == OPTIONS:
         return options_art(art)
     if isinstance(rel, tuple) and rel[0] == 'grid':
@@ -280,8 +202,6 @@ def opaque(img):
 
 
 def grid_art(art, cells):
-    """Keys side by side: cells are (picture, column, row), row 0 on top, each centred in a cell as large as the
-    largest key, with a small gap between cells."""
     pics = [(opaque(load_art(art, rel)), c, r) for rel, c, r in cells]
     cw, ch, gap, pad = max(p.width for p, _, _ in pics), max(p.height for p, _, _ in pics), 6, 4
     cols, rows = max(c for _, c, _ in pics) + 1, max(r for _, _, r in pics) + 1
@@ -292,7 +212,6 @@ def grid_art(art, cells):
 
 
 def label_art(art, key, shade):
-    """A key the art has no picture of: its blank key with the key's name written on it."""
     blank = load_art(art, BLANKS[shade])
     name = KEY_LABELS.get(key, key.upper())
     d = ImageDraw.Draw(blank)
@@ -310,8 +229,6 @@ def label_art(art, key, shade):
 
 
 def options_art(art):
-    """PlayStation's Options button as the art draws its Create button's neighbour on the pad: the dark pill of the
-    share picture with three white bars, drawn four times larger and scaled down for smooth edges."""
     share = load_art(art, SHARE)
     x0, y0, x1, y1 = share.getchannel('A').point(lambda a: 255 if a > 127 else 0).getbbox()
     k = 4
@@ -325,17 +242,10 @@ def options_art(art):
     return big.convert('RGBa').resize(share.size, Image.LANCZOS).convert('RGBA')
 
 
-LIT_AREA, LIT_RING = 200, 6   # pixels of the art
+LIT_AREA, LIT_RING = 200, 6
 
 
 def ink(img, lit=False):
-    """Coverage 0..1 per pixel (rows of floats) of a button drawn as a dark body with white symbols, for one-colour
-    glyphs: the body counts, and so does white outside it (a stick's direction arrows, which touch the transparent
-    background); white inside it (letters, symbols) is a hole.
-    lit: a d-pad with its pressed directions in white. The art draws them as a white arm in a hairline outline (Xbox)
-    or as a white arm the others' colour reversed (PlayStation); at text size the one vanishes and the other looks like
-    the rest, so each white part of LIT_AREA pixels or more becomes a hollow arm, a LIT_RING-pixel band along its
-    edge."""
     a, lum, near, parts = _parts(img)
     w, h = img.size
     field = [[a[y][x] * (1 - lum[y][x]) + (a[y][x] * lum[y][x] if near[y][x] else 0) for x in range(w)] for y in range(h)]
@@ -360,8 +270,6 @@ def ink(img, lit=False):
 
 
 def symbol(img):
-    """Coverage of the white letter or symbol inside a dark button (the action prompt's letter), as an L image: the
-    white inside the body, the body's own grey left out."""
     a, lum, near, _ = _parts(img)
     out = Image.new('L', img.size)
     for y in range(img.height):
@@ -372,14 +280,11 @@ def symbol(img):
 
 
 def _parts(img):
-    """Alpha and luminance (0..1) per pixel, whether each pixel is white outside the body or its soft edge, and the
-    white parts (lists of (x, y))."""
     w, h = img.size
     px = img.load()
     a = [[px[x, y][3] / 255 for x in range(w)] for y in range(h)]
     lum = [[(0.299 * px[x, y][0] + 0.587 * px[x, y][1] + 0.114 * px[x, y][2]) / 255 for x in range(w)] for y in range(h)]
     white = [[a[y][x] > 0.5 and lum[y][x] > 0.5 for x in range(w)] for y in range(h)]
-    # the background: transparent pixels reachable from the edge
     bg = [[False] * w for _ in range(h)]
     stack = [(x, y) for x in range(w) for y in (0, h - 1)] + [(x, y) for y in range(h) for x in (0, w - 1)]
     while stack:
@@ -387,9 +292,6 @@ def _parts(img):
         if 0 <= x < w and 0 <= y < h and not bg[y][x] and a[y][x] <= 0.5:
             bg[y][x] = True
             stack += [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)]
-    # each white part: outside the body when a quarter of its edge touches the background. A stick's arrows touch it
-    # all round; a lit d-pad direction inside a thin dark outline touches it only where the outline thins at a rounded
-    # corner, and stays a hole.
     outside = [[False] * w for _ in range(h)]
     seen = [[False] * w for _ in range(h)]
     parts = []
@@ -415,47 +317,40 @@ def _parts(img):
             if touching * 4 >= edge:
                 for x, y in part:
                     outside[y][x] = True
-    # the soft edge of an outside part (antialiased pixels next to it) counts with it
     near = [[outside[y][x] or any(outside[yy][xx] for yy in range(max(0, y - 1), min(h, y + 2))
                                   for xx in range(max(0, x - 1), min(w, x + 2))) for x in range(w)] for y in range(h)]
     return a, lum, near, parts
 
 
 def trace(field, level=0.5):
-    """Closed outlines (lists of (x, y) in pixels, y down) where field crosses level, by marching squares with the
-    crossings placed linearly along the cell edges. Each outline has the covered side on its left once y points up
-    (as in a font): outer outlines run counter-clockwise and holes clockwise, as a CFF font wants them."""
     h, w = len(field), len(field[0])
 
-    def v(x, y):   # one pixel of zero around the field, so every outline closes
+    def v(x, y):
         return field[y - 1][x - 1] if 1 <= x <= w and 1 <= y <= h else 0.0
 
     def cross(p, q):
         (x0, y0), (x1, y1) = p, q
         a, b = v(x0, y0), v(x1, y1)
         t = (level - a) / (b - a)
-        return (x0 + (x1 - x0) * t - 1, y0 + (y1 - y0) * t - 1)   # back to field coordinates
+        return (x0 + (x1 - x0) * t - 1, y0 + (y1 - y0) * t - 1)
 
-    starts = {}   # edge -> (start point, end edge, end point) of the segment leaving the cell through it
+    starts = {}
     for y in range(h + 1):
         for x in range(w + 1):
-            corners = [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)]   # clockwise with y down
+            corners = [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)]
             inside = [v(*c) >= level for c in corners]
             if all(inside) or not any(inside):
                 continue
-            # the crossings met going round the cell clockwise: (edge key, point, entering the covered part)
             hits = []
             for i in range(4):
                 p, q = corners[i], corners[(i + 1) % 4]
                 if inside[i] != inside[(i + 1) % 4]:
                     hits.append((tuple(sorted((p, q))), cross(p, q), inside[(i + 1) % 4]))
-            # each segment joins the crossing entering a covered part to the one leaving it, so that going round the
-            # cell clockwise (y down) the covered part lies between them
             if len(hits) == 2:
                 enter, leave = (hits[0], hits[1]) if hits[0][2] else (hits[1], hits[0])
                 pairs = [(enter, leave)]
-            else:   # a saddle: the middle decides whether the covered corners join
-                order = hits if hits[0][2] else hits[1:] + hits[:1]   # enter, leave, enter, leave
+            else:
+                order = hits if hits[0][2] else hits[1:] + hits[:1]
                 e1, l1, e2, l2 = order
                 joined = (v(x, y) + v(x + 1, y) + v(x + 1, y + 1) + v(x, y + 1)) / 4 >= level
                 pairs = [(e2, l1), (e1, l2)] if joined else [(e1, l1), (e2, l2)]
@@ -475,8 +370,6 @@ def trace(field, level=0.5):
 
 
 def simplify(loop, tolerance):
-    """A closed outline with the points that stray less than tolerance from a straight line dropped (Douglas-Peucker on
-    the two halves between the first point and the one farthest from it)."""
     def dp(points):
         if len(points) < 3:
             return points
@@ -503,7 +396,6 @@ def area(loop):
 
 
 def outlines_of(img, lit=False):
-    """The traced, simplified outlines of a dark-style button picture, specks dropped (lit: as ink)."""
     return [s for s in (simplify(o, 0.3) for o in trace(ink(img, lit))) if abs(area(s)) >= 1.5]
 
 
@@ -513,22 +405,16 @@ def bounds(outlines):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-# ---- the button font
 def draw_font(otf, glyph, traced, lit_dpad):
-    """The button font with the glyphs of GLYPHS drawn from glyph (Switch button -> picture). Every picture is scaled
-    as A's picture is to the game's A (both fill their square the same way), centred in its advance and placed at the
-    height of the art's own square, so the arrows of a stick reach out as they do in the art. A grid of keys is made
-    no taller than the game's A and centred on it. A wider picture widens its glyph. lit_dpad: the d-pad directions
-    are lit pad pictures (ink lit)."""
     font = TTFont(io.BytesIO(otf))
     glyphs, cmap, hmtx = font.getGlyphSet(), font.getBestCmap(), font['hmtx']
     box = BoundsPen(glyphs)
     glyphs[cmap[0xE040]].draw(box)
-    gx0, gy0, gx1, gy1 = box.bounds   # the game's A: a round button
+    gx0, gy0, gx1, gy1 = box.bounds
     rx0, ry0, rx1, ry1 = bounds(traced(glyph['A']))
     scale = (gy1 - gy0) / (ry1 - ry0)
     mid_y_px, mid_y = (ry0 + ry1) / 2, (gy0 + gy1) / 2
-    side = gx0   # the game's A has this much room on either side
+    side = gx0
     drawn = {}
     for cp, button in GLYPHS.items():
         pic = glyph[button]
@@ -550,10 +436,7 @@ def draw_font(otf, glyph, traced, lit_dpad):
     return button_icons.redraw_font(otf, drawn)
 
 
-# ---- BNTX textures: block-linear in the Switch 2 GOB layout (runtime/gfx/tex_deswizzle.c, nvn_bl_offset)
 def bntx_textures(data):
-    """name -> (format, width, height, block height (log2 GOBs), level offset, level size) of every one-level 2D
-    texture of a BNTX."""
     assert data[:4] == b'BNTX'
     count, table = struct.unpack_from('<IQ', data, 0x24)
     out = {}
@@ -571,7 +454,6 @@ def bntx_textures(data):
 
 
 def level_tiles(th, rows):
-    """The block height of a level rows block-rows high (runtime/nvn/nvn_tex.c adj_tile): halved while it is too tall."""
     x = 8 << (th - 1) if th else 0
     while th and x >= rows:
         th -= 1
@@ -580,7 +462,6 @@ def level_tiles(th, rows):
 
 
 def block_linear(row_bytes, rows, th):
-    """Offset of each 16-byte piece (row, piece) of a level, in the Switch 2 GOB order."""
     th = level_tiles(th, rows)
     unit, block, gobs = 8 << th, 512 << th, (row_bytes + 63) // 64
     return lambda x, y: ((y // unit) * gobs * block + (x // 64) * block + ((y % unit) // 8) * 512 + (x % 64 // 32) * 256
@@ -631,8 +512,6 @@ def bc4_palette(a, b):
 
 
 def bc4_encode(img):
-    """BC4 blocks of an L image: each block's lowest and highest value as the ends, every pixel the nearest of the
-    eight levels between them."""
     w, h = img.size
     px = img.load()
     out = bytearray()
@@ -651,16 +530,10 @@ def bc4_encode(img):
     return bytes(out)
 
 
-# ASTC 4x4, one partition, endpoint mode 12 (RGBA, direct), 8-bit endpoints and a 4x4 grid of 2-bit weights: 11 bits
-# of block mode (0x042: weights 0..3, grid 4x4), 2 of partition count, 4 of endpoint mode, then the eight endpoint
-# bytes from bit 17 (r0 r1 g0 g1 b0 b1 a0 a1) and the 32 weight bits from bit 127 down. The 79 bits left after the
-# mode and the weights hold eight values of 0..255 exactly, so the decoder reads the endpoints as plain bytes.
 ASTC_WEIGHTS = (0, 21, 43, 64)
 
 
 def astc_block(texels):
-    """One 128-bit block of 16 RGBA texels: the two ends of the colours' main direction, every texel its nearest of
-    the four steps between them."""
     n = len(texels)
     mean = [sum(t[c] for t in texels) / n for c in range(4)]
     cov = [[sum((t[i] - mean[i]) * (t[j] - mean[j]) for t in texels) for j in range(4)] for i in range(4)]
@@ -675,7 +548,7 @@ def astc_block(texels):
     lo, hi = min(proj), max(proj)
     e0 = [max(0, min(255, round(mean[c] + lo * axis[c]))) for c in range(4)]
     e1 = [max(0, min(255, round(mean[c] + hi * axis[c]))) for c in range(4)]
-    if sum(e1[:3]) < sum(e0[:3]):   # the decoder would read the ends the other way (blue contraction)
+    if sum(e1[:3]) < sum(e0[:3]):
         e0, e1 = e1, e0
     span = [e1[c] - e0[c] for c in range(4)]
     length = sum(v * v for v in span)
@@ -704,8 +577,6 @@ def astc_encode(img):
 
 
 def fit(img, box, size):
-    """img's opaque part scaled to fit box (x0, y0, x1, y1) and centred in it, on a transparent canvas of size;
-    resampled with premultiplied alpha, so the edges keep their colour."""
     crop = img.crop(img.getchannel('A').point(lambda a: 255 if a > 8 else 0).getbbox())
     bw, bh = box[2] - box[0], box[3] - box[1]
     k = min(bw / crop.width, bh / crop.height)
@@ -716,8 +587,6 @@ def fit(img, box, size):
 
 
 def bleed(img):
-    """The colour of the nearest covered pixel spread under transparent ones, so a compressed block that holds both
-    ends in the button's own colour rather than in black."""
     w, h = img.size
     px = img.load()
     known = {(x, y) for y in range(h) for x in range(w) if px[x, y][3] > 8}
@@ -738,8 +607,6 @@ def bleed(img):
 
 
 def mask_of(img, rel):
-    """The action prompt's mask of a dark picture: the white letter or symbol inside it, or for a mouse, whose white is
-    the pressed button rather than a label, the mouse itself with that button cut out."""
     if '/T_Mouse_' not in str(rel):
         return symbol(img)
     field = ink(img)
@@ -754,9 +621,6 @@ def note_texture(art, rel, box):
 
 
 def draw_textures(data, glyph, note, art, cache):
-    """Paints the action prompt's letters (from glyph) and the ocarina's note buttons (from note; both Switch button ->
-    picture) into the BNTX data (a bytearray) in place. A new letter takes the height and centre of the game's own
-    letter in that mask (a wider one may use a little more width); a note button fills NOTE_BOXES."""
     textures = bntx_textures(data)
     for name, button in {**MASKS, **NOTES}.items():
         assert name in textures, f'no {name} in {TEXTURES}'
@@ -767,7 +631,6 @@ def draw_textures(data, glyph, note, art, cache):
             assert t['fmt'] == BC4_UNORM, f'{name}: format {t["fmt"]:#x}'
             old = bc4_decode(read_level(data, t, wb * 8, hb), t['w'], t['h'])
             box = old.point(lambda v: 255 if v > 64 else 0).getbbox()
-            # the old letter's height; a wider new symbol may use a little more width
             cx, cy, half = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2, (box[3] - box[1]) / 2
             rel = glyph[button]
             sym = cache(('mask', rel), lambda: mask_of(load_art(art, rel), rel))
@@ -783,16 +646,10 @@ def draw_textures(data, glyph, note, art, cache):
             write_level(data, t, encoded, wb * 16, hb)
 
 
-# Where the game's own note buttons are opaque in their 93x93 textures (1.1.1), which the new ones fill: the face
-# buttons a disc, L and R a wider shape. Measured once with the runtime's ASTC decoder (tools/ui_textures.py), so this
-# tool needs none.
 NOTE_BOXES = {'disc': (13, 13, 80, 80), 'shoulder': (8, 15, 84, 76)}
 
 
-# ---- the overlay folder
 def write_overlay(out, outputs, originals):
-    """outputs: RomFS path -> new file bytes; originals: RomFS path -> the original's bytes. Writes each file under out
-    and the manifest runtime/hle/romfs.c overlay_load checks: path, size, SHA-256, the original's SHA-256."""
     lines = []
     for path, data in outputs.items():
         target = out / path
@@ -806,14 +663,13 @@ def write_overlay(out, outputs, originals):
 
 
 def default_binds(game):
-    """The current settings file, or an existing legacy file when that is all the folder has."""
     if not game:
         return None
     current, legacy = Path(game) / 'nx2saria.ini', Path(game) / 'nx2navi.ini'
     return current if current.is_file() else legacy if legacy.is_file() else None
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--art', type=Path, required=True,
                     help='the art pack\'s Source folder (XGamepad, P5Gamepad, Keyboard_Mouse)')
     ap.add_argument('--game', type=Path, help='the folder of the exe and romfs-index.bin; the overlays go there')
@@ -852,7 +708,6 @@ def main():
 
     report = []
     for style in [args.style] if args.style else sorted(STYLES) + ['pc']:
-        # the keyboard follows no pad layout: one folder, romfs-patches-pc
         for layout in [None] if style == 'pc' else [args.layout] if args.layout else sorted(FACE):
             out = args.out or args.game / overlay_folder(style, layout)
             glyph, note = pc_pictures(args.art, keys) if style == 'pc' else pad_pictures(style, layout)

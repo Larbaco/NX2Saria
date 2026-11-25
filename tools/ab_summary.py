@@ -1,8 +1,3 @@
-"""In-launch A/B summary of a NX2SARIA_AB run (runtime/diag/prof_win.c rt_ab): per perf window of 60 presents wholly in an A or a
-B block, the frame interval and the replay time; their means per frame on each side, and B - A.
-
-usage: ab_summary.py <log> [--skip <seconds>]
-"""
 import argparse
 import re
 import sys
@@ -22,12 +17,12 @@ def main():
             continue
         b, n = int(m.group(4)), int(m.group(5))
         if b and b != n:
-            continue   # a window across a block edge
+            continue
         side[1 if b else 0].append((n, float(m.group(2)), float(m.group(3))))
     if not side[0] or not side[1]:
         print('no whole A and B windows (NX2SARIA_AB unset, or the run too short)')
         return 1
-    def means(w):   # per frame over the side's frames: each window weighs its frames
+    def means(w):
         frames = sum(x[0] for x in w)
         return sum(x[0] * x[1] for x in w) / frames, sum(x[0] * x[2] for x in w) / frames, sum(x[0] * x[1] for x in w) / 1000
     for k, name in ((0, 'A'), (1, 'B')):

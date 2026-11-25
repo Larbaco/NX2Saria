@@ -1,14 +1,4 @@
 # needs: clang
-"""Build and run tests/part_file_check.c: runtime/part_file.h, which the runtime's detached threads write their files
-through (the flight recorder's dump). A file gets its name only when it is complete, so a game that closes under the
-writing thread leaves the older file or none, never one cut short.
-
-The C side checks the helper itself. This side then kills a process in the middle of a write, as the window's close
-ends the dump thread, and looks at what it left: the older file whole under its name, the half in the .part file.
-No game files, no GPU.
-
-Usage: part_file_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -41,7 +31,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     plat = [rt / 'platform' / ('win32.c' if win else 'linux.c'), rt / 'platform' / 'common.c']
-    plat += stand_ins(work)   # what the platform layer calls outside it (tests/platform_stand_ins.py)
+    plat += stand_ins(work)
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',
@@ -53,7 +43,6 @@ def main():
     if code:
         return code
 
-    # a writer killed in the middle: the file of the dump before it is whole, the half is named as a part
     killed = files / 'killed.tsv'
     killed.write_text('the whole older file\n', encoding='utf-8')
     p = subprocess.Popen([str(exe), str(files), 'hang'], env=env, stdout=subprocess.PIPE, text=True)

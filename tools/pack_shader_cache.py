@@ -1,19 +1,3 @@
-"""Fold the loose files of a shader cache into <cache>/shader-cache.pack and delete them.
-
-The translator writes four files per shader into the cache (runtime/gfx/gfx_shader.c): <key>.spv, <key>.res.json,
-<name>.use and in/<input id>.in, about 117,000 files after an install, which are slow to copy, back up, scan and sync.
-nx2saria.exe reads the pack first and the loose files after it, and keeps writing new translations as loose files, so
-this tool can run again at any time the game is closed: it merges the existing pack with the loose files (a loose file
-wins over a packed one of the same name) and writes the pack anew. The installer runs it after preparing the shaders.
-
-Layout, little-endian (gfx_shader.c, section "cache pack"): b'TKSPACK1', u32 count, u32 0, then count entries of 48
-bytes sorted by (kind, name): name (the 32 bytes the file name's 64 hex digits spell), u32 kind (1 .spv, 2 .res.json,
-3 .use, 4 in/*.in), u32 size, u64 offset; then the data.
-
-    python tools\\pack_shader_cache.py <install folder>\\shader-cache [--keep]
-
---keep leaves the loose files in place. Close the game first: a running nx2saria.exe has read the old pack's index.
-"""
 import argparse
 import os
 import re
@@ -27,16 +11,12 @@ MAGIC = b'TKSPACK1'
 PACK = 'shader-cache.pack'
 KINDS = {'.spv': 1, '.res.json': 2, '.use': 3, '.in': 4}
 NAME = re.compile(r'([0-9a-f]{64})(\.spv|\.res\.json|\.use|\.in)')
-USE_SIZE = 20   # gfx_shader.c use_store: magic, version, three masks
-# Loose files are read on READERS threads, at most WINDOW ahead of the one being written. On Windows the time goes into
-# opening each file (about 3 ms the first time, against 0.04 ms once the system has seen it), which threads overlap:
-# read one at a time, the 175,000 files of a launcher's cache took minutes.
+USE_SIZE = 20
 READERS = 16
 WINDOW = 1024
 
 
 def loose_files(cache):
-    """{(kind, name): path} of the cache's loose files; *.in only in in/."""
     found = {}
     for folder, kinds in ((cache, (1, 2, 3)), (cache / 'in', (4,))):
         if not folder.is_dir():
@@ -53,7 +33,6 @@ def loose_files(cache):
 
 
 def read_pack(path):
-    """{(kind, name): (offset, size)} of an existing pack; {} when there is none or it fails a check."""
     try:
         f = open(path, 'rb')
     except FileNotFoundError:
@@ -94,9 +73,6 @@ def pack(cache, keep=False):
     packed = read_pack(out)
     loose = loose_files(cache)
     if not loose:
-        # Nothing to fold in: every file of the cache is already in the pack, so writing it again copies the same
-        # bytes over the same entries (1.37 GiB here, 2.6 s, and a file system that then has the old pack's blocks to
-        # release as well). The installer runs this after every prepare.
         return len(packed), 0, 0, out.stat().st_size if out.is_file() else 0
     keys = sorted(set(packed) | set(loose))
     tmp = out.with_name(PACK + '.tmp')
@@ -104,7 +80,7 @@ def pack(cache, keep=False):
     old = open(out, 'rb') if packed else None
     try:
         with open(tmp, 'wb') as f, ThreadPoolExecutor(READERS) as pool:
-            f.write(bytes(offset))   # header and index, written once the offsets are known
+            f.write(bytes(offset))
             ahead, todo = deque(), iter(keys)
 
             def submit():
@@ -118,7 +94,7 @@ def pack(cache, keep=False):
                 key, reading = ahead.popleft()
                 submit()
                 data = None
-                if reading:   # a valid loose file, else the packed copy, else nothing
+                if reading:
                     data = reading.result()
                     if data is not None and valid(key[0], data):
                         written.append(loose[key])
@@ -145,7 +121,7 @@ def pack(cache, keep=False):
         for p in written:
             p.unlink(missing_ok=True)
         try:
-            (cache / 'in').rmdir()   # only when empty
+            (cache / 'in').rmdir()
         except OSError:
             pass
     return len(index), len(written), skipped, offset

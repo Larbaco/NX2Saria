@@ -1,12 +1,4 @@
 # needs: clang
-"""Build and run tests/mem_need_check.c: runtime/mem_need.h, whether the machine has the commit the game needs.
-
-With the game executable's path it also runs the executable's --probe-memneed (runtime/memory.c mem_start_note: it
-reads this machine's commit, prints the answer and starts nothing) three times: with mem_need_mb = 0 (not checked),
-with 1 (any machine has it) and with a value no machine has, where the log's warning line must appear.
-
-Usage: mem_need_check.py [PATH_TO_GAME_EXE]
-"""
 import os
 import shutil
 import subprocess
@@ -18,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tests' / 'diff'))
 try:
     from common import MSYS_BIN, compiler  # noqa: E402
-except ImportError:   # a Python without the differential tests' packages: the same compiler choice without them
+except ImportError:
     MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
     def compiler():
@@ -45,7 +37,6 @@ def main():
 
 
 def probe(game):
-    """The executable's --probe-memneed under three settings; 0 when each answers as it must."""
     fails = 0
     for need, answer, warns in (('0', 'not checked', False), ('1', 'enough', False), ('1048576', 'short', True)):
         env = dict(os.environ, NX2SARIA_MEM_NEED_MB=need)
@@ -55,7 +46,6 @@ def probe(game):
         said = [ln for ln in lines if ln.startswith('probe-memneed:')]
         warned = [ln for ln in lines if 'mem: WARNING: this machine has' in ln]
         print('\n'.join(said + [ln[:160] + ' ...' for ln in warned]))
-        # without a commit limit (a Linux machine with none) nothing is short: the forced case cannot be shown there
         if said and said[0].endswith('no limit known'):
             continue
         if r.returncode or len(said) != 1 or not said[0].endswith(': ' + answer) or bool(warned) != warns:

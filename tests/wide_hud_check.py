@@ -1,21 +1,4 @@
 # needs: clang
-"""Build and run tests/wide_hud_check.c: runtime/patches/wide_hud.c, the HUD's edge elements moved out to the sides of a picture
-wider than 16:9 (NX2SARIA_WIDE_HUD = edges), on layout files and archives the test makes itself. No game files.
-
-With --romfs, also on the game's own archive: the folder holds romfs.bin and its index.json, and the program reads the
-archive, Pack/ZsDic.pack.zs and the resource size table from romfs.bin at the offsets the index gives, edits the
-archive for several shapes of picture and after the action prompt's edit of the same archive, prints the log lines of
-the 3440x1440 and 21:9 edits, and raises the table's entry for the archive the menus' redesign makes larger. The
-pause menu's backdrop drawn in pieces (runtime/patches/wide_hud.c split_layout) is compared byte for byte with
-tools/layout_dump.py split_picture, the reference, at u 640 and 1920: this script reads the game's PlusMenu_00.buil
-(the zstd command unpacks the archive), splits it with the same pieces and writes the results to build/test/wide_hud/
-for the program. Nothing else is written.
-
-The program is built with the undefined-behaviour sanitizer (traps), with locals that start as a pattern rather than
-whatever the stack held, and with AddressSanitizer where the toolchain has it (not MSYS2's).
-
-Usage: wide_hud_check.py [--romfs DIR]
-"""
 import argparse
 import json
 import os
@@ -25,12 +8,13 @@ import sys
 from pathlib import Path
 import runtime_include
 
+DESCRIPTION = "Build and run tests/wide_hud_check.c: runtime/patches/wide_hud.c, the HUD's edge elements moved out to the sides of a picture"
+
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 ARCHIVE = 'UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs'
 DICTIONARIES = 'Pack/ZsDic.pack.zs'
 RESTBL = 'System/Resource/ResourceSizeTable.Product.111.Nin_Ounce_NVN2.rsizetable.zs'
-# runtime/patches/wide_hud.c menu_bg_pieces: P_MenuBg_00 of PlusMenu_00 in pieces, as split_picture takes them
 PIECES = [{'src': [1880, 2010], 'at': [-320, -320], 'f': [0, 1]},
           {'src': [-320, 3380], 'at': [-320, 3380], 'f': [1, 1]},
           {'src': [1880, 2010], 'at': [3380, 3380], 'f': [1, 2]},
@@ -49,7 +33,6 @@ def compiler():
 
 
 def game_args(folder):
-    """romfs.bin and the offset and size of the archive, the dictionaries and the resource size table in it."""
     files = {f['path']: f for f in json.loads((folder / 'index.json').read_text(encoding='utf-8'))['files']}
     for rel in (ARCHIVE, DICTIONARIES, RESTBL):
         if rel not in files:
@@ -59,7 +42,6 @@ def game_args(folder):
 
 
 def reference_splits(folder, work):
-    """The game's first PlusMenu_00.buil split by tools/layout_dump.py at u 640 and 1920, written under work."""
     sys.path.insert(0, str(ROOT / 'tools'))
     import layout_dump as ld
     common = dict(ld.read_archives(folder))['Common']
@@ -75,7 +57,7 @@ def reference_splits(folder, work):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('--romfs', type=Path, help='a folder with romfs.bin and index.json: also check the game\'s archive')
     args = ap.parse_args()
     work = ROOT / 'build' / 'test' / 'wide_hud'
@@ -88,7 +70,6 @@ def main():
     if os.name != 'nt':
         sanitize.append('-fsanitize=address')
     rt = ROOT / 'runtime'
-    # runtime/simd_fp.h FOK ors two compares on purpose; clang 18 warns on it
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wextra', '-Werror',
                            '-Wno-bitwise-instead-of-logical', *sanitize, *runtime_include.flags(rt),
                            str(ROOT / 'tests' / 'wide_hud_check.c'), str(rt / 'patches' / 'wide_hud.c'),

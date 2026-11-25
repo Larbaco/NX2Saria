@@ -1,43 +1,3 @@
-"""Read the game's interface layouts (BFFH files in a SARC layout archive) and print them as text or JSON.
-
-    layout_dump.py <archive.blarc | romfs folder> [--layout NAME ...] [--json]
-    layout_dump.py <archive.blarc | romfs folder> --find-animated [--layout NAME ...]
-    layout_dump.py <archive.blarc | romfs folder> --codes
-
-The archive is a decompressed layout archive (a SARC whose members are `<Layout>.buil`), or a RomFS folder with
-romfs.bin and its index.json, from which UI/Layout2Archive/{Common,Title}.Product.100.Nin_Ounce_NVN2.blarc.zs are read
-at the index's offsets and decompressed with the zstd command and the dictionary Pack/ZsDic.pack.zs names, in a
-temporary folder under build/ that is removed afterwards. Nothing is written to the RomFS folder.
-
-For each layout: its canvas, its panes as a tree (kind, translate, size, scale, rotation, origin, anchor on the parent
-and the pane's extent on the grid, with every ancestor's translate, scale and anchor applied), the layouts its part
-panes instantiate, and every animation with each track decoded (pane, property, component, keys as frame:value,
-constants). --find-animated lists every pane whose translate x, scale x or size an animation keys, which a menu edit
-has to take into account. --codes counts the track target codes the archive uses.
-
-The format (docs/wide-hud.md, "The layout format (BFFH)"): records point at each other by 64-bit offsets from the
-file's start. The header has a slot of 0x20 bytes per table (+0x00 the list of name offsets, +0x08 the list of record
-offsets, +0x18 the count), and the canvas size as two floats at 0x2f8. The grid's origin is the canvas's centre, y up.
-
-A picture (table 0x158) has a material index (u16) at +0x10 and an optional window record offset at +0x08. The
-material (table 0x138) has an array of texture-map offsets at +0x00 with the count at +0x08. Each map starts with an
-optional list of texture-name offsets and a count at +0x08. These names are the alternatives for a texture pattern.
-Its UV scale, translation and rotation in radians start at +0x10, +0x18 and +0x20. An ordinary picture generates
-unit-square UVs (top-left = 0,0), which the map transforms in normalized texture space. The picture's +0x20 list
-of four pointers is a separate set of corner parameters (normally all four pairs are 2.0, 16.0).
-The material's u32 at +0x14 indexes the render-material offset array (header 0x228, count at 0x230).
-Each render material starts with a sampler offset array and count at +0x08. A sampler has U/V wrap bytes at +0/+1
-and the default texture-name offset at +0x08. A pane's u32 at +0x24 indexes the parameter offset array (header
-0x2e0, count 0x2e8), where +0x10 is its default alpha. The material's u32 at +0x28 indexes the RGBA float
-palette (header 0x2c0, count 0x2c8).
-
-A part's initial animation states are an offset array at +0x28 (count at +0x30). Each entry names the child
-animation by string offset at +0x00 and gives its initial frame as a float at +0x08. A texture-pattern track
-(target 0, property group 1 and code 28) addresses a pane's material. Its first code byte selects the texture map
-and component 0 selects a name from that map's alternatives.
-
-layout_preview.py and tests/layout_tools_check.py import this file; it uses the standard library only.
-"""
 import argparse
 import json
 import shutil
@@ -47,6 +7,8 @@ import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
+
+DESCRIPTION = "Read the game's interface layouts (BFFH files in a SARC layout archive) and print them as text or JSON."
 
 ROOT = Path(__file__).resolve().parents[1]
 ROMFS_ARCHIVES = ('UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.blarc.zs',
@@ -59,31 +21,24 @@ TABLES = {'panes': 0x118, 'materials': 0x138, 'pictures': 0x158, 'texts': 0x178,
           'parts': 0x1b8, 'captures': 0x1d8, 'animations': 0x238}
 CANVAS = 0x2f8
 
-# A pane record: 0x44 bytes, parents before children.
 PANE_SCALE_X, PANE_SCALE_Y, PANE_ROTATE = 0x10, 0x14, 0x18
 PANE_X, PANE_Y, PANE_PARENT, PANE_W, PANE_H, PANE_END, PANE_FLAGS = 0x1c, 0x20, 0x28, 0x2c, 0x30, 0x34, 0x38
 PANE_SIZE = 0x44
-# Bits 7-10 of the flags; the names' prefixes agree (N_, P_/W_, T_, A_, S_, C_, Pa_/L_, N_SlideList).
 KINDS = {0: 'null', 1: 'picture', 2: 'text', 3: 'alignment', 4: 'scissor', 5: 'capture', 6: 'part', 7: 'slide list'}
-# The origin (where on its own box a pane's position is) and the anchor (the point of the parent's box its translate
-# counts from) use the same codes: horizontal 1 left, 2 centre, 3 right; vertical 4 top, 5 centre, 6 bottom.
 H_CODES = {1: ('left', 0.0), 2: ('centre', 0.5), 3: ('right', 1.0)}
-# The fraction of the box below the point (y up): a top origin has the whole box below its position.
 V_CODES = {4: ('top', 1.0), 5: ('centre', 0.5), 6: ('bottom', 0.0)}
 
-# Animation body: (list offset, count offset) for tracks, curves, curve components, constants, constant components.
 BODY_TRACKS, BODY_CURVES, BODY_CURVE_COMPONENTS, BODY_CONSTANTS, BODY_CONSTANT_COMPONENTS = 0x08, 0x18, 0x28, 0x38, 0x48
-ANIM_LENGTH = 0x28   # in the animation record: its length in frames (the name's offset follows at +0x30)
+ANIM_LENGTH = 0x28
 NO_INDEX = 0xffff
-TARGET_PANE = 7      # bits 8-10 of a track's code for a pane's property (0 for a material's)
-# (bit 22, byte 3) of a pane track's code. Text and material values are reported by number.
+TARGET_PANE = 7
 PROPERTIES = {(1, 0): 'scale', (1, 1): 'translate', (1, 2): 'visibility', (1, 4): 'alpha', (0, 1): 'rotation',
               (0, 2): 'size', (0, 47): 'colour'}
 SCALE, TRANSLATE, VISIBILITY, ALPHA, ROTATION, SIZE = (1, 0), (1, 1), (1, 2), (1, 4), (0, 1), (0, 2)
 COLOUR = (0, 47)
 TEXTURE_PATTERN, UV_SCALE, UV_TRANSLATE = (1, 28), (0, 31), (0, 32)
 COMPONENTS = {0: 'x', 4: 'y', 8: 'z'}
-SAME = 1e-3          # the game stores some zeros as -2.8e-14
+SAME = 1e-3
 
 
 class FormatError(Exception):
@@ -94,7 +49,6 @@ class SpecError(Exception):
     pass
 
 
-# ---- bytes, every offset checked
 def _get(data, fmt, off):
     size = struct.calcsize(fmt)
     if off < 0 or off + size > len(data):
@@ -123,9 +77,7 @@ def same(a, b):
     return abs(a - b) < SAME
 
 
-# ---- SARC
 def sarc_members(data):
-    """Every member of a SARC as (name, start, end) in the order of its entries; one name may come several times."""
     if data[:4] != b'SARC':
         raise FormatError('not a SARC archive')
     head, bom = u16(data, 4), u16(data, 6)
@@ -150,14 +102,12 @@ def sarc_members(data):
     return out
 
 
-# ---- zstd, through the zstd command (Python 3.12 has no zstd module)
 def frame_dict_id(z):
-    """The dictionary id a zstd frame names (0: none)."""
     if z[:4] != ZSTD_MAGIC:
         raise FormatError('not a zstd frame')
     fhd = z[4]
     size = (0, 1, 2, 4)[fhd & 3]
-    at = 5 + (0 if fhd & 0x20 else 1)   # single segment frames have no window byte
+    at = 5 + (0 if fhd & 0x20 else 1)
     return int.from_bytes(z[at:at + size], 'little') if size else 0
 
 
@@ -177,7 +127,6 @@ def zstd_decompress(z, work, dictionary=None):
 
 
 def unpack_zs(z, work, dictionaries=None):
-    """A .zs file's bytes: decompressed with the dictionary its frame names, taken from Pack/ZsDic.pack.zs's bytes."""
     did = frame_dict_id(z)
     if not did:
         return zstd_decompress(z, work)
@@ -206,7 +155,6 @@ def romfs_file(folder, index, path):
 
 
 def read_archives(source):
-    """[(archive label, SARC bytes)] for an archive file or a RomFS folder."""
     source = Path(source)
     if source.is_dir():
         index = json.loads((source / 'index.json').read_text())
@@ -227,12 +175,11 @@ def read_archives(source):
     return [(source.name.split('.')[0], data)]
 
 
-# ---- the layout
 @dataclass
 class Pane:
     index: int
     name: str
-    at: int           # the record's offset
+    at: int
     sx: float
     sy: float
     rot: float
@@ -268,11 +215,11 @@ def place_name(h, v):
 class Curve:
     index: int
     component: int
-    at: int            # the curve record
-    values_at: int     # the values record (+0 span)
-    keys_at: int       # the floats: (value, slope) pairs
+    at: int
+    values_at: int
+    keys_at: int
     frames: list
-    values: list       # (value, slope)
+    values: list
     span: float
 
 
@@ -280,17 +227,17 @@ class Curve:
 class Constant:
     index: int
     component: int
-    at: int            # the float's offset
+    at: int
     value: float
 
 
 @dataclass
 class Track:
     code: bytes
-    target: int        # bits 8-10 of the code
-    pane: int          # the index the code names (a pane's when target is TARGET_PANE)
-    group: int         # bit 22
-    prop: int          # byte 3
+    target: int
+    pane: int
+    group: int
+    prop: int
     curves: list
     constants: list
 
@@ -357,8 +304,6 @@ class Layout:
                 self.panes[p.parent].children.append(i)
             self.panes.append(p)
         self.by_name = {p.name: p for p in self.panes}
-        # A part record starts with the offset of the name of the layout it instantiates; the table's own names are
-        # the part panes' names.
         self.parts = {pname: cstr(d, u64(d, at)) for pname, at in self.tables['parts']}
         self.part_records = dict(self.tables['parts'])
         self.animations = [self.animation(an, at) for an, at in self.tables['animations']]
@@ -385,7 +330,6 @@ class Layout:
         return out
 
     def pictures(self):
-        """Picture records by pane name, with their texture bindings and UV transforms."""
         d = self.data
         materials = self.tables['materials']
         result = {}
@@ -482,19 +426,15 @@ class Layout:
         values = list(zip(raw[0::2], raw[1::2])) if vn == 2 * fn else [(v, 0.0) for v in raw]
         return Curve(index, component, at, values_at, vo, frames, values, f32(d, values_at))
 
-    # -- where things are
     def pane_names(self, index):
         return self.panes[index].name if 0 <= index < len(self.panes) else f'#{index}'
 
     def tracks_of(self, pane_index, prop=None):
-        """[(animation, track)] of a pane's properties (prop: a PROPERTIES key, None for all)."""
         return [(a, t) for a in self.animations for t in a.tracks
                 if t.target == TARGET_PANE and t.pane == pane_index and (prop is None or t.key == prop)]
 
 
 def evaluate(curve, frame):
-    """A curve's value at a frame: Hermite interpolation of its (value, slope) keys, held before and after them. Two
-    keys on one frame make a step; on that frame the later one holds (pattern animations pick a state by frame)."""
     f, v = curve.frames, curve.values
     if not f:
         return None
@@ -511,7 +451,6 @@ def evaluate(curve, frame):
 
 
 def animated_state(layout, anim_name, frame, *, material=False):
-    """Pane properties at a frame, or material properties by (texture map, property, component)."""
     for a in layout.animations:
         if a.name != anim_name:
             continue
@@ -533,12 +472,11 @@ def animated_state(layout, anim_name, frame, *, material=False):
 
 @dataclass
 class Box:
-    """A pane on the grid: the point its position names, the scale its children inherit, its box."""
     px: float
     py: float
     gsx: float
     gsy: float
-    w: float           # the pane's own size (an animation may change it)
+    w: float
     h: float
     left: float
     right: float
@@ -548,14 +486,12 @@ class Box:
 
 
 def pane_geometry(pane, state):
-    """Animated translate, scale, size and Z rotation, in the parent's coordinates."""
     return (state.get((TRANSLATE, 0), pane.x), state.get((TRANSLATE, 4), pane.y),
             state.get((SCALE, 0), pane.sx), state.get((SCALE, 4), pane.sy),
             state.get((SIZE, 0), pane.w), state.get((SIZE, 4), pane.h), state.get((ROTATION, 8), pane.rot))
 
 
 def anchor_offset(pane, parent, width, height):
-    """The child's anchor point on the parent's box, relative to the parent's origin."""
     qh, qv = parent.origin
     ah, av = pane.anchor
     return ((H_CODES.get(ah, ('', .5))[1] - H_CODES.get(qh, ('', .5))[1]) * width,
@@ -563,10 +499,6 @@ def anchor_offset(pane, parent, width, height):
 
 
 def place(layout, state=None, at=(0.0, 0.0), scale=(1.0, 1.0)):
-    """Every pane's Box on the grid. A child's position is its parent's position plus the parent's scale times (the
-    anchor's point on the parent's box plus the child's translate); its box spans its size times its scale on the grid
-    around its origin. Rotation is not applied (Box.rotated says a pane or an ancestor is turned). state: overrides
-    from animated_state()."""
     state = state or {}
     boxes = []
     for p in layout.panes:
@@ -589,9 +521,7 @@ def place(layout, state=None, at=(0.0, 0.0), scale=(1.0, 1.0)):
     return boxes
 
 
-# ---- loading
 def load(source):
-    """{layout name: Layout} of an archive or a RomFS folder; the first copy of a name, with the count of copies."""
     out = {}
     for label, data in read_archives(source):
         counts = {}
@@ -610,14 +540,11 @@ def load(source):
     return out
 
 
-# ---- edits (layout_preview.py --spec)
 def out_units(aspect):
-    """How far a side of the picture lies beyond the middle 16:9, in grid units: 0 at 16:9, 640 at 21:9."""
     return max(0.0, 1080.0 * aspect - 1920.0)
 
 
 def parse_aspect(text):
-    """A picture's width over its height from 21:9, 3440x1440 or 2.39. 21:9 names the 2560x1080 picture (64:27)."""
     if text == '21:9':
         return 64 / 27
     for sep in (':', 'x'):
@@ -631,14 +558,13 @@ def _put_f32(layout, off, value):
     struct.pack_into('<f', layout.data, off, value)
 
 
-# ---- the "split" edit: a picture drawn in pieces, each a pane of its own
-PICTURE_BLOB = 0x88                  # a picture record without a window, with its colour and corner lists
-PICTURE_POINTERS = (0x00, 0x20, 0x48, 0x50, 0x58, 0x60)   # its offsets that point inside it
+PICTURE_BLOB = 0x88
+PICTURE_POINTERS = (0x00, 0x20, 0x48, 0x50, 0x58, 0x60)
 MATERIAL_RECORD = 0x40
-SECTION_POOL = 0xd0                  # the second BFSI section (StringPool): +0x08 its size
+SECTION_POOL = 0xd0
 FILE_SIZE = 0x08
-MATERIAL_EXTRA = 0x300               # a u32 array, one per material (+0x08 its count, +0x0c its stride, 4)
-PART_PANE, CAPTURE_PANE = 0x40, 0x04 # the u32 pane index a part's and a capture's record hold
+MATERIAL_EXTRA = 0x300
+PART_PANE, CAPTURE_PANE = 0x40, 0x04
 M64 = 0xFFFFFFFFFFFFFFFF
 K0, K1, K2 = 0xc3a5c85c97cb3127, 0xb492b66fbe98f273, 0x9ae16a3b2f90404f
 
@@ -660,8 +586,6 @@ def _len16(u, v, mul):
 
 
 def name_hash(name):
-    """The 64-bit hash each table keeps beside a name, which the game's lookup by name compares: CityHash64 of the
-    name's bytes (names up to 32 bytes; every layout name is shorter)."""
     s = name.encode()
     n = len(s)
     q = lambda o: struct.unpack_from('<Q', s, o)[0]
@@ -687,14 +611,6 @@ def name_hash(name):
 
 
 def split_picture(layout, op, out):
-    """The layout's bytes with picture pane op['pane'] drawn in pieces, and a line per piece. Each piece
-    {"src": [a, b], "at": [x0, x1], "f": [f0, f1]} shows the picture's texture from a to b (x in the pane's parent, the
-    picture unrotated at scale 1 with its centre origin) between x0 + f0 * out and x1 + f1 * out. The first piece is
-    the pane itself; the others are copies inserted right after it in pane order, each with a copy of the picture
-    record and of the material, whose texture map gets the piece's UV window. New lists of names, records and hashes
-    replace the pane, picture and material tables' (the old ones are left unused); everything new is appended past the
-    end of the file, which the string pool section grows to cover. Every pane index past the pane's (parents, subtree
-    ends, the animation track codes) moves by the number of copies."""
     d = bytearray(layout.data)
     p = layout.by_name.get(op.get('pane'))
     if not p or p.kind != 1 or p.children:
@@ -738,7 +654,6 @@ def split_picture(layout, op, out):
         su0, su1 = (a - left) / p.w, (b - left) / p.w
         return (t0 + t1) / 2, t1 - t0, sx * (su1 - su0), tx + ((su0 + su1) / 2 - 0.5) * sx
 
-    # renumber what follows the pane, in place, before anything is appended
     for slot, field in ((TABLES['parts'], PART_PANE), (TABLES['captures'], CAPTURE_PANE)):
         for _n, rec in layout.table(slot):
             if u32(d, rec + field) > i:
@@ -746,7 +661,7 @@ def split_picture(layout, op, out):
     for q in layout.panes:
         if q.parent > i:
             struct.pack_into('<i', d, q.at + PANE_PARENT, q.parent + extra)
-        if q.end > i and q.index != i:   # its ancestors' and later panes' subtrees end further on
+        if q.end > i and q.index != i:
             struct.pack_into('<I', d, q.at + PANE_END, q.end + extra)
     codes = set()
     for an, at in layout.tables['animations']:
@@ -775,7 +690,6 @@ def split_picture(layout, op, out):
         blob += data
         return at
 
-    # the pane itself shows the first piece
     cx, w, usx, utx = windows(pieces[0])
     struct.pack_into('<f', d, p.at + PANE_X, cx)
     struct.pack_into('<f', d, p.at + PANE_W, w)
@@ -788,7 +702,6 @@ def split_picture(layout, op, out):
         name = f'{p.name}_{k}'
         cx, w, usx, utx = windows(piece)
         name_at = put(name.encode() + b'\0', 1)
-        # material: record, its one-entry map list and the map, internal pointers moved with them
         m = bytearray(d[mat_at:mat_at + mat_blob])
         mat_new = put(bytes(m))
         struct.pack_into('<Q', blob, mat_new - base, mat_new + MATERIAL_RECORD)
@@ -797,14 +710,12 @@ def split_picture(layout, op, out):
         struct.pack_into('<ff', blob, mp + 0x10, usx, f32(d, map_at + 0x14))
         struct.pack_into('<ff', blob, mp + 0x18, utx, f32(d, map_at + 0x1c))
         new_mats.append((name_at, mat_new, name))
-        # picture record, pointing at the new material
         pr = bytearray(d[pic_at:pic_at + PICTURE_BLOB])
         pic_new = put(bytes(pr))
         for off in PICTURE_POINTERS:
             struct.pack_into('<Q', blob, pic_new - base + off, u64(d, pic_at + off) - pic_at + pic_new)
         struct.pack_into('<H', blob, pic_new - base + 0x10, len(mats) + k - 1)
         new_pics.append((name_at, pic_new, name))
-        # pane record
         pn = bytearray(d[p.at:p.at + PANE_SIZE])
         struct.pack_into('<f', pn, PANE_X, cx)
         struct.pack_into('<f', pn, PANE_W, w)
@@ -826,7 +737,6 @@ def split_picture(layout, op, out):
     tables = [new_table(TABLES['panes'], new_panes, i + 1),
               new_table(TABLES['pictures'], new_pics, len(pics)),
               new_table(TABLES['materials'], new_mats, len(mats))]
-    # the per-material u32 array grows with the materials: each new one takes the piece's source material's value
     extra_at, extra_n, stride = u64(d, MATERIAL_EXTRA), u32(d, MATERIAL_EXTRA + 8), u32(d, MATERIAL_EXTRA + 12)
     grown = None
     if extra_at:
@@ -846,9 +756,6 @@ def split_picture(layout, op, out):
 
 
 def apply_ops(layout, ops, out):
-    """Apply a list of edit operations to a layout's bytes (a bytearray) and return the reparsed layout and a line per
-    operation. Raises SpecError, leaving `layout` untouched, when an operation names what the layout does not hold or a
-    value it expects differs."""
     trial = Layout(layout.name, bytearray(layout.data), layout.archive, layout.copies)
     lines = []
 
@@ -916,7 +823,6 @@ def apply_ops(layout, ops, out):
                     raise SpecError(f'{layout.name} {op["anim"]} {p.name} {op["prop"]}: no key holds {v:g}')
                 lines.append(f'{op["anim"]} {p.name} {op["prop"]} {op.get("component", "x")}: {hits} key(s) '
                              f'{v:g} -> {nv:g}')
-            # each curve's span (its last value less its first) follows its keys
             for t in found:
                 for c in t.curves:
                     if c.component == comp and len(c.values) > 1:
@@ -928,7 +834,6 @@ def apply_ops(layout, ops, out):
     return trial, lines
 
 
-# ---- text and JSON
 def fmt(v):
     return f'{v:.6g}' if abs(v) >= 1e-3 or v == 0 else '0'
 
@@ -998,7 +903,6 @@ def layout_text(lay, layouts):
 
 
 def find_animated(lay):
-    """[(pane, what, [animations])] for panes whose translate x, scale x or size an animation keys."""
     found = {}
     for a in lay.animations:
         for t in a.tracks:
@@ -1017,7 +921,7 @@ def find_animated(lay):
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('source', type=Path, help='a decompressed layout archive (.blarc) or a RomFS folder')
     ap.add_argument('--layout', action='append', help='only this layout (repeatable)')
     ap.add_argument('--json', action='store_true', help='print JSON')

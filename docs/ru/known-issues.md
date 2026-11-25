@@ -1,4 +1,4 @@
-<!-- translation: lang=ru source=docs/known-issues.md source-hash=4679f2a7b22fdeb015100f0d6f0303e6eab365f1 reviewed=no -->
+<!-- translation: lang=ru source=docs/known-issues.md source-hash=69d8ac02a603b9a406b2e78a4032d4e57ec8257a reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · **Русский** · [简体中文](../zh-Hans/known-issues.md)
 
@@ -21,6 +21,10 @@
 - **FSR 4 на Radeon RX 6000 (RDNA 2)**: драйвер AMD предлагает FSR 4 на этих картах, и он работает, но стоит гораздо
   больше времени GPU, чем на более новых картах (около 12 мс на кадр при 1440p на RX 6750 XT). FSR 3.1 там — более
   лёгкий вариант.
+- **В Linux с Mesa 26 игра может завершиться с ошибкой «the GPU device was lost» на некоторых видеокартах AMD.**
+  Отчёты о сеансах показывают это на Radeon RX 480, RX 580 и RX 6800S с Mesa 26.2 и 26.3, через секунды или минуты
+  после начала сеанса; в отчётах с Mesa 25.2 этого нет. Причина пока неизвестна. Если это случилось у вас, откройте
+  issue и приложите `logs/nx2saria.log` и строки ядра после сбоя (`journalctl -k -b`).
 
 ## Генерация кадров
 

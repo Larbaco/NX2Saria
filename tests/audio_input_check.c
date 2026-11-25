@@ -1,4 +1,3 @@
-/* No game data or physical microphone: exercise conversion, bounded capture and the polling ABI. */
 #include <SDL3/SDL.h>
 #include <assert.h>
 
@@ -55,7 +54,7 @@ static void ring_check(void) {
     assert(mic_read(m, out, 3) == 3);
     assert(out[0] == 1 && out[2] == 3);
     assert(SDL_PutAudioStreamData(m->stream, second, sizeof second));
-    assert(mic_available(m) == 8); /* oldest unread samples were dropped */
+    assert(mic_available(m) == 8);
     assert(mic_read(m, out, 16) == 8);
     assert(memcmp(out, second, sizeof second) == 0);
     assert(mic_read(m, out, -1) == 0);
@@ -102,7 +101,7 @@ static void polling_check(void) {
         c.x[0] = key;
         state_locked(&c);
         assert(c.x[0] == 2);
-        SDL_Delay(350); /* overflow the 100 ms ring, not system memory */
+        SDL_Delay(350);
         c.x[0] = key;
         stop_input_locked(&c);
         SDL_AudioSpec spec;
@@ -130,7 +129,7 @@ static void polling_check(void) {
         close_input_locked(&c);
         assert(opaque[0] == 0);
         c.x[0] = key;
-        purge_input_locked(&c); /* regression: Purge after failed/closed Open */
+        purge_input_locked(&c);
     }
     format[0] = 99;
     c.x[0] = key;

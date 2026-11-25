@@ -337,7 +337,7 @@ the calls). Their prefixes, most of which the main table has too:
 
 `python tests/log_prefixes_check.py` runs without game files or a build, with the standard library alone. It reads
 every `.c`, `.cpp`, `.h` and `.inc` file under `runtime/` (not `third_party/` and not the generated `*_spv.h`), finds
-the log calls and their prefixes as its docstring says, and compares them with the table under "Prefixes" above:
+the log calls and their prefixes as [code/tests.md](code/tests.md) says, and compares them with the table under "Prefixes" above:
 
 - A prefix the code writes that has no row in either table is a problem: the check prints its file and line and exits
   with 1.

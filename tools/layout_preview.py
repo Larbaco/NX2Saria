@@ -1,54 +1,3 @@
-"""Draw the game's interface layouts as SVG boxes or textured PNGs for one or more picture shapes.
-
-    layout_preview.py <archive.blarc | romfs folder> --layout PlusMenu_00 [--layout ...] --aspect 21:9
-                      [--aspect 32:9 ...] [--spec spec.json] [--anim [LAYOUT[/PART...]/]NAME:FRAME ...] [--hud] [--png]
-                      --out build/wide-menus/preview/
-
-Each pane is a rectangle at its place on the 3840 x 2160 grid (every ancestor's translate, scale and anchor applied),
-coloured by kind and labelled with its name; a part pane holds the layout it instantiates, drawn at the part's place and
-scale. Panes hidden by their own flag or by --anim are drawn faint. The picture is 2160 * aspect grid units wide around
-the grid's centre (3840 at 16:9, 5120 at 21:9, 7680 at 32:9); its outline is solid, the middle 16:9 (x = +-1920)
-dashed, and what lies outside the picture is shaded.
-
---anim applies an animation at a frame (Hermite interpolation of its keys), e.g. EquipToItem:28 to show the pause
-menu scrolled to the item page. LAYOUT/ limits it to one layout. LAYOUT/PART/.../ addresses one part instance.
-
---spec applies edit operations first and draws "before | after" side by side. The spec is JSON,
-{"<Layout>": [operation, ...]}, where out = 1080 * aspect - 1920 grid units (0 at 16:9, 640 at 21:9, 1920 at 32:9):
-
-    {"op": "move",   "pane": P, "f": F}     translate x += F * out
-    {"op": "grow",   "pane": P, "g": G}     width += 2 * G * out
-    {"op": "widen",  "pane": P, "g": G}     scale x *= 1 + G * out / 1920
-    {"op": "narrow", "pane": P}             scale x *= 1920 / (1920 + out)
-    {"op": "keys", "anim": A, "pane": P, "prop": "translate" | "scale" | "size", ["component": "x" | "y",]
-     "map": [{"value": V, "f": F}, ...]}    the track's keys and constants equal to V become V + F * out
-    {"op": "split", "pane": P, "pieces": [{"src": [A, B], "at": [X0, X1], "f": [F0, F1]}, ...]}
-                                            picture P drawn in pieces: each shows its texture from A to B between
-                                            X0 + F0 * out and X1 + F1 * out (layout_dump.py split_picture adds a pane,
-                                            picture and material for each piece after the first)
-
-Each operation may state the value it expects ("x", "y", "w", "h", "sx", "sy" of the pane): the tool stops with an
-error when the layout holds another, as an edit of the game's files would. A spec may edit a part's layout too (the
-part is drawn edited in "after").
-
---hud outlines, over each "after" panel, the layout as the game draws it today (no edit), to compare. Layouts the game
-keeps over the whole picture (widescreen.c wide_init's keep list) are drawn stretched to it, as the game does.
-
-Writes <out>/<Layout>_<aspect>.svg for each layout and shape, and <out>/index.html linking them; --png also renders
-each SVG to PNG with rsvg-convert or ImageMagick's convert, whichever exists. SVG uses the standard library.
-
---stack A,B draws the named layouts together, from back to front. --textures draws directly to an RGBA PNG using
-the textures from the RomFS folder (--romfs is required if the layout source is an archive). Each panel is clipped
-to the picture. --scale gives the fraction of the 2160-pixel picture height (default 0.25), and --boxes adds pane
-outlines and, with Pillow, labels. Text is shown as faint outlines. Pictures use the first available static texture
-of their material, including single-texture window fills. Multi-texture windows and live captures are omitted.
-Custom material effects and live layout state are approximated by the stored textures and animation tracks.
-Use --dump-texture LAYOUT/PANE for a pane's source texture at its native size.
-
-Texture mode needs NumPy and zstd. Pillow is optional. For uncached ASTC textures it builds the standalone CPU
-decoder with a C compiler and the runtime headers. Set NX2SARIA_VMA_INCLUDE if vk_mem_alloc.h is outside the
-usual toolchain include paths. Textured output and the decoded texture cache stay under build/.
-"""
 import argparse
 import html
 import json
@@ -61,18 +10,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import layout_dump as ld  # noqa: E402
 
-# Layouts whose canvas the game keeps over the whole picture (widescreen.c wide_init).
+DESCRIPTION = "Draw the game's interface layouts as SVG boxes or textured PNGs for one or more picture shapes."
+
 FULL_WIDTH = {'ShortCutBG_00', 'MenuBG_00', 'SystemBG_00', 'EventFade_00', 'LoadingFade_00'}
 COLOURS = {'null': '#8a8a8a', 'picture': '#2f6fd6', 'text': '#d9822b', 'alignment': '#8e44ad', 'scissor': '#c0392b',
            'capture': '#1e9e5a', 'part': '#0f9ba8', 'slide list': '#8b5a2b'}
-MARGIN = 480      # grid units shown beyond each side of the picture
-TITLE = 150       # grid units above the panels for their titles
-GAP = 240         # between panels
-LABEL = 30        # label size in grid units
+MARGIN = 480
+TITLE = 150
+GAP = 240
+LABEL = 30
 
 
 def rgba(colour, alpha):
-    """A colour with its opacity in one value: renderers that ignore fill-opacity (ImageMagick's own) read rgba()."""
     if colour == 'none':
         return colour
     r, g, b = (int(colour[i:i + 2], 16) for i in (1, 3, 5)) if len(colour) == 7 else \
@@ -82,7 +31,7 @@ def rgba(colour, alpha):
 
 class Panel:
     def __init__(self, x0, view_w, title):
-        self.x0, self.view_w, self.title = x0, view_w, title   # x0: the panel's left edge in the SVG
+        self.x0, self.view_w, self.title = x0, view_w, title
         self.items = []
 
     def sx(self, x):
@@ -93,7 +42,6 @@ class Panel:
 
 
 def clip(panel, left, right, bottom, top):
-    """The box limited to the panel, or None when none of it is in."""
     half = panel.view_w / 2
     lim_t = 1080 + MARGIN
     l, r = max(left, -half), min(right, half)
@@ -102,7 +50,6 @@ def clip(panel, left, right, bottom, top):
 
 
 def hidden_of(layout, state):
-    """{pane index} hidden by its flag (bit 0 clear), a visibility key at 0 or an alpha at 0, or by an ancestor."""
     out = set()
     for p in layout.panes:
         s = state.get(p.index, {})
@@ -127,9 +74,6 @@ def state_for(layout, anims, instance, initial=(), *, material=False):
 
 def draw_layout(panel, layout, layouts, anims, at=(0.0, 0.0), scale=(1.0, 1.0), depth=0, max_depth=4,
                 hidden=False, mark=frozenset(), outline=None, stretch=1.0, label_depth=1, instance=None):
-    """Add a layout's panes to the panel; part panes recurse into their layouts (to max_depth; panes deeper than
-    label_depth go unlabelled). outline: draw only outlines in that colour (the --hud overlay). stretch: the x factor
-    of a layout drawn over the whole picture. mark: pane names an edit names, drawn in red at any depth."""
     instance = instance or layout.name
     state = state_for(layout, anims, instance)
     boxes = ld.place(layout, state, at, scale)
@@ -232,7 +176,6 @@ def render_png(svg_path):
     if exe:
         cmd = [exe, '-w', '2400', '-o', str(png), str(svg_path)]
     elif shutil.which('convert'):
-        # the SVG's width attribute is a quarter of its grid units; the density gives a PNG about 2400 pixels wide
         width = float(svg_path.read_text().split('width="', 2)[1].split('"')[0])
         cmd = [shutil.which('convert'), '-density', f'{96 * 2400 / width:.0f}', str(svg_path), str(png)]
     else:
@@ -268,7 +211,6 @@ def textured_png(path, group, layouts, edited, visible, scale, store, anims, box
 
 def build(layouts, names, aspects, spec, anims, hud, out_dir, png=False, max_depth=4, label_depth=1, log=print,
           *, stacks=(), texture_store=None, output_scale=0.25, boxes=False):
-    """Write previews and index.html; returns [(layout or stack, aspect text, image path, edit lines)]."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for scope, aname, _f in anims:
         candidates = layouts.values()
@@ -353,7 +295,7 @@ def build(layouts, names, aspects, spec, anims, hud, out_dir, png=False, max_dep
 
 
 def main(argv=None):
-    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    ap = argparse.ArgumentParser(description=DESCRIPTION)
     ap.add_argument('source', type=Path, help='a decompressed layout archive (.blarc) or a RomFS folder')
     ap.add_argument('--layout', action='append', default=[], help='a layout to draw (repeatable)')
     ap.add_argument('--stack', action='append', default=[], help='comma-separated layouts, back to front (repeatable)')

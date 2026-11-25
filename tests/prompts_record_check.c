@@ -1,14 +1,8 @@
-// The game folder's record of where its button prompts came from (runtime/input/input_map.c input_prompts_record, which
-// runtime/hle/romfs.c overlay_init logs as "button prompts: ..."; tools/make_game.py record_prompts writes the file): its
-// first line without the line end, cut short to the buffer, and 0 for a folder without the record or with an empty
-// one. No game files. tests/prompts_record_check.py builds this with runtime/input/input_map.c and runs it on a temporary
-// folder.
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include "input_map.h"
 
-// what input_map.c needs from the rest of the runtime; none of it is reached from input_prompts_record
 const char *cfg_get(const char *key) { (void)key; return NULL; }
 double cfg_double(const char *key) { (void)key; return 0; }
 void rt_log(const char *fmt, ...) { (void)fmt; }
@@ -43,7 +37,6 @@ int main(int argc, char **argv) {
     put("no line end");
     CHECK(input_prompts_record(dir, out, sizeof out) && !strcmp(out, "no line end"), "no line end: '%s'", out);
 
-    // a line longer than the buffer is cut short and ends inside it
     char longer[200];
     memset(longer, 'a', sizeof longer - 1);
     longer[sizeof longer - 1] = 0;

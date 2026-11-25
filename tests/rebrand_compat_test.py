@@ -1,4 +1,3 @@
-"""Branding transitions preserve update discovery, private reports, shortcuts and existing installs. No game files."""
 import contextlib
 import io
 import json
@@ -32,11 +31,9 @@ class RebrandCompatibilityTest(unittest.TestCase):
             self.assertEqual(gameini._path(game), game / 'nx2saria.ini')
             self.assertEqual((game / 'nx2saria.ini').read_text(encoding='utf-8'), 'sharpness = 20\n')
             self.assertFalse((game / 'nx2navi.ini').exists())
-            # both there: nx2saria.ini is the file, and nx2navi.ini is left as it is
             (game / 'nx2navi.ini').write_text('sharpness = 5\n', encoding='utf-8')
             self.assertEqual(gameini._path(game), game / 'nx2saria.ini')
             self.assertEqual((game / 'nx2navi.ini').read_text(encoding='utf-8'), 'sharpness = 5\n')
-            # a fresh folder: nx2saria.ini, nothing renamed
             fresh = game / 'fresh'
             fresh.mkdir()
             self.assertEqual(gameini._path(fresh), fresh / 'nx2saria.ini')
@@ -53,7 +50,6 @@ class RebrandCompatibilityTest(unittest.TestCase):
                 release = {'tag_name': 'v1.0.0', 'assets': [
                     {'name': n, 'browser_download_url': 'https://example.invalid/' + n}
                     for n in (name, manifest['app']['name'])]}
-                # the Windows manifest's two names, so the feed looks as on Windows: Linux has a manifest of its own
                 with mock.patch.object(feed.net, 'get_json', return_value=[release]), \
                      mock.patch.object(feed.net, 'get_bytes', return_value=files[0].read_bytes()), \
                      mock.patch.object(feed.sys, 'platform', 'win32'):
@@ -170,7 +166,6 @@ int main(void) {
         cc = shutil.which('clang')
         if not cc or sys.platform != 'linux':
             self.skipTest('Linux clang preprocessing required')
-        # linux.c includes SDL3's clipboard header: the stand-in tests/platform_stand_ins.py writes will do
         with tempfile.TemporaryDirectory() as tmp:
             sdl = platform_stand_ins.include(tmp)
             for macro in ('NX2SARIA_PGO_GEN', 'NX2NAVI_PGO_GEN'):

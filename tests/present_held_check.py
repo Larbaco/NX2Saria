@@ -1,16 +1,4 @@
 # needs: clang
-"""Build and run tests/present_held_check.c: runtime/pacing/vk_present_held.h, the present that waits for held work
-(vk_backend.c "a present that waits for held work"). One presenting thread and three submitting threads over 200,000
-frames: every frame reaches the present exactly once and in order, never two at once, and each reason a held present
-goes out occurs. Step by step: a held present stays while work is held, goes out after the work, at the next present
-or before a later present, and only once. With the lock held elsewhere a submitting thread gives up at once, and the
-presenting thread waits and counts its wait. Then the unlocked 0.10.1 shape runs through the same harness and only
-prints what it saw, to show that the harness catches the race.
-
-No GPU, no game files, any Python.
-
-Usage: present_held_check.py
-"""
 import os
 import shutil
 import subprocess
@@ -25,7 +13,6 @@ MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def compiler():
-    """$CC, else MSYS2 UCRT64's clang, else clang on PATH."""
     if os.environ.get('CC'):
         return os.environ['CC']
     if os.name == 'nt' and (MSYS_BIN / 'clang.exe').exists():
@@ -43,7 +30,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     rt = ROOT / 'runtime'
     plat = [rt / 'platform' / ('win32.c' if win else 'linux.c'), rt / 'platform' / 'common.c']
-    plat += stand_ins(work)   # what the platform layer calls outside it (tests/platform_stand_ins.py)
+    plat += stand_ins(work)
     libs = ['-lbcrypt', '-lws2_32', '-lpsapi', '-lwinmm', '-ldbghelp', '-lshell32', '-lole32', '-luser32', '-ladvapi32'] if win \
         else ['-lpthread']
     subprocess.check_call([compiler(), '-std=gnu11', '-O1', '-g', '-Wall', '-Wno-unused-function', '-fno-strict-aliasing',

@@ -1,28 +1,3 @@
-"""Personal folders written short in the text players share: the launcher's log and crash.log, the "Copy Report" text,
-the AppImage's build.log and the game log a bug-report zip carries.
-
-The same rules as the game's own log (runtime/log_privacy.c, runtime/log_privacy_core.h):
-
-- each of these folders, where it starts a path, is written as its marker and the rest of the path is kept:
-  Windows %LOCALAPPDATA%, %APPDATA%, %USERPROFILE% (also HOMEDRIVE + HOMEPATH and the 8.3 short form), %HOMESHARE%,
-  %OneDrive%, %TEMP%; Linux (and the Unix home a Windows build sees under Wine) ~;
-- a folder matches only as a whole: the character before it and the one after it are not part of a name (a letter,
-  digit, '_', '.' or '-'), so /home/ana leaves /home/anabel and /var/home/ana alone; the longest folder wins;
-- the computer's name (COMPUTERNAME, USERDOMAIN, HOSTNAME, the host name and its first label), three characters or
-  longer, as a word of its own anywhere and without case: %COMPUTERNAME% (%USERDOMAIN% for a domain's name). Names a
-  system gives every machine (COMMON_HOSTS: localhost, steamdeck, ...) are not looked for;
-- the account's name, three characters or longer, as a word of its own inside a path (the run of non-blank characters
-  around it holds '/' or '\\'): %USERNAME% on Windows, $USER elsewhere. "Steam Deck" stays as it is for the account
-  deck;
-- Windows paths match without case, with either separator, and with a run of separators for one (an escaped path in
-  an error's text: 'C:\\\\Users\\\\ana');
-- a '.' or '-' right after a folder ends it when no name character follows (the end of a sentence);
-- names too common to be the account's alone (COMMON: user, admin, deck, ...) are not looked for alone; a path under
-  their home still matches as a folder.
-
-NX2SARIA_LOG_SHORT_PATHS=0 in the environment writes everything in full (for debugging on one's own machine), as
-log_short_paths = 0 in nx2saria.ini does for the game.
-"""
 import os
 import re
 import sys
@@ -30,10 +5,10 @@ import sys
 SWITCH = 'NX2SARIA_LOG_SHORT_PATHS'
 NAME_MIN = 3
 COMMON = {'user', 'users', 'admin', 'administrator', 'root', 'guest', 'deck', 'steamuser', 'owner', 'default', 'public',
-          'home', 'local', 'data', 'game', 'games'}   # runtime/log_privacy_core.h priv_common
+          'home', 'local', 'data', 'game', 'games'}
 COMMON_HOSTS = {'localhost', 'steamdeck', 'ubuntu', 'debian', 'fedora', 'archlinux', 'linux', 'desktop', 'laptop',
                 'computer', 'workgroup', 'mint', 'pop-os', 'manjaro', 'nobara', 'bazzite', 'cachyos', 'endeavouros',
-                'opensuse', 'localdomain'}   # runtime/log_privacy_core.h priv_common_host
+                'opensuse', 'localdomain'}
 
 
 def _hostname():
@@ -43,19 +18,18 @@ def _hostname():
     except OSError:
         return ''
 
-_WORD = r'[^\W]'           # a letter (any script), a digit or '_'
-_PATH = r'[^\W]|[.\-]'     # ... or '.' and '-': what continues a folder's name
+_WORD = r'[^\W]'
+_PATH = r'[^\W]|[.\-]'
 
 
 def _strip(p):
     p = p.rstrip('/\\')
     if not p or p.endswith(':') or not re.search(r'[/\\]', p):
-        return ''   # a root or a drive's root would write every path short
+        return ''
     return p
 
 
 def _short_path(p):
-    """The Windows 8.3 form of a folder (C:\\Users\\ANASOU~1), or ''."""
     if os.name != 'nt':
         return ''
     try:
@@ -68,9 +42,6 @@ def _short_path(p):
 
 
 def rules(env=None, windows=None, real=os.path.realpath, short=_short_path, host=_hostname):
-    """(prefixes, name, hosts, windows): the folders to write short as (folder, marker), longest first, the account's
-    name with its marker, and the computer's names as (name, marker). env and windows default to this process's
-    environment and system."""
     env = os.environ if env is None else env
     windows = os.name == 'nt' if windows is None else windows
     pre = []
@@ -91,7 +62,7 @@ def rules(env=None, windows=None, real=os.path.realpath, short=_short_path, host
         for var, mark in (('USERPROFILE', '%USERPROFILE%'), ('LOCALAPPDATA', '%LOCALAPPDATA%')):
             if env.get(var):
                 add(short(env[var]), mark)
-        home = env.get('HOME', '')   # Wine passes the Unix environment on: /home/<name>, seen as Z:\home\<name>
+        home = env.get('HOME', '')
         if home.startswith('/'):
             add(home, '~')
             add('Z:' + home.replace('/', '\\'), '~')
@@ -145,7 +116,7 @@ class Shortener:
                 body = re.escape(p)
             parts.append(f'(?P<p{i}>(?<!{_PATH}){body}(?:(?!{_PATH})|(?=[.\\-](?!{_PATH}))))')
             self._marks[f'p{i}'] = mark
-        for i, (h, mark) in enumerate(hosts):   # a word of its own anywhere, without case
+        for i, (h, mark) in enumerate(hosts):
             parts.append(f'(?P<h{i}>(?i:(?<!{_WORD}){re.escape(h)}(?!{_WORD})))')
             self._marks[f'h{i}'] = mark
         if name:
@@ -163,8 +134,6 @@ class Shortener:
 
     @staticmethod
     def _in_path(s, a, b):
-        """A '/' or '\\' in the run of non-blank characters around s[a:b]; reads that run alone, not the text before
-        it (a bug report's log can be 64 MiB)."""
         i = a
         while i > 0 and not s[i - 1].isspace():
             i -= 1
@@ -192,7 +161,6 @@ def on(env=None):
 
 
 def shorten(text):
-    """text with the personal folders written short, or text as it is when NX2SARIA_LOG_SHORT_PATHS=0."""
     global _default
     if not isinstance(text, str) or not on():
         return text
@@ -201,13 +169,21 @@ def shorten(text):
     return _default(text)
 
 
+def shorten_always(text):
+    global _default
+    if not isinstance(text, str):
+        return text
+    if _default is None:
+        _default = Shortener()
+    return _default(text)
+
+
 def describe(env=None):
-    """For the start of a log: whether paths are written short."""
     if not on(env):
         return f'paths are written in full, the account and computer names included ({SWITCH}=0)'
     return (f'personal folders are written short ({"%USERPROFILE%, %LOCALAPPDATA%" if os.name == "nt" else "~"}, '
             f'the account name and the computer name; {SWITCH}=0 writes them in full)')
 
 
-if __name__ == '__main__':   # filter: python tools/private_paths.py < in > out
+if __name__ == '__main__':
     sys.stdout.write(shorten(sys.stdin.read()))

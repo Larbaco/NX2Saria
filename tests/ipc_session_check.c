@@ -1,12 +1,3 @@
-// runtime/hle/ipc.c with runtime/hle/kernel.c linked: what a CloseHandle racing a request does to the session and the
-// transfer memory the request uses, with the platform layer linked and the rest of the runtime stubbed. Built and run
-// by tests/ipc_session_check.py; prints each failed check and exits 1 on any.
-//   session  a request whose handler blocks while another thread closes the session's only handle: the session's
-//            close callback runs once, after the handler returned, never while it runs
-//   tmem     kern_handle_copy hands out the transfer memory's fields while the handle is open, and 0 after its close
-//   domain   appletOE as a domain: 100 rounds of a getter and its CloseVirtualHandle reuse one id; a closed id is
-//            answered with a bad-handle result; the domain's own id is never closed; an object with a handle of its
-//            own (CopyFromCurrentDomain) keeps the domain after the client closes it, and the last handle frees all
 #include "ipc.c"
 
 #include <stdarg.h>
@@ -14,7 +5,6 @@
 static int fails;
 #define T_CHECK(c, ...) do { if (!(c)) { fails++; printf("FAIL line %d: ", __LINE__); printf(__VA_ARGS__); printf("\n"); } } while (0)
 
-// ---- the runtime ipc.c and kernel.c reach
 unsigned rt_trace;
 uint64_t rt_guest_start_ns;
 volatile uint32_t prof_replay_tid, prof_main_tid;
@@ -47,7 +37,6 @@ void *mem_kernel_alloc(uint64_t size, uint64_t align) {
     return p;
 }
 void mem_kernel_free(void *p, uint64_t size) { (void)size; plat_aligned_free(p); }
-// runtime/memory.c mem_commit_checked: kernel.c commits the main thread's stack with it, which these tests never start
 void mem_commit_checked(uint64_t addr, size_t size, const char *what) {
     uint32_t error = 0;
     if (!plat_mem_commit(addr, size, &error)) { printf("FAIL: commit of %s\n", what); exit(1); }
@@ -78,7 +67,6 @@ void audio_dmg_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) { (
 void audio_sysmix_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) { (void)s, (void)rq, (void)rs; }
 void nfp_user_manager_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) { (void)s, (void)rq, (void)rs; }
 
-// ---- a service whose command 7 blocks until released, and whose state its close callback frees
 typedef struct { volatile int alive, entered, release, done, closes, closed_while_running; } Svc;
 
 static void blocking_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs) {
@@ -117,7 +105,7 @@ static void session_check(void) {
     cl.h = ipc_session_new("blocking", blocking_handler, &v, svc_close);
     void *t = plat_thread_new(client_main, &cl, "client");
     while (!__atomic_load_n(&v.entered, __ATOMIC_SEQ_CST)) plat_wait_ns(200000);
-    kern_handle_close(cl.h);   // the session's only handle, closed while its request runs
+    kern_handle_close(cl.h);
     plat_wait_ns(50000000);
     T_CHECK(v.closes == 0, "the close callback waits for the running request (ran %d times)", v.closes);
     T_CHECK(v.alive, "the service's state outlives the CloseHandle while a request runs");
@@ -127,7 +115,6 @@ static void session_check(void) {
     T_CHECK(v.closes == 1, "the close callback runs once after the request (ran %d times)", v.closes);
     T_CHECK(!v.closed_while_running, "the close callback never runs while the handler does");
     T_CHECK(ipc_sessions_live() == live0, "the session is freed (%ld live, %ld before)", ipc_sessions_live(), live0);
-    // A request on an open session leaves it open; the CloseHandle afterwards frees it.
     static Svc w;
     w.alive = 1, w.release = 1;
     static Client c2;
@@ -150,8 +137,6 @@ static void tmem_check(void) {
     T_CHECK(!kern_handle_copy(h, KERN_TMEM, &copy, sizeof copy), "a closed transfer memory handle copies nothing");
 }
 
-// A CMIF domain request on h: domain command dcmd (1 send, 2 close) to object obj, command cmd. *result and *id (the
-// reply's first data word) are filled for a send; a close has no answer.
 static uint32_t dom_call(Cpu *c, uint32_t h, uint32_t dcmd, uint32_t obj, uint32_t cmd, uint32_t *result,
                          uint32_t *id) {
     uint32_t *m = (uint32_t *)(uintptr_t)c->tpidrro;
@@ -161,10 +146,10 @@ static uint32_t dom_call(Cpu *c, uint32_t h, uint32_t dcmd, uint32_t obj, uint32
     uint32_t dh[4] = {dcmd, obj, 0, 0}, sh[4] = {CMIF_IN_MAGIC, 0, cmd, 0};
     memcpy(payload, dh, 16);
     memcpy(payload + 16, sh, 16);
-    m[1] = (16 + 16 + 16 + 3) / 4;   // the alignment pad, the domain header and the CMIF header
+    m[1] = (16 + 16 + 16 + 3) / 4;
     uint32_t k = sv(c, 0x21, h, 0, 0, 0);
     if (k || dcmd != 1) return k;
-    const uint8_t *rp = (const uint8_t *)m + 16 + 16;   // no handles in these answers: words at 8, payload at 16
+    const uint8_t *rp = (const uint8_t *)m + 16 + 16;
     uint32_t oh[4];
     memcpy(oh, rp, 16);
     *result = oh[0] == CMIF_OUT_MAGIC ? oh[2] : 0xFFFFFFFFu;
@@ -187,10 +172,10 @@ static void domain_check(void) {
     int bad = 0;
     for (int i = 0; i < 100; i++) {
         uint32_t got = 0;
-        dom_call(&c, h, 1, proxy, 0, &res, &got);   // the common state getter
+        dom_call(&c, h, 1, proxy, 0, &res, &got);
         bad += res != 0 || got != 3;
         if (i == 0) id = got;
-        dom_call(&c, h, 2, got, 0, &res, &got);     // CloseVirtualHandle
+        dom_call(&c, h, 2, got, 0, &res, &got);
     }
     T_CHECK(!bad, "100 getters opened and closed, each answered with id 3 (%d not)", bad);
     T_CHECK(root->nobjects == 3 && root->subs == 1, "the table stays at 3 slots (%d), one object open (%d)", root->nobjects,
@@ -199,9 +184,8 @@ static void domain_check(void) {
     uint32_t got = 0;
     dom_call(&c, h, 1, id, 0, &res, &got);
     T_CHECK(res == IPC_R_BAD_HANDLE, "a closed id is answered with a bad handle (%#x)", res);
-    dom_call(&c, h, 2, 1, 0, &res, &got);   // the domain's own id
+    dom_call(&c, h, 2, 1, 0, &res, &got);
     T_CHECK(root->objects[0] == root, "CloseVirtualHandle never closes the domain's own id");
-    // A handle of the proxy's own, then the client closes the domain: the proxy keeps it until its handle closes.
     uint32_t pid = proxy;
     Msg copy = {.type = T_CONTROL, .cmd = 1, .data = &pid, .size = 4};
     T_CHECK(call(&c, h, &copy, &r) == 0 && r.nmove == 1, "CopyFromCurrentDomain hands out a handle");
@@ -214,7 +198,6 @@ static void domain_check(void) {
     kern_handle_close(ph);
     T_CHECK(ipc_sessions_live() == live0, "the last handle frees the object and the domain (%ld live, %ld before)",
             ipc_sessions_live(), live0);
-    // A domain whose client closes it with objects that have no handle of their own: all are freed at once.
     h = ipc_session_new("appletOE", applet_oe_handler, NULL, NULL);
     call(&c, h, &conv, &r);
     dom_call(&c, h, 1, 0, 0, &res, &proxy);

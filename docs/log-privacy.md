@@ -28,6 +28,11 @@ write the account's folders short, and keep the rest of each path, which still s
   `launcher/start.pyw` (`crash.log` and its message box), `launcher/saves.py` (the bug report zip's log and settings,
   also when the log came from an older version or a run with the switch off), `tools/appimage_gui.py` (the AppImage's
   `build.log`) and `tools/make_game.py` (`button-prompts.txt`).
+- What the launcher sends to the project's server is written short whatever the switch says
+  (`tools/private_paths.py` `shorten_always()`, as the game's `log_privacy_str_always()` does for the session
+  report's error line): the log lines of a comment and of a crash log, and the error line of the report the launcher
+  makes after a hard crash. Whoever turns the switch off wants to read their own log in full, not to send the
+  account's name. The log on disk is not changed.
 
 ## What is not changed
 
@@ -68,6 +73,10 @@ read per byte and is passed on as it is; the code allocates nothing and takes no
 `log_short_paths = 1` in `nx2saria.ini` ([diagnostics]) is the default. `0` (or `NX2SARIA_LOG_SHORT_PATHS=0`) writes
 paths in full, for debugging on one's own machine; the lines logged before the settings are read are short either way.
 The launcher and the build tools follow `NX2SARIA_LOG_SHORT_PATHS=0` in their environment.
+
+The switch is for one's own logs, never for what goes to a server: the error line of the session summary
+(`logs/session-summary.json`, which the launcher may send, [telemetry.md](telemetry.md)) has its folders written short
+with the switch off too (`runtime/log_privacy.h` `log_privacy_str_always()`).
 
 Log lines:
 

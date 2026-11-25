@@ -1,13 +1,4 @@
 # needs: py:fontTools, py:compression.zstd
-"""tools/make_romfs_patches.py --prompts and tools/button_icons.py on a RomFS made here, with no game files: each prompt
-names the label of the Xbox button that the pad layout presses, the shoulder buttons, triggers, Plus, Minus and the
-d-pad are drawn as on an Xbox controller, the PC prompts draw every button as its key or mouse button (the defaults or
-a nx2navi.ini's bind_ lines), the resource size table grows with the fonts, every other file and member stays byte for
-byte, the same input gives the same output, and a RomFS the tool does not recognise fails before it writes anything. Both game versions: 1.2.1 (Common.Product.110, 72x72 button guide images) and 1.4.3
-(Common.Product.140, 108x108).
-
-Run: .venv-py314\\Scripts\\python tests\\romfs_prompts_test.py
-"""
 import compression.zstd as zstd
 import hashlib
 import importlib.util
@@ -33,28 +24,23 @@ spec = importlib.util.spec_from_file_location('button_icons', ROOT / 'tools' / '
 icons = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(icons)
 
-# The face button each Switch button is in a pad layout (docs/controls.md, runtime/input/input_map.c), the label an Xbox pad
-# prints on it, and the layout each overlay is made for (runtime/input/input_map.c input_prompts_folder).
 POSITION = {'nintendo': {'A': 'east', 'B': 'south', 'X': 'north', 'Y': 'west'},
             'xbox': {'A': 'south', 'B': 'east', 'X': 'west', 'Y': 'north'}}
 XBOX_LABEL = {'south': 'A', 'east': 'B', 'west': 'X', 'north': 'Y'}
 STYLE_LAYOUT = {'xbox': 'nintendo', 'xbox-label': 'xbox'}
 FACE = {'A': 0xE040, 'B': 0xE041, 'X': 0xE042, 'Y': 0xE043}
-# The glyphs drawn as Xbox icons, with their advance: LB RB LT RT, Menu and View, the d-pad.
 DRAWN = {0xE044: 820, 0xE045: 820, 0xE046: 760, 0xE047: 760, 0xE04B: 640, 0xE04C: 640, 0xE049: 640,
          **{cp: 640 for cp in range(0xE060, 0xE066)}}
 
-# restbl: the resource size table's name after its version, in both forms the tool takes.
 VERSIONS = {'v121': dict(common='110', size=72, newest=121, restbl='Nin_NX_NVN.rsizetable.zs'),
             'v143': dict(common='140', size=108, newest=143, restbl='rsizetable.zs')}
 DEFAULT_FONT, REGIONAL_FONT = 'Font/Font.Nin_NX_NVN.bfarc.zs', 'Font/Font_KRko.Nin_NX_NVN.bfarc.zs'
 PANES = {'T_A_00': 'A', 'T_B_00': 'B', 'T_X_00': 'X', 'T_Y_00': 'Y', 'T_Name_00': 'A'}
 MESSAGES = {**PANES, 'Greeting': 'Hello'}
 R8_UNORM, BC1 = 0x201, 0x1a01
-IMAGE = 16384   # an R8 square up to 128 rows, two GOBs wide, block height 16: the size of the game's key images
+IMAGE = 16384
 
 
-# ---- the formats, written here from their layout so the tools' readers are checked against an independent writer
 def sarc(members, align=0x80):
     names, sfnt, name_at = list(members), b'', {}
     for name in names:
@@ -85,7 +71,6 @@ def sarc_files(data):
 
 
 def bflan(panes):
-    """A FLAN whose pai1 section steps each pane's visibility from 0 at frame 0 to 1 at frame 1."""
     entries = [name.encode().ljust(28, b'\0') + bytes([1, 0, 0, 0]) + struct.pack('<I', 36)
                + b'FLVI' + bytes([1, 0, 0, 0]) + struct.pack('<I', 12)
                + bytes([0, 0, 1, 0]) + struct.pack('<HHI', 2, 0, 12)
@@ -101,7 +86,6 @@ def bflan(panes):
 
 
 def visibility(data):
-    """pane -> [(frame, value)] of a FLAN made by bflan()."""
     pos, out = 0x14, {}
     count, table = struct.unpack_from('<H', data, pos + 14)[0], pos + struct.unpack_from('<I', data, pos + 16)[0]
     for e in range(count):
@@ -112,7 +96,6 @@ def visibility(data):
 
 
 def bntx(textures):
-    """A BNTX of single-mip square textures: name -> (format, size, image)."""
     out = bytearray(0x30)
     out[0:4], out[0x20:0x24] = b'BNTX', b'NX  '
     table = len(out)
@@ -126,7 +109,7 @@ def bntx(textures):
         struct.pack_into('<H', out, info + 0x16, 1)
         struct.pack_into('<I', out, info + 0x1c, fmt)
         struct.pack_into('<II', out, info + 0x24, size, size)
-        struct.pack_into('<I', out, info + 0x34, 4)   # block height 1 << 4 GOBs
+        struct.pack_into('<I', out, info + 0x34, 4)
         struct.pack_into('<I', out, info + 0x50, len(image))
         struct.pack_into('<Q', out, info + 0x60, len(out))
         out += struct.pack('<H', len(name)) + name.encode() + b'\0'
@@ -141,7 +124,6 @@ def bntx(textures):
 
 
 def bntx_images(data):
-    """name without the ^ suffix -> (format, size, image) of a BNTX made by bntx()."""
     count, table = struct.unpack_from('<IQ', data, 0x24)
     out = {}
     for k in range(count):
@@ -155,7 +137,6 @@ def bntx_images(data):
 
 
 def bflyt(panes):
-    """A FLYT with one txt1 section per pane (name -> text) after a pan1 section."""
     sections = b'pan1' + struct.pack('<I', 0x4c) + bytes(0x44)
     for name, text in panes.items():
         s = bytearray(0x80)
@@ -181,7 +162,6 @@ def pane_texts(data):
 
 
 def msbt(messages):
-    """A UTF-16 MSBT: one LBL1 group with every label, then TXT2 (label -> text)."""
     labels = b''.join(bytes([len(name)]) + name.encode() + struct.pack('<I', i) for i, name in enumerate(messages))
     lbl1 = struct.pack('<III', 1, len(messages), 12) + labels
     texts = [text.encode('utf-16-le') + b'\0\0' for text in messages.values()]
@@ -219,7 +199,6 @@ def message_texts(data):
 
 
 def restbl(entries):
-    """A RESTBL keyed by the CRC32 of each path without .zs (path -> size)."""
     crcs = sorted((zlib.crc32(path.removesuffix('.zs').encode()), size) for path, size in entries.items())
     return b'RESTBL' + struct.pack('<IIII', 1, 160, len(crcs), 0) + b''.join(struct.pack('<II', *c) for c in crcs)
 
@@ -229,11 +208,10 @@ def restbl_sizes(table):
     return dict(struct.unpack_from('<II', table, 22 + 8 * i) for i in range(count))
 
 
-MAGIC = 0x18029a7f   # a .bfotf's first word is its key XOR this
+MAGIC = 0x18029a7f
 
 
 def bfotf(otf, key):
-    """A .bfotf as tools/button_icons.py bfotf_encode writes it: 32-bit words XORed with the key."""
     size = len(otf)
     out = struct.pack('<II', MAGIC ^ key, struct.unpack('<I', size.to_bytes(4, 'big'))[0] ^ key)
     out += b''.join(struct.pack('<I', struct.unpack_from('<I', otf, i)[0] ^ key) for i in range(0, size - size % 4, 4))
@@ -248,7 +226,6 @@ def unbfotf(blob):
 
 
 def rect(pen, x0, y0, x1, y1, hole=False):
-    """A rectangle, counter-clockwise (filled, the CFF way) or clockwise (a counter)."""
     points = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
     points = points[::-1] if hole else points
     pen.moveTo(points[0])
@@ -267,7 +244,6 @@ def polygon(*points):
 
 
 def cff_font(name, glyphs):
-    """A CFF OpenType font with a 1000-unit em: code point -> (advance, draw(pen))."""
     names = {cp: f'uni{cp:04X}' for cp in glyphs}
     fb = FontBuilder(1000, isTTF=False)
     fb.setupGlyphOrder(['.notdef'] + list(names.values()))
@@ -289,7 +265,6 @@ def cff_font(name, glyphs):
     return out.getvalue()
 
 
-# A distinct rectangle and advance for every button glyph, so a glyph that moved is found by its outline.
 BUTTONS = {cp: (600 + 4 * (cp - 0xE040), lambda pen, i=cp - 0xE040: rect(pen, 20 + 5 * i, 20, 300 + 5 * i, 400 + 3 * i))
            for cp in range(0xE040, 0xE069)}
 LETTERS_1 = {ord('L'): (560, polygon((60, 0), (480, 0), (480, 100), (160, 100), (160, 700), (60, 700))),
@@ -297,16 +272,12 @@ LETTERS_1 = {ord('L'): (560, polygon((60, 0), (480, 0), (480, 100), (160, 100), 
                                           rect(pen, 160, 400, 360, 600, True)]),
              ord('R'): (560, lambda pen: [rect(pen, 60, 0, 460, 700), rect(pen, 160, 400, 360, 600, True)])}
 LETTERS_2 = {ord('T'): (560, polygon((230, 0), (330, 0), (330, 600), (520, 600), (520, 700), (40, 700), (40, 600), (230, 600)))}
-# The other characters the PC prompts' keys show (button_icons.PC_LABELS of the defaults): a block with a counter, each
-# its own size.
 LETTERS_2.update({ord(ch): (560, lambda pen, i=i: [rect(pen, 60, 0, 300 + 10 * i, 700), rect(pen, 120, 100, 240, 600, True)])
                   for i, ch in enumerate('ACDEFMQSW1234⇧G')})
-PC_PANES = {'A': 'E', 'B': '↑', 'X': '▬', 'Y': 'L'}   # the diamond's letters with the default keys
+PC_PANES = {'A': 'E', 'B': '↑', 'X': '▬', 'Y': 'L'}
 
 
 class Romfs:
-    """A RomFS (romfs.bin, index.json) holding the files make_romfs_patches.py reads, the originals kept to compare."""
-
     def __init__(self, folder, version, text_fonts=True, restbl_skips=(), l_format=R8_UNORM):
         v, rnd = VERSIONS[version], random.Random(version)
         words = [b'Layout', b'Pane', b'Font', b'Msg', b'Texture', b'Anim', b'Group', b'Text', b'Base', b'Key']
@@ -317,7 +288,7 @@ class Romfs:
         self.mals = [f'Mals/EUen.Product.{v["newest"]}.sarc.zs', f'Mals/USen.Product.{v["newest"]}.sarc.zs']
         self.old_mals = 'Mals/USen.Product.110.sarc.zs'
         self.restbl = f'System/Resource/ResourceSizeTable.Product.{v["newest"]}.{v["restbl"]}'
-        self.old_restbl = f'System/Resource/ResourceSizeTable.Product.100.{v["restbl"]}'   # an older version's: left alone
+        self.old_restbl = f'System/Resource/ResourceSizeTable.Product.100.{v["restbl"]}'
         size = v['size']
         images = {f'Nt_KeyTex{b}_00': (R8_UNORM, size, rnd.randbytes(IMAGE)) for b in 'ABXY'}
         images.update({'Nt_KeyTexL_00^z': (l_format, size, rnd.randbytes(IMAGE)),
@@ -329,7 +300,7 @@ class Romfs:
         if text_fonts:
             default.update(zip(icons.TEXT_FONTS, self.text_fonts))
         mals = sarc({'LayoutMsg/DoCommand_00.msbt': msbt(MESSAGES), 'LayoutMsg/Other_00.msbt': msbt({'T_A_00': 'A'})})
-        self.contents = {   # RomFS path -> contents before compression
+        self.contents = {
             self.common: sarc({'anim/ShortCutBG_00_In.bflan': bflan(('C_CaptureBG_00', 'C_CaptureClearBG_00',
                                                                       'P_CaptureClearBG_00', 'N_Other_00')),
                                'anim/AutoBuilder_00_In.bflan': bflan(('C_CaptureBG_00',)),
@@ -337,7 +308,6 @@ class Romfs:
                                'blyt/Title_00.bflyt': bflyt({'N_Title_00': 'Z'}),
                                'timg/__Combined.bntx': bntx(images)}),
             DEFAULT_FONT: sarc(default),
-            # The same font under another key: drawn once, stored under each archive's own key.
             REGIONAL_FONT: sarc({'scft/External.bfotf': bfotf(cff_font('External', BUTTONS), 0x77777777),
                                  'fnt/rest.bin': rnd.randbytes(500)}),
             **{path: mals for path in self.mals + [self.old_mals]},
@@ -345,7 +315,7 @@ class Romfs:
         sizes = {path: len(data) + 256 for path, data in self.contents.items() if path not in restbl_skips}
         self.contents[self.restbl] = restbl({**sizes, **{f'Other/{i}.bin': 1000 + i for i in range(20)}})
         self.contents[self.old_restbl] = restbl({DEFAULT_FONT: 1})
-        plain = (REGIONAL_FONT, self.restbl, self.old_restbl)   # stored without a dictionary
+        plain = (REGIONAL_FONT, self.restbl, self.old_restbl)
         self.files = {'Pack/ZsDic.pack.zs': zstd.compress(sarc({'zs.zsdic': self.dictionary.dict_content}))}
         self.files.update({path: zstd.compress(data, zstd_dict=None if path in plain else self.dictionary)
                            for path, data in self.contents.items()})
@@ -365,7 +335,6 @@ class Romfs:
                                '--out', str(out), *flags], capture_output=True, text=True, encoding='utf-8')
 
     def read(self, out, path):
-        """The overlay's file, decompressed."""
         raw = (out / path).read_bytes()
         return zstd.decompress(raw, zstd_dict=self.dictionary if zstd.get_frame_info(raw).dictionary_id else None)
 
@@ -375,7 +344,6 @@ def font(blob):
 
 
 def glyph(f, cp):
-    """(outline, advance) of the glyph of code point cp."""
     name = f.getBestCmap()[cp]
     pen = RecordingPen()
     f.getGlyphSet()[name].draw(pen)
@@ -406,7 +374,6 @@ class PromptsTest(unittest.TestCase):
         cls.tmp.cleanup()
 
     def each(self, styles=('xbox', 'xbox-label')):
-        """(RomFS, style, overlay folder, summary) of every run of these styles."""
         return [(self.romfs[v], style, out, summary) for (v, style), (out, summary) in self.outs.items()
                 if style in styles]
 
@@ -423,7 +390,7 @@ class PromptsTest(unittest.TestCase):
         for romfs, style, out, _ in self.each():
             with self.subTest(version=romfs.version, style=style):
                 layout = STYLE_LAYOUT[style]
-                label = {b: XBOX_LABEL[POSITION[layout][b]] for b in FACE}   # Switch button -> the label of its button
+                label = {b: XBOX_LABEL[POSITION[layout][b]] for b in FACE}
                 before, after = sarc_files(romfs.contents[romfs.common]), sarc_files(romfs.read(out, romfs.common))
                 old, new = bntx_images(before['timg/__Combined.bntx']), bntx_images(after['timg/__Combined.bntx'])
                 panes, messages = pane_texts(after['blyt/DoCommand_00.bflyt']), {}
@@ -439,7 +406,6 @@ class PromptsTest(unittest.TestCase):
                     self.assertEqual(panes[f'T_{b}_00'], label[b], f'diamond letter of {b}')
                     for path, texts in messages.items():
                         self.assertEqual(texts[f'T_{b}_00'], label[b], f'{path}: diamond message of {b}')
-                # Text that only looks like a letter pane, and every other message, stays.
                 self.assertEqual((panes['T_Name_00'], pane_texts(after['blyt/Title_00.bflyt'])), ('A', {'N_Title_00': 'Z'}))
                 for path, texts in messages.items():
                     self.assertEqual((texts['T_Name_00'], texts['Greeting']), ('A', 'Hello'))
@@ -458,12 +424,10 @@ class PromptsTest(unittest.TestCase):
                         self.assertEqual(advance, DRAWN[cp], f'U+{cp:04X} advance')
                     elif cp not in FACE.values():
                         self.assertEqual((outline, advance), glyph(original, cp), f'U+{cp:04X} kept')
-                # The letters are holes in the key: LB is the key, L, and B with its two counters.
                 moves = sum(op == 'moveTo' for op, _ in glyph(drawn, 0xE044)[0])
                 self.assertEqual(moves, 5)
-                self.assertEqual(sum(op == 'moveTo' for op, _ in glyph(drawn, 0xE047)[0]), 1 + 1 + 1 + 1)   # RT: key, R + counter, T
-                self.assertEqual(sum(op == 'moveTo' for op, _ in glyph(drawn, 0xE060)[0]), 2)              # d-pad up: cross, arrow
-                # The text fonts and the archives' other members stay byte for byte; both archives hold the same font.
+                self.assertEqual(sum(op == 'moveTo' for op, _ in glyph(drawn, 0xE047)[0]), 1 + 1 + 1 + 1)
+                self.assertEqual(sum(op == 'moveTo' for op, _ in glyph(drawn, 0xE060)[0]), 2)
                 before = sarc_files(romfs.contents[DEFAULT_FONT])
                 self.assertEqual({k: v for k, v in default.items() if k != 'scft/External.bfotf'},
                                  {k: v for k, v in before.items() if k != 'scft/External.bfotf'})
@@ -485,9 +449,9 @@ class PromptsTest(unittest.TestCase):
                     fmt, width, image = new[name]
                     pixels = bytes(image[icons.gob_offset(x, y, (size + 63) // 64, 16)] for y in range(size) for x in range(size))
                     self.assertEqual(pixels, icons.rasterize(glyphs[cp][1], size), name)
-                    self.assertEqual({pixels[0], pixels[-1], max(pixels)}, {0, 255}, name)   # a margin around a white key
+                    self.assertEqual({pixels[0], pixels[-1], max(pixels)}, {0, 255}, name)
                 self.assertEqual(new['Nt_KeyTexLSt_00'], old['Nt_KeyTexLSt_00'])
-                for member in before:   # the 60 fps patch and the prompts touch only these
+                for member in before:
                     if member not in ('timg/__Combined.bntx', 'blyt/DoCommand_00.bflyt') and not member.startswith('anim/'):
                         self.assertEqual(after[member], before[member], member)
 
@@ -528,7 +492,7 @@ class PromptsTest(unittest.TestCase):
                 drawn = font(sarc_files(romfs.read(out, DEFAULT_FONT))['scft/External.bfotf'])
                 advances = icons.font_advances(sarc_files(romfs.contents[DEFAULT_FONT])['scft/External.bfotf'])
                 pc = icons.pc_icons(icons.text_glyphs(romfs.text_fonts), advances)
-                self.assertIn(0xE05E, pc)   # the left stick's W A S D
+                self.assertIn(0xE05E, pc)
                 for cp in range(0xE040, 0xE069):
                     outline, advance = glyph(drawn, cp)
                     if cp in pc:
@@ -536,7 +500,6 @@ class PromptsTest(unittest.TestCase):
                     else:
                         self.assertEqual(outline, glyph(original, cp)[0], f'U+{cp:04X} kept')
                     self.assertEqual(advance, glyph(original, cp)[1], f'U+{cp:04X} keeps its advance')
-                # The key's label is a hole: E is the key, the block and its counter.
                 self.assertEqual(sum(op == 'moveTo' for op, _ in glyph(drawn, 0xE040)[0]), 3)
                 after = sarc_files(romfs.read(out, romfs.common))
                 new = bntx_images(after['timg/__Combined.bntx'])

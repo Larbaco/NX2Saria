@@ -1,42 +1,3 @@
-"""Static check of the log prefixes the runtime writes against the table in docs/logging.md. Standard library only.
-
-Every line of logs/nx2saria.log starts with a word or a few that say which part of the game wrote it ("vk:",
-"frame rate:", "boot map:"). This check finds the prefix of each log call in runtime/ and fails on a prefix that has
-no row in docs/logging.md, so a new prefix comes with its row and a reader of a player's log can look it up. A row
-of the main table that no call uses any more is a warning: the table is behind, the code is not wrong.
-
-What a log call is:
-- rt_log(fmt, ...) and rt_logf(fmt, ...) of runtime/host.h;
-- a macro whose body calls rt_log or rt_logf with __VA_ARGS__ as the format, after string literals or none
-  (vk_pipeline.c LOG_ONCE, nvn_api.h NVN_LOG with its "nvn: ", romfs.c BAD);
-- a function with a const char * parameter that it passes on as rt_log's or rt_logf's format (ov_input.c once).
-  A macro or function defined in a .c or .cpp file counts in that file only; one in a header counts everywhere.
-
-The prefix of a format string:
-- the text before the first colon that ends a word (a colon followed by a space, a "\\n" or the end), when that text
-  is one to four words of letters, digits and _ . : / + - ("vk:", "host save import:", "aud:u:", "nn::codec:");
-- otherwise the format's first word, without a colon ("frame %llu: submits ..." gives "frame"); the table writes it
-  without a colon too;
-- a format that starts with white space continues the line before it (a block such as the crash report's registers)
-  and has no prefix of its own;
-- an rt_logf format, written as it is with no "[host] " and no newline, is a prefix only when it has the colon form
-  above: the others are pieces of a line another rt_logf started ("outside every module)", " %08x");
-- a format chosen by ?: gives one prefix for each of its string literals.
-
-A format that starts with a conversion ("%s", "%s: ...") takes its prefix from the text put in its place, which this
-check reads only when the first argument is a plain name that the same function filled before the call with
-snprintf(name, size, "...") or sprintf(name, "..."), or set with name = "...". Every other such call, and a call whose
-format is not a string literal, is counted as not seen; `--unseen` lists them. docs/logging.md lists the prefixes those
-lines are known to carry in a table of their own, which is not checked for use.
-
-Not read: rt_fatal and rt_fatal_code (their line is "FATAL: <message>", dispatch.c fatal_end), the "[host] " every
-rt_log line starts with, runtime/third_party/ and the generated *_spv.h headers. Code under #if 0 and in every #ifdef
-branch is read like the rest.
-
-Usage: python tests/log_prefixes_check.py [repo]          one line per problem; exit 1 if any
-       python tests/log_prefixes_check.py --unseen        also list the calls whose prefix the check cannot read
-       python tests/log_prefixes_check.py --self-test     inject each kind of fault into copies and check it is caught
-"""
 import re
 import sys
 from pathlib import Path
@@ -54,12 +15,10 @@ PREFIX_TEXT = re.compile(r'[A-Za-z_][A-Za-z0-9_.:/+\-]*(?: [A-Za-z0-9_.:/+\-]+){
 
 
 def literal_text(run):
-    """The text of adjacent string literals, escapes left as written."""
     return ''.join(m[1:-1] for m in re.findall(LIT, run))
 
 
 def prefix_of(text, raw=False):
-    """The prefix of a format string's text, '' for a continuation, None for a format that starts with a conversion."""
     if not text or text[0] in ' \t' or text.startswith('\\n'):
         return ''
     if text[0] == '%':
@@ -74,7 +33,6 @@ def prefix_of(text, raw=False):
 
 
 def wrappers(src):
-    """{name: (format argument index, prefix literal text, logger, position of the wrapped call)} defined in src."""
     out = {}
     for m in re.finditer(r'#define\s+(\w+)\(\.\.\.\)([^\n]*(?:\\\n[^\n]*)*)', src):
         body = m.group(2)
@@ -96,7 +54,6 @@ def wrappers(src):
 
 
 def filled_with(src, body_start, pos, name):
-    """The format texts a function wrote into the buffer `name` before pos, or the literals it set it to."""
     texts = []
     for m in re.finditer(r'\b(snprintf|sprintf)\s*\(\s*%s\s*,' % re.escape(name), src[body_start:pos]):
         args = call_args(src, body_start + m.start() + m.group(0).index('('))
@@ -110,13 +67,12 @@ def filled_with(src, body_start, pos, name):
 
 
 def scan(sources):
-    """The prefixes the runtime writes: ({prefix: [file:line, ...]}, [unseen call file:line and text], counts)."""
     stripped = {p: strip_comments(t) for p, t in sources.items()}
     shared, local, skip = {}, {}, {}
     for p, s in stripped.items():
         w = wrappers(s)
         (shared if p.endswith(('.h', '.inc')) else local.setdefault(p, {})).update(w)
-        skip[p] = {v[3] for v in w.values()}   # the wrapper's own call, whose format is its parameter
+        skip[p] = {v[3] for v in w.values()}
     used, unseen = {}, []
     counts = {'calls': 0, 'continuations': 0, 'from buffers': 0}
     for p, s in stripped.items():
@@ -130,7 +86,7 @@ def scan(sources):
                 continue
             ahead = s[max(0, m.start() - 40):m.start()]
             if re.search(r'(?:\bvoid|#define)\s*\**\s*$', ahead):
-                continue   # a declaration or definition
+                continue
             idx, lead, logger, _ = names[m.group(1)]
             args = call_args(s, m.end() - 1)
             if idx >= len(args):
@@ -150,8 +106,6 @@ def scan(sources):
             for text in texts:
                 pre = prefix_of(text, raw=logger == 'rt_logf')
                 if pre is None:
-                    # the text of the first argument in place of the conversion: string literals in it (one per
-                    # branch of a ?:), or what the function wrote into the buffer it names
                     first = args[idx + 1].strip() if len(args) > idx + 1 else ''
                     rest = text[len(re.match(CONVERSION, text).group(0)):]
                     if re.search(LIT, first):
@@ -176,8 +130,6 @@ def scan(sources):
 
 
 def table(doc):
-    """({prefix: line} of the main table, {prefix: line} of the table of lines the check cannot see, problems). A row's
-    prefixes are the code spans of its first cell."""
     main, extra, problems, section = {}, {}, [], None
     for n, line in enumerate(doc.split('\n'), 1):
         if line.startswith('## '):
@@ -187,7 +139,7 @@ def table(doc):
         if section is None or len(cells) < 3 or cells[0].strip() or not cells[1].strip().startswith('`'):
             continue
         into = main if section == 'main' else extra
-        for pre in re.findall(r'`([^`]+)`', cells[1]):   # a row may name several prefixes: `a:`, `b:`
+        for pre in re.findall(r'`([^`]+)`', cells[1]):
             if pre in into:
                 problems.append(f'{DOC}:{n}: `{pre}` has a second row (the first at line {into[pre]})')
             into.setdefault(pre, n)
@@ -197,7 +149,6 @@ def table(doc):
 
 
 def check(sources, doc):
-    """(problems, warnings, used prefixes, unseen calls, counts)."""
     used, unseen, counts = scan(sources)
     main, extra, problems = table(doc)
     for pre in sorted(used, key=str.lower):
@@ -220,7 +171,6 @@ def read_repo(repo):
 
 
 def self_test(repo):
-    """Each kind of fault, put into a copy of the doc or a made-up source file, must be reported."""
     sources, doc = read_repo(repo)
     base, base_warn, *_ = check(sources, doc)
     bad = 0

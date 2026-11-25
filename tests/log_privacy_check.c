@@ -1,5 +1,3 @@
-// tests/log_privacy_check.py builds this: runtime/log_privacy_core.h's tables and rewrite, with Windows and Linux tables
-// on any system. Prints "case: ok" or "case: FAIL ..." per case and "log_privacy_check: ok|FAILED" at the end.
 #include <stdio.h>
 #include <string.h>
 
@@ -19,7 +17,6 @@ static void expect(const PrivTable *t, const char *what, const char *in, const c
     if (!ok) printf("  in:   %s\n  got:  %s\n  want: %s\n  find %d hits %u\n", in, out, want, found, hits), bad++;
 }
 
-// The rewrite in small pieces (a caller's buffer that fills): the same text as in one piece.
 static void pieces(const PrivTable *t, const char *what, const char *in) {
     char one[4096], many[4096];
     size_t n = strlen(in), at = 0, o = priv_rewrite(t, in, n, &at, one, sizeof one - 1, NULL);
