@@ -60,6 +60,21 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['error']['code'], 'invalid_parent')
         self.assertEqual(self.tree(), before)
 
+    def test_older_path_helper_keeps_report_paths_private(self):
+        script = ("import os,sys\n"
+                  "from pathlib import Path\n"
+                  "from tools import private_paths\n"
+                  "del private_paths.shorten_always\n"
+                  "sys.modules['private_paths']=private_paths\n"
+                  "os.environ['NX2SARIA_LOG_SHORT_PATHS']='0'\n"
+                  "from launcher import telemetry,worker\n"
+                  "raw=str(Path.home() / 'private' / 'synthetic.log')\n"
+                  "assert private_paths.shorten(raw) == raw\n"
+                  "assert telemetry.sent_line(raw).changed\n"
+                  "assert str(Path.home()) not in telemetry.sent_line(raw)\n")
+        result = subprocess.run([sys.executable, '-c', script], text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     @unittest.skipUnless(sys.platform == 'win32', 'Windows parent handle')
     def test_parent_exit_releases_idle_worker_with_pipe_still_open(self):
         script = ("import os,subprocess,sys;"

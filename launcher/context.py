@@ -10,7 +10,15 @@ from .paths import Layout
 from .settings import Settings
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools'))
-from private_paths import describe, on as short_paths_on, shorten, shorten_always  # noqa: E402
+from private_paths import Shortener, describe, on as short_paths_on, shorten  # noqa: E402
+
+try:
+    from private_paths import shorten_always
+except ImportError:
+    _report_shortener = Shortener()
+
+    def shorten_always(text):
+        return _report_shortener(text) if isinstance(text, str) else text
 
 LOG_LIMIT = 4 << 20
 

@@ -227,6 +227,13 @@ GitHub Tests and Content guard passed for branch head `4024d86d`. Three addition
 
 The replacement Windows ZIP ships the Electron application and CPython 3.14 worker bytecode. It uses the selected installation's distributed Python and the tools of the release in `app/current.txt`. The worker records the chosen interpreter path, Python version and app path through the existing private-path logger. If Python or the tools are missing or the runtime cannot load 3.14 bytecode, the window directs the player to update or repair with the installed launcher. A first installation starts with the current NX2Saria installer. The synthetic Windows window verified both messages. With the published Python 3.14.9 runtime, a synthetic build tool from the active app verified its own path and the interpreter path. Success resumed Play. Cancelling a second job released the job marker and did not launch again. The dependency probe of the build interpreter now opens stdin as DEVNULL so it cannot inherit the worker pipe. The full worker test module under the Windows release runtime had 44 passing cases and two platform skips. These checks used a fabricated toolchain and game, so the owner's real-game test remains pending. Updates, session reporting, the crash-log offer and migration remain separate milestones.
 
+The first owner Windows attempt exposed a mismatch between the worker's imports and the published
+0.24.0-rc.1 tools. The release audit found that `private_paths.shorten_always()` was the only missing
+export used by inspection or Play in the 0.24.0-rc.1 and 0.25.0 archives. The packaged worker uses its own
+launcher modules and loads the selected release's tools. The compatibility path uses the older helper's
+`Shortener` so paths included in reports remain shortened regardless of the local log setting.
+The Windows regression uses the app and runtime archives published for each tested version in isolated folders.
+
 ### Worker implementation: handshake and inspection
 
 The first worker slice implements a bounded JSON-lines handshake with exact protocol version 1, validates the selected

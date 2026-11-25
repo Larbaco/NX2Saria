@@ -274,6 +274,11 @@ active game or job as for EOF. An installed worker checks the active app again u
 its `Layout` for tools and writes a runtime line through the existing path filter. `toolchain.zbic_ok()` probes the build
 interpreter with stdin closed to input so the probe cannot inherit the worker's protocol pipe.
 
+A packaged worker imports `tools/private_paths.py` from the installed release. `Context` uses its
+`shorten_always()` when present. If that export is missing, `Context` uses the installed helper's
+`Shortener` directly, independent of the local log switch. This preserves shortening for report text and
+crash summaries on older installations even when their local logs include full paths.
+
 ### `mods_job.py`: mod rebuild completion
 
 `drop_build_cache()` removes the lifted sources and objects when the player does not keep the build cache, while
