@@ -1,6 +1,9 @@
 # needs: exe
 # args: {exe}
-"""Run the game executable's crash probes and check what a fault does to the way the process ends (runtime/main.c
+import subprocess
+import sys
+
+USAGE = """Run the game executable's crash probes and check what a fault does to the way the process ends (runtime/main.c
 crash_handler, mode_done).
 
   - --probe-crash-call: a fault inside a library while the mode still runs is a crash: a FATAL line that names the
@@ -13,8 +16,6 @@ No game files, no GPU, no window.
 
 Usage: exit_fault_check.py PATH_TO_GAME_EXE
 """
-import subprocess
-import sys
 
 CRASH_EXIT = 71
 PROBE_EXIT = 3
@@ -28,7 +29,7 @@ def run(exe, mode):
 
 def main():
     if len(sys.argv) != 2:
-        print(__doc__)
+        print(USAGE)
         return 2
     fails = []
 
