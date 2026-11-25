@@ -47,11 +47,15 @@ jobs:
       - name: Python 3.14
         run: |
           uv python install -q 3.14.9
-          uv venv -q --managed-python --python 3.14.9 "$RUNNER_TEMP/electron-python"
+          python=$(uv python find --managed-python 3.14.9)
+          deps="$RUNNER_TEMP/electron-test-deps"
+          uv pip install -q --python "$python" --target "$deps" 'numpy==2.5.4'
           if [[ "$RUNNER_OS" == 'Windows' ]]; then
-            cygpath -w "$RUNNER_TEMP/electron-python/Scripts" >> "$GITHUB_PATH"
+            cygpath -w "$(dirname "$(cygpath -u "$python")")" >> "$GITHUB_PATH"
+            printf 'PYTHONPATH=.;%s\n' "$(cygpath -w "$deps")" >> "$GITHUB_ENV"
           else
-            echo "$RUNNER_TEMP/electron-python/bin" >> "$GITHUB_PATH"
+            dirname "$python" >> "$GITHUB_PATH"
+            printf 'PYTHONPATH=.:%s\n' "$deps" >> "$GITHUB_ENV"
           fi
       - name: Compile Windows stand-ins
         if: runner.os == 'Windows'
