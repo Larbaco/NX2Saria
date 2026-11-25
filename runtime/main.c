@@ -556,6 +556,51 @@ static int probe_crash(int null) {
     return 1;
 }
 
+#define PROBE_BUSY_THREADS 4
+#define PROBE_BUSY_LINES 200
+static volatile int32_t probe_busy_lines[PROBE_BUSY_THREADS];
+
+static void probe_busy_main(void *arg) {
+    int me = (int)(intptr_t)arg;
+    for (int32_t i = 0;; i++) {
+        rt_log("probe: busy line %d of thread %d, logged while another thread fails", i, me);
+        __atomic_store_n(&probe_busy_lines[me], i + 1, __ATOMIC_RELEASE);
+    }
+}
+
+static int probe_busy(int fatal) {
+    for (int i = 0; i < PROBE_BUSY_THREADS; i++)
+        if (!plat_thread_spawn(probe_busy_main, (void *)(intptr_t)i, "probe busy", 0)) {
+            printf("probe-busy: thread %d could not be started\n", i);
+            return 1;
+        }
+    for (int i = 0; i < PROBE_BUSY_THREADS; i++)
+        while (__atomic_load_n(&probe_busy_lines[i], __ATOMIC_ACQUIRE) < PROBE_BUSY_LINES) plat_sleep_ms(1);
+    if (fatal) rt_fatal("probe-fatal-busy: a fatal error while %d threads log", PROBE_BUSY_THREADS);
+    printf("%zu\n", probe_strlen((const char *)(uintptr_t)8));
+    printf("probe-crash-busy: still running, the crash did not happen\n");
+    return 1;
+}
+
+static volatile int32_t probe_stuck_held;
+static void probe_stuck_main(void *arg) {
+    (void)arg;
+    plat_mutex_lock(&g_err_lock);
+    __atomic_store_n(&probe_stuck_held, 1, __ATOMIC_RELEASE);
+    for (;;) plat_sleep_ms(1000);
+}
+
+static int probe_crash_stuck(void) {
+    if (!plat_thread_spawn(probe_stuck_main, NULL, "probe stuck", 0)) {
+        printf("probe-crash-stuck: the thread could not be started\n");
+        return 1;
+    }
+    while (!__atomic_load_n(&probe_stuck_held, __ATOMIC_ACQUIRE)) plat_sleep_ms(1);
+    printf("%zu\n", probe_strlen((const char *)(uintptr_t)8));
+    printf("probe-crash-stuck: still running, the crash did not happen\n");
+    return 1;
+}
+
 #define PROBE_EXIT_CODE 3
 static void probe_exit_fault(void) { printf("%zu\n", probe_strlen((const char *)(uintptr_t)8)); }
 
@@ -569,7 +614,7 @@ static int usage(const char *argv0) {
     fprintf(stderr, "usage: %s [--exefs DIR] [--romfs DIR] [--profile DIR] [--audio-device VALUE] [--monitor VALUE] [--list-audio-devices | --list-monitors | --selftest | --probe-loader | "
                     "--probe-cfg | --probe-dpi | --probe-mods | --probe-kernel | --probe-ipc | --probe-services | --probe-fs | --probe-gfx-abi | "
                     "--probe-nvn | --probe-nvn-tex | --probe-window | --probe-shader | --probe-vkmem | "
-                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-fsr3 | --probe-fsr3fg | --probe-zstd | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-discord | "
+                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-fsr3 | --probe-fsr3fg | --probe-zstd | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-crash-busy | --probe-fatal-busy | --probe-crash-stuck | --probe-discord | "
                     "--prepare-shaders | --warm-shaders | --prepare-pipelines | --probe-prewarm | --probe-buildgate | --probe-ffx-cache | --probe-memneed | --probe-devlost | --boot |--seconds S [--shot PNG]]\n", argv0);
     return 2;
 }
@@ -747,6 +792,9 @@ static int main_run(int argc, char **argv) {
     if (!strcmp(mode, "--probe-crash-call")) return probe_crash(0);
     if (!strcmp(mode, "--probe-crash-null")) return probe_crash(1);
     if (!strcmp(mode, "--probe-crash-exit")) return probe_crash_exit();
+    if (!strcmp(mode, "--probe-crash-busy")) return probe_busy(0);
+    if (!strcmp(mode, "--probe-fatal-busy")) return probe_busy(1);
+    if (!strcmp(mode, "--probe-crash-stuck")) return probe_crash_stuck();
     if (!strcmp(mode, "--probe-cfg")) return probe_cfg();
 #ifdef _WIN32
     if (!strcmp(mode, "--probe-dpi")) return probe_dpi();

@@ -5815,6 +5815,41 @@ class WhilePlayingTest(Tmp):
         self.assertEqual(app.last_fatal(self.tmp), '')
 
 
+class InterleavedFatalLine(Tmp):
+    def fatal(self, text):
+        log = self.tmp / 'logs' / 'nx2saria.log'
+        log.parent.mkdir(exist_ok=True)
+        log.write_text(text, encoding='utf-8')
+        return build.last_fatal(self.tmp)
+
+    def test_a_whole_fatal_line_is_kept_as_it_is(self):
+        line = 'access violation (0xb) at host 0x7f00 (libc.so.6+0x98e31), reading address 0x3e80010beb5'
+        self.assertEqual(self.fatal(f'[host] x\nFATAL: {line}\n  not on a guest thread\n[host] fatal: at 14:24\n'), line)
+        line = 'access violation (0xc0000005) at host 0000000000000000 (outside every module), executing address 0x0'
+        self.assertEqual(self.fatal(f'FATAL: {line}\n[host] input: a line\n'), line)
+        line = 'vk: the GPU device was lost (seen at: q). The run ends here'
+        self.assertEqual(self.fatal(f'FATAL: {line}\n[host] fatal: memory commit: 9000 MB\n'), line)
+
+    def test_another_threads_line_inside_it_is_cut_and_its_tail_joined_back(self):
+        head = 'access violation (0xb) at host 0x7f00 (libc.so.6+0x98e31)'
+        other = '[host] input: relative mouse mode on failed (That operation is not supported)'
+        self.assertEqual(self.fatal(f'[host] x\nFATAL: {head}{other}\n, reading address 0x3e80010beb5\n'
+                                    '  not on a guest thread\n'), f'{head}, reading address 0x3e80010beb5')
+        self.assertEqual(self.fatal(f'FATAL: {head}{other}\n, writing address 0x10\n'), f'{head}, writing address 0x10')
+        self.assertEqual(self.fatal(f'FATAL: access violation (0xb) at host 0x7f00 ({other}\n'
+                                    'libc.so.6+0x98e31), reading address 0x10\n'), f'{head}, reading address 0x10')
+        self.assertEqual(self.fatal(f'FATAL: access violation (0xb) at host (nil) ({other}\noutside every module)\n'),
+                         'access violation (0xb) at host (nil) (outside every module)')
+
+    def test_another_threads_line_inside_it_without_a_known_tail_is_only_cut(self):
+        head = 'access violation (0xb) at host 0x7f00 (libc.so.6+0x98e31)'
+        self.assertEqual(self.fatal(f'FATAL: {head}[host] input: a line\n  not on a guest thread\n'), head)
+        self.assertEqual(self.fatal(f'FATAL: {head}[launcher] the game: a line\n[host] b\n, reading address 0x1\n'), head)
+        self.assertEqual(self.fatal(f'FATAL: {head}[host] input: a line\nsomething else, reading address 0x1\n'), head)
+        self.assertEqual(self.fatal('FATAL: vk: a fatal error[host] input: a line\n, reading address 0x1\n'),
+                         'vk: a fatal error')
+
+
 class MemorySettings(dict):
     def save(self):
         pass
