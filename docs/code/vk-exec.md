@@ -3167,6 +3167,2470 @@ bottom. Runs on the submitting thread under `vk_sync_submit`'s lock: no locking 
   pass (begins an occlusion query when counting and none is active), and the open pass about to end (ends the active
   query).
 
+## `runtime/vk/vk_exec_draw.c`
+
+Draws, binds and dispatches of the Vulkan op-stream replay: the strong `vk_exec_op_draw` behind `runtime/vk/vk_exec.c`'s
+weak hook. The bind ops fill the `VkExec` slots; a draw opens the pass, resolves the bound program to translated shaders
+(the translator's answers come from the bound state), asks `runtime/vk/vk_pipeline.c` for the pipeline, pushes (or
+allocates) set 0 as `VkPipeInfo.bindings` says and records the dynamic state, vertex and index buffers and the draw. A
+dispatch ends the pass and does the same for the compute shader. `UPDATE_UB` is a buffer copy from transient memory
+between full barriers.
+
+Per command buffer the replay keeps transient memory (support buffers, copied uniform ranges, generated indices),
+descriptor pools, image views and the storage-buffer ranges the GPU may write; all of it is freed, and the ranges are
+reported with `vk_gpu_written`, from one completion callback once the submission's fence is done (the write watch does
+not see GPU writes). Nothing here locks: it runs on the submitting thread under `vk_sync_submit`'s lock.
+
+Unbound vertex streams read a zeroed buffer. The support buffer layout is the translator's SupportBuffer.
+
+- `NX2SARIA_TONEMAP_STANDIN`: `runtime/vk/vk_tonemap.c`, see `untranslated_dispatch_fallback`.
+- `SUPPORT_BYTES`: the translator's SupportBuffer (std140): `alpha_test`, `is_bgra[8]`, `viewport_inverse`,
+  `viewport_size`, ...; 1408 pcss and 1424 `shadow_spread` (translator patches 0010, 0011), 1440..1519 HDR
+  (`support_fill`).
+- `NVN_STAGE_TASK`: NVN2.
+
+### `oneshot_wait_ms()`
+
+`prepare_draw`: how long a one-shot draw waits for its shaders and pipeline before it is skipped. Such a draw renders
+into a target that is neither recent nor steady (`runtime/vk/vk_target_frames.h`: a volume, a lookup table, an icon, a
+target made new at an area change); skipped, a target the game draws once stays as it was. A draw into per-frame targets
+whose shaders write memory takes the same wait (`writers_wait_on`). `NX2SARIA_ONESHOT_BUDGET` (default 1): the one-shot
+draws of a presented frame wait from that frame's wait pool (`frame_wait`, shared with the full-screen draws), a mesh
+draw `MESH_WAIT_MS` at most. Until 0.7.1 each waited up to `NX2SARIA_ONESHOT_WAIT_MS` (30 s) on the replay thread, which
+is what `=0` still does: after a scene load every pass was new or not recent, so the first frame waited for one pipeline
+after another, and for the whole compile of each mesh pipeline (0.2 to 1.3 s cold): 5-14 s on an RTX 4080 SUPER with no
+pipeline recorded, and frames of 0.7 to 1 s at area changes of a played install (`runtime/vk/vk_target_frames.h` "Steady
+targets"), while the pipeline workers sat idle. A draw skipped at the end of its wait comes back the next frame its
+target is drawn, when the target is recent and the pipeline is built on a worker like any other; a target drawn only
+once whose pipeline took longer than the pool stays as it was until the game draws it again. With the stage libraries in
+the driver's cache a fast link takes 2 to 6 ms, so the pool covers the lookup tables of a load several times over.
+
+### `oneshot_budget_on()`
+
+What a mesh draw waits for is a few milliseconds when the caches hold it and 200 ms or more when they do not: the whole
+build of a mesh pipeline without stage libraries, which has no fast link, or with them (`vk_pipeline_mesh_libs`) the
+library of its task and mesh stages, which is most of that build. A longer wait only finds out which, and one that has
+been building for longer than this is a compile: the draws that meet it in the frames after wait for nothing
+(`oneshot_ms`). Before that rule a first visit waited 8 to 13 ms for each of 17 mesh draws over nine frames, up to four
+in one frame, and every one of them was skipped at the end. The wait for a fast link (`link_budget`) needs the rule only
+without stage libraries (`mesh_whole`): with them a mesh draw waits there as a vertex draw does, `LINK_DRAW_MS` from its
+pipeline's first miss and nothing after.
+
+### Resources of one command buffer, freed by its completion callback
+
+- `Range`: back: written into a VRAM mirror (`vk_mem_mirrored`).
+- `SPARE_POOLS`: Descriptor pools and full-size transient chunks go back to these lists when their command buffer
+  completes, instead of being destroyed and created again for the next one: each creation is a driver memory allocation
+  (on Windows an allocation, a map and a paging-fence wait on the CPU), about ten of them per frame inside the replay.
+- `npools_live`: the replay's descriptor pools in existence, spare ones included (`vk_exec_desc_mem`).
+- `REPLAY_POOL_SETS`: sets in each of them (`alloc_set`).
+- `CbState`: State of the command buffer being recorded that the Vulkan command buffer itself holds (DrawCtx.B).
+  - `VkPipeline pipe[2]`: bound per bind point: 0 graphics, 1 compute.
+  - `VkPipeState st`: the state `vk_pipeline_set_dynamic` last recorded.
+  - `VkDynShadow dyn`: the dynamic state values the command buffer holds (`prepare_draw_ex`).
+  - `VkBuffer vb[17]`: vertex buffers last bound.
+  - `int vcls[17]`: their pool class and pool record, for the census.
+  - `NVNbufferRange vin[16]`: the ranges they were resolved from, under `vk_mem_gen` vgen.
+  - `VkBuffer ib`: index buffer last bound, with its offset and index type (`bind_index_buffer`).
+  - `uint8_t support[SUPPORT_BYTES]`: last support buffer and where it lives.
+  - `float sup_in[3]`: the `support_fill` arguments it was filled from.
+  - `uint8_t c0[5][VK_C0_BYTES]`: last c0 bank per stage (vertex, fragment, compute, task, mesh) and where it lives.
+  - `struct { p_bind_buf ssbo[16], ubo[16]; uint32_t dim[3], binst; uint8_t push[1024]; } c0_in[5]`: what `vk_c0_fill`
+    read for `c0[k]`.
+  - `VkPipelineLayout ds_layout`: graphics layout the sets below were last pushed or bound with.
+  - `VkDescriptorSet ds_bound[2]`: allocated set bound per set number (0: none or pushed since).
+  - `VkDescriptorSet ds_last[2]`: last allocated and written set per set number, contents in DS.
+  - `int ds_pushed[2]`: set number holds the push of DS.psig under `ds_layout`.
+  - `int res_valid`: the graphics sets bound hold what the inputs in RS give (`bind_resources`).
+- `DS_SIG_BYTES`: Contents of `B.ds_last` (`DrawCtx.DS`): the set's packed descriptors (`VkDescSlot`), which with its
+  layout determine every write. A draw whose allocated set would hold the same reuses the set instead of allocating and
+  writing one (a per-draw cost). psig: the same for the last push per set number; a push equal to it under the same
+  layout is not recorded again (the descriptors stay bound across pipeline binds of that layout).
+- `BS`: `NX2SARIA_BIND_STATS` counters (`bind_stats`).
+- `RS_BYTES`: The inputs of the last graphics `bind_resources` (`bind_sig`, `DrawCtx.RS`) and what its build counted for
+  the traffic census, which a skipped build counts again. `RS_BYTES` bounds the bound-slot bytes a pipeline reads
+  (`RsList`): per binding at most one c0 storage table, otherwise one bound range or handle per descriptor.
+- `RsState`:
+  - `uint32_t hn`: words of h the last signature filled; 0: none.
+  - `uint64_t h[24]`: generations, feedback images, support inputs, base instance.
+  - `const VkPipeInfo *info`: the pipeline whose `RsList` ranges body holds, as of bind op generation gen.
+  - `int rec`: a graphics build is running: `count_use` records, scratch copies mark volatile.
+  - `int volatile_`: the build copied guest bytes into transient memory: a rebuild differs.
+  - `int cmds`: check mode: pushes, binds and set writes the build recorded.
+  - `uint32_t ckn`: check mode: the last build's packed descriptors (bytes in ck).
+- `rs_on`: `NX2SARIA_BIND_SKIP`: 1 skip (default), 2 check, 0 off.
+- `RS_PTRS`: The bound-slot bytes of `VkExec` a pipeline's descriptors read, as ranges merged where they touch, built
+  once per pipeline info: c0's storage table, the uniform and storage ranges of the bound slots and the texture and
+  image handles. sup and c0: the support inputs and the base instance count too. p: storage buffers whose address the
+  shader loads from a user uniform block; the address read from the block counts too. ok 0: never skipped (too many
+  descriptors or such buffers).
+- `rs_lists`: `VkPipeInfo` pointer -> `RsList`, until shutdown.
+- `STAGEM_N`: Types of the context's caches and memos; each is described where it is used.
+
+  `find_stage`.
+- `SLOTM_N`: `slot_mask_of`.
+- `PB_N`: per-binding descriptor reuse (`pb_take`).
+- `PbEntry`:
+  - `uint8_t ok[PB_DESC]`: descriptor j holds a result that may be reused.
+  - `uint64_t in[PB_DESC][4]`: the values it was resolved from (`pb_key`).
+  - `PbCount cnt[PB_DESC]`: what its resolution counted for the census.
+
+### The recording context
+
+`bind_resources`: the sampled-texture descriptors this context resolved, each with the generations and slot token it was
+resolved under: while its slot, the submission and the samplers are as they were (`slot_still`, as the texture
+descriptor memo TD checks, without the lock) it holds what TD would give, and a hit takes no texture lock. The replay
+workers' chunks waited for that lock at nearly every draw: 6.1 s of waits a minute in `bind_resources` alone (Hyrule
+Field, 3 workers, `NX2SARIA_LOCK_TIME`, 2026-11-12).
+
+- `DrawCtx`: What the draws, binds and dispatches keep from one call to the next while they record a command buffer: the
+  state the command buffer holds (B), the signatures that let a draw skip its descriptor build or push (DS, RS, PB), the
+  previous draw's shaders and pipeline (SM, PM), the shader lookup's caches (AC, stagem, slotm) and the submission's
+  transient resources (res). A thread reaches the one it records with through dc; every thread starts with `dc_main`,
+  the replay's, which is the only one while the replay records on a single thread. Shared tables (image views, shaders,
+  descriptor lists, the texture pool sets, the stand-ins) stay file statics.
+  - `CbRes *res`: transient resources of the submission being recorded (`cb_res`).
+  - `uint64_t res_fence`: the submission they belong to.
+  - `const VkPipeInfo *rs_last`: `rs_list`'s last lookup.
+  - `uint32_t c0_dim[3], c0_binst`: the dispatch size and base instance of the draw or dispatch being bound.
+  - `uint64_t bind_gen`: bumped by every bind op that writes `ex->prog`, ubo, ssbo, tex or img.
+  - `AcSlots AC[8]`: `answers_for`: texture and image types per stage.
+  - `StageMemo stagem[STAGEM_N]`: `find_stage`: the shader serving each NVN stage, per program serial.
+  - `SlotMask slotm[SLOTM_N]`: `slot_mask_of`: the slots a (program, stage) translation reads.
+  - `int sf_mvprev`: `shader_for` asks for the vertex shader's previous-frame variant (motion).
+  - `int mfb_stage`: the mesh fallback binds this NVN stage's resources (`nvn_stage_of`).
+  - `const GfxShader *mfb_cur_vs`: the mesh fallback's vertex stage (`prepare_draw_ex`).
+  - `uint64_t mfb_list`: the address of its draw's indirect record, 0: none or not held (`mfb_hold_role`).
+  - `PbCount *pb_cap`: per-binding reuse: where the resolving descriptor's census count goes.
+  - `int pb_spoiled`: ... and it may not be kept.
+  - `PbEntry *pb_e`: the build running, NULL when it keeps nothing.
+  - `uint64_t pb_key_cur[4]`: `pb_take` to `pb_keep`: the descriptor's values.
+  - `int pb_key_ok`: ... and whether it may be kept at all.
+  - `int mo_ovr_on`: per-object motion: `mo_ovr` replaces uniform bindings (`ubo_info`).
+  - `VkDescriptorBufferInfo mo_ovr[2][32]`: [vertex, `fragment][slot`]; buffer 0: not replaced.
+  - `struct { int valid, has_fs; MemoKey k; const GfxShader *vs, *fs; } SM`: the shader memo (`shader_memo_on`).
+  - `struct { int valid; VkPipeState s; const VkPipeInfo *info; } PM`: the pipeline memo (`pipe_memo_on`).
+  - `void *fm`: `feedback_scan`'s memo per texture handle (`FmEnt[FM_N]`), made at first use.
+  - `void *mo_vm`: `mvobj_pick`'s memo of the motion variant per vertex shader, made at first use.
+  - `struct { const void *d; uint64_t ind; VkDeviceSize at; } ma[64]`: `mesh_ring_entry`: entries filled ahead.
+  - `int ma_n, ma_i`: ... how many, and the next one a draw takes.
+  - `uint32_t ma_brk`: ... `vk_exec_brk_now` when they were filled.
+  - `TexMemo TM[TM_N]`: `bind_resources`: sampled-texture descriptors (`tm_take`).
+  - `VkWriteDescriptorSet bind_w[MAX_BINDINGS]`: `bind_resources`: write structs, packed descriptors, texel views.
+- `shader_lock`: Tables the chunks of a parallel group (`runtime/vk/vk_exec.c` "replay workers") share, locked only
+  while a chunk records: outside groups the submitting thread alone replays, and these lookups run per draw.
+
+  `shader_tab`.
+- `rs_lock`: `rs_lists`.
+- `pool_mt`: `pool_sync` from a chunk.
+
+### `cb_done()`
+
+Completion thread.
+
+### `dispatch_mark()`
+
+Marks a dispatch about to be recorded (`runtime/vk/vk.h` `vk_pass_mark_begin()`); the caller ends it after the dispatch.
+
+### `scratch()`
+
+- `HOST_COHERENT`: the CPU fills these chunks and never flushes them. Intel's integrated GPUs (ANV, Meteor Lake) offer
+  host-cached memory only without coherence, which VMA picks for random host access: the GPU then read what an earlier
+  submission left in the chunk (an UpdateUniformBuffer payload of another draw: a lighting shader's step count of
+  0x3f800000 instead of 128, and a loop of a billion steps).
+- `if (res == VK_ERROR_OUT_OF_DEVICE_MEMORY || res == VK_ERROR_OUT_OF_HOST_MEMORY)`: once more after a give-back.
+
+### Stand-ins for what a binding names but the game did not bind
+
+(zeros, a 1x1 image, the default sampler).
+
+- `Z`:
+  - `VkBuffer sink`: `ssbo_info`: an unresolved storage buffer a shader writes (zbuf stays zero).
+
+### `make_dummy()`
+
+A 1x1 stand-in image of view type `dinfo[i]` in `fmt`, moved to GENERAL and cleared to `clear` by the upload batch
+(which reaches the queue before the submission that uses it). `*sview` is the view a storage descriptor takes (a cube
+becomes a 2D array). Left uncleared its content was undefined, and a material that read its roughness map through one (a
+slot with no texture yet) could see roughness near 0: on Kakariko's distant cliffs at night the specular term reached
+3392 in single pixels, which bloom and the temporal upscaler spread into bright white spots.
+
+### `storage_dummy()`
+
+- `DUMMY_SAMPLED`: Sampled stand-ins read as mid grey, opaque: a missing roughness or metalness map gives a middling
+  value, a missing two-channel normal map a flat normal, a missing colour map grey. Storage stand-ins (any format,
+  written by shaders that have no image) start at zero.
+- `tex_format`: Storage image stand-ins in the format a shader declares (`GfxShaderRes.format`: the translator's
+  TextureFormat order); Vulkan wants the view format to match the declaration. Created on first use.
+
+### `dummies_init()`
+
+- `.requiredFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT}`: the memset below is
+  not flushed.
+- The samplers every other one falls back to (`tex_info_full`, `pool_sync_entries`): without them there is none.
+
+### `vk_exec_draw_shutdown()`
+
+- `mesh_ring_release()`: Releases the stand-ins and the depth twins. The device must be idle; the game path leaves them
+  to process exit like the pipelines.
+
+- `if (vk_ctx()) mesh_ring_release(vk_ctx()), pool_marks_release(vk_ctx())`: made without the stand-ins below too.
+- `dc_main.rs_last = NULL, dc_main.rs_last_l = NULL`: the replay's context: no other records now.
+
+### Resource types
+
+### `gfx_type_of()`
+
+`GFX_TEX_*` of a bound texture slot (the translator's `tex_type` / `img_type` answers).
+
+### `vk_exec_view_aspect()`
+
+A view in STENCIL mode samples the stencil plane (TextureViewSetDepthStencilMode); otherwise depth wins. The translator
+declares every sampled image float and the shader takes the raw bits, as for integer formats.
+
+### `int_view_format()`
+
+- `ViewNode`: Image views of registered textures, kept for their image's lifetime: made per command buffer they were
+  created again every frame (`vkCreateImageView` took about 8% of the fight replay on the 7900X). Used under the texture
+  lock, as `vk_exec_image_gone` is (`destroy_tex`), which hands the views of a destroyed image to the deferred release
+  with it.
+- `view_of`: `ViewKey` -> `VkImageView`.
+- `views_by_image`: `VkImage` -> its first `ViewNode`.
+
+Integer formats a texture view may give an image (`nvnTextureViewSetFormat`): the Vulkan format and the translator's
+TextureFormat code (`runtime/gfx/gfx_shader.c` `fmt_names`) the translator declares a storage image with. A shader that
+packs texels itself writes raw words through such a view (Ocarina's last post-process pass stores R11G11B10 bits through
+an R32UI view of an R11G11B10F target); through a view of the texture's own format the store converted them (a black
+picture with red blobs). 0: not an integer format.
+
+### `texel_bytes()`
+
+Bytes per texel of the formats a storage view may reinterpret (`int_view_format`'s and the 32/64/128-bit float and unorm
+ones they alias); 0 unknown.
+
+### `raw_note()`
+
+Images written this frame through an integer storage view (`storage_view_format`), in the order of their writes (seq):
+Ocarina's last post-process pass stores shared-exponent RGB9E5 texels that way into its R11G11B10F scene target, raw
+words the upscaler that reads them (tensor-core, untranslatable) decodes itself, and the fallback blit must too
+(`raw_9e5`). Now and then (1 of 529 frames sampled in a field) the same pass writes them into the RGB9E5 image at that
+address instead, as native texels (`raw_native_9e5`); the R11G11B10F image there then holds an older picture.
+
+### `raw_written()`
+
+The order of img's last write through an integer view, 0 when it had none this frame or the one before.
+
+### `raw_9e5_twin()`
+
+The image that holds this frame's post-process picture at t's place in memory, NULL when none was written: the
+R11G11B10F image written as raw RGB9E5 words, or t itself when t is the RGB9E5 image and was written as native texels,
+whichever was written last. The picture resolves as an RGB9E5 texture there, and that image is otherwise one nothing
+renders into, stale or never initialised. Looked up live (texture lock held), as an image noted in RAW may be gone.
+
+### `vk_exec_raw_9e5()`
+
+`runtime/vk/vk_dump.c`: 1 when img was written as raw RGB9E5 words this frame (dump it decoded as such).
+
+### `storage_view_format()`
+
+The format a storage view of img takes: the view's integer format when it sets one of the image's texel size (the image
+is `MUTABLE_FORMAT`, `runtime/vk/vk_texture.c`), else the image's own.
+
+### `get_view()`
+
+An image view of a registered texture for a shader resource of type `rtype` (`GfxShaderRes.type`); `VK_NULL_HANDLE` when
+the image cannot serve it (the caller binds a stand-in). Texture lock held.
+
+- `if (!ok && !storage && !ms && img->type == VK_IMAGE_TYPE_2D)`: a flat texture under a 3D sample: its 3D copy.
+- Texture detail (`runtime/vk/vk_texture.c`): the image was made without the game's top `img->skip` levels, so the
+  view's levels [l0, end) of the game are the image's [l0 - skip, end - skip). A view that names only levels the image
+  lacks shows the first one it has: the nearest content, where a stand-in would show none.
+- `if (!storage)`: view selectors replace the texture's, then the format remap.
+- `if (img->block_views) ci.pNext = &use`: the image's `COLOR_ATTACHMENT` usage is its block views'
+  (`runtime/vk/vk_texture.c`).
+
+### `vk_exec_target_view()`
+
+An attachment view of a registered texture, kept with its sampled views for the image's lifetime: made per command
+buffer, every render target's views were created again each frame (`vkCreateImageView` under `vk_exec_pass_begin`, 2% of
+the fight replay on the 7900X). Attachment keys carry a swizzle word no sampled key has (those hold four NVN selectors,
+each below 8). The texture lock guards the tables, as for `get_view`; `vk_exec_pass_begin` may already hold it.
+
+- `vk_texture_lock()`: `destroy_tex` sets gone and purges the image's views with it held.
+- A texture destroyed while a command buffer or DLSS still held it (`img->gone`): its image lives on until the GPU is
+  past the submission being recorded (`vk_defer_image`), so a view for this use is made, and goes the same way. Cached,
+  it outlived the image: Vulkan hands the handle to a later image, which then got the view of the dead image's memory
+  and the GPU faulted reading it at the start of a pass ("read invalid", a 128x128 scene capture, `#177`).
+- `if (blocks) ci.pNext = &use`: not the BC image's sampling and transfer usages.
+
+### `vk_exec_image_gone()`
+
+- `vk_tonemap_forget(image)`: the stand-in's views of a game image it read as it is.
+
+### Program to shaders
+
+- `SHADER_SETS`: (program, stage, answers) -> shader, 4-way set-associative, most recently used first. A miss costs a
+  SHA-256 of the whole shader code (`runtime/gfx/gfx_shader.c` `req_init()`), slow on CPUs without SHA instructions: a
+  field frame looks up ~3000 and the 2048-slot direct-mapped table this replaced missed 3% of them on conflicts.
+
+### `ctl_nvn2()`
+
+Stage and code length of a control section. NVN1 (0x880 bytes): stage at +0x714, length at +0x704, c1 offset at +0x700,
+workgroup size at +0x748. NVN2 (Switch 2, 0xe0 bytes, magic 0x98761234 at +0): stage in bits 16+ of +0x54, length at
++0x38, workgroup size at +0x58, no c1 part (`runtime/gfx/gfx_shader.c`, "NVN2").
+
+### `ctl_stage_len()`
+
+- NVN2: the c1 constants (BRX jump tables) follow the code from +0x40 to +0x44, in the same storage; the length covers
+  them so `runtime/gfx/gfx_shader.c` `req_init()` sends them (with the code length alone it never could).
+
+### `ctl_c1()`
+
+Offset of the c1 constants (len: none).
+
+- `else memcpy(&c1, c + 0x40, 4)`: NVN2: after the code and its padding, up to +0x44.
+
+### `find_stage()`
+
+Which shader of a program serves each NVN stage, and its code length, per program serial (new at every
+`nvnProgramSetShaders`): the scan reads two words of every stage's control block, cold guest cache lines, and runs
+several times a draw. Direct-mapped (`DrawCtx.stagem`); a collision only scans again.
+
+### `token_of()`
+
+Texture and image types of a stage's first 32 slots, each kept with the handle and the generation and slot token it was
+looked up under: a slot is looked up again, a hash probe, only when the handle changed or its slot may resolve otherwise
+(`slot_still`). `DrawCtx.AC`, per stage.
+
+`vk_texture_slot_token` of the slot a texture or image handle names; an empty handle always resolves to nothing.
+
+### `slot_still()`
+
+Whether what handle h resolved to under the global generation `*egen` and its slot token etok (both read before that
+lookup) still holds at global generation gen: nothing at all changed since, or not its slot (the token, read only when
+the global generation moved, about every 16 draws). A token hit moves `*egen` to gen.
+
+### `slotm_idx()`
+
+The slots of (program, stage) whose types its translation reads (`gfx_shader_slot_mask`), learned from its first shader;
+~0u while unknown. The types of other slots select the same shader, so `answers_for` leaves them zero instead of looking
+up all 64 handles. Direct-mapped by serial and stage (`DrawCtx.slotm`); a collision only relearns.
+
+### `type_of_handle()`
+
+Texture lock held.
+
+### `format_of_handle()`
+
+The `img_format` answer of an image handle: the integer format its view gives it (`int_view_format`, as `get_view` binds
+it), else 0 (the translator's default, a float format). Texture lock held.
+
+### `answers_for()`
+
+The answers of stage st for the slots in mask; the types of other slots stay zero.
+
+- The generation and tokens are read before the lookups (one that creates an entry changes them) and unlocked: a
+  registration racing with them is ordered after this draw, and a slot stored under older ones is only looked up again.
+- `if (check && (type_of_handle(h) != c->tt[slot] || type_of_handle(hi) != c->it[slot]))`: `NX2SARIA_SHADER_MEMO=check`.
+
+### `vk_exec_probe_shader()`
+
+`*present`: the program has this stage. Returns NULL when it has not or the translation failed. pending (graphics
+stages, `vk_pipeline_async_on`): a shader not translated yet is queued and NULL returned with `*pending` = 1.
+`await_ms`: a shader queued earlier is waited for instead, that long at most (`gfx_shader_await`; `UINT32_MAX`: until it
+is done), and `*pending` = 1 says the wait ended first. `DrawCtx.sf_mvprev`: `shader_for` asks for the vertex shader's
+last-frame variant (per-object motion).
+
+- `probe_sh`: Probes only (`runtime/gfx/mesh_fb_probe.c`): the shader of the program stage whose control section is ctl,
+  in place of a translation. The probes build their programs from modules made here, which no translator has an input
+  for.
+
+### `shader_for()`
+
+- `uint64_t h = (serial * 0x9E3779B97F4A7C15ull ^ (uint64_t)st) ^ nvn_hm_hash(&a, sizeof a)`: a is zero-padded.
+- `int lk = vk_exec_shared()`: only while a parallel group records do several threads look up at once.
+- `if (w)`: to the front.
+- `else if (set)`: in front, the least recently used way drops out.
+
+### Descriptors
+
+The mesh fallback (below, "mesh fallback") runs a program's task and mesh stages as compute modules: while it binds
+one's resources, a compute module's bindings are those of this NVN stage (6 task, 7 mesh), not of the compute stage
+(`DrawCtx.mfb_stage`).
+
+Per-binding descriptor reuse (`bind_resources`, PB): while a descriptor that may be kept resolves, `pb_cap` is where its
+census count goes, so a later reuse counts the same bytes again; `pb_spoiled` is set when the resolution copied guest
+bytes into transient memory or counted more than once, and such a descriptor is not kept (both in `DrawCtx`).
+
+### `count_use()`
+
+`vk_mem_count`, also kept per (class, use) while a graphics build runs (RS).
+
+### `bind_range()`
+
+A buffer descriptor for [addr, addr+size) of guest memory: its backing (a pool's VRAM mirror when it has one) when
+aligned, a copy in transient memory when the backing is host memory with an unaligned offset. 0 when neither works.
+written: the shader stores into it (a mirror's range goes back to guest memory at the end of the submission).
+
+### `c0_ssbo_base()`
+
+The driver constant bank c0 as GLSLC-compiled shaders read it. Storage-buffer tables {u64 address, u32 size} every 16
+bytes at 0x110 (vertex), 0x510 (fragment), 0x310 (compute): the translator's GlobalToStorage fallback loads each
+candidate base from here and compares the global pointer against it. Compute: dispatch size at 0x200, the uniform buffer
+table at 0x210 + 16 r. Graphics: the largest point size (Maxwell's limit, GLSLC clamps `gl_PointSize` to it) at 0x610,
+the base instance at 0x644. NVN2 task and mesh stages: storage tables at 0x670 and 0x770 (the game binds slots 0-2
+there, and their programs read 0x670.. and 0x770..). The mesh table starts 0x90 bytes before the bank's end: it holds
+the 9 slots that fit, and sixteen would write 0x6C bytes past the bank. Other stages: zeros. Unbound slots read zero,
+since the replay keeps them zero. Byte offset of a stage's storage buffer table in c0, -1 for none.
+
+### `c0_on()`
+
+`NX2SARIA_FIX_C0=0`: c0 reads zeros instead of the driver constants.
+
+### `c0_info()`
+
+- `nvn2_cs_tables()`: c0 from replay scratch; a bank equal to the stage's previous one reuses its range, so it costs no
+  copy.
+
+- One bank per stage: the inputs below do not say which stage they are for, and the stages lay the storage table out at
+  different offsets (`c0_ssbo_base`). Task and mesh shared the compute entry: the foliage's task and mesh stages bind
+  the same storage buffers, so the task stage was handed the mesh stage's bank (its table at 0x770), read zero addresses
+  at 0x670, culled every instance and launched no mesh workgroups.
+- `vk_c0_fill` reads the storage slots, and the uniform slots and dispatch size for compute or the base instance for
+  graphics: equal inputs give the same bank, so neither the fill nor the 2 KiB compare is needed. A vertex or fragment
+  bank depends on the storage slots and the base instance alone (the rest of its inputs record is zero): those two are
+  compared without building and comparing the whole 1.8 KiB record on every draw.
+- NVN2 compute: the bank holds the push constants from byte 0x10 (then the program's handle table, which the host does
+  not read: textures and images are bound by slot).
+- The pushed constants from 0x10, the driver's tables after them (`push_ptr`, `nvn2_cs_tables_at`).
+- Bytes 0-0xb of an NVN2 compute bank are the dispatch's group counts (x, y, z). The fog pass after the integration
+  (passes 0115/0116 of a Kokiri frame) maps each thread to tid / (groups * 16 - 1): with zeros there every thread read
+  the same point. An indirect dispatch leaves them 0 (`op_dispatch_indirect`).
+
+### `limits_init()`
+
+The buffer range limits, read once: the device's properties are a cold cache line on every binding of every draw.
+
+### `ubo_info()`
+
+Per-object motion (section at the end): while it records a draw again, these replace the uniform bindings of the vertex
+stage's slots 18-20 (last frame's camera, bones and place) and the fragment stage's slot 3 (its parameters)
+(`DrawCtx.mo_ovr`).
+
+- `if (slot == 1 && ex->prog)`: compiler constants stored after the shader code.
+- `if (ctl_nvn2(ctl)) memcpy(&len, ctl + 0x44, 4)`: NVN2: c1 is [+0x40, +0x44) after the code.
+- `if (b->size && vk_usnap_find(b->addr, b->size < max ? b->size : max, align, &bi))`: as of the submit call.
+
+### `ssbo_slot()`
+
+The NVN slot of a storage binding. The translator numbers a shader's storage buffers in the order it meets them
+(`GfxShaderRes.slot`); the NVN slot is the entry of the driver constant buffer c0 that holds the buffer's address
+(`cbuf_slot` 0, handle = word offset): 16-byte entries at byte 0x110 (vertex), 0x510 (fragment) and 0x310 (compute). A
+compute address at c0 0x210..0x30f is uniform block (offset - 0x210) / 16 read as storage: `*ubo` is set. -1: the
+address is not in c0 (the shader loads it from a user uniform block: `ubo_ptr`) or the stage has no known table.
+
+### `ubo_ptr_res()`
+
+1 when the shader loads the storage buffer's address from a user uniform block (`cbuf_slot` 3.., NVN uniform slot
+`cbuf_slot` - 3, byte offset handle * 4). Some terrain reads its vertices through one, about 500 draws a frame; with a
+zero buffer they collapse and the ground is missing.
+
+### `upd_note()`
+
+- `UPD`:
+  - `uint64_t fence`: the submission the entries belong to.
+  - `uint32_t n`: updates noted in it.
+
+The inline uniform updates of the submission being replayed, newest last (a ring of `UPD_N`). `op_update_ub` writes them
+into the buffer's GPU copy; guest memory gets them only from the write-back when the submission ends. The terrain
+rewrites its pointer block this way before every draw, all at one address, so `ubo_ptr` reads the latest update that
+covers the pointer, else memory. Payloads stay in the recorded command buffer for the whole replay.
+
+### `upd_read()`
+
+1 when an update of this submission supplied [a, a+n).
+
+- `uint32_t top = vk_exec_upd_top(UPD.n)`: a replay worker's chunk: the updates before its group.
+- `if (a < e->lo || a + n > e->hi) return 0`: partly covered: memory.
+
+### `ubo_ptr()`
+
+That address as the bound block holds it at this point of the replay; 0 when the block is unbound or too short. The
+block has no size field.
+
+### `nvn2_cs_tables()`
+
+NVN2 compute c0 (fitted to the storage offsets of 2549 compute programs against their control sections, round 24): from
+byte 0x10 the constants the game pushed (PushComputeConstants), then a table of uniform buffers and one of storage
+buffers, {u64 address, u32 size} every 16 bytes (counts: bytes 1 and 2 of control +0xb0), then 8-byte entries (byte 3 of
++0xb0, then byte 2 of +0xb4); +0xb8 (high half) is the end of it all, which gives the pushed size. Entry k of the
+storage part is storage slot k (BindStorageBuffer), entry k of the uniform part uniform slot k. Progs 98 and 99 (the
+compute after the composite: auto exposure) push 0x74 bytes, rounded to 0x80, and read storage entries 9 and 8 at
+c0+0x120 / +0x1c0; most programs push nothing and have their tables at 0x10.
+
+### `nvn2_cs_tables_at()`
+
+Where the tables start: after the pushed constants.
+
+- `if (!(b0 >> 8 & 0xffff)) return 0x10 + 1024`: no tables: all of c0 from 0x10 is the pushed constants.
+
+### `push_ptr()`
+
+An NVN2 compute program that takes a storage buffer's address from c0 (`c0_info`): an entry of the driver's tables (the
+bound uniform or storage slot), or the {u64 address, u32 size} at that place of the constants the game pushed. 1 with
+`*out` filled; 0 when the program is not NVN2 or the offset is in neither.
+
+- `uint32_t o = (uint32_t)r->handle * 4`: c0 byte offset.
+- `if (o < ta)`: in the pushed constants: a pointer the game passes itself.
+- `*out = (p_bind_buf){0, 0, a, n < (1u << 30) ? n : 0}`: size 0: up to the end of the backing.
+- `static int logged`: diagnosis: offsets past the tables.
+
+### `ssbo_direct()`
+
+The buffer a storage resource names by where its address lives (`GfxShaderRes.ptr` aside): an NVN slot of the stage, a
+pointer in a user uniform block (size 0: up to the end of the backing), or an NVN2 compute push pointer. `*tmp` holds
+the last two. NULL when it names none.
+
+### `ptr_addr()`
+
+The address of a storage resource read through a pointer table (`GfxShaderRes.ptr`): the u64 at offset ptr - 1 of the
+buffer it names, as that buffer holds it at this point of the replay (like `ubo_ptr`); 0 when the buffer is unbound, too
+short or not backed. Ocarina binds such a table as NVN storage slot 1 of most stages (five pointers at 0-0x20) and its
+vertex, pixel and mesh shaders read their instance and light data through them (PORT-HANDOFF.md 7.17).
+
+### `vk_exec_storage_addr()`
+
+`runtime/vk/vk_dump.c`: the guest address a storage resource of NVN stage st resolves to, 0 when none.
+
+### `ssbo_info()`
+
+- The device address table (`runtime/vk/vk_gpa.c`, translator patch 0030). Mirrored pools are not synced for its
+  readers: a sync of every mirror at a table reader's draw copied stale guest bytes over what the GPU had written into
+  the mirrors earlier in the frame, and Kokiri Forest's lit areas went black. A pool read only through the table is
+  rarely a mirrored one (mirrors are made for pools bound as buffers, which sync then). With shadow storage every pool
+  the table names is a copy of guest memory, and nothing resolves the pools such a reader reaches: the binding is noted
+  here, and the copies are brought up to date before the part is submitted
+  (`runtime/vk/vk_memory.c` `vk_mem_shadow_table_read()`). A draw that reuses the descriptors of the one before it
+  (`bind_resources`) comes after a build in the same command buffer, and the packed descriptors of `mo_desc` are built
+  in the same guest submission as their draws: either way this ran for the guest submission.
+- What the table names is mostly guest memory itself (pools without a mirror), which the GPU reads as it runs: the
+  submission's submit wait is the GPU's (`vk_mem_take_live`). Without this the staged mirror uploads
+  (`NX2SARIA_MIRROR_STAGE`) ended the wait once the replay had submitted, and the game wrote the next frame's instances
+  while the GPU still drew from them: the small grass and moss, which reach their instances through the table, flickered
+  and slid over the ground as the camera turned (RX 580, Kokiri Forest, 2026-11-11). Not every bind comes here (the bind
+  skip, the kept descriptors): `gpa_reader` notes it at each bind.
+- The mesh fallback's own buffers (`runtime/gfx/mesh_fb.c`): no guest memory behind them.
+- `if (r->ptr) up.addr = ptr_addr(ex, st, r), b = &up`: size 0: up to the end of the backing.
+- `runtime/vk/vk_caps.c`: shaders translated for `sbuf_align` address the buffer from its address rounded down to it.
+- `static int logged`: diagnosis: what c1 of an NVN2 compute program is (its control section's c1 range, the.
+- `const uint8_t *ctl, *code`: uniform slots the game bound).
+- A shader that writes it gets the sink: the zero buffer also stands in for missing vertex buffers and read-only
+  storage, and words written into it came back as garbage loop counts (a GPU hang at the first gameplay frame).
+
+### Feedback loops ([maxwell.md](../maxwell.md) 1.9, `runtime/vk/vk.h` `VkCtx.feedback`)
+
+The game's G-buffer and terrain shaders sample targets of the pass that renders them, at their own pixel, after earlier
+draws of the pass wrote them (albedo, normals, R32F linear depth). Maxwell reads see those writes; in Vulkan the read is
+undefined without a barrier, and on the RX 9070 it showed as dark screen-aligned blocks on the island ground and hid
+Tulin's sage spirit. Before a draw whose fragment shader samples an attachment of the open pass that a draw or clear of
+the pass wrote since the pass began or the last barrier:
+
+- `VK_FEEDBACK_LAYOUT`: the image is learned (`VkTexImage.fb_learned`; it has the feedback usage since its creation),
+  the pass restarts once with it in `ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT`, and from then on its passes attach it in
+  that layout, its descriptors carry that layout, the draws that sample it use a pipeline with the feedback flag
+  (`VkPipeState.feedback`) and a by-region barrier precedes such a draw.
+- `VK_FEEDBACK_RESTART`: the pass ends and restarts behind the full barrier (`vk_exec_pass_begin`).
+
+- `SubRange`: The image and the levels [l0, l1) and layers [a0, a1) a texture's view covers.
+
+### `attached_as()`
+
+Attachment slots of the open pass (bit 8 depth) whose subresource r covers.
+
+### `knob_log_mesh()`
+
+Knobs the draw and dispatch paths test on every call, read once: each cfg lookup walks the settings table
+(`runtime/cfg/cfg.c` `raw_get()`), about 0.2 ms a frame of replay in Kokiri Forest when they ran per draw.
+
+`NX2SARIA_LOG_MESH=1`: the first mesh draws' state.
+
+### `knob_tm_dispatch()`
+
+`NX2SARIA_TM_DISPATCH`: the scene upscaler stand-in's mode.
+
+### `knob_log_cs_binds()`
+
+`NX2SARIA_LOG_CS_BINDS` set: the compute bindings of each program's first dispatch.
+
+### `td_mode()`
+
+`NX2SARIA_TEX_MEMO` (`tex_info`, `feedback_scan`): 0 off, 1 on, 2 (`=check`) computes every hit again and stops on a
+difference.
+
+### `sampled_sub()`
+
+- `FmEnt`: `DrawCtx.fm`: one table per recording thread.
+
+The subresource a texture handle samples, per handle, kept while its slot resolves the same (`slot_still`): a draw's
+texture bindings change the whole-scan memo below, but the handles they bind were mostly looked up before, in this pass
+or an earlier one. Direct-mapped.
+
+Texture lock held.
+
+### `feedback_scan()`
+
+Attachments of the open pass the fragment shader fs samples; kept while the shader, the texture bindings and the pass
+stay the same.
+
+- `uint32_t m = 0, gen = vk_texture_slots_gen()`: before any lookup.
+- Only bound slots (0..127) are looked at. The texture and sampler pool arrays (res.pool: `VK_POOL_TEX` and 4096
+  descriptors, bindless handles) have slot -1: walking them ran up to about 100,000 empty iterations per scan, about 3.6
+  ms of replay per frame in Kokiri Forest, and read `tex[FS][0..127]` for them by mistake.
+- `uint64_t tok = token_of(h)`: before the lookup.
+
+### `feedback_prepare()`
+
+Before the pipeline lookup of a draw with fragment shader fs: learns and restarts as the mode says. Returns the sampled
+attachments in the feedback layout (the pipeline's feedback flag and `feedback_barrier`).
+
+- `vk_exec_pass_begin(ex)`: learned targets now in the feedback layout; the full barrier cleared `fb_dirty`.
+
+### `feedback_barrier()`
+
+By-region barrier inside the pass: earlier attachment writes become visible to this draw's fragment shader reads.
+
+### `vk_exec_feedback_war()`
+
+Write after read inside the open pass: the GPU orders attachment writes after earlier attachment writes, not after
+earlier draws' texture reads of the same image (feedback layout), so a draw or clear writing a target an earlier draw of
+the pass sampled could land before those reads finish and they read the new value (a band of the picture a frame out:
+the fog's flat colour, a dark shadow band). A by-region barrier from fragment shader reads to attachment writes orders
+them; written: the attachments about to be written (bit i colour i, bit 8 depth).
+
+### `feedback_writes()`
+
+The attachments the draw with state s writes: colour targets with a nonzero effective write mask, depth with depth
+writes or the stencil test on.
+
+### `feedback_written()`
+
+Marks the attachments the draw with state s writes, after ordering them behind earlier draws' reads of them
+(`vk_exec_feedback_war`); sampled: what this draw itself samples in the feedback layout, which a later write must wait
+for in turn (a draw reading and writing one target is the game's own feedback loop, ordered by region as it is).
+
+### `tex_info_lookup()`
+
+- `TD`:
+  - `uint8_t reduced`: the image was made without its top levels and the resource did not mind (`GfxShaderRes.exact`).
+
+Sampled-texture descriptors per (handle, resource type, separate), kept while nothing they derive from changed: the
+slot's resolution and texture entry (`slot_still`) and the samplers (`vk_sampler_gen`); the layout is set again on every
+hit from the images in the feedback layout (`in_fbl` of the image kept with it). The first binding of a slot in a
+submission (`vk_texture_epoch`) still makes the slot lookup for its storage check; a re-upload writes the same image, so
+the descriptor stays. Draws bind the same textures thousands of times a frame (15,000 lookups a frame in the monsters
+fight); a hit skips the slot lookup, the view key with its hash probe and the sampler lookup. Storage images, which note
+their binding per submission, are not kept. Direct-mapped; texture lock held. `NX2SARIA_TEX_MEMO=0` turns it off;
+`=check` computes every hit again and stops on a difference.
+
+- `uint32_t gen = vk_texture_slots_gen(), ep = vk_texture_epoch(), sg = vk_sampler_gen()`: before any lookup.
+- `if (m->epoch != ep)`: the slot's first binding in this submission: only its storage check is due.
+- `uint64_t tok = token_of(h)`: before the lookup.
+- A lookup that made the texture whole again changed the slot's resolution after the stamps above were read: the entry
+  never matches, and the next binding fills it.
+
+### `direct_blank()`
+
+Returns whether the image bound was made without its top mip levels (texture detail, `VkTexImage.skip`). For the flight
+recorder: a draw's own binding of slot id resolved to no view, so the draw samples the stand-in. The pool's entries are
+noted where they change (`pool_note_blank`); a binding written into a draw's own set is not, and it keeps what it got.
+Noted once per slot and frame, for the first 256 slots of a frame. Texture lock held.
+
+### `tex_info_full()`
+
+- A shader that reads this binding's texels by position, or asks for its size, needs every level of the texture where
+  the game put it (`runtime/gfx/gfx_shader.c` `reflect_exact()`): one made without its top levels is made again.
+- A depth texture sampled without a compare reads one texel on the Switch, whatever the sampler's filter: blending
+  neighbouring depths puts reconstructed positions in mid-air at object edges (shadow masks).
+
+### Texture and sampler pools (bindless)
+
+Shaders that take texture handles from memory (TEX.B and kin) index the whole texture pool: the translator declares
+arrays of `VK_POOL_TEX` images and `VK_POOL_SAMP` samplers (index = handle & 0xfffff and handle >> 20), which
+`runtime/vk/vk_pipeline.c` `spirv_pool_rebind()` moves to set 2, one image binding per view kind (`runtime/vk/vk.h`).
+One set serves every such pipeline: entry id of binding k holds texture slot id viewed as kind k (a stand-in when the
+slot is empty or cannot be viewed so), entry id of binding `VK_POOL_KINDS` sampler slot id. `pool_sync` rewrites the
+entries whose slot changed (`vk_texture_slot_token`) and fills the kinds a new pipeline asked for; with
+update-after-bind (descriptorIndexing) a write never invalidates a command buffer being recorded. Each submit's first
+sync also looks every registered slot up once, the freshness check a bound texture gets (`vk_texture_by_id_locked`). The
+set is one of a ring of `POOL_SETS`, one per submission: on the Switch the GPU reads the pool as it goes, but it runs a
+submission right after `nvnQueueSubmitCommands`, so what it reads is the pool as of about the submit. Here the GPU runs
+a submission several milliseconds later, and Ocarina registers slots for its next submission right after submitting:
+with one set, an in-flight submission sampled a texture registered for the next one, the lit materials of distant
+characters read the wrong texture as their light or probe data, wrote NaN and bloom spread it (white dialogue frames, a
+fifth of them; none once each submission waited for its GPU work, `NX2SARIA_SUBMIT_FINISH`). A submission's first
+`pool_sync` takes the next set (`pool_take_set`), waits for the GPU only if that set's last submission is still running,
+and brings it up to date from the change log (every entry written since the set was last current; the whole set when the
+log has wrapped). Writes within a submission go to its own set at once, until a part of the submission goes to the queue
+early (`runtime/vk/vk_exec.c` `maybe_split()`): that part may read any entry of the set, so the set is sealed
+(`vk_exec_pool_split`) and the next sync takes the following set as if a new submission began. Writing into it instead
+updated descriptors a pending command buffer reads, which Vulkan does not allow: the part sampled textures registered
+after it went, and on RADV a texture whose memory was mapped after the part's submit is absent from that submit's page
+tables, a GPU page fault on the 128x128 probe pass of Kokiri Forest's first frame (RADV's `radv_wait_for_vm_map_updates`
+hid it, as did `NX2SARIA_SPLIT_DRAWS=0`).
+
+- `PoolSlot`: Per texture slot, what `pool_fill` keeps between refills: the descriptor hash of the registration it was
+  read under, and the lookup memo stamp its entries were last written from (0: none) with the kinds that write covered.
+- `POOL_LOG`: entries of the change log: binding * `VK_POOL_TEX` + id, one per write.
+- `PL`:
+  - `VkDescriptorSet set`: the current submission's (`sets[cur]`).
+  - `uint64_t set_fence[POOL_SETS]`: the timeline value of the last submission that bound it.
+  - `uint64_t set_synced[POOL_SETS]`: the change-log position up to which it holds every write.
+  - `int nsets, cur, all`: all: the first fill, written to every set.
+  - `uint64_t cur_fence`: the submission `sets[cur]` serves.
+  - `uint32_t *log`: `POOL_LOG` entries.
+  - `uint64_t logn`: writes so far.
+  - `uint64_t *last`: per entry: the log position of its newest write (catch-up writes it once, there).
+  - `uint64_t n_walk[2], walk_visit[2], walk_refill[2], walk_ns[2]`: dirty walks: at a submission's start, within one.
+  - `uint64_t n_visit`: slots the dirty walks looked at.
+  - `uint64_t n_gwalk, n_gskip, n_gskip_slots, n_grep`: `POOL_GROUP`: groups walked, left alone and their slots, first.
+  - `uint64_t n_gchk_writes, n_gchk_groups`: members looked up for the memo.
+  - `uint64_t n_gchk_writes, n_gchk_groups`: `POOL_GROUP_CHECK`: writes the groups left alone got all the same, and in
+    how many.
+  - `uint64_t n_gchk_pending, n_gchk_bad`: of members registered since their last fill (not counted above); this
+    group's.
+  - `uint64_t n_gnouni, n_gchanged`: groups walked member by member: not known to hold one resolution, first member
+    changed.
+  - `int gmode`: `pool_group()` as of the last sync.
+  - `uint64_t n_by_reg, n_by_addr`: refills whose token changed by a registration, by an address generation only.
+  - `uint64_t full_ns, n_full`: the walks over every slot (a submission's first sync) and their time.
+  - `uint64_t ep_ns, n_ep, n_ep_ent`: `POOL_FAST`: a submission's freshness check of the noted entries instead.
+  - `uint64_t unres_ns, n_unres_walks`: of it: the walks over the slots without an entry.
+  - `uint32_t unres_mg`: `mem_map_gen` of the last such walk.
+  - `int unres_more`: it left a lookup for the creation budget: the next submission walks again.
+  - `PoolSlot *ps`: `[id]`.
+  - `uint8_t *unres_on`: `[id]`: its last fill resolved to no entry (`POOL_FAST`: retried each submission).
+  - `uint8_t *unres_in`: `[id]`: the slot is in unres (once: `pool_unres` never lists it a second time).
+  - `int *unres, nunres, cunres`: those slots (some may have left: `unres_on` clear, dropped by the next walk).
+  - `uint32_t *ent`: `[id]`: the entry its last fill resolved to, held there (`pool_hold`); 0: none.
+  - `uint64_t dirty_pos`: `vk_texture_dirty_slots_locked` position (0: the next sync walks every slot).
+  - `int ready, uab, sealed`: sealed: a part of the current submission already reads `sets[cur]`.
+  - `int retry`: the last sync left slots to the creation budget.
+  - `uint64_t frame, frame_ns`: the frame of the last sync, and the time its syncs spent making textures
+    (`pool_create_ns`).
+  - `uint64_t n_frame_stops, n_defer_skips`: syncs that created nothing for the frame's time, lookups they skipped.
+  - `uint64_t *tok`: per texture slot: `vk_texture_slot_token` it was filled under (0: stand-ins).
+  - `VkImageView *view`: [kind * `VK_POOL_TEX` + id]: what the entry holds.
+  - `VkSampler *samp`: `[id]`.
+  - `VkBuffer marks`: pool marks (`vk_exec_pool_marks`): the device buffer the marked shaders write, read-back copies in
+    a ring.
+  - `uint32_t marks_since`: submissions that recorded work since the last copy.
+
+### `pool_limits()`
+
+The device's limits for the sampled images of the pool's set: in one set, and in one shader stage of a pipeline layout
+(the pool's bindings are visible to every stage, and a layout adds the bound textures of set 0 to them). The
+update-after-bind limits apply when PL.uab, the plain ones otherwise. `*set` and `*stage` are 0 when unknown.
+
+### `pool_layout_make()`
+
+- `vkGetPhysicalDeviceFeatures2(c->phys, &f2)`: `create_device` enables every supported feature.
+- The pool needs `VK_POOL_KINDS` x `VK_POOL_TEX` sampled images in its set, whatever the game uses: a translated shader
+  indexes the whole array. A device whose limits are below that is told in the log before the layout is asked for; a
+  driver that accepts the layout anyway is let go on, one that refuses it ends the start with the limit named.
+- `uint32_t nb = VK_POOL_KINDS + 1 + (marks ? 1u : 0u)`: the marks buffer at `VK_POOL_MARK_BINDING`, last.
+- `if (marks)`: written once, before any set is bound: no update-after-bind.
+- `POOL_SETS` sets, fewer where the device has no room for them (one at the least, as before).
+
+### Pool marks
+
+(`NX2SARIA_TEX_DISUSE`; `runtime/vk/vk_pipeline.c` `spirv_pool_mark()` writes them, `runtime/vk/vk_texture.c` "disuse"
+reads them) A device buffer of a uint per texture slot at `VK_POOL_MARK_BINDING` of every pool set: a marked shader
+stores 1 into the slot of every pool texture it samples. Every `MARKS_EVERY` submissions that recorded work, the end of
+the submission copies the buffer into a host-visible read-back buffer and clears it; a copy is in the submission that
+signals the timeline value, so once `vk_sync_fence_done` reaches that value the copy is complete, and a later submission
+hands it to `vk_pool_marks_read`. Up to `MARKS_RB` copies may be in flight; with none free, the marks stay and the next
+submission tries. The buffer starts with whatever the memory held: a stray mark only keeps a texture one read longer,
+and `runtime/vk/vk_texture.c` waits for two reads before it evicts by disuse.
+
+### `pool_marks_make()`
+
+- Two uints past the slots: the spare that a fragment shader's marks of accesses it did not reach go to, never read, and
+  the overflow word, read with the slots (`VK_POOL_MARK_OVERFLOW`; `runtime/vk/vk_pipeline.c` `spirv_pool_mark()`).
+- `__atomic_store_n(&PL.marks_ready, 1, __ATOMIC_RELEASE)`: the recording thread reads the rest after this.
+
+### `pool_marks_release()`
+
+`vk_exec_draw_shutdown`: a probe ends with the device idle.
+
+### `vk_exec_pool_marks()`
+
+- `while (PL.rb_n)`: the copies the GPU completed, in submission order.
+- The shaders' stores before the copy; the copy's read before the clear.
+- `VkBufferCopy region = {0, 0, (VkDeviceSize)(VK_POOL_TEX + 2) * 4}`: the slots, the spare and the overflow word.
+- The clear before later shaders' stores, and the copy visible to the host.
+
+### `pool_kind_type()`
+
+The translator's sampler type (`GfxShaderRes.type`) of pool kind k.
+
+- `static const uint16_t dim[4] = {1, 3, 4, 5}`: 1D, 2D, 3D, CUBE.
+
+### `vk_exec_pool_loading()`
+
+- `pool_loading`: replay: a sync left an area load's worth of slots, and they are not made yet.
+
+Texture entries a pool sync may create (images and uploads), the rest at the next sync (`NX2SARIA_POOL_CREATE_BUDGET`,
+default 16). The sync holds the texture lock throughout, and with 64 streaming in new textures made frames of 20-40 ms
+with the replay and other threads waiting on that lock (24 ms of holds per slow frame in a dense area); 16 brought that
+to 5 ms with no pop-in a player could see. The slots it leaves keep their stand-in until the next sync. An area load is
+not streaming. It leaves thousands of slots at once (4,925 in the load measured below), and at the streaming budget they
+came in over a hundred frames and more: the first seconds out of a load screen showed the ground, the walls and the
+buildings as their black stand-ins. So while a sync leaves `NX2SARIA_POOL_LOAD_BACKLOG` slots or more (default 512; 0:
+never) the pool is loading: the count budget is off, a frame's refreshes may take `NX2SARIA_POOL_LOAD_MS` (default 50),
+and the presents of those frames are left out so the picture before the load stays up
+(`runtime/vk/vk_backend.c` `frame_hold()`, `vk_exec_pool_loading`) until fewer than `POOL_LOAD_END` slots are left. The
+load screen lasts those few frames longer and the area appears whole.
+
+### `pool_create_ns()`
+
+The refresh runs before every draw that binds the pools, not once per submission, so the count above held for each draw:
+an area load made 4,925 entries (1.7 GB of uploads) in one 430 ms frame, and while slots were left over every draw
+walked the whole table and looked each of them up again (key and hash), about 100 ms of that frame on its own. Once a
+frame's refreshes have spent `NX2SARIA_POOL_CREATE_MS` (default 6; 0: no limit) making textures, its later ones create
+nothing, and skip the slots left earlier in the frame (`pool_defer`) instead of looking them up again; the first refresh
+of each frame keeps its count budget. The slots left keep their stand-in, a few frames longer in a large load. The time
+counted is what the lookups spend making entries and uploading them the first time (`vk_texture_pool_make_ns_take`). It
+was the whole refresh, with its check of every entry the pools hold: in Kakariko that check alone takes 0.8 ms a
+submission, six submissions a frame, so most of the 6 ms was gone before a texture was made, and the frame's later
+refreshes made none. The game moves about thirty of its textures to new storage every four or five frames there; the
+ones a refresh left were on screen as their grey stand-ins for a frame (three lamp posts in one recorded frame), 87
+refreshes in 600 frames with 1,090 slots left between them.
+
+### `pool_left_add()`
+
+- `pool_defer`: per slot: 1 + the low bits of the frame a refresh left it in.
+
+The slots a refresh left (`pool_refill` failed: the creation budget or the frame's time was spent), so that the next
+refresh of the same submission looks up these and the changed slots (`vk_texture_dirty_slots_locked`) instead of walking
+the whole table again. While an area loads, slots are left at every refresh, and each refresh walked the table: about
+67,000 slot reads and 1.65 ms of the replay per submission in Kokiri Forest on an RX 580 (2026-11-11), with six
+submissions a frame. `pool_left_all`: the list overflowed (or nothing tracks it yet): walk the table.
+
+### `pool_write()`
+
+An entry whose wanted value PL.view / PL.samp already hold: into the current set, and into the log for the others (the
+first fill goes into every set).
+
+### `pool_entry_to()`
+
+Writes entry e (binding * `VK_POOL_TEX` + id) of set as PL.view / PL.samp hold it now.
+
+### `pool_take_set()`
+
+- `pool_current()`: A submission's first pool use: the next set of the ring, once the GPU is done with it. 1 when it
+  switched; `*from` is the log position the set holds writes up to (`pool_catch_up` brings it level once `pool_sync` has
+  refreshed the entries: a view written into a set must be alive, and the refresh is what replaces the views of
+  destroyed textures).
+- `pool_takes`: sets taken (`vk_pool_takes`): counted once the take's `pool_sync` is done.
+
+- A sealed set stays bound while it is current: reading it is what the pending part does too.
+
+### `vk_exec_pool_split()`
+
+- `if (PL.cur_fence != fence || PL.sealed) return 1`: no part of this submission has the current set unsealed.
+- `pool_take_set` moves to the next set of the ring: it must not be bound by this submission's earlier parts too.
+
+### `pool_catch_up()`
+
+- `pool_memo_hits`: `pool_fill`: slots that shared another slot's lookup (defined with `pool_memo` below).
+- `pool_memo_same`: of those, slots whose entries held the shared views already.
+
+The current set gets the entries written into other sets in [from, to) of the log, as PL.view / PL.samp hold them now.
+
+- `if (to - from > POOL_LOG)`: the log has wrapped since: every entry.
+- Each entry once, at its newest write: an entry written again later (also by this submission's own sync, which wrote it
+  into this set already) is skipped at the older positions.
+- `if (PL.switches % 3600 == 0)`: diagnosis: what invalidates the slots
+  (`runtime/vk/vk_texture.c` `vk_texture_bucket_stats()`).
+
+### `shader_skipped()`
+
+Entry id of every kind in mask: the slot's view of that kind or the kind's stand-in. Texture lock held. 0: the slot's
+texture was left to a later sync by the creation budget (`pool_sync`). `NX2SARIA_SKIP_SHADERS=<hash>,...`: draws and
+dispatches whose shader's SPIR-V has one of these FNV-1a hashes (the "vs"/"fs"/ "cs" hashes of the frame dump's
+passes.txt) are skipped (diagnosis: which pass makes an effect).
+
+- `uint64_t h = gfx_shader_spirv_fnv(sh)`: as `runtime/vk/vk_dump.c` `shader_hash()`.
+
+### `pool_on()`
+
+`NX2SARIA_POOL=0`: draws and dispatches of pipelines that index the pools are skipped (A/B against bindless shaders).
+
+### `pool_fast()`
+
+- `pool_stamp`: the last stamp given out.
+
+Slots that resolve alike share one lookup (`vk_texture_slot_khash_locked`): Ocarina keeps ~400 descriptors of each
+transient render target registered over its storage, and every finalize and initialize of that target changes their
+tokens, so a refill looked up the same texture ~400 times, ~15,000 lookups a frame in Kokiri Forest. An entry holds the
+views one slot got, for the slots with its hash, address generation and entry generation. Its stamp changes only when
+one of its views does (`NX2SARIA_POOL_FAST`, default on): a slot whose entries were written from the entry at the stamp
+it has now (`PoolSlot`) holds those views already, so a refill that finds the entry so compares and writes nothing. That
+is most refills: a transient render target released and taken back moves the address generation of its storage, ~1,300
+slots in Kokiri Forest, and every slot resolves as before (18,500 of 18,800 refills a submission shared a lookup, each
+comparing up to 16 views a quarter megabyte apart: 1.9 ms).
+
+ab: in the B blocks.
+
+### `pool_hold()`
+
+Slot id's last fill resolved to the entry ent (`vk_texture_pool_note_locked`; 0: none). `runtime/vk/vk_texture.c` counts
+the slots that hold each entry: the entries held are the ones the walk over every slot reached with a lookup in each
+submission, and the check by list leaves their use stamps from that count (`vk_texture_pool_hold_locked`).
+
+### `pool_unres()`
+
+Slot id's last fill resolved to no entry (got 0) or to one: the slots without one are looked up again each submission
+(`pool_sync_entries`), as the walk over every slot did: an entry their storage could not have then may be made now, and
+its address generation then refills them. A slot that resolved keeps its place in the list until the next walk drops it;
+when it stops resolving before that walk, that place serves again. Listing it a second time made the list grow by one
+entry per such change (160,000 entries for the 32,768 slots after a minute in the Market), and every 8th submission's
+walk over it then held the texture lock for 15 to 30 ms.
+
+### `pool_view_blank()`
+
+For the flight recorder: v is one of the stand-in views.
+
+### `pool_no_3d()`
+
+For the flight recorder's blank-slot events: 16384 when no pipeline made so far reads the pool as a volume (kind = depth
+* 8 + dim * 2 + arrayed, `runtime/vk/vk.h`), so a slot that holds a volume has a stand-in in every kind that is read.
+
+### `pool_note_blank()`
+
+- `pool_blanked`: the slots that lost their picture since the last `pool_blank_check`.
+
+Slot id's entry of a kind went from the view was to now: noted when a texture's view gives way to the stand-in, which
+every draw of the submission that samples the slot then reads (the set is written with update-after-bind).
+
+### `pool_blank_check()`
+
+A submission's first sync, before it changes anything: the slots that lost their picture during the submission before
+and have none in any kind now went to the queue with their stand-ins. Texture lock taken here.
+
+### `pool_slot_shown()`
+
+Whether slot id's entry of a kind in mask is a texture's view now (`vk_texture_pool_shown_locked`).
+
+### `pool_fill()`
+
+- `if (tok)`: the descriptor hash changes only with a registration (the token's upper half).
+- `ps->stamp = 0`: its entries match no memo entry, unless the one below.
+- `if (m && ok)`: the generation after the lookups: an entry they created is part of what they resolved.
+- A view that changes gives the entry a new stamp; one kept outside the mask keeps its value, so a kind that comes back
+  with another view is a change too.
+
+### `pool_sync_draw()`
+
+A chunk of a parallel group (`runtime/vk/vk_exec.c` "replay workers") binds the set as `vk_exec_draw_group_begin` left
+it, up to date when the group began; a chunk that still finds no set of this submission takes it in turn, under
+`pool_mt`. Elsewhere the replay syncs the pools at every draw that binds them, as before, under `pool_mt` past a group
+whose chunks still record (`NX2SARIA_REPLAY_PIPE`): the set is the submission's, read by the GPU when the part runs.
+
+### `vk_exec_draw_group_begin()`
+
+- `if (vk_ctx()->has_mesh_shader && !vk_ctx()->mesh_fallback) mesh_ring_make()`: the chunks' indirect mesh draws.
+- The set this submission took, or its first one when it has none yet: taken by a chunk instead, that chunk waited for
+  every earlier chunk of the group to be done (`pool_sync_draw`), and so did each chunk that reached its first draw
+  before one had taken it, so the first group of a submission recorded one chunk at a time (Hyrule Field: 2.4 ms for 209
+  draws where a later group of 784 took 0.8).
+- `int lk = vk_exec_shared()`: earlier groups may still record (`NX2SARIA_REPLAY_PIPE`).
+
+### `pool_sync()`
+
+- `if (took && flight_on) pool_blank_check()`: what the submission before went to the queue with.
+- `int switched = pool_take_set(ex, &from)`: every submission its own set, before the shortcut.
+- `if (PL.sealed) return`: current when checked: a change since waits for the next sync, which takes a new set.
+- `vk_texture_pool_make_ns_take()`: what other lookups left: only this sync's making counts for the frame.
+- `pool_catch_up(from, pre)`: what the other sets got since; this sync's own writes went into it already.
+- A set taken and up to date (with one set, the refresh above wrote into it directly), counted only when this sync left
+  no slot behind: once the frame's creation time is spent, `pool_refill` skips a slot it left earlier in the frame and
+  `pool_sync_entries` may return before the walk, and such a slot keeps its old view in this set with nothing in the
+  log, so the takes after it would not carry the change into the other sets. After a counted take, every slot change
+  made before it is in this set and in the log; `runtime/vk/vk_texture.c` `retire_sweep()` frees a retired image only
+  after more than `VK_POOL_SETS` of them, so no set of the ring still holds its view.
+
+### `pool_refill()`
+
+A slot whose token changed: filled, or noted as left (`pool_defer`). With the frame's creation time spent (spent), a
+slot left earlier in the frame is not looked up again. A left slot holds the stand-ins (its lookup resolved to nothing),
+and a fill clears the note: kept, a slot left and then filled in the same frame was skipped later in that frame with the
+filled texture's view still in the set, also after that texture was destroyed (a released one dropped, one evicted), and
+a shader sampling the slot read freed memory.
+
+### `pool_dirty_slot()`
+
+`vk_texture_dirty_slots_locked`: a slot whose token may have changed.
+
+### `pool_current()`
+
+Every entry as the slots, kinds and samplers are now (`pool_sync_entries` has nothing to write).
+
+### `pool_group()`
+
+`NX2SARIA_POOL_GROUP=1` (default), 0, ab: a dirty bucket's slot groups (`runtime/vk/vk_texture.c`) are walked whole. The
+members of a group resolve alike, so once a walk of the group brought every member to the current resolution (every fill
+done, an entry for each) they all hold the same views, and later the group is left alone when its first member still
+holds the current resolution: its token did not change (its views are what that token resolves to), or its refill wrote
+nothing. A slot that joined since is at the tail and refilled on its own (its registration's entry on the dirty ring).
+The members keep their older tokens: their views are what those tokens resolved to, and what the current ones do.
+(Comparing the memo's stamps instead left half the groups to their members: the memo's entries are shared between
+hashes, so the same views came back under a new stamp.).
+
+### `pool_group_check()`
+
+`NX2SARIA_POOL_GROUP_CHECK=1`: a group left alone is walked member by member all the same, and the writes that walk
+makes are counted (none when the rule holds; the pool log's slot groups line), but for the members registered since
+their last fill: their registration's entry on the dirty ring refills them in the same walk (counted apart).
+
+- `if (on < 0) on = rt_knob("POOL_GROUP_CHECK", "0") == 1`: a diagnosis: no settings row.
+
+### `pool_dirty_group()`
+
+- `if (!same)`: the first member's refill: nothing written, an entry found, its token taken.
+- `int r0 = d->retry, uni = 1`: member by member: then all hold the current resolution, unless a fill was left.
+- `if (id >= d->n) continue`: outside the pool.
+- `if (chk)`: the check: a member registered since its last fill is refilled by its own entry anyway.
+
+### `pool_sync_entries()`
+
+- `int spent = pool_create_ns() && PL.frame_ns >= pool_create_ns()`: this frame creates nothing more.
+- `if (spent && PL.ready && used == PL.kinds && gen == PL.gen && ep == PL.epoch && sg == PL.sgen) ...`: left slots only.
+- `vk_texture_pool_ctx(1)`: these lookups are the pool's own: a texture evicted by disuse keeps its stand-in.
+- `if (!PL.ready)`: every entry a stand-in first: partially bound arrays are still read out of range by guests.
+- `int retry = 0`: slots whose texture the creation budget left: filled again by the next sync.
+- Only a slot change since the last sync (no new kinds, no new submission): the slots that changed
+  (`vk_texture_dirty_slots_locked`), not the whole table. With `NX2SARIA_POOL_FAST` (default on) a new submission too:
+  its freshness check goes through the entries the slots resolved to and the slots that resolved to none
+  (`vk_texture_pool_fresh_locked`, `pool_unres`), not every slot.
+- `if (grp && !PL.gmode) vk_texture_groups_unstamp_locked()`: members were refilled one by one meanwhile.
+- With slots left by an earlier refresh (the creation budget or the frame's time spent): those (`pool_left`) first, then
+  the changed slots, instead of the walk over every slot. While an area loads, slots are left at every refresh, and each
+  one walked the table: about 67,000 slot reads and 1.65 ms of the replay per submission in Kokiri Forest on an RX 580
+  (0.7.1, 2026-11-11), six submissions a frame. `pool_left_all`: no list kept yet (until the first walk): walk.
+- The slots without an entry are over storage the guest has not mapped (stale descriptors, 1,160 in Kokiri Forest):
+  looked up again when the mapping changed, while a lookup is left for the creation budget, and every 8th submission for
+  the rest (an entry whose creation failed, an image at their address that took GPU content since: `slot_resolve`'s
+  alias rule).
+- `if (r)`: resolves now (an entry it made changes its token: refilled), was refilled since, or.
+- `PL.unres_on[id] = 0`: resolves to none until its token changes (the refill lists it again).
+- `for (int id = 0; id < n && !walked; id++)`: slots past n were never registered: stand-ins since the first sync.
+- `vk_texture_by_id_locked(id, NULL, NULL)`: the submit's freshness check.
+- `vk_texture_groups_unstamp_locked()`: the walk over every slot refilled members one by one.
+- `retry = (int)pool_nleft`: every slot left, by this refresh or an earlier one not filled since.
+- Retry counts every slot left (`pool_left`: this sync's and the earlier ones' not filled since).
+- `stutter_load()`: the stutter map counts the frames around it as an area load's.
+
+### Depth twins: colour images under a compare sampler in a compute shader
+
+The game's compute passes sample an `R32_SFLOAT` texture through a shadow sampler. Maxwell compares any single-channel
+float or unorm texel; Vulkan only formats with `SAMPLED_IMAGE_DEPTH_COMPARISON` (VUID-vkCmdDispatch-None-06479), which
+AMD's drivers do not give `R32_SFLOAT`, so the result there is undefined. Such an image gets a depth twin of the same
+size and bits (`R32_SFLOAT` -> `D32_SFLOAT`, `R16_UNORM` -> `D16_UNORM`), copied through a buffer right before each
+dispatch that samples it (a dispatch is outside any render pass), and the dispatch samples the twin. Draws keep the
+colour image: a copy cannot go inside their pass. `NX2SARIA_DEPTH_TWIN=0`: off.
+
+- `twin_dispatch`: `op_dispatch*`: the resources being bound are a dispatch's, on this thread (the replay workers record
+  draws meanwhile); 2 when the dispatch is a network program's (`uses_tensor_ops`; `net_binding`).
+
+### `twin_free()`
+
+Completion thread, after the last submission that may sample it.
+
+### `twin_buf_free()`
+
+Completion thread, after the last submission that may copy through it.
+
+### `twin_format()`
+
+- `static int compares[2] = {-1, -1}`: per source format: the driver compares it as it is.
+
+### `twin_update()`
+
+The twin of img holding img's current texels, the copies recorded into `ex->cb`; NULL when img needs none or it cannot
+be made.
+
+- `if (bytes > twin_buf_cap)`: one copy buffer, grown; the old one goes after the submission being recorded.
+- `if (t->img)`: the submission being recorded may still sample the replaced twin.
+- The source's earlier writes and the twin's earlier readers before the copies; the twin's old texels are dropped.
+- The twin's texels before the dispatch; the source's next writers and the buffer's next copy after these copies.
+
+### `net_binding()`
+
+What a network program run natively (`NX2SARIA_NATIVE_TENSOR=1`, `native_tensor`) binds at slot h, before its dispatch.
+Its input picture: the game's scene upscaler samples the post pass's picture through an RGB9E5 texture that lies at the
+scene target's address. On the console the two are one memory, so the words the post pass stores through the target's
+integer view are that texture's texels. Here they are two images (`raw_9e5_twin`), and the RGB9E5 one holds what it was
+given when it was made: an older picture, or the target's R11G11B10F words read as shared-exponent texels, which is
+noise up to 65408 that the half-float network turns into infinities. The stand-in reads the target's image for that
+reason (`untranslated_dispatch_fallback`); the network's own code samples the texture, so the words are copied into it
+here (the same texel size: a copy keeps the bits), each written picture once. Its output: an image made without storage
+use cannot be written, and the dispatch then writes a dummy; logged, as the picture is then lost without another sign.
+Texture lock held.
+
+- `if (o == t) return`: written as native texels, later than the target was.
+- The target's earlier writes and the texture's earlier readers before the copy, the copy before the dispatch.
+
+### `tex_info()`
+
+The image descriptor of slot h; in a dispatch, a compare-sampled colour image the driver cannot compare is swapped for
+its depth twin; in a pass larger than it, the scene's light target, once DLSS scaled it this frame, for DLSS's output
+(`runtime/vk/vk_dlaa.c`).
+
+### `alloc_set()`
+
+- `if (res == VK_ERROR_OUT_OF_DEVICE_MEMORY || res == VK_ERROR_OUT_OF_HOST_MEMORY)`: once more, as scratch.
+
+### `support_in()`
+
+What `support_fill` reads: viewport size, point size.
+
+### `pcss_params()`
+
+`NX2SARIA_PCSS` (percent, 0 = off): the pcss field of the support buffer, which translator patch 0010 reads in every
+explicit-LOD compare on a 2D array texture (the sun cascades). x: penumbra width in UV per unit of light-space depth
+between receiver and blocker (0 keeps the game's single compare), y and z: the narrowest and widest disc radius, w: the
+blocker search radius, all in UV of the cascade map. Radii are in UV, so they hold at any `NX2SARIA_SHADOW_SCALE`.
+`NX2SARIA_PCSS_K` overrides the depth-to-penumbra factor at 100 percent, for tuning.
+
+### `shadow_spread_params()`
+
+The `shadow_spread` field of the support buffer: the factor translator patch 0011 applies to the lighting shaders' sun
+shadow filter offset (element 56 .xy of their lighting block), 1 / `NX2SARIA_SHADOW_SCALE`. The game spaces its four
+compares for its own shadow map texels; with maps `NX2SARIA_SHADOW_SCALE` times larger, the same offset in UV spans that
+many more texels and the near cascade shows four separate copies of each edge. Dividing by the scale keeps the game's
+spacing in texels. The offset is in UV of the shadow map, so the output resolution plays no part. The scale is read
+once, as `runtime/vk/vk_texture.c` `shadow_scale()` reads it: the maps keep the size they were made with.
+
+### `support_fill()`
+
+- `memcpy(b + 1392, &point_size, 4)`: `point_size` (translator patch 0008): vertex shaders that write none output it.
+- `memcpy(b + 1408, pcss_params(), 16)`: pcss (translator patch 0010): soft sun shadows in the cascade compares.
+- `memcpy(b + 1424, shadow_spread_params(), 16)`: `shadow_spread` (translator patch 0011): sun shadow filter width.
+- `for (int i = 0; i < 73; i++) memcpy(b + 192 + 16 * i, &one, 4)`: render scale 1: the host renders at guest size.
+- `if (vk_hdr_armed())`: read by the game's tonemap only, once `runtime/vk/vk_hdr.c` `tonemap_splice()` has grown its
+  block past the translator's.
+
+### `bind_stats_on()`
+
+`NX2SARIA_BIND_STATS=1`: bindings and descriptors per draw of each stage (Task 2.2's choice of the pushed stage), and
+how often a draw repeats the previous one, logged every 20000 draws: pushes recorded and skipped, allocated sets written
+and reused, stage texture-type recomputations (`answers_for`), draws with the previous draw's program, bound state and
+textures (shaders and pipeline would be the same) and those that also have its buffers and viewport (all descriptors
+would be the same). BS is declared beside DS.
+
+### `repeat_stats()`
+
+The bound state a draw reads, compared with the previous draw's (`NX2SARIA_BIND_STATS` only).
+
+### `push_skip_on()`
+
+`NX2SARIA_PUSH_SKIP=0`: every graphics draw pushes its set again.
+
+### `bind_skip_on()`
+
+A graphics draw whose descriptor inputs equal the previous graphics draw's in this command buffer skips building its
+sets: every write would be the same, the push would be skipped and the allocated set reused without a bind (about a
+quarter of field and monsters2 draws, `NX2SARIA_BIND_STATS`). The inputs, compared and stored in place, are what
+`bind_resources` and its helpers read beyond the pipeline info's fixed bindings and Z's stand-ins:
+
+- The info (bindings, layouts), the program and its serial (the compiler-constant range of UBO slot 1);
+- `vk_texture_slots_gen`, `vk_texture_epoch` (a slot's image, view and once-per-submit storage check), `vk_sampler_gen`;
+- `vk_mem_gen` (buffer and offset of a span, mirror creation and per-submission sync);
+- The images in the feedback layout (the sampled layout);
+- Per binding: the support inputs, c0's storage table and base instance, the bound uniform and storage ranges, the
+  texture and image handles (`RsList`; compared only when a bind op ran since the last draw, `bind_gen`);
+- Storage buffer addresses read from user uniform blocks (RsList.p, `ubo_ptr`): compared on every draw, since the
+  block's contents change without a bind op.
+
+The side effects of a build repeat as no-ops in the same command buffer and submission: c0 and support buffers kept in
+B, `note_written`'s ranges, `vk_mem_gpu_wrote`'s write-backs, the per-submission mirror sync and dirty census note, the
+views cached per submission. The census counts are added again. A build that copied guest bytes into transient memory
+(an unaligned host range) is never skipped after: the copy may differ. `B.res_valid` says the sets bound hold the last
+build; `vk_exec_draw_new_cb`'s memset clears it, and every build clears it until it ends. `NX2SARIA_BIND_SKIP=0` builds
+every draw; `=check` builds every draw and stops when a draw with equal inputs gets other writes, census counts or
+descriptor commands.
+
+### `rs_list()`
+
+- `if ((nd += cnt) > MAX_DESC) { ok = 0; break; }`: the build stops on it.
+- `}`: slot 1: the program (`bind_sig`); others: the zero buffer.
+- `} else if (b->kind == GFX_RES_SSBO)`: every descriptor of the binding is the same range.
+- `if (r->ptr || (!direct && ubo_ptr_res(r)))`: an address read from memory: `bind_sig` reads it again.
+
+### `bind_sig()`
+
+The signature of a graphics draw's descriptor inputs into RS; 1 when it equals the stored one. The bound-slot bytes are
+compared only when a bind op ran since they were stored or the pipeline changed: otherwise they are the same. Check mode
+compares them anyway and stops when the bind op generation said they could not differ but they do.
+
+- `PUT(vk_mem_gen() + vk_usnap_gen())`: both only grow.
+
+### `bt_now()`
+
+The binding profile in the `NX2SARIA_TRACE=gfx` frame line reads the clock around every descriptor; without the trace
+those reads would cost more than some of what they time, so they read 0. The phases `NX2SARIA_REPLAY_PHASES` times
+(`vk_exec_op_draw` below); the binding's four are inside `PH_BIND`.
+
+### Per-binding descriptor reuse
+
+A graphics draw whose inputs differ from the previous draw's in one binding (the whole-draw skip, `bind_sig`, misses it)
+used to resolve every one of its descriptors again: each uniform and storage range through `vk_mem_resolve` and its
+mirror, each texture through the descriptor memo and the slot table, hundreds of thousands a frame in Kokiri Forest. PB
+keeps, per pipeline info (the `PB_N` most recent, direct-mapped), each descriptor's last result together with the
+bound-slot values it came from, and a descriptor whose values are unchanged takes that result instead of resolving.
+Results stay valid while nothing else a resolution reads changes (`pb_globals`): the command buffer, the program, the
+texture slot, epoch and sampler generations, the memory generation, the feedback-layout images and DLSS's stand-in
+image. `vk_mem_gen` moves with every submission, so a result never outlives the submission whose mirror sync and
+write-back notes it relied on; within one, repeating `vk_mem_use` for the same pool is a no-op, which is why it can be
+left out. Only descriptors that read nothing but their bound slot are kept (`pb_key`): uniform slots 1 and 3-20, storage
+buffers the shader only reads that a stage slot names, and sampled textures; written storage, c0, pointer tables,
+storage images and the support buffer resolve every time. A reuse counts its census bytes again, and a resolution that
+copied guest bytes into transient memory is never kept. Off while per-object motion replaces uniform bindings
+(`mo_ovr_on`). `NX2SARIA_BIND_REUSE=0` resolves every descriptor; `=check` resolves every descriptor and stops on one
+that resolves differently from its kept result with the same inputs. The entries (`PbEntry`, `DrawCtx.PB`) and the build
+running (`DrawCtx.pb_e`) belong to the recording context.
+
+### `pb_globals()`
+
+Everything besides its own bound slot that a kept descriptor's resolution read.
+
+### `pb_entry()`
+
+info's entry, emptied when it held another pipeline's results or the globals moved.
+
+### `pb_key()`
+
+The bound-slot values descriptor k of binding b resolves from, when they are all it reads besides `pb_globals`.
+
+- `return 1`: slot 1: the program's constants (`pb_globals`); others: the zero buffer.
+- `if ((r->flags & 1) || r->ptr || r->cbuf_slot >= VK_GPA_CB_SLOT) return 0`: the table, the mesh fallback's buffers.
+
+### `pb_take()`
+
+Before descriptor j (descriptor k of binding b) resolves: 1 when its kept result serves, `*o` filled and its census
+counted again. 0: resolve it, then `pb_keep`.
+
+### `pb_keep()`
+
+After descriptor j resolved to `*o`.
+
+### `write_set()`
+
+Writes allocated set s from its packed descriptors d: through the layout's update template, or with the write structs
+`w[i0..i1`) when it has none.
+
+### `gpa_reader()`
+
+- `emu_d`: Writes the pipeline's sets from the bound state: set 0, and set 1 with independent layouts. Each is pushed
+  into the command buffer, or allocated, written and bound; a graphics set whose contents equal the last one allocated
+  for that set number in this command buffer is reused, and bound again only when another layout or a push came between.
+  A graphics push equal to the last one at its set number, with no other layout or bind between, is not recorded. The
+  descriptors go into one packed array d, a `VkDescSlot` per descriptor in binding order, which a set's update template
+  reads directly (`VkPipeInfo.tpl`); write structs are filled only when a set has no template.
+
+  set 0's descriptors of the last `bind_resources` build (mesh emulation).
+
+A pipeline that binds the device address table reads what it names, mostly guest memory itself (pools without a mirror),
+as the GPU runs: the submission's submit wait is the GPU's (`vk_mem_take_live`). Without this the staged mirror uploads
+(`NX2SARIA_MIRROR_STAGE`) ended the wait once the replay had submitted, and the game wrote the next frame's instances
+while the GPU still drew from them: the small grass and moss, which reach their instances through the table, flickered
+and slid over the ground as the camera turned (RX 580, Kokiri Forest, 2026-11-11). Noted at every bind, before the bind
+skip and the kept descriptors (`bind_sig`, `pb_take`), which leave `ssbo_info` out: noted only there, it was missed once
+those had warmed up, and the flicker came back after a minute of play. the pipeline's binding list holds a table
+binding.
+
+- `int8_t g = __atomic_load_n(&info->gpa, __ATOMIC_RELAXED)`: the replay workers bind too.
+
+### `bind_resources()`
+
+- `cx->B.res_valid = 0`: until the build below ends.
+- `uint32_t lo[2] = {0, 0}, hi[2] = {0, 0}, d0[2] = {0, 0}`: bindings [lo, hi) and first descriptor per set.
+- `int need_w = 0`: a set without a template: fill the write structs.
+- `int st = nvn_stage_of(b->stage), kind = 0`: kind: 0 buffer, 1 image, 2 texel buffer view.
+- `if (!cx->B.sup_valid || memcmp(in, cx->B.sup_in, sizeof in))`: `support_fill` reads only these.
+- A new buffer only when the contents changed.
+- `for (uint32_t k = 0; k < cnt; k++)`: buffer textures are not replayed yet.
+- `int locked = 0`: `tex_info` looks up with the texture lock held; kept descriptors (`pb_take`) need none.
+- The context's memo (`TexMemo`) for sampled textures while other threads record (the lock is free otherwise), outside a
+  dispatch's depth twins and DLSS's stand-in image, with the generations read before any lookup below.
+- `uint64_t tok = m ? token_of(h) : 0`: before the lookup.
+- `o[k].w[2] = (uint32_t)o[k].image.imageLayout`: zero the tail padding.
+- `if (kind == 0) w[i].pBufferInfo = &o->buffer`: a `VkDescSlot` is as large as either info struct.
+- An empty set 1 (a fragment stage without resources: depth and shadow draws) starts past the last binding, which the
+  loop never reaches: `d0[1]` stayed 0 and set 0 was pushed with 0 bytes, so the driver read stale descriptors.
+- Under the validation layer, a new graphics layout binds set 1 before set 0 is pushed or bound. The layer (SDK 1.4.363,
+  `PipelineLayoutCompatDef::operator==`) takes any two `INDEPENDENT_SETS` layouts as compatible, so
+  vkCmdPushDescriptorSetKHR keeps the push set it made for an earlier layout and drops writes to bindings that layout
+  lacks (false VUID-vkCmdDrawIndexed-None-08114, then an access violation inside the layer). A bind at set 1 disturbs
+  set 0 by its canonical id, which drops the layer's push set: the push after it gets a new one.
+- `if (gfx && info->layout != cx->B.ds_layout)`: another layout: sets bound before may be disturbed.
+- `if (s && i1 == i0)`: no fragment stage: set 1 is empty and unused.
+- `if (set1_first)`: bound only to drop the layer's push set (comment above).
+- `if (info->pool)`: set 2: the texture and sampler pools.
+- `cx->RS.volatile_ = 1`: the pools may change under an equal draw: build the next one again.
+- An equal next draw records nothing when every push set holds its push (`NX2SARIA_PUSH_SKIP` on) and nothing made the
+  build unrepeatable; allocated sets are always bound to the one written last.
+- `if (skip == 2)`: with the pipeline info equal (`bind_sig`), the packed descriptors determine every write.
+- `if (same && was_valid) BS.bind_skip++`: the draws a skip would have spared, compared instead.
+
+### Draws
+
+### `base_viewport()`
+
+- `VkViewport v = {x, y + h, w, -h, ex->depth_range[0], ex->depth_range[1]}`: the y flip: negative height.
+
+### `draw_viewport()`
+
+- `if (ex->mark)`: `NX2SARIA_PASS_TIMES`: how much of the pass the draws cover.
+- `vk_dlaa_viewport(ex, &v)`: the scene's draws move by the DLAA jitter.
+
+### `slope_bias()`
+
+The slope-scaled depth bias of a draw. The term is the bias per unit of depth slope across one pixel of the target, and
+a shadow map made k times larger on each side (`NX2SARIA_SHADOW_SCALE`, `runtime/vk/vk_texture.c` `shadow_scale_of()`,
+`pass_scale`) has 1/k of the slope across each of its texels: the game's factor alone gives k times less bias than it
+asked for on sloped surfaces, which is what shows as acne (stripes of self-shadow over slanted ground and walls). The
+constant term counts the depth format's smallest steps, which do not change with the size, and keeps its value.
+
+- `if (ex->pass_scale > 1)`: the log names each scale it meets, at most 8 times a run (replay workers record too).
+
+### `record_fixed()`
+
+- `NX2SARIA_DEPTH_BIAS_X` scales the constant term (diagnostic): NVN's units are tuned for the Switch's fixed-point
+  depth buffer, and this back end draws into a 32-bit float one, where the same constant means a far smaller offset. If
+  decals z-fight here, this multiplier says whether the offset is the reason.
+
+### `bind_vertex_buffers()`
+
+- A stream whose range is the one its bound buffer was resolved from, with no pool or mirror change since (`vk_mem_gen`,
+  read before any resolve), resolves to that buffer again: most draws change one stream or none.
+- Most draws change no stream at all: with every range as it was bound and no pool or mirror change, the loop below
+  would take each buffer from B again and return at the compare after it.
+
+### `foliage_shadow_cull()`
+
+`NX2SARIA_FOLIAGE_SHADOW_CULL=<layer>[f]` (0 to 3, default 1; 3 turns it off): the foliage's mesh draws into the sun's
+shadow cascades from this layer on drop one side of their cards ("f": the front faces, else the back faces). The game
+draws them double-sided, and stacks of alpha-tested cards seen from the sun reached about 1,000 million fragments in one
+draw of the 2.5 million texel far cascade, where half the cards still cover the same texels. Cull mode is dynamic state,
+so this needs no other pipeline.
+
+### `pipe_skip_mode()`
+
+`NX2SARIA_PIPE_SKIP`: which draws are skipped, rather than waited for, while their shaders or pipeline build. strict
+(0): only draws whose pass targets were all rendered in the previous presented frame; a pass with a target.
+
+- That was not counts as one-shot and waits.
+
+Any (1): also draws in a pass with at least one target rendered in the previous frame (a per-frame depth.
+
+- Buffer or g-buffer with a colour target the frame before did not use: half-resolution effect buffers in fights).
+- Passes with none (volumes, LUTs, shadow layers seen for the first time) still wait, and so do passes whose only.
+- Recent target is the depth buffer while a colour target is rendered for the first time (item icon captures).
+- Full-screen draws into such passes wait from their budget of 50 ms a presented frame. The default: a skipped.
+- full-screen draw is a lighting, fog or tone mapping pass that leaves its target as it was, which shows as a black.
+- Or unlit frame with the interface intact, and with the stage libraries in the driver's cache the wait is a.
+- Millisecond (`runtime/vk/vk_pipeline.c` `lw_start()` keeps them there). One that is skipped once its budget is spent
+  leaves a frame.
+- That is not shown (`runtime/vk/vk_backend.c` `frame_hold()`); where that cannot hold the picture any longer, the draw
+  waits on.
+- (`FULLSCREEN_LAST_MS`).
+
+Fullscreen (2): as any, and full-screen draws into such passes are skipped instead of waiting from their.
+
+- budget. A full-screen pass whose stage libraries are cold in the driver cache took 86 ms on average (up to 194 ms).
+- In a fight on an RX 9070: three frames in a row each spent the 50 ms budget, and some of the draws were skipped.
+- After all. Skipping costs the pass for the frames until the pipeline is ready. It was the default until the.
+- Libraries were kept warm.
+
+Any other draw whose pipeline is missing waits for its fast link from a small budget per presented frame (`link_budget`)
+before it is skipped.
+
+### `writers_wait_on()`
+
+`NX2SARIA_DRAW_WRITERS_WAIT` (default 1; 0 = off): a draw whose shaders write memory waits for its shaders and pipeline
+as a one-shot draw does, whatever its targets. A draw into per-frame targets may be left out while its pipeline builds
+because the game renders those targets again in the next frame (`pipe_skip_mode`). A storage buffer its shaders write,
+or an image they store into, is no such target: the write is a side effect of this draw that later draws and frames
+read, and with the draw left out that memory keeps what it held. So the draw takes the wait of a draw into targets that
+are not per-frame (`prepare_draw_ex`: from the frame's wait pool, or `ONESHOT_WAIT_MS` with
+`NX2SARIA_ONESHOT_BUDGET=0`), and is skipped only at the end of it. `draw_stats_tick`'s line counts the draws that
+waited by this rule alone.
+
+### `stage_reads_images()`
+
+1 when a stage reads a texture or a storage image (`mfb_draw`, `MFB_ONE_TEXTURES`).
+
+### `stage_writes()`
+
+1 when the stage writes a storage buffer or stores into an image (`GfxShaderRes.flags`, `runtime/gfx/gfx.h`).
+
+### `draw_writes()`
+
+1 when a draw with these stages waits because it writes memory (`writers_wait_on`). A stage that is NULL writes nothing:
+the program has none, or it is still being translated and has no reflection to ask yet.
+
+### `frame_wait()`
+
+`NX2SARIA_PIPE_LINK_MS` (default 6; 0 = off): how long the draws of one presented frame may wait, in all, for the fast
+link of a pipeline that is missing, `LINK_DRAW_MS` at most each. A draw into a per-frame pass used to be skipped at once
+and for as long as its pipeline built, also when its stage libraries were in the driver's cache and the link took under
+a millisecond: geometry seen for the first time (ground, a wall, a character) was missing for a frame or more and then
+appeared. With the libraries warm the wait ends within the budget and nothing is skipped; with them cold it runs out
+after a few draws and the rest are skipped as before, so a burst of cold pipelines costs a frame this much and no more.
+Measured on an RX 7900 XT, first walk through a village with no pipeline recorded: 2,349 draws skipped without the
+budget, with the libraries warm in both runs. `NX2SARIA_PIPE_LINK_DRAW_MS` (default 3): the wait for one pipeline,
+counted from its first miss and shared by all its draws (`prepare_draw_ex`), so a pipeline whose libraries the driver
+has to compile costs its first frame this much and the frames after it nothing; it was 3 ms for each draw, in every
+frame. A frame that has left a draw out already waits for no fast link either (`pending_draws`): it is held back or
+shown without that draw whatever its other pipelines do. The 3 ms are just under what a pipeline takes with its two
+shader libraries in the driver's cache: on a new install's first visits (RTX 5090, the libraries prepared, 67 pipelines
+the install's list did not hold) 44 were usable under 4 ms after their miss, 17 after 4 to 8 ms and 6 later, and of 87
+draws that waited 66 were skipped at the end of the wait, their frame then held back. 8 ms a pipeline and 16 ms a frame
+were tried for that. A scripted walk through a village with no pipeline recorded (610 missed) had the picture stand
+still 15 times against 50 and 15 frames over 25 ms against 17, but in play it felt worse to the player than the 3 ms it
+replaced, in two sessions on the same install: a frame that takes 10 to 14 ms longer showed more than one that is left
+out. The waits stay short; the settings take longer ones. `NX2SARIA_PIPE_FRAME_WAIT_MS` (default 50; 0 to 500): the wait
+pool of one presented frame. Its full-screen draws and its one-shot draws (`NX2SARIA_ONESHOT_BUDGET`) wait for their
+shaders and pipelines from it, each for what the ones before left, and are skipped once it is spent, so the pipelines of
+one frame hold the replay thread this long in all and no longer (beside the fast links' own small budget, `link_budget`,
+and `FULLSCREEN_LAST_MS`).
+
+### `pool_ms()`
+
+The milliseconds of pool not used up since t0, when the caller began to draw on it; `UINT32_MAX` without a pool.
+
+### `mesh_whole()`
+
+1 for a draw whose pipeline is a mesh pipeline without stage libraries, which gets no fast link (`MESH_WAIT_MS`). mesh:
+the draw binds a mesh pipeline.
+
+### `oneshot_ms()`
+
+What a one-shot draw with the state s may wait for its pipeline from pool.
+
+- `if (vk_pipeline_building_ms(s) > MESH_WAIT_MS) return 0`: a compile (`MESH_WAIT_MS`).
+
+### Wait accounting
+
+What the replay thread spent on draws that found their pipeline or a shader missing Counted from the miss to the draw's
+bind or skip, the look-ahead scan included, by the kind of wait the draw was allowed; left: the draws skipped at the end
+of it. `draw_stats_tick` logs the sums with the skipped draws, so a session's log says how much time the pipelines cost
+on this thread and which rule spent it. writers: the draws into per-frame targets that took a one-shot wait because
+their shaders write memory (`draw_writes`); they are among the one-shot kinds' counts.
+
+- `FULLSCREEN_LAST_MS`: How long the full-screen draws of a frame wait on for their pipelines, in all, once the frame's
+  wait pool is spent and the previous picture cannot be held any longer (`prepare_draw_ex`, `last_wait`). Every such
+  pipeline has a fast link (`runtime/vk/vk_pipeline.c` `gpl_feedback()`), so the wait is for stage libraries: a few
+  milliseconds from the driver's cache, and in the one case a player's session shows the draw had its pipeline 18 ms
+  into this wait. It was 500 ms for each draw while a pipeline with a feedback loop waited for its whole optimised
+  build; with the pool before it, a frame now waits under 100 ms for pipelines in all.
+- `sm_on`: The previous draw's shaders, kept while its program, bound pipeline state, the vertex and fragment stages'
+  first 32 texture and image handles and every slot's resolution (`vk_texture_slots_gen`, read unlocked: a registration
+  racing with it is ordered after this draw, as `answers_for`'s own check would order it) stay the same: `answers_for`
+  reads nothing else, so `shader_for` would return the same shaders. About 65% of field draws repeat them
+  (`NX2SARIA_BIND_STATS`). `NX2SARIA_SHADER_MEMO=0` turns it off; `=check` looks the shaders up on every hit too, and
+  every slot's texture type in `answers_for`, and stops on a difference. `tex_serial` (bumped by every texture and image
+  bind) equal to the key's means the handles were not rebound since they were compared, so the 1 KiB compare is skipped;
+  a rebind to the same handles still matches by the compare. The memo and its key (`MemoKey`) are `DrawCtx.SM`.
+- `pm_on`: the memo is `DrawCtx.PM`.
+- `vk_draw_skip_names`: Pass, shaders, pipeline, fixed state and resources for a draw. 0: the draw is skipped. ---- draw
+  accounting: why draws were not drawn Every draw `prepare_draw_ex` turns away is counted by reason, vertex and mesh
+  draws apart. The first draw of each kind skipped for each reason is logged with its program, and every
+  `DRAW_STATS_FRAMES` presented frames one line sums up the draws issued and skipped since the last line (only when
+  something was skipped). A black screen with draws skipped for "shader failed" or "pipeline failed" points at the
+  translator or the pipeline; draws issued and still nothing on screen point at the shaders' results (`NX2SARIA_DUMP`).
+
+### `draw_stats_tick()`
+
+- `for (int k = 0; k < WK_N && o < (int)sizeof line - 320; k++)`: room for the two counts after the kinds.
+
+### `vk_exec_pending_draws_take()`
+
+The draws skipped since the last present because their shader or pipeline was still building: the picture of that frame
+lacks them (a light, a wall, a whole lighting pass). `runtime/vk/vk_backend.c` `frame_hold()` reads it at the present
+and keeps the previous picture on screen instead. The replay and its parallel chunks add to it; the present takes it, on
+the presenting thread, which with the replay on the submitting threads need not be the one replaying: atomics.
+
+### `draw_skipped()`
+
+- `if (why == SK_PIPE_PENDING) perf_count(PERF_CNT_PIPE_SKIP)`: skipped draws only: a lookup that then waited is none.
+
+### `skip_prog_wanted()`
+
+`NX2SARIA_SKIP_PROG=<serial>[,<serial>...]`: diagnostics. Drops every draw whose program serial is listed, so something
+on screen can be attributed to one program by elimination: pass the programs of the pass it appears in, then half of
+them, and so on. Environment only, and nothing is skipped without it. Read once: a getenv on every draw scanned the
+whole environment block and was a sixth of the replay thread's samples in a play profile.
+
+### `prog_lead_on()`
+
+`NX2SARIA_PROG_LEAD=1` (diagnostics): how long before its first draw the game made each program (`nvnProgramSetShaders`,
+`runtime/nvn/nvn_api_obj.c` `nvn_prog_made_ns()`): the head start a build begun at that moment would have over one begun
+at the draw, which is where shaders are looked up and pipelines built today. A line for vertex, mesh and compute
+programs (their first dispatch) each, after every 200 programs first used.
+
+### `prog_lead()`
+
+mesh: 0 a vertex program's draw, 1 a mesh program's, 2 a compute program's dispatch.
+
+mesh: a mesh draw (`op_draw_mesh`): the program's mesh and task stages stand in for the vertex stage, and nothing
+vertex-related (vertex buffers, motion vector bookkeeping of vertex shaders) is bound or noted. 2: a mesh draw of the
+mesh fallback (`mfb_draw`): the vertex stage is `DrawCtx.mfb_cur_vs`, in an ordinary pipeline without vertex input.
+
+### Mesh fallback
+
+A list's depth-only draw is held while its colour draw waits for a pipeline The game draws a culled list of grass or
+leaves twice from one indirect record: into the depth target alone, then into the colour targets. Each draw has modules
+and a pipeline of its own, and the depth-only one, the smaller, is built first. Drawn without its colour draw it leaves
+the list's depth in the scene with nothing drawn over it: what lies behind fails the depth test there, and the sky's
+colour shows through the ground in the shape of the grass for as long as the colour draw's pipeline builds, seconds each
+on the drivers the fallback is the default for. So while a list's colour draw is skipped for its modules or pipeline,
+its depth-only draw is skipped too, and the ground shows as it does without the grass. A list is its record's address in
+the game's memory. The colour draw stamps the list with the present it was skipped in and clears the stamp when it is
+drawn; the depth-only draw, which comes first in the frame, is held when the stamp is at most `MFB_HOLD_PRESENTS`
+presents old, so a list whose colour draw no longer comes is held no longer than that. A draw whose stages write memory
+is never held (`mfb_draw`): the writes are wanted whatever is drawn. The table is `runtime/gfx/mesh_fb_hold.h`'s
+(`tests/mesh_fb_hold_check.c`), read and written by the replay's threads without a lock: a lost update costs a list one
+frame of the hold. `NX2SARIA_MESH_FALLBACK_HOLD=0` turns it off.
+
+### `mfb_hold_set()`
+
+The list's colour draw was skipped for its modules or pipeline (waits 1), or was drawn (0).
+
+### `mfb_hold_skip()`
+
+A held depth-only draw is left out, counted as a draw whose own pipeline is building: the frame lacks it for the same
+reason (`draw_skipped`, `runtime/vk/vk_backend.c` `frame_hold()`).
+
+- `if (!(n & (n - 1)))`: the first, then at powers of two.
+
+### `mfb_hold_colour()`
+
+A colour target is bound (`OP_SET_RT`), whatever the draw's write masks are.
+
+### `mfb_hold_role()`
+
+What a fallback draw with state s writes: 1 a colour target, 2 depth and no colour, 0 neither.
+
+### `prepare_draw_ex()`
+
+- `int fb = mesh == 2`: from here on mesh says what the draw is, and `!fb` that its pipeline is a mesh pipeline.
+- `if (ex->pass_noatt)`: no attachment: the pass covers this draw's viewport or scissor, reopened when it needs more.
+- A new pass may have another scale (`pass_scale`): the viewport, the scissor and the slope bias (`slope_bias`) follow
+  it.
+- `if (n_skip_prog && skip_prog_wanted(ex->prog->serial)) return draw_skipped(ex, mesh, SK_PROG_FILTER)`: -1 until read.
+- `uint32_t gen = memo ? vk_texture_slots_gen() : 0`: before `shader_for`, whose lookups may bump it.
+- A draw into a target the previous frame did not render (or into none) waits for a pending shader or pipeline: one-shot
+  draws (volumes and LUTs generated once, later only sampled) would leave their target empty for the session. A draw
+  into per-frame targets is skipped until they are ready and comes back next frame, unless its shaders write memory:
+  then it waits like a one-shot draw (`draw_writes`).
+- `int oneshot = -1, skip = pipe_skip_mode()`: -1: not looked up.
+- `int writer = 0`: the draw waits as one-shot by `draw_writes` alone.
+- `vk_exec_ahead(ex)`: the later draws' shaders and stage libraries are queued while this one waits or is skipped.
+- Only the stages that are here can say that they write: one still being translated has no reflection yet.
+- `if (!oneshot)`: skipped until ready.
+- From the frame's wait pool (`NX2SARIA_ONESHOT_BUDGET=0`: until each is translated); a shader the pool does not reach
+  stays at the front of the translators' queue, and the draw is skipped like a per-frame one.
+- `if (stutter_map_on)`: the shaders translated by now name it; one still translating is not known yet.
+- `if (vk_dlaa_skip_draw(ex, fs)) return draw_skipped(ex, mesh, SK_DLAA)`: The game's FXAA off, or its scaling replaced
+  by DLSS (`runtime/vk/vk_dlaa.c`).
+- `if (fb) memset(s.vattr, 0, sizeof s.vattr), memset(s.vstream, 0, sizeof s.vstream)`: whatever the last vertex draw
+  left.
+- `if (result) requested = s`: the mesh caller checks the state that selected its cache entry.
+- A draw of at most 6 vertices over half the render area or more (a full-screen triangle or quad, a tile) waits for its
+  pipeline: skipping it can leave a black tile. Those waits and the one-shot draws' come from the frame's wait pool
+  (`frame_wait`; `NX2SARIA_PIPE_SKIP=fullscreen` skips the full-screen draws instead, and with
+  `NX2SARIA_ONESHOT_BUDGET=0` a one-shot draw waits up to `ONESHOT_WAIT_MS` outside the pool). Everything else waits for
+  its fast link from the small budget of `link_budget` and is skipped while its pipeline is built.
+- `uint64_t *budget = NULL`: the per-frame budget a timed wait is charged to.
+- `int linking = 0`: the wait is the short one for a fast link (`link_budget`).
+- `int fullscreen = 0`: the wait is a full-screen draw's.
+- A frame that has left a draw out already is not shown, or is shown without that draw (`pending_draws`,
+  `runtime/vk/vk_backend.c` `frame_hold()`): a wait for another pipeline would only make it later.
+- The previous draw's pipeline while its state repeats (PM, `NX2SARIA_PIPE_MEMO=0` turns it off): the cache key is made
+  from the state alone, and a pipeline once found only changes from its fast link to its optimised build, read from the
+  info the cache entry keeps.
+- `uint64_t w0 = 0, m0 = 0`: m0: when the lookup missed (`wait_note`).
+- Nearly every draw finds its pipeline, so the first lookup waits for nothing and the clock is read only for a draw that
+  missed. A miss first has the rest of the submission read ahead (`vk_exec_ahead`: the stage libraries of the later
+  draws' pipelines build on the workers from here on), inside this draw's wait budget.
+- The fast link's wait is one for each pipeline, counted from its first miss (`link_budget`): what that left unbuilt is
+  a compile, and its later draws, in this frame and the next ones, wait for nothing.
+- A mesh pipeline without stage libraries that is known to be compiling gets no fast link, so the few milliseconds a
+  draw waits for one are lost in every frame that meets it until the compile ends, 0.2 to 1.1 s later (`MESH_WAIT_MS`).
+- Still pending after the wait any draw gets: a draw into targets that are not per-frame waits as one-shot, and so does
+  a draw into per-frame targets whose shaders write memory (`draw_writes`).
+- A full-screen draw still pending after its budget: skipped, it leaves the frame black or unlit. While the previous
+  picture can stay on screen in its place (`vk_frame_hold_left`) that is what happens; once that time is used up the
+  draw waits on, from the `FULLSCREEN_LAST_MS` of its frame, before such a frame is shown.
+- Also a one-shot draw skipped at the end of its wait, however short: its target may not be drawn again.
+- `if (fb && cx->mfb_list)`: the list's depth-only draw goes with its colour draw (`mfb_hold_role`).
+- `if (pending) return draw_skipped(ex, mesh, SK_PIPE_PENDING)`: a background worker is building it: skipped until it is
+  ready.
+- Only the dynamic states whose values changed (`vk_pipeline_set_dynamic_delta`); `NX2SARIA_DYN_DELTA=0` records them
+  all after every pipeline bind, as before.
+- An emulated mesh draw (`NX2SARIA_MESH_EMULATION`) binds a vertex pipeline: its topology, primitive restart and vertex
+  input are dynamic and are set as for any vertex draw.
+- `if (vk_draw_marks_on)`: `NX2SARIA_DRAW_CRUMBS`: a lost device then names these shaders
+  (`runtime/vk/vk_crumbs.c` `vk_draw_mark()`).
+- `vk_pipeline_line_width(ex->cb, &s, ex->line_width)`: a draw of lines: the game's width; else nothing.
+- `vk_dlaa_jitter_check(ex)`: a draw with another jitter than the viewport recorded last records it again.
+- The replay's binding path is the CPU cost the frame profile needs to separate from recording.
+- `if (vk_texture_deferred()) return 0`: a chunk's lookup waits for its turn: the op is replayed again.
+
+### Looking ahead
+
+(`runtime/vk/vk_exec.c` `vk_exec_ahead()`): the binds and draws of ops the replay has not reached, applied to sx, a copy
+of the replay state. A draw looks its shaders up as `prepare_draw_ex` will (one not in memory is queued for its disk
+read or translation by that lookup) and names its state to `vk_pipeline_hint`. The last draw looked up is kept: one with
+the same program, texture binds and state repeats it, as most draws of a pass do. A mesh draw is looked up with its mesh
+and task stages where its pipeline will be a mesh pipeline with stage libraries (`vk_pipeline_mesh_libs`; never with the
+mesh fallback, which draws through vertex pipelines of its own).
+
+### `ahead_draw()`
+
+- `if (!has_vs) return`: a program without the stage this draw starts from: no libraries.
+
+### Per-object motion
+
+The camera pass (`runtime/vk/vk_dlaa.c` `mv_pass()`) gives everything the camera's motion, so a character that moves
+with the camera, or on its own, gets the wrong one and DLSS throws its history away there. Each solid scene draw whose
+position reads an object's own uniform blocks (bones c5, place c7, c6; `mvobj_draw_` says which are left out and why) is
+therefore drawn a second time (listed during the replay, MQ, and recorded by `mv_pass`) with its vertex shader's
+last-frame variant (translator patch 0015: the position again from last frame's blocks, bound at slot bank + 15, and
+last frame's camera, written to a spare output) and the fragment shader of `mvobj_fs_spv.h`, which writes last frame's
+window position minus this frame's. The draw keeps everything else of the original: vertex and index buffers, the other
+uniform blocks, the jittered viewport and the scene depth, tested with the game's own test and its equal case (LEQUAL,
+GEQUAL) without writes, so only the visible surface writes its vector. Last frame's blocks: `vk_mvprev_find` and
+`mo_prev_block`; the camera: `vk_dlaa_prev_camera`. A draw whose variant or pipeline is still building, or whose
+last-frame blocks are not in the snapshot, keeps the camera's motion. `NX2SARIA_DLAA_OBJMV=0` turns it off
+(`runtime/vk/vk_mvprev.c`).
+
+- `MO`:
+  - `const GfxShader *fs[16], *link_fs[16]`: per input Location.
+  - `uint64_t ns_part[3], n_part[3], misses, cyc[3], ncyc, big`: checks: filter, data and stillness (memo misses),
+    variant and pipeline; time spent: checks and lookups of every candidate; recording the draws again; cand: draws
+    whose vertex shader reads c5 or c7.
+  - `uint64_t why[5]`: nodata by cause: camera, bones, place, bones copy, place copy.
+  - `uint64_t no_out, storage, no_fs`: variant without the extra output, with storage resources; no fs.
+  - `uint64_t other_cam`: listed draws left out: their camera block is not the scene camera.
+  - `uint64_t lk[14][5]`: last-frame lookups per binding index: none, self, side, nearer, refused (another object).
+  - `uint64_t e_draws, e_pipe, e_dyn, e_push, e_pushw, e_sets, e_vb, e_setw, e_setreuse`: emitted commands (summary).
+- `MoDraw`: The motion draws of the frame, kept as a list while the scene replays and recorded into the replay's own
+  command buffer by `vk_mvobj_execute`, through the recorder thread (`runtime/vk/vk_rec.h`) like every other draw:
+  recording them straight into a secondary command buffer made the driver's work for each one on the replay thread. What
+  a draw shares with the one before it (pipeline, dynamic state, viewport, buffers, descriptors) is recorded once; a
+  push descriptor set is pushed again only where a binding changed (pushes update the set in place while its layout
+  stays bound).
+  - `uint32_t st, desc, vb`: indices into MQ.st, MQ.desc (the draw's packed descriptors) and MQ.vb.
+  - `VkDescriptorSet set[2]`: allocated sets; `VK_NULL_HANDLE` for a pushed one.
+  - `uint64_t cam`: the draw's camera block, this frame's.
+  - `int skin`: `runtime/vk/vk_skin_motion.inc`: 0 not a skinned character's draw; 1 one, 2 one checked against last
+    frame's depth; -1 one `skin_resolve` left to the camera.
+- `MQ`:
+  - `uint64_t frame, fence`: the frame and submission the list belongs to.
+  - `NVNbufferRange vin[17]`: the vertex ranges `MQ.vb[nvb - 1]` was resolved from, under `vk_mem_gen` vgen.
+  - `float sup_in[3]`: the support buffer last filled for the list and its inputs.
+  - `float par_in[8]`: the fragment shader's parameters last written and their inputs.
+  - `VkDescriptorSetLayout aset_layout[2]`: the last allocated set per set number, with its descriptors.
+- `MM`: The position bank masks of the draws considered (`gfx_shader_mvprev_banks`), with counts, for the summary.
+
+  ubo, ssbo, tex: the first vertex shader's.
+- `mo_gen`: the list's snapshot (`mo_prev_cached`), bumped by `mo_begin`.
+- `MF`: this list's draws per position banks and changed banks.
+- `fm_last`: the last executed list's, formatted (`vk_mvobj_frame_masks`).
+
+### `mo_begin()`
+
+Starts this frame's list (the old one, never executed, is dropped).
+
+### `link_motion_fs()`
+
+- `OpDecorate` Location 15 uniquely identifies the previous clip position in `runtime/shaders/link_motion.frag`.
+
+### `mo_write()`
+
+The write of binding b from its packed descriptors.
+
+- `w.pBufferInfo = &d->buffer`: `VkDescSlot` is 24 bytes, as `VkDescriptorBufferInfo`: arrays line up.
+
+### `mo_desc()`
+
+The descriptors of a motion draw, packed into MQ.desc at `q->desc` without the binding caches of the command buffer
+being replayed (B, DS, RS), which then stay true for its next draw: uniform buffers (through `ubo_info`, so with
+`mo_ovr`), the support buffer and sampled textures. An allocated set is written here (or the last one reused when it
+would hold the same); a pushed set is pushed by `mo_emit`. 0 for a pipeline with storage buffers, images or texel
+buffers (not drawn again).
+
+- `memset(d, 0, total * sizeof *d)`: unused bytes zero: equal descriptors compare equal.
+- `} else if (b->kind == GFX_RES_SSBO && !(r->flags & 1))`: read only: instance data of foliage and such.
+
+### `mo_vertex_buffers()`
+
+The draw's vertex buffers as `bind_vertex_buffers` resolves them, into MQ.vb; the previous entry again while the ranges
+and `vk_mem_gen` are the same (most motion draws in a row are one model's parts).
+
+### `mo_emit()`
+
+Records the list into cb (the replay's command buffer, inside the motion pass's rendering), skipping what the draw
+before already set.
+
+- `int pdesc[2] = {-1, -1}`: the pushed set's descriptors (MQ.desc index) under lay/pinfo, -1 none.
+- The bindings that differ from the last push of this layout and pipeline (all after another).
+
+### `mvobj_draw()`
+
+The chunks of a parallel group (`runtime/vk/vk_exec.c`) add to the frame's list at once: whether a draw is listed at all
+is decided by its own draw context (`mvobj_pick`, its memo per context), and only the frame's list, its memos and
+statistics go under `mo_lock` there: under one lock for the whole check, the chunks' scene draws waited for each other.
+The order of the list does not change the picture: its draws write motion without blending, tested against the scene
+depth they do not write.
+
+- The upscaler, or frame generation without one (`vk_dlaa_fg_only`), takes the motion.
+- `if (timed < 0) timed = rt_knob("MVOBJ_TIMES", "0")`: `NX2SARIA_MVOBJ_TIMES=1`: the summary's times (the clock reads
+  cost).
+
+### `mvobj_banks()`
+
+`NX2SARIA_MVOBJ_BANKS=1` (test): for scene draws, the words of each other uniform bank (c3, c6, c8-c16) that changed
+since the same shader's draw last frame, logged at frame 3000: where the time that moves wind and water lives.
+
+### `mo_similar()`
+
+1: old is cur a little changed or the same (every float within 10 %, at least 1.0 and at most 4.0); `*changed`: not the
+same. The cap: the game's world positions are in the thousands, and 10 % of them let another object's block a few units
+away pass as this one moved; nothing moves 4 units in a frame.
+
+- Word by word as integers; float arithmetic only on two normal floats (the blocks hold integers too, and denormal
+  arithmetic took this loop 1.9 million cycles a block).
+- `if (!ex || ex == 0xff || !ey || ey == 0xff) continue`: not both normal floats: an integer or a tiny value.
+
+### `mo_prev_block()`
+
+Last frame's copy of a block, accepted when it is this frame's block a little changed (`mo_similar`, which see): a block
+of another object the address rule found would make motion up. 1 and `*out`: found (the block itself when it is
+unchanged, `*changed` 0); 0: none, the draw keeps this frame's block there.
+
+- c9 and c11 keep this frame's block. With the copies the address rule finds for c11 and last frame's c9, the c4 c7 c9
+  c11 draws (walls, cliffs, arches) got several pixels of motion under a still camera (`NX2SARIA_MV_CHECK`, those draws
+  alone: 34 % of the picture moving; with c11 kept, 0.8 %). With c11 kept, their c9 still changes every frame while
+  nothing moves (the check's per-draw line: about 120 such draws a frame changed in c9 alone), the object scale the
+  picture shows is 0.6-0.8 of theirs, and with Link stopped against a cliff 40-77 % of the picture got 1-3 px of motion
+  that flipped direction, three times the warp error of the camera's vectors. With c9 kept too, the turning run is as
+  good (object warp error 0.46 of the camera's). Why their copies are wrong is not known. `NX2SARIA_MVPREV_SKIP=<hex
+  bank mask>` (test) replaces the default a00 (bit n: cn).
+- `if (how == MVPREV_SELF) return 1`: bound at the same address last frame: not written again.
+- `static long trust = -2`: `NX2SARIA_MVPREV_TRUST=<hex bank mask>` (test): the copy found is taken without the check.
+
+### `mo_prev_cached()`
+
+`mo_prev_block` once per block and list: many draws share their blocks (the scene's c14, a model's c7 and c9 across its
+parts), and the lookup with its comparison was most of the checks' time.
+
+### `mo_legacy_previous()`
+
+- `have |= 1u << b, moving |= changed << b`: the banks whose block changed.
+
+### `mvobj_pick()`
+
+Whether the draw goes on to the frame's list (`mvobj_draw_`), with its motion variant and the banks its position reads;
+this draw context alone decides (no lock in a chunk): the draw's state, and the variant memo per context.
+
+- `if (!vk_exec_in_chunk()) mvobj_banks(ex)`: a test's log of every scene draw (its tables are not shared).
+- Solid geometry only, which tests and writes the scene depth: effects, particles and screen quads write none, and drawn
+  again they would put their motion on the surfaces behind them (DLSS takes those from the surface).
+- An opaque colour pass can use EQUAL against a depth prepass. Its geometry is already in the scene depth.
+- The player's own draw (ownership records), else any other skinned character's (`runtime/vk/vk_skin_motion.inc`).
+- A vertex shader that reads a user bank besides the camera's (c4) may move on its own.
+- The variant: the translation of the same code and answers, kept per shader once found; it names the banks the position
+  depends on (0: none, the shader is skipped from then on).
+- `if (!RT_V111) vk_mvprev_want((banks & ~(1u << 4)) >> 3)`: binding index = bank - 3.
+- A position without the scene camera (c4) has a view of its own (c8 c9 c10 `[c13]`: its c8 is at a new address every
+  frame, last frame's is never found): drawn again it would get this frame's view and no camera motion
+  (`NX2SARIA_MV_CHECK` while turning: 6.2 px end-point error against the camera vectors' 1.7).
+- `if (noc4 < 0) noc4 = rt_knob("MVOBJ_NOC4", "0")`: `NX2SARIA_MVOBJ_NOC4=1` (test): drawn again all the same.
+- Only positions that read an object's own blocks: bones (c5), place (c7) or c6. The rest (terrain and grass: c14 c15
+  c16, with or without c9) measured no better than the camera's motion (`NX2SARIA_MV_CHECK`, turning, those draws alone:
+  object warp error 0.112 against the camera's 0.113, the object part 0.4 of what the picture shows) and were half the
+  draws checked and listed. `NX2SARIA_MVOBJ_ALL=1` (test) takes them again.
+- `NX2SARIA_MVOBJ_ONLY=<hex bank mask>` (test): only draws whose position reads no bank outside the mask (bit n: cn).
+- `static long exact = -2`: `NX2SARIA_MVOBJ_EXACT=<hex bank mask>` (test): only draws with exactly these position banks.
+
+### `mvobj_draw_()`
+
+A draw `mvobj_pick` took, onto the frame's list (in a chunk under `mo_lock`): the list begins at the first such draw of
+the frame's submission (`mo_emit` drops a list of another frame, submission or depth format).
+
+- Last frame's camera and blocks; held still when none of the position's blocks changed (most of the scenery).
+- Missing visibility evidence is not evidence that this valid pose vector is wrong. Keep the raw vector, with the normal
+  current-depth and history-validity checks.
+- Another skinned character's draw: its blocks, and whether a bone turned sharply (`runtime/vk/vk_skin_motion.inc`);
+  which draw of last frame it continues is decided when the vectors are made (`skin_resolve`).
+- `pose_visibility_guard = 0`: as for the player: no depth of last frame to check against, the plain vector.
+- Blending off (`blend_en` below); the factors stay the game's, valid NVN values.
+- `ms.chmask.mask = 0x3`: r and g of target 0.
+- The game's own test with its equal case (LESS -> LEQUAL, GREATER -> GEQUAL): the surface the draw left in the scene
+  depth passes, anything nearer hides it (`NX2SARIA_MVOBJ_EQUAL=1`: EQUAL, for comparison).
+- The pipeline per state, kept: the lookup hashes and locks the whole state.
+- `static int plast = -1`: the entry of the last draw: a model's parts in a row share the state, no hash then.
+- `pipe = __atomic_load_n(&info->pipeline, __ATOMIC_ACQUIRE)`: its optimised build once swapped in.
+- `if (t0) MO.ns_check -= t1 - t0`: counted as recording below.
+- Into the frame's list, past the primary's binding caches (`mo_desc`); `mo_emit` records it.
+- Where `skin_resolve` puts last frame's bytes of each block, once it knows whose they are.
+- `for (int i = 0; i < 16; i++)`: the frame's draws per position banks and changed banks (`vk_mvobj_frame_masks`).
+
+### `vk_mvobj_execute()`
+
+- `if (exec < 0) exec = rt_knob("MVOBJ_EXEC", "1")`: `NX2SARIA_MVOBJ_EXEC=0`: listed, never recorded (test).
+- Only draws with the scene camera block (`runtime/vk/vk_dlaa.c` `mv_pass()`'s): last frame's camera they get is that
+  block's, and a draw of another view would move by the difference between the two views.
+- `(!MQ.d[i].skin || (MQ.d[i].skin > 0 && SK.resolved)))`: a skinned draw: one `skin_resolve` paired.
+- `else if (!MQ.d[i].skin) MO.other_cam++`: a skinned draw left out has its own count (`skin_status`).
+- `vkCmdBeginRendering(cb, &ri)`: through the recorder (`runtime/vk/vk_rec.h`), in order with the draws and the end.
+- The draws left their pipeline, descriptors, buffers and dynamic state bound: the next game draw sets everything.
+
+### `draw_mesh_fn()`
+
+NVN2 mesh draws (DrawMeshTasks): count task workgroups, or mesh workgroups for a program without a task stage, through
+`VK_EXT_mesh_shader`. The stages are the translator's TaskEXT / MeshEXT modules (`tools/xlate/MeshSpirv.cs`). The lazy
+lookups below store the pointer before the flag that says it was looked up: the chunks of a parallel group draw meshes
+at once, and one that saw the flag first went on with no pointer and skipped its draws.
+
+### `mesh_shading_rate()`
+
+`NX2SARIA_FOLIAGE_SHADOW_VRS` (0 to 3, default 2): the foliage's mesh draws in the shadow cascades from this one on
+shade one fragment per 2x2 pixels; 3 turns it off. A leaf's alpha test then runs a quarter as often, and the far
+cascade's texels are metres across the forest floor, where the coarser cut-out does not show. A mesh pipeline has the
+rate as dynamic state, so every mesh draw sets it.
+
+- `if (!__atomic_load_n(&looked, __ATOMIC_ACQUIRE))`: as `draw_mesh_fn`: the pointer before the flag.
+
+### Mesh fallback
+
+A mesh draw on a device without `VK_EXT_mesh_shader` (`mesh_fallback`, `runtime/vk/vk_device.c`), or on any device with
+`mesh_fallback` = 1. The program's task and mesh stages run as compute dispatches that write the fallback's buffers, and
+an ordinary draw reads them (`runtime/gfx/mesh_fb.c` makes the modules, `runtime/vk/vk_mesh_fb.c` holds the buffers):
+
+- The draw's record: its workgroup count, copied on the GPU when the game's own record holds it.
+- With a task stage only, the task dispatch: the task module, with the task stage's bindings.
+- With a task stage only, the scan: lists the mesh workgroups the tasks started and counts them into the record.
+- The mesh dispatch: the mesh module, with the mesh stage's bindings.
+- The draw: one instance per mesh workgroup, with the generated vertex stage and the program's fragment stage, the
+  instance count from the record.
+
+Every step reads what the one before wrote, so a full barrier stands between them, and the dispatches cannot be recorded
+inside a pass: each such draw ends the open pass, and the next draw begins it again. The buffers are reused by every
+draw (`runtime/vk/vk_mesh_fb.c`), which the barrier before a draw's first dispatch makes safe: the previous draw's
+vertex stage has read them by then.
+
+Batched (`NX2SARIA_MESH_FALLBACK_BATCH`, `mfb_batch_on`, `runtime/gfx/mfb_batch.h`), a pass's draws record their steps
+in the part's pre-pass command buffer instead, each draw into a part of the buffers of its own, and in the pass only the
+draw: the pass stays open. The first batched draw of a pass cuts the part there, so what came before runs before the
+steps.
+
+The modules of a program are made once, on a thread of their own, with their compute pipelines (a mesh program of the
+game is up to 900,000 SPIR-V words, and its pipeline compiles for as long as the mesh pipeline it replaces): until they
+are ready the program's draws are skipped, like draws whose pipeline is being built. Without background pipeline builds
+(the probes) they are made at the draw.
+
+- `MfbCs`:
+  - `const GfxShader *ms, *ts`: the key: the translated mesh and task shaders (ts NULL: none).
+  - `volatile int32_t state`: 0 queued or being made, 1 ready, -1 failed.
+  - `const GfxShader *cs_mesh, *cs_task`: the compute modules (`gfx_shader_own`).
+  - `MfbHist hist`: what its draws asked for (`runtime/gfx/mfb_batch.h`; `runtime/vk/vk_mesh_fb.c` `record_check()`).
+  - `struct MfbCs *next`: the worker's queue.
+- `MFB`:
+  - `int threads, busy`: workers started, workers making a program now.
+  - `uint64_t first_ms, drained`: the first program's queueing; the queue has emptied once (logged).
+
+### `mfb_binding_base()`
+
+One past the highest binding the module declares.
+
+### `mfb_module()`
+
+The compute module of stage (6 task, 7 mesh) of e, as a shader of the runtime's own with the stage's resources and the
+fallback's buffers.
+
+### `mfb_worker_count()`
+
+The programs queued at their first draws are made by `NX2SARIA_MESH_FALLBACK_WORKERS` threads (auto: one for each 4
+logical processors, 1 to 4). A place's mesh programs all arrive in its first frames and each one's draws are left out
+until its compute pipelines are built (up to seconds each on some drivers), so with one thread the foliage of a first
+visit filled in one program at a time. The first time the queue empties the log says how long it took.
+
+### `mfb_worker()`
+
+- `plat_thread_priority(PLAT_PRIO_BELOW_NORMAL)`: as the pipeline workers' optimised builds: the game's threads go
+  first.
+
+### `mfb_cs_get()`
+
+The entry of (ms, ts), made and queued at its first draw; NULL (logged) when the program's layout is not carried.
+
+- `mfb_cs_tab[i] = e`: a program that is refused is not looked at again.
+
+### `mfb_vs_get()`
+
+The vertex stage that draws e's mesh buffer slots for fragment shader fs: an output for every input fs reads, in its
+type.
+
+### `mfb_dispatch()`
+
+One of the draw's compute dispatches: module cs with the bindings of NVN stage `stage`, its group counts read from the
+record at `at`. 0 when its pipeline is not there. mark: the dispatch's pass mark (`dispatch_mark`); not in the pre-pass
+command buffer, whose commands run before the part's marks around them.
+
+### `mfb_step()`
+
+A step of the stages: one by one, `vk_exec_barrier` (the first ended the pass); batched, `ex->cb` is the pre-pass
+command buffer, which has no pass.
+
+### `mfb_stages()`
+
+The draw's stages in `ex->cb`, from its record to its note: the record's copy, the clamp of a count the GPU wrote, the
+task dispatch and the scan, the mesh dispatch. The draw after reads the record at `*at` in `*rec`. 0: a dispatch's
+pipeline failed.
+
+- `if (ind)`: to what the buffers hold, before a dispatch reads it (`runtime/shaders/meshfb_clamp.comp`).
+- `cx->B.pipe[1] = VK_NULL_HANDLE`: the clamp bound its own.
+- `cx->B.pipe[1] = VK_NULL_HANDLE`: the scan bound its own.
+- The note copies the record's report words, which the steps before wrote (the mesh dispatch only reads the record):
+  batched, no barrier between the mesh dispatch and the note, so a batch's draws are one barrier apart fewer; the next
+  draw's parts and record do not overlap this one's (`mfb_part_take`, `vk_meshfb_record`).
+- `if (!batched) vk_exec_barrier(ex)`: batched, the barrier at the pre-pass command buffer's end (`vk_meshfb_pre_end`).
+
+### `vk_exec_mfb_batch_exit_log()`
+
+- `MFBB`: `NX2SARIA_MESH_FALLBACK_BATCH` (`auto|0|1`, `mfb_batch_on`): the stages of a pass's fallback draws run in the
+  part's pre-pass command buffer (`vk_sync_pre`), as the mesh emulation's do (`NX2SARIA_MESH_EMU_BATCH`), and the pass
+  is not broken for them. One by one, each draw ended the pass, ran its stages with a full barrier between every two and
+  began the pass again: about 33 us of the submitting thread a draw ([replay-cpu.md](../replay-cpu.md)), 1.7 ms a frame
+  in Kokiri Forest and 3.2 ms in Hyrule Field. Which draws are batched and the size of their parts of the buffers:
+  `runtime/gfx/mfb_batch.h`. 0: every draw one by one. Each pass with batched draws cuts the part (a new command buffer
+  and pre-pass command buffer, the state bound again), and a batched draw keeps its barriers and bindings in the
+  pre-pass command buffer: on a CPU-bound PC that costs about what the pass breaks saved (`mfb_batch_on` has the bench's
+  numbers); the gain is the GPU's, without the pass breaks.
+  - `MfbCount n`: the draws, batched or one by one and why, and the cuts (`runtime/gfx/mfb_batch.h` `mfb_count()`).
+
+`runtime/gfx/gfx_present.c` `rt_exit_steps()` (`plat_exit` runs no atexit handlers): the session's totals once more,
+with batching on.
+
+### `vk_exec_mfb_batch_counts()`
+
+`runtime/gfx/mesh_fb_probe.c`: `why[MFB_REASONS]`, `cuts[3]`.
+
+### `mfb_batch_on()`
+
+The switch, read once: at the device's start with the mesh fallback (`runtime/vk/vk_device.c`,
+`vk_exec_mfb_batch_start`), so the log says its value even in a session that draws nothing through the fallback.
+`NX2SARIA_MESH_FALLBACK_BATCH`: 1 (the default), 0 (off, false, no: every draw one by one), or auto (on where the
+fallback is the device's default: `runtime/vk/vk_mesh_path.h` `mesh_path_fallback_default()`, AMD's Windows driver for
+RDNA 1 and 2, Intel, a device without mesh shaders; off where `mesh_fallback` = 1 forces it on a device that draws them
+natively). On by default: on the Linux bench (RX 6700, RADV, the CPU sets the frame rate, the fallback forced), two A/Bs
+of six interleaved pairs each gave Hyrule Field +1.9 and +3.3 fps, Kokiri Forest +0.3 and +1.6 (medians of the pairs'
+differences), the GPU's time per frame 0.4 to 1.4 ms less (2026-11-22), and the pictures as main draws them. The
+device's path and default come from `vk_exec_mfb_batch_start` (`runtime/vk/vk_device.c`, before `vk_ctx()` is ready); a
+first call from a draw without them (the probe, which turns the fallback on itself) asks `vk_ctx()`. The words are read
+as the settings file reads a switch's: off, false, no and 0 are 0.
+
+### `mfb_batch_log()`
+
+Every 30 s while the fallback draws with batching on, and at exit: the draws batched and those one by one, by reason
+(the way back). Nothing with the switch at 0: every draw is one by one then, as the start line says.
+
+### `mfb_step_cut()`
+
+`mfb_batch_steps`' calls in `mfb_draw`: the cut, the pre-pass command buffer, the part of tb, lb and mb bytes.
+
+### `mfb_draw()`
+
+A mesh draw of `count` workgroups, or of the count in the game's record at ind (4 bytes, GPU-written), which lies at
+`list` in the game's memory (0: no record).
+
+- The list's hold (`mfb_hold_role`): not for a draw whose stages write memory.
+- Without a colour target the draw is its list's depth-only one, known before its dispatches are recorded; with colour
+  targets bound and their write masks off it is known where its state is (`prepare_draw_ex`).
+- A target the game does not render every frame: the draw may not come again, so it waits for its modules from the
+  frame's wait pool, as such a draw waits for a pipeline (`prepare_draw_ex`).
+- Its modules are being made: with a colour target bound it counts as the list's colour draw. Its write masks are not
+  known here; a depth-only draw taken for one holds itself for `MFB_HOLD_PRESENTS` presents at most.
+- `if (count > most) count = most`: a count the GPU wrote is cut on the GPU, below.
+- `vk_meshfb_poll(vk_sync_fence_done())`: the histories, from the records of finished submissions.
+- The steps (`runtime/gfx/mfb_batch.h` `mfb_batch_steps()`): a task or mesh stage that reads a texture or image goes one
+  by one (its binds in the pre-pass command buffer may record an image's first fill or an alias copy,
+  `vk_exec_inline_begin`, which ends and begins the part's pass around it). The first batched draw of a pass cuts the
+  part there (as the mesh emulation does, `mesh_emu_draw`): what the part held before, the game's culling and the draws
+  done one by one among them, runs before the pre-pass command buffer, which begins with a full barrier; again when that
+  pass ended since (`mfb_need_cut`), after a draw one by one wrote over the parts, and when the part does not fit what
+  is left.
+- A part larger than the whole buffers never fits: one by one without a cut (a cut for it is for nothing).
+- `if (why != MFB_BATCHED) mfb_count(&MFBB.n, why, cut, 0)`: a batched draw counts once its stages are in.
+- `vk_meshfb_one_by_one()`: after a batch's parts were taken, it writes over them: a cut before the next batched.
+- `vk_exec_barrier(ex)`: ends the pass; the culling's record and the last draw's reads come before what follows.
+- The stages in the pre-pass command buffer, each after the last with a full barrier of its own (`vk_exec_barrier` is
+  the part's, with its pass); the replay's compute pipeline there is not the part's, and its commands are not the part's
+  (`ex->recorded`: whether a barrier of the part has anything to order).
+- `cx->B.res_valid = 0`: the vertex stage reads its own part of the mesh buffer: no bind skip into or out of it.
+- `if (cut && ex->in_pass) ex->pre_pass = ex->pass_serial`: the pass the prepare began: its batched draws share pre.
+- `if (ex->mark && ind) ex->mark->mesh_ind++`: the pass's mesh draws (`runtime/vk/vk_crumbs.c` `describe_mark()`).
+
+### `mesh_emu_draw_prim()`
+
+The primitive an emulated draw's mesh stage outputs: point meshes draw point lists, the rest triangles.
+
+- `const uint32_t *w = gfx_shader_spirv_pin(ms, &n)`: once per mesh shader the memo meets.
+
+### `mesh_emu_on()`
+
+- `on = vk_ctx()->mesh_emulation`: decided with the mesh fallback at device creation (`runtime/vk/vk_mesh_path.h`).
+
+### `op_draw_mesh()`
+
+- `if (on < 0) on = rt_knob("MESH", "1")`: `NX2SARIA_MESH=0`: mesh draws are skipped (diagnosis).
+- `if (ex->mark) ex->mark->mesh++`: the pass's mesh draws, for a lost device's report
+  (`runtime/vk/vk_crumbs.c` `describe_mark()`).
+
+### `mesh_ring_release()`
+
+- `enum { MESH_RING, ... }`: The record NVN's DrawMeshTasksIndirect reads is {count, first} (as `NV_mesh_shader`'s), and
+  Vulkan's {x, y, z}: read as it is, y = first (0) drew nothing. Each draw gets an entry of this ring, {count, 1, 1}: y
+  and z filled with 1 and x copied from the game's record on the GPU, between the pass's end and the draw (the record is
+  written by the culling compute earlier in the frame and never comes back to guest memory). `first` is not applied: the
+  game leaves it 0. `MESH_RING` entries outlast the frames in flight: an entry is rewritten only after a barrier behind
+  its last draw.
+- `vk_gpu_passes_capturing()`: `NX2SARIA_GPU_PASSES`: the workgroup counts of the indirect mesh draws of the timed
+  frames, copied to host memory.
+
+`vk_exec_draw_shutdown`: a probe ends with the device idle.
+
+### `mesh_ring_make()`
+
+- `enum { MESH_AHEAD, ... }`: `NX2SARIA_MESH_AHEAD` (default 1; 0 = each draw by itself, "ab" switches with the A/B
+  blocks): the copy of a record cannot be recorded inside a pass, so every indirect mesh draw ended its pass, and a pass
+  that draws its meshes one after another was cut into as many pieces (a village: 45 of them a frame, each with a gap of
+  its own on the GPU). The first such draw of a run now fills the entries of the ones that follow it as well, with
+  nothing but state, draws and counter reports between them
+  (`runtime/vk/vk_exec.c` `op_linear()`, `vk_exec_mesh_run()`): those draws then find their entry and stay in the pass.
+  The culling compute that writes the records cannot run inside that run, and an entry is taken only by the draw it was
+  filled for, at the same record address, while no other op was replayed since (`vk_exec_brk`). In the village 42 of the
+  45 draws a frame are served that way: 3 gaps with these copies a frame where there were 41 (0.04 ms of GPU time for
+  0.22), and about 40 passes fewer to begin and end. The entries filled ahead are the draw context's (`DrawCtx.ma`): a
+  chunk of a parallel group (`runtime/vk/vk_exec.c`) fills them for the draws that follow its own (`vk_exec_mesh_run`
+  reads on from the op it records), and an entry it filled for a draw another chunk records is left unused.
+- `mesh_ahead_taken`: since the start: draws served by an entry filled ahead; the others.
+
+The ring, made before the chunks of a group record (`vk_exec_draw_group_begin`) or at the first indirect mesh draw.
+
+### `mesh_ring_entry()`
+
+A ring entry {count from src, 1, 1}, filled in cb; `ex->cb`: after a full barrier, which ends the pass (the next draw
+opens it again) and orders the culling's writes before the copy. Another cb (the pre-pass one of the mesh emulation)
+begins with one. d: the draw it is for, which may take an entry filled ahead (`MESH_AHEAD`, `ex->cb` only); NULL: none
+(the mesh emulation's).
+
+- `cx->ma_n = cx->ma_i = 0`: the walk went another way: the entries left are never drawn from.
+- `if (!vk_mem_resolve(f->ind, 12, &ip) || ip.offset % 4) break`: that draw reports it when the walk gets there.
+
+### `foliage_skip()`
+
+`NX2SARIA_FOLIAGE` (full, reduced, off; default full; foliage in nx2navi.ini): Ocarina draws its foliage with
+DrawMeshTasksIndirect, the instances its compute passes culled on the GPU. With a task stage: the small grass and moss
+that carpet the ground; without one: ferns, leaves, clover and the other plants. Its other mesh draws (DrawMeshTasks
+with a count: terrain, rocks, buildings, doors) are not foliage. reduced skips the indirect draws with a task stage, off
+every indirect one, in every pass (their shadows too). In a frame dump of Kokiri Forest on an RX 580 (f8118, 2026-11-10)
+the grass and moss were one draw with task stage 2ddf7b0bf74e5a05; the plants nine without.
+
+### `op_draw_mesh_ind()`
+
+DrawMeshTasksIndirect: one draw from its ring entry (`mesh_ring_entry`); x2-x4 of the call vary like leftovers, so they
+are not read as a count or stride.
+
+- `if (emu)`: emulated: a ring entry {count, 1, 1}, made where the stages run, is the first stage's dispatch.
+- `if (ex->mark) ex->mark->mesh_ind++`: the pass's mesh draws, for a lost device's report
+  (`runtime/vk/vk_crumbs.c` `describe_mark()`).
+
+### `NX2SARIA_MESH_EMULATION`: mesh draws on GPUs without `VK_EXT_mesh_shader`
+
+Each mesh draw (prepared like one, `prepare_draw_ex`, for its layout, descriptors and graphics state) runs its task and
+mesh stages as compute pipelines (`vk_pipeline_mesh_emu`) outside the pass: they write vertices and triangles into the
+arena (`runtime/gfx/mesh_emu_spirv.h`) and the draw record's `DrawIndexedIndirect`, which the generated vertex shader
+and the game's fragment shader then draw. The arena's counters are zeroed at the first emulated draw of each submission;
+the draw records go round a ring of `MESH_EMU_DRECS`. `NX2SARIA_MESH_EMU_MB` sizes the arena (default 256 MiB),
+`NX2SARIA_MESH_EMU_TASKS` its task records per submission (default 16384, 3 KiB each). Before the counters start over
+they are copied to a readback ring; the perf log reports the most a submission asked for against the capacities.
+
+- `ME`:
+  - `VkPipelineLayout alayout`: the allocation shader's (push constants only).
+
+### `me_alloc_pipe()`
+
+The allocation shader's pipeline (`runtime/gfx/mesh_emu_spirv.h` `mesh_emu_alloc_spirv()`); 0 when it cannot be made.
+
+### `me_arena()`
+
+- `if (tbytes + (32ull << 20) > ((uint64_t)mb << 20)) mb = (int)((tbytes >> 20) + 64)`: room for vertices and indices.
+
+### `me_barrier()`
+
+The access masks also carry the generic `MEMORY_WRITE` / `MEMORY_READ` bits. `SHADER_STORAGE_READ/WRITE` exist only in
+synchronization2 (bits above 31), and AMD's driver for Polaris (23.10.01, RX 580) did not act on them: the mesh dispatch
+that reads the {groups, task workgroups, 1} the task stage had just written read zeros and launched no workgroup
+(mesh.txt: "mesh groups started 0" with the record holding 32 x 12 x 1), so every draw with a task stage (Kokiri's moss
+foliage, Link's door) drew nothing. Mesh draws without a task stage drew, because their record is read by the draw after
+a command buffer boundary. The general replay barrier (`runtime/vk/vk_exec.c` `barrier_to()`) uses those bits.
+
+### `me_bind()`
+
+- `MeQ`:
+  - `VkBuffer ib`: the first stage's indirect dispatch (`VK_NULL_HANDLE`: count).
+- `MEQ`:
+  - `uint8_t *d`: the push descriptors' data of the queued draws.
+
+The stages of the emulated draws whose records were filled, waiting to be recorded (`me_flush`): the draws of a pass
+with `NX2SARIA_MESH_EMU_BATCH`, which run in the part's pre-pass command buffer when it ends (`vk_exec_mesh_flush`, from
+`runtime/vk/vk_sync.c`), or the one draw that runs in the part. Recorded by stage, with one barrier between stages for
+all the draws: the fills, the allocation (task records; index ranges of draws without a task stage), every task stage,
+the allocation of the other index ranges, every mesh stage. Each draw's indices are a range of its own and its task
+records too (the allocation shader), so the draws' stages need nothing of each other's. One by one, as before
+2026-11-11, each draw took three barriers, and its task base and first index were copies of the arena's counters after
+the draw before it: an RX 580 spent 5.5 ms of a frame's GPU time on 69 draws' stages (Kokiri Forest), most of it waiting
+at the barriers with the GPU nearly idle.
+
+### `me_flush()`
+
+The queued draws' stages into cb (the pre-pass command buffer, or the part for a draw that runs there); returns the
+commands recorded.
+
+- `if (MEQ.tasks)`: the task stages wrote the mesh dispatch {max mesh groups, task workgroups, 1} into the draw record.
+
+### `vk_exec_mesh_flush()`
+
+`runtime/vk/vk.h`: the pre-pass command buffer ends (`runtime/vk/vk_sync.c` `pre_end()`): the stages of the draws queued
+for it go in first.
+
+### `mesh_emu_draw()`
+
+count: the first stage's workgroups, or ind: a {count, 1, 1} record to dispatch from args: an indirect draw's arguments
+in game memory (count, 1, 1 copied into a ring entry, which ind then is).
+
+- `NX2SARIA_MESH_EMU_BATCH` (default on): the stages run in the part's pre-pass command buffer (`vk_sync_pre`), which
+  the queue runs before the part, and the pass is not split for them. At the first emulated draw of a pass the part is
+  cut there (`vk_sync_cut`: ended, but handed to the queue only with the next part, so the texture pool set stays; a
+  split there took a new set, and each took 2.3 ms of the replay to refresh), so that the pass begins the next part and
+  only what came before it runs before the stages. Split, a pass of 20 emulated draws was 20 passes, each emulated draw
+  a pass end and begin with a full barrier, three more barriers and the targets stored and loaded again: on an RX 580 6
+  to 7 ms of a frame's GPU time went to the gaps between passes (`gpu_passes`, Kokiri Forest, 2026-11-10).
+- `if (again.info != info)`: the pass again, in the new part.
+- `if (!pre) vk_exec_barrier(ex)`: ends the pass; what the game wrote before (its culling) is visible to the stages.
+- `if (!pre && MEQ.n) me_flush(vk_sync_pre())`: the draws queued for the pre-pass command buffer go before this one.
+- `if (ep != ME.epoch)`: the first emulated draw of this submission: the counters start over.
+- `if (ME.rb && ME.rb_map)`: the last submission's counters to the readback ring; one 32 resets back is read.
+- `vkCmdFillBuffer(cb, ME.buf, 0, 32, 0)`: the counters, and the diagnosis words 4-7 (`runtime/gfx/mesh_emu_spirv.c`).
+- `me_flush(vk_sync_pre())`: full, or not the next record (the allocation shader takes a run of them).
+- The record: `DrawIndexedIndirect` {0, 1, 0, 0, 0}, mesh dispatch, task base, then the words the allocation shader
+  reads (`runtime/gfx/mesh_emu_spirv.h` `MESH_EMU_R_*`); an indirect first stage's count is copied from its arguments.
+- `vkCmdFillBuffer(cb, ME.buf, ro + MESH_EMU_R_TASK * 4, 8, tp ? 1 : 0)`: and the unused last word.
+- `if (!pre) ex->recorded += 3 + me_flush(cb)`: the one draw's stages, here.
+- The draw: prepared again (the pass reopens, every binding is recorded again).
+- The index buffer and push constants are the emulation's: the next draw binds everything again.
+
+### `bind_index_buffer()`
+
+Binds a draw's index buffer unless the command buffer holds that bind already: the same buffer, offset and index type as
+the indexed draw before, as when a mesh is drawn again with other uniforms or textures. B.ib is cleared with the rest of
+B wherever the replay goes on in another command buffer or something else has bound into this one
+(`vk_exec_draw_new_cb`, `cb_res`: a new submission or part, a chunk's own command buffer, the draws of `mo_emit` and
+`mesh_emu_draw`, which bind index buffers of their own), so a bind from before those is never taken for held.
+
+### `bind_index()`
+
+Indices made here (a quad list or line loop as triangles or a strip, byte indices widened), from a place of their own in
+the submission's transient memory.
+
+### `op_draw()`
+
+- `if (d->prim == NVN_DRAW_PRIMITIVE_QUADS && n >= 4)`: quads become two triangles each.
+- `} else if (d->prim == NVN_DRAW_PRIMITIVE_LINE_LOOP && n >= 2)`: a strip that returns to its first vertex.
+
+### `restart_for()`
+
+Primitive restart of an indexed draw. NVN restarts strips wherever an index equals the SetPrimitiveRestart value; Vulkan
+restarts only at the all-ones value of the bound index type, and only strips and fans without
+primitiveTopologyListRestart. Byte indices are widened to 16 bits, so their restart value becomes 0xffff
+(`op_draw_idx`). Without restart the 0xffff entries of the game's terrain and cliff strips fetch vertex 65535 + base and
+the triangles around them drop out.
+
+- `default: return 0`: lists: a restart index only drops the unfinished primitive.
+
+### `quad_index_on()`
+
+`NX2SARIA_QUAD_INDEX` (default 0): an indexed quad list is drawn as two triangles per quad and an indexed line loop as a
+strip that comes back to its first vertex, from the game's indices (`runtime/vk/vk_index_rewrite.h`), as the non-indexed
+ones are (`op_draw`). Off, they go to the GPU with the game's indices under the triangle list and line strip topologies,
+and the first such draw is logged either way. Read once.
+
+### `draw_idx_rewritten()`
+
+An indexed quad list or line loop, drawn with indices made from the game's (`NX2SARIA_QUAD_INDEX`). 0: not one of those,
+or left as it was (setting off, indices the CPU cannot read, a loop with primitive restart); the caller draws it.
+
+- `if (quads && n < 4) return 1`: no whole quad: nothing to draw.
+
+### `op_draw_idx()`
+
+- `if (d->itype == NVN_INDEX_TYPE_UNSIGNED_BYTE)`: no uint8 index type here: widen (host-readable backing only).
+
+### `op_draw_idx_ind()`
+
+DrawElementsIndirect: the arguments are read by the GPU from the pool buffer (they are often written by an earlier
+dispatch). The base instance stays out of c0 (0x644): c0 cannot be patched by a transfer inside a pass;
+`gl_BaseInstance` of the Vulkan draw is the argument's. Byte indices need the count to be widened: skipped.
+
+### Dispatch and uniform buffer updates
+
+### `fmt_srgb()`
+
+A compute dispatch whose shader cannot be translated: Switch 2 titles run tensor-core networks (HMMA/LDSM, an AI
+upscaler: Ocarina's title movie goes 1920x1080 -> 2560x1440 through ten such passes) that the Maxwell translator has no
+model for. Instead of leaving the outputs untouched (black), the largest bound storage image receives a linear blit of
+the largest bound sampled RGBA8 texture that is a different image and no larger (the networks' 10-bit intermediates are
+only partly meaningful as pictures, so they are not a source): what an upscaler approximates. In-place passes (the
+output also sampled) are left alone. `NX2SARIA_CS_FALLBACK=0` turns it off. sRGB-ness of the RGBA8 formats the fallback
+blits: a blit converts between encodings, the game's network writes the bits through a UNORM view, so a UNORM source and
+an sRGB target go through a scratch image in the source's format (blit, scaling only) and then a raw copy.
+
+### `fallback_scratch()`
+
+Scratch images for those blits, one per (size, format), at most `SCRATCH_N`; a new size takes the place of the one used
+longest ago (`runtime/vk/vk_scratch_lru.h`), whose image goes through the deferred destruction.
+
+- `vk_tonemap_forget(cache[i].img)`: the stand-in's views of it, before a new image can take its handle.
+
+### `uses_tensor_ops()`
+
+1 when the bound compute program uses tensor-core instructions (HMMA 0x23c, IMMA 0x237, LDSM 0x83b): the game's
+upscalers (the movie's and the 3D scene's), which the fallback blit stands in for unless `native_tensor` runs them.
+Other untranslated programs (bindless texturing, indirect branches) bind the output image too, and a blit for them
+pasted G-buffer normals and intermediates over the picture. Kept per program serial.
+
+### `native_tensor()`
+
+`NX2SARIA_NATIVE_TENSOR=1`: tensor-core programs run their translation (HMMA, LDSM and MOVM lowered to warp shuffles in
+`tools/xlate/AmpereLowering.cs` Hmma, Ldsm, Movm). The lowering gives the hardware's results: its SPIR-V, run by the
+driver, matches what the same SM86 kernels compute natively, bit for bit, on single instructions and on a network pass
+over four warps (a check named `tensor_gpu_check.py`, which `tests/` does not hold). The infinities and noise the scene upscaler wrote came from its input
+picture, not from the arithmetic (`net_binding`). Still off by default: no game run has confirmed the picture since, and
+each network pipeline takes the driver tens of seconds and about 100 MiB of device memory to build
+(`runtime/vk/vk_pipeline.c`, compute pipeline prebuild). While off, the programs take the fallback below as untranslated
+ones do.
+
+### `log_cs_bindings_locked()`
+
+Everything an untranslated program binds (`NX2SARIA_LOG_CS_BINDS`): what a stand-in could use instead. Texture lock
+held.
+
+### `log_fallback_skip_locked()`
+
+`NX2SARIA_LOG_CS_BINDS`: an untranslated program the fallback leaves alone, so its output keeps what it held (black when
+nothing else wrote it): why, and what it binds. `in_place` -1: not a tensor program (its translation failed). Each
+(program, output) once, 256 at most. Texture lock held.
+
+### `fallback_9e5_scene()`
+
+The scene upscaler's input as an RGB9E5 image, for an output in r11g11b10f: the post pass's picture (`raw_9e5`'s words).
+
+### `cs_guest_hash()`
+
+FNV-1a of a program's compute code as the game hands it over, kept per program: what `runtime/vk/vk_aa.c` knows the
+game's SMAA passes by, the same with every translator and setting. 0 without compute code.
+
+### `aa_dispatch()`
+
+The anti-aliasing setting (`runtime/vk/vk_aa.c`): while it asks for something other than the game's SMAA, the game's
+edge and weight passes are left out and its composition is replaced by `vk_aa_record`, from the same composite (the
+sampled R11G11B10F image of the output's size) into the same scene target, through the integer storage view the game's
+own pass writes it with. 1: the dispatch is handled (left out or replaced). `NX2SARIA_AA_LOG=1` logs each compute
+program's guest code hash once, with its dispatch size and output, to find the passes in another game version.
+
+- The scene target, written as raw words: the R11G11B10F image, or at times the RGB9E5 one the same memory also resolves
+  as (`raw_9e5_twin`), which takes the same words.
+- `if (storage_view_format(t, &v, hv) == VK_FORMAT_R32_UINT) dv = get_view(ex, t, &v, hv, 3, 1)`: 3: Texture2D.
+- `for (int i = 0; dst && i < 128 && !src; i++)`: the composite: R11G11B10F of the same size, another image.
+- `if (dv && sv) vk_texture_storage_bound_locked(dst)`: the GPU writes it below, as the game's pass would have.
+- Left to the game, once logged. Expected while an area loads: the target is then the RGB9E5 image at the same memory,
+  made without storage use, which the game's own pass cannot write either.
+- Recorded without the texture lock: SMAA's first frame waits for its lookup textures' upload. The views stay valid
+  meanwhile: images and views go only through the deferred release.
+- `vk_exec_barrier_dispatch(ex)`: ends the pass; the composite's writes are visible.
+- `ex->dc->B.pipe[1] = VK_NULL_HANDLE`: the replay must bind its compute pipeline again.
+
+### `untranslated_dispatch_fallback()`
+
+- `if (!uses_tensor_ops(ex))`: its translation failed, and no stand-in exists for programs without tensor ops.
+- The output is looked for among the image slots the program uses: the count of image entries of its NVN2 control
+  section (byte +0xb6), at least slot 0 (the networks' in-place passes count none and write slot 0). An image slot keeps
+  its binding from earlier dispatches, so past that count lie other programs' images: with a 3840x2160 picture the scene
+  upscaler leaves its 3840x2160 RGB9E5 target in slot 2, the largest image bound to the movie network's last pass, and
+  that pass's real output (2560x1440, slot 1, which the frame's last passes enlarge) kept stale bits for the whole
+  movie: the Triforce movie after Gohma showed as frozen coloured stripes.
+- `for (int i = 0; dst && i < 128; i++)`: an in-place pass (its output also sampled) is left alone.
+- RGBA8 sources (the movie's frames; its 10-bit intermediates gave black bands), or one in the output's own format: the
+  3D scene (r11g11b10f) the game's upscaler enlarges to the output resolution.
+- The picture also resolves as RGB9E5 at the same address; what the post pass wrote there stands in for it below.
+  Refused for its format, the next input of its size (the older picture the upscaler blends with) was shown, and what
+  moves trailed.
+- `if (dst && src && knob_log_cs_binds())`: each distinct (program, source, target) once, 256 at most.
+- `if (src && dst && fallback_9e5_scene(sf, dst->format))`: the image the post pass wrote this frame (`raw_9e5_twin`).
+- `int native = raw_native_9e5(si, sf)`: RGB9E5 texels in an RGB9E5 image: decoded as they are, no copy.
+- `VkImageView dst_view = VK_NULL_HANDLE`: for the tonemap pass, while the lock keeps the image.
+- `dst_view = get_view(ex, dst, &nv, 0, 3, 1)`: 3: the translator's Texture2D.
+- `static int e5_blit = -1`: E5B9G9R9 can be a blit source (with linear filtering).
+- `if (e5 && !native)`: the raw words into a shared-exponent image (same texel size: a copy keeps the bits), then the
+  blit.
+- The square decode of the stored picture (`runtime/vk/vk_tonemap.c`). Builds of round 24 lost the device with it: its
+  descriptor push did not go through the recorder (`runtime/vk/vk_rec.h` `rec_push()`; PORT-HANDOFF 7.12 item 11), which
+  it now does. Its edge-adaptive filter is for the picture the screen shows: while DLSS or FSR 3.1 runs
+  (`vk_dlaa_active`) that upscaler scales the scene itself and `vk_dlaa_upscaler` below puts its picture over this one,
+  so the pass keeps its linear filter there, also in the few frames that upscaler misses.
+- `if (tm)`: the tonemapped picture, already at the target's size, then the same blit as below.
+- `ex->dc->B.pipe[1] = VK_NULL_HANDLE`: the replay must bind its compute pipeline again.
+- The scene upscaler's input is the post pass's picture stored as the square root of each linear value (prog 102 packs
+  `sqrt(composite)` into RGB9E5), and its output is linear: the HUD is drawn over it and the frame's last pass encodes
+  to sRGB. A plain blit carried the stored values into the linear target, so the picture was washed out. The pass above
+  squares them. Without it, this approximation decodes with the sRGB curve instead: scale into an RGBA8 UNORM scratch
+  (the stored values), copy those bits into an RGBA8 sRGB scratch, and blit that into the target, which reads the sRGB
+  image as linear (mid-tones a little dark, the darkest values a little lifted).
+- `if (scratch)`: the bits as they are: a UNORM picture stays the same picture in an sRGB image's memory.
+- `vk_dlaa_upscaler(ex, di, df, dw, dh)`: the scene upscaler's output: DLSS's or FSR's picture goes there
+  (`runtime/vk/vk_dlaa.c`).
+
+### `op_dispatch()`
+
+- `if (aa_dispatch(ex, d->x, d->y, d->z)) return`: The game's SMAA left out or replaced (`runtime/vk/vk_aa.c`).
+- A tensor-core program runs the stand-in while `NX2SARIA_NATIVE_TENSOR` is off, so ask that before translating it.
+  Translating it anyway recorded four AI-upscaler compute shaders of 0.87-4.4M SPIR-V words that this game never
+  dispatches natively, and building them cost gigabytes of memory at boot (`NX2SARIA_LIB_PREBUILD_BIG`, `bg_main`).
+- `const GfxShader *cs = shader_for(ex, NVN_STAGE_CS, &present, NULL, 0)`: synchronous: a skipped dispatch changes
+  results.
+- `if (knob_log_cs_binds())`: diagnosis: the compute bindings of the first dispatch of each program.
+- `if ((info->pool && !pool_on()) || shader_skipped(cs)) return`: `NX2SARIA_POOL=0`, `NX2SARIA_SKIP_SHADERS`.
+- `vk_exec_barrier_dispatch(ex)`: ends the pass; earlier writes are visible to the shader.
+- The replay's binding path is the CPU cost the frame profile needs to separate from recording.
+- `if (vk_texture_deferred()) return`: past a parallel group: the op goes again once it is done
+  (`runtime/vk/vk_exec.c` `op_again()`).
+
+### `op_dispatch_ind()`
+
+DispatchComputeIndirect: `vkCmdDispatchIndirect` from the pool buffer. The shader reads the group counts from c0 0x200,
+so they are copied there on the GPU, into a c0 range no other dispatch uses, before the dispatch.
+
+- `if (aa_dispatch(ex, 0, 0, 0)) return`: as in `op_dispatch`.
+- `if (!native_tensor(ex)) { untranslated_dispatch_fallback(ex); return; }`: as in `op_dispatch`: never translate it.
+- `if ((info->pool && !pool_on()) || shader_skipped(cs)) return`: `NX2SARIA_POOL=0`, `NX2SARIA_SKIP_SHADERS`.
+- `cx->B.c0_valid[2] = 0`: a fresh c0 range: the copy below must not change one an earlier dispatch reads.
+- The replay's binding path is the CPU cost the frame profile needs to separate from recording.
+- `if (vk_texture_deferred()) return`: as in `op_dispatch`.
+- `if (cx->B.c0_valid[2])`: the shader binds c0.
+- NVN2 programs read the group counts from c0 byte 0 (`c0_info`); at 0x200 their bank holds pushed constants or the
+  driver's tables, which the copy would overwrite.
+- `cx->B.c0_valid[2] = 0`: the range no longer holds `B.c0[2]`.
+
+### `op_update_ub()`
+
+- `vk_exec_barrier(ex)`: earlier draws finished with the old contents.
+- In a submission's tail (`runtime/vk/vk_exec.c` "the early tail") an update of a mirrored block reaches guest memory
+  with the results the game reads, from the bytes here, and takes no write-back: one after the tail would land when the
+  game is already writing the next frame's data. This goes the same way under the lazy write-back (`runtime/memory.c`
+  "Lazy write-back", NVIDIA's and Intel's Windows default), which is what kept every tail of those drivers from going
+  early: a write-back recorded here would run before the tail, whose copy makes the bytes, and carry the pool's older
+  ones down over the guest's. It needs no write-back either: `ub_write_cb` delivers these very bytes
+  (`runtime/nvn/nvn_api_cmd.c` records the payload) to the guest at the fence, and the tail's own copy keeps the mirror
+  equal to them from then on; where the game passed its data through this very block, as it usually does, the guest
+  pages hold them already. The one case left as before is a range the lazy write-back has armed
+  (`runtime/vk/vk_memory.c` `vk_gpu_written_back()` arms what a shader wrote, and only that: blocks updated this way
+  never get armed): there the fetch path owns the bytes, the update is noted as ever, and the tail goes after the
+  write-backs. A range armed only in part passes and its fetch orders after the tail's copy, so it still brings these
+  bytes down when a touch releases it.
+
+### Bind ops
+
+### `op_draw_impl()`
+
+- `memset(ex->pipe.vattr, 0, sizeof ex->pipe.vattr)`: the new list replaces the old one.
+- `else if (b->index >= 18 && b->index < 64)`: NVN2 has more banks than Maxwell's 18: say which, once each.
+- `if (b->stage >= NVN_STAGE_TASK && b->stage <= NVN_STAGE_MESH && b->index >= 0 && b->index < 16)`: once per slot.
+- `ex->tex_serial++`: the shader memo's handle check (`feedback_scan` reads only textures: a rescan at most).
+- `cx->bind_gen++`: storage buffers may come from these words (`push_ptr`).
+
+### `vk_mvobj_frame_masks()`
+
+The last executed list's draws as " `<position` `banks>/<changed` `banks>:<draws>`" (bit n: cn), for
+`NX2SARIA_MV_CHECK`'s lines.
+
+### `op_is_draw()`
+
+`NX2SARIA_REPLAY_TIME` (default 0, off): times each op so the frame-time summary can say how the replay splits between
+draws, binds and transfers. The clock reads cost a fraction of a millisecond a frame, which is why it is off by default
+and why the wrapper is the only thing between the walk and the switch.
+
+### `vk_exec_phase_worker()`
+
+- `enum { PK_DRAW, ... }`: `NX2SARIA_REPLAY_PHASES=1` (default 0, off; a developer switch): where the replay's time per
+  op goes, apart for the submitting thread and the replay workers (whose chunks run beside it), by the op's kind and,
+  inside a draw, by the phase of `prepare_draw_ex`: entry (the pass and the scissor), shader lookup, pipeline lookup,
+  its bind and dynamic state, the per-draw hooks (DLAA, motion vectors, jitter, fixed state, repeat stats), the resource
+  binding (of it the texture and buffer descriptors, the binding signature and the set packing and pushes, which
+  `bind_resources` times itself), the vertex buffers and what follows, and the rest of the op (the index buffer, the
+  `vkCmdDraw` call, a skipped draw). One line per thread kind every `PH_EVERY` frames (`vk_exec_phases_frame`). The
+  clock reads cost about a tenth of a microsecond each, a dozen a draw, which the totals include.
+- `ph_worker`: `vk_exec_phase_worker`: this thread is a replay worker.
+- `ph_ns`: (`ph_t`, declared above `bt_now`: the last mark of the draw op being timed, 0 outside one).
+
+  `__atomic`.
+
+### `vk_exec_phases_on()`
+
+- `ph_code_ns`: `__atomic`.
+
+### `vk_exec_phase_seg()`
+
+- `ph_seg_ns`: `__atomic`; the submitting thread's alone (`vk_exec_record` runs there).
+
+### `vk_exec_op_draw()`
+
+- `if (ph_on && k != PK_OTHER) ph_t = t0`: draws, dispatches and uniform updates mark their phases.
+
+### `vk_exec_phases_frame()`
+
+After each frame's end in replay order (`runtime/vk/vk_exec.c` `vk_exec_frame_end`): every `PH_EVERY` frames, the
+phases' lines.
+
+- By op code: the eight with the most time, and the walk's calls of `vk_exec_record` against the ops' sum.
+
+### `vk_exec_sizes()`
+
+`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): the image view cache (under the texture lock), the spare
+descriptor pools and transient chunks, and the continuations held for event order.
+
+### `vk_exec_desc_mem()`
+
+The memory report's descriptor pools (`runtime/vk/vk_memory.c` `outside_log()`): the replay's (`alloc_set`,
+`REPLAY_POOL_SETS` sets each), the spare ones among them, and the texture pool's sets. Their memory is the driver's,
+outside VMA, and has no size.
+
 ## `runtime/vk/vk_exec_xfer.c`
 
 Transfers of the Vulkan op-stream replay: buffer and texture copies, texture clears, event signals, counter reports and
