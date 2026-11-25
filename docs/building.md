@@ -535,9 +535,9 @@ Before a commit:
   `runtime_include.flags()` (`tests/runtime_include.py`): runtime/ and each folder, as the build does.
 - `docs/code/<area>.md` of each area you changed: its notes follow the code, by file and function, since the code has no
   comments ([docs/code/README.md](code/README.md)).
-- `python tests/source_comments_check.py`: the comment lines left in the source, per area; a warning until the last
-  area is done, and `--strict <area>` fails on any left there.
-- `python tests/code_docs_check.py`: every file and function `docs/code/` cites exists (a warning, `--strict` fails).
+- `python tests/source_comments_check.py`: fails on a comment or docstring left in the source, and prints the count
+  per area; with an area or a path as argument it looks only there.
+- `python tests/code_docs_check.py`: fails when `docs/code/` cites a file or function that does not exist.
 
 The rest of this section is the reference: which test covers which change, how to run it on its own, and what it
 checks. `tests/run.py` runs all of them; a filter runs one (`tests/run.py sprint`).
