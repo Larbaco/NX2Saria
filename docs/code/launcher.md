@@ -3,8 +3,8 @@
 The launcher: the window, the installation of the build tools and of the game, the updates, the mods, the saves and
 the session reports. What it does for a player is in [launcher.md](../launcher.md), [install.md](../install.md) and
 [telemetry.md](../telemetry.md); this page holds the notes of its code, one section per file in the order of the file
-names. These files still keep their comments until their notes are here: `launcher/context.py`,
-`launcher/settings.py`, `launcher/toolchain.py`, `launcher/winsys.py`, and `launcher/build.py`.
+names. These files still keep their comments until their notes are here: `launcher/settings.py`,
+`launcher/toolchain.py`, `launcher/winsys.py`, and `launcher/build.py`.
 
 ## `launcher/__init__.py`
 
@@ -95,6 +95,35 @@ estimate. `need=None` with `unbounded=True` represents an infinite estimate with
 `play_memory_response()` logs the player's answer and returns it; an unavailable dialog is logged and permits Play.
 `confirm_play_memory()` retains the synchronous entry point used by Steam and combines these functions with the
 existing native dialog, including the fallback that permits Play if the probe or dialog is unavailable.
+
+## `launcher/context.py`
+
+What every part of the launcher shares: the folder layout, the settings and the log (`data/logs/launcher.log`, the run
+before it in `launcher.1.log`; [launcher.md](../launcher.md#the-launchers-log)). The import of `private_paths` from
+`tools/` comes after the path is set, hence its `# noqa: E402`, which stays.
+
+### `install_kind()`
+
+How this launcher was installed, for the start line: a checkout of the repository; on Windows the setup's install
+(`NX2Saria.exe` beside `app/`) or an unpacked release; on Linux the AppImage's install (the `nx2saria-launcher` script
+beside `app/`, which the AppImage writes and the menu entry starts), and whether the AppImage started this run (it
+passes `APPIMAGE` on) or the menu entry did.
+
+### `system_text()`
+
+The system for the start line: the Windows version, or the Linux distribution and the graphical session.
+
+### `Context`
+
+The settings get the context's log, so that each changed setting gets a line when it is saved
+(`launcher/settings.py` `Settings.save()`).
+
+### `Context.log()`
+
+One line (or several) into `launcher.log`. A log that cannot be written (a full disk, a file closed under it, which
+raises `ValueError`) loses the line and nothing else: the callers log from the build's reader thread and from the
+window's timers, where an exception would stop the build's output from being read or the timer from running. The
+account's folders are written short (`tools/private_paths.py`): players attach this log to public issues.
 
 ## `launcher/crash_offer.py`
 
