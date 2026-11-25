@@ -9,12 +9,15 @@ test('records approved events without exposing the selected path', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nx2saria-log-private-'));
   try {
     await fs.mkdir(path.join(root, 'data', 'logs'), { recursive: true });
-    const log = await createDevelopmentLog(root, 'manual', 'other', '0.0.1', 'linux');
-    await log.write('inspection', 'ready');
+    const log = createDevelopmentLog(root, '0.0.1', 'linux', 'aabbcc12', new Date());
+    log.write('root', 'picked origin=manual brand=other');
+    log.write('inspection', 'result=ready');
+    log.write('window', root);
     const text = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
-    assert.match(text, /\d\d:\d\d:\d\d electron: development 0\.0\.1, platform linux/);
-    assert.match(text, /electron: root manual \(other\)/);
-    assert.match(text, /electron: inspection ready/);
+    assert.match(text, /\d\d:\d\d:\d\d electron: start version=0\.0\.1 build=aabbcc12 platform=linux instance=\d+/);
+    assert.match(text, /electron: root picked origin=manual brand=other/);
+    assert.match(text, /electron: inspection result=ready/);
+    assert.match(text, /electron: window invalid /);
     assert.equal(text.includes(root), false);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });
@@ -22,16 +25,15 @@ test('records approved events without exposing the selected path', async () => {
 test('does not create log directories and resets an oversized development log', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'nx2saria-log-'));
   try {
-    const absent = await createDevelopmentLog(root, 'default', 'NX2Saria', '0.0.1', 'linux');
-    await absent.write('inspection', 'ready');
+    assert.equal(createDevelopmentLog(root, '0.0.1', 'linux', 'aabbcc12', new Date()), null);
     assert.deepEqual(await fs.readdir(root), []);
     const directory = path.join(root, 'data', 'logs');
     await fs.mkdir(directory, { recursive: true });
     const file = path.join(directory, 'launcher-electron.log');
     await fs.writeFile(file, 'x'.repeat(1024 * 1024 + 1));
-    await createDevelopmentLog(root, 'default', 'NX2Saria', '0.0.1', 'linux');
+    createDevelopmentLog(root, '0.0.1', 'linux', 'aabbcc12', new Date());
     const text = await fs.readFile(file, 'utf8');
     assert.ok(text.length < 1000);
-    assert.match(text, /root default \(NX2Saria\)/);
+    assert.match(text, /electron: start version=0\.0\.1 build=aabbcc12/);
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

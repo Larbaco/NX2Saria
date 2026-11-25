@@ -1,33 +1,31 @@
-import { promises as fs } from 'node:fs';
+import { appendFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-export type DevelopmentLog = { write(event: string, outcome: string): Promise<void> };
-const events = new Set(['inspection', 'play', 'window']);
-function timestamp(): string {
-  const now = new Date();
+type Event = 'inspection' | 'exit' | 'play' | 'root' | 'window';
+export type DevelopmentLog = { write(event: Event, outcome: string): void };
+
+function timestamp(now: Date): string {
   return [now.getHours(), now.getMinutes(), now.getSeconds()].map(n => String(n).padStart(2, '0')).join(':');
 }
 function safe(value: string): string {
   return /^[A-Za-z0-9_.+= -]{1,80}$/.test(value) ? value : 'invalid';
 }
-export async function createDevelopmentLog(root: string, origin: 'default' | 'manual', brand: 'NX2Saria' | 'NX2navi' | 'other', version: string, platform: string): Promise<DevelopmentLog> {
+export function createDevelopmentLog(root: string, version: string, platform: string, build: string, startedAt: Date): DevelopmentLog | null {
   const folder = path.join(root, 'data', 'logs');
   const file = path.join(folder, 'launcher-electron.log');
-  let enabled = false;
-  let queue = Promise.resolve();
+  const identity = `instance=${process.pid}`;
+  const buildId = /^[a-f0-9]{8,40}$/.test(build) ? build : 'unknown';
+  let enabled = true;
   try {
-    if ((await fs.stat(folder)).isDirectory()) {
-      try { if ((await fs.stat(file)).size > 1024 * 1024) await fs.writeFile(file, ''); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-      enabled = true;
-      await fs.appendFile(file, `${timestamp()} electron: development ${safe(version)}, platform ${safe(platform)}\n${timestamp()} electron: root ${origin} (${brand})\n`);
-    }
-  } catch { enabled = false; }
+    if (!statSync(folder).isDirectory()) return null;
+    if ((statSync(file, { throwIfNoEntry: false })?.size ?? 0) > 1024 * 1024) writeFileSync(file, '');
+    appendFileSync(file, `${timestamp(startedAt)} electron: start version=${safe(version)} build=${buildId} platform=${safe(platform)} ${identity}\n`);
+  } catch { return null; }
   return {
-    write(event: string, outcome: string) {
-      if (!enabled || !events.has(event)) return Promise.resolve();
-      queue = queue.then(() => fs.appendFile(file, `${timestamp()} electron: ${event} ${safe(outcome)}\n`)).catch(() => { enabled = false; });
-      return queue;
+    write(event, outcome) {
+      if (!enabled) return;
+      try { appendFileSync(file, `${timestamp(new Date())} electron: ${event} ${safe(outcome)} ${identity}\n`); }
+      catch { enabled = false; }
     }
   };
 }

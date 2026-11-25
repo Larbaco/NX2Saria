@@ -29,3 +29,11 @@ CPython 3.14 worker bytecode, and the bootstrap adds the active app's tools to i
 `launcher-electron/ui-tests/mods-synthetic.cjs` uses a fake mod rebuild job and a temporary executable to exercise
 successful resumption, cancellation and the following Play without repeatedly rebuilding the same failed mods.
 It does not compile or run the real game.
+
+`launcher-electron/src/dev-log.ts` writes short records to `data/logs/launcher-electron.log` once an existing
+installation with a logs directory is recognized. The build step writes the checkout commit to
+`dist/build-id.txt`. The main process records startup, selection, inspection, Play results, window visibility,
+lock refusal and normal exit. The process ID distinguishes instances using the same file. Selection records
+identify the origin and brand with fixed values. They and all other records omit paths and dialog or error
+text, even if the Python path shortening switch is off. Appending the compact normal exit record
+synchronously lets it finish before Electron quits.

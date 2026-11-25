@@ -234,8 +234,11 @@ launcher modules and loads the selected release's tools. The compatibility path 
 `Shortener` so paths included in reports remain shortened regardless of the local log setting.
 The replacement ZIP passed inspection, synthetic Play and the forced-privacy checks in Windows installations
 built from the published app and runtime archives of 0.24.0-rc.1, 0.25.0 and 0.26.0-rc.1. This establishes
-the startup and privacy behavior with those archives. The owner's retest with the installed game is still
-pending.
+the startup and privacy behavior with those archives. The owner later confirmed detection and two normal
+consecutive Plays on Windows. The original ZIP did not record Electron window events independently.
+The test build leaves report sending with the installed launcher. Only the most recent summary remains
+available to that launcher after consecutive sessions in Electron. A change to when reports are sent is
+pending the owner's decision.
 
 ### Worker implementation: handshake and inspection
 
@@ -248,7 +251,11 @@ handshake. The synthetic worker tests run on Windows with Python 3.11; they use 
 
 ## Development logging and dependency inventory
 
-The current development Electron writes `data/logs/launcher-electron.log` only for a recognized installation whose logs directory already exists; it does not create that directory during inspection. It logs startup version/platform, selection kind and recognized brand (no paths), inspection and Play outcomes, and window visibility. Existing files over 1 MiB are reset on opening; logging failure does not prevent the application from working. A persistent worker will later use the existing privacy-aware launcher logger. See `docs/electron-launcher-notices.md` for the preliminary runtime and development-dependency license inventory; it is not release clearance.
+Electron writes `data/logs/launcher-electron.log` for a recognized installation after the logs directory is available.
+It records the build hash and process ID, selection origin and brand, inspection and Play results, window visibility,
+second instance refusal and normal exit. Lines omit paths regardless of the Python log setting. Existing files over
+1 MiB are reset on opening. The worker still writes its own events to the existing `launcher.log`. The synthetic
+window tests verify both logs, including the Electron rows for a second instance sharing the same file. See `docs/electron-launcher-notices.md` for the preliminary runtime and development-dependency license inventory; it is not release clearance.
 
 The development slice now refreshes installation state after a delegated Play ends and permits another Play without reselecting when the refreshed state is ready and unblocked. A Linux Electron test covers two consecutive starts and verifies a stand-in game is still running when the Electron window closes. It does not prove the future worker recovery contract or Windows real-game behavior.
 

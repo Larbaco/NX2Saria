@@ -11,7 +11,9 @@ import the launcher dependencies if the default `python3` is not suitable. Selec
 For a manual test, check discovery and selection, Play twice, hide and restore when enabled, closing the window during a
 game. The Windows ZIP uses Python 3.14 and the build tools from the selected installation. Use the current NX2Saria
 installer for a first installation and the installed launcher to update or repair an older one. After testing, copy
-`data/logs/launcher.log` and the game's log to the usual private log folder.
+`data/logs/launcher-electron.log`, `data/logs/launcher.log` and the game's log to the usual private log folder.
+In this test build, only the last session's summary stays available for the installed launcher to send when it
+next opens with session reports on.
 
 `npm test` runs the TypeScript tests. On Linux, `xvfb-run -a npm run test:ui` opens Electron windows against temporary
 installations and synthetic executables; it never runs the real game.

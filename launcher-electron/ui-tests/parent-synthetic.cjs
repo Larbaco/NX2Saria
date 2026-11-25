@@ -116,6 +116,11 @@ async function main() {
     process.kill(gamePid, 0);
     assert.equal(await busyPage.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
     await busy.close();
+    const electronLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
+    const refusal = electronLog.match(/electron: window second_instance_refused instance=(\d+)/);
+    assert.ok(refusal);
+    assert.ok(electronLog.includes(`electron: inspection result=worker_busy instance=${refusal[1]}`));
+    assert.ok(electronLog.includes(`electron: exit code=0 play_active=false instance=${refusal[1]}`));
     await fs.writeFile(path.join(game, 'finish-game'), '');
     await waitFor(async () => (await readLog()).includes('worker: game ended'), 'worker did not record game end');
     await waitFor(async () => !(await workerPids(root)).includes(playingPid), 'worker did not exit after the game');

@@ -1,0 +1,17 @@
+NX2Saria Electron — teste privado para Windows x64
+
+1. Extraia o ZIP e execute NX2Saria-Electron-Teste.exe.
+2. O teste usa o Python e as ferramentas da instalação selecionada.
+   Para uma primeira instalação, use o instalador atual do NX2Saria.
+3. Clique em Jogar duas vezes. Com a opção de ocultar ativada, confira
+   se a janela some ao abrir o jogo e volta quando ele fecha.
+4. Feche o launcher com o jogo aberto e abra uma segunda janela. Ela
+   deve indicar que a instalação está ocupada até o jogo terminar.
+5. Se usar um mod que exige recompilação, observe o progresso e a
+   retomada de Jogar. Em outra tentativa, observe o cancelamento.
+6. Copie data/logs/launcher-electron.log, data/logs/launcher.log e
+   o log do jogo para a pasta privada de logs de sempre.
+
+Com este ZIP, só o resumo da última sessão fica disponível para
+envio. O launcher instalado é quem pode enviá-lo quando for aberto,
+se a opção de relatórios estiver ligada.

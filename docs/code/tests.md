@@ -5789,6 +5789,11 @@ cancellation. Its temporary build tool asserts its file is the copy from the act
 the one in the selected installation. Its toolchain stamp and files model the toolchain already being present. The
 build and game fixtures have no game data and perform no downloads.
 
+The worker window test checks the actual Electron log for build identity, selection, inspection, Play
+requests and outcomes, hide and restore, and launcher exit. It checks that the log contains no installation
+or executable paths even with the local Python log switch off. The parent-exit test checks that the second
+window records lock refusal and its corresponding exit under the same instance ID.
+
 `launcher-electron/ui-tests/published-runtime-synthetic.cjs` tests the packaged worker with the exact app and
 runtime archives of 0.24.0-rc.1, 0.25.0 and 0.26.0-rc.1 unpacked in temporary installations. The earlier
 Windows fixtures populated `tools/` from the checkout. Those fixtures missed the import failure because
