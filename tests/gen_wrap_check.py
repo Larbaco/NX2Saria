@@ -9,8 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
-BEGIN = '// ---------------------------------------------------------------- page write generations'
-END = '// ---------------------------------------------------------------- dirty census'
+BEGIN = '#define GEN_CHUNK_SHIFT 28'
+END = '#define DIRTY_UNSYNCED UINT64_MAX'
 READERS = ('static int cpu_wrote_since(', 'static int shadow_pool_clean(', 'static int lazy_clean(',
            'static int page_dirty(')
 SEEDS = ((1 << 32) - 8, (1 << 40) - 8, (1 << 63) - 8)

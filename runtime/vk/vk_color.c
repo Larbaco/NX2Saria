@@ -1,16 +1,3 @@
-// Colour adjustment on the present (vk_color.h): brightness, contrast, saturation and gamma of the game's picture, after
-// the game and before the FSR 1 pass or the blit scale it to the window. Settings NX2SARIA_COLOR_BRIGHTNESS (-30..30, %
-// added), NX2SARIA_COLOR_CONTRAST and NX2SARIA_COLOR_SATURATION (%, 100 = unchanged) and NX2SARIA_COLOR_GAMMA (exponent, 1 =
-// unchanged), read when the settings change. NX2SARIA_COLOR_PRESET names a profile (vk_color_preset) whose values win
-// over the four, so a profile set in nx2navi.ini or by NX2SARIA_MENU_TEST_SET applies without the menu; custom uses the
-// four. At the default values nothing is recorded and the present is what it was. Design and preset values: the
-// colour profiles of issue #136.
-//
-// One compute pass (shaders/color_grade.comp) reads the crop rectangle of the game's image and writes an RGBA16F image
-// of its size, which present_image then hands to FSR or the blit in place of the game's image. The HUD is part of that
-// picture and is adjusted with it; the in-game menu is drawn later, straight into the swapchain image, and is not.
-// The source view of slot s is destroyed when slot s records again (present_image has waited for that slot's fence);
-// the output image is shared by all slots, and each frame's first barrier orders it after the previous frame's reads.
 #include "vk.h"
 
 #include <stdlib.h>
@@ -29,13 +16,13 @@ static struct {
     VkPipelineLayout layout;
     VkPipeline pipe;
     VkSampler sampler;
-    VkImage img;                   // the adjusted picture, RGBA16F at the crop size
+    VkImage img;
     VmaAllocation alloc;
     VkImageView view;
     uint32_t w, h;
-    VkImageView src_view[SLOTS];   // the source view each slot's last frame read
-    unsigned seen;                 // cfg_version the values below were read at
-    float adj[4];                  // brightness (added), contrast, saturation, gamma
+    VkImageView src_view[SLOTS];
+    unsigned seen;
+    float adj[4];
 } C = {.seen = ~0u};
 
 static int init(VkCtx *c) {
@@ -88,7 +75,6 @@ static void free_image(VkCtx *c) {
 
 static int ensure_image(VkCtx *c, uint32_t w, uint32_t h) {
     if (C.img && C.w == w && C.h == h) return 1;
-    // another crop size (a resolution change): earlier presents may still read the old image
     vk_queue_lock();
     vkDeviceWaitIdle(c->device);
     vk_queue_unlock();
@@ -122,11 +108,7 @@ const char *const *vk_color_preset(const char *name) {
     return NULL;
 }
 
-// The four values from the profile, or from their own settings under custom (or an unknown profile name); re-read when
-// the settings change. 1 when any differs from "unchanged".
 static int adjusting(void) {
-    // The menu has no colour rows (ui/menu.cpp tab_screen): values left in nx2navi.ini could not be undone there, so
-    // the pass is off and the picture is the game's own
     return 0;
     unsigned v = cfg_version();
     if (v != C.seen) {
@@ -171,7 +153,6 @@ VkImage vk_color_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat
         return VK_NULL_HANDLE;
     }
     const VkPipelineStageFlags2 CS = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, ALL = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    // the game's writes to src are visible; last frame's reads of the output are done (UNDEFINED: its old content goes)
     barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, ALL, VK_ACCESS_2_MEMORY_WRITE_BIT, CS, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
     barrier(cb, C.img, VK_IMAGE_LAYOUT_UNDEFINED, ALL, 0, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT);
     VkDescriptorImageInfo ii = {C.sampler, C.src_view[slot], VK_IMAGE_LAYOUT_GENERAL},
@@ -187,7 +168,6 @@ VkImage vk_color_record(VkCommandBuffer cb, unsigned slot, VkImage src, VkFormat
                                                               {C.adj[0], C.adj[1], C.adj[2], C.adj[3]}};
     vkCmdPushConstants(cb, C.layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof pc, &pc);
     vkCmdDispatch(cb, ((uint32_t)crop[2] + 7) / 8, ((uint32_t)crop[3] + 7) / 8, 1);
-    // later submissions that write src wait for this read; FSR and the blit read the output
     barrier(cb, src, VK_IMAGE_LAYOUT_GENERAL, CS, 0, ALL, 0);
     barrier(cb, C.img, VK_IMAGE_LAYOUT_GENERAL, CS, VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT, ALL,
             VK_ACCESS_2_MEMORY_READ_BIT);
