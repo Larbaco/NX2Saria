@@ -1813,8 +1813,8 @@ Fallbacks (each also forced on any GPU by an environment switch, to test it wher
   `runtime/vk/vk_exec_draw.c` `ssbo_info()` binds the rounded-down address, so shader writes reach guest memory instead
   of a copy.
 - No graphics pipeline library with fast linking (`NX2SARIA_GPL=0` forces it; it also defaults off on AMD's Windows
-  driver for RDNA 2 and older, see `vk_caps_gpl`): `vk_caps.gpl` = 0, the extension stays disabled, and pipelines are
-  built whole.
+  driver for RDNA 2 and older, `vk_caps_gpl()` below): `vk_caps.gpl` = 0, the extension stays disabled, and pipelines
+  are built whole.
 - No 32-lane pin (no `subgroupSizeControl`, 32 outside min..max, or `NX2SARIA_VK_SUBGROUP_PIN=0`): stages run at the
   device's `subgroupSize` (SPIR-V 1.3 without a required size) and the translator is told that size.
   `NX2SARIA_VK_SUBGROUP=<n>` pins n instead of 32 where the driver allows it.
@@ -1822,22 +1822,22 @@ Fallbacks (each also forced on any GPU by an environment switch, to test it wher
 The defaults (Float64, no storage rounding, 32 everywhere) leave the shader cache keys as they were
 (`runtime/gfx/gfx_shader.c`).
 
-- `gpl_lib`: the driver's `graphicsPipelineLibrary` (feature), ...FastLinking (property).
-- `gpl_off`: why gpl is off, for the boot report; NULL when it is on.
-- `summary`: `vk_caps_summary`: written once, in `vk_caps_init`, before any other thread reads it.
-- `gpu`: The card for the session summary (`runtime/session_summary.h` `vk_caps_gpu()`): stored once in `vk_caps_init`,
-  published by `gpu_known`.
-- `amd_proprietary`: AMD's own Windows driver (any branch): `runtime/gfx/gfx_shader.c` `patch_vec_index()`.
+The file's state: `gpl_lib` and `gpl_fast` are the driver's `graphicsPipelineLibrary` feature and
+`graphicsPipelineLibraryFastLinking` property; `gpl_off` is why `vk_caps.gpl` is off, for the boot report, and NULL when
+it is on. `summary` (`vk_caps_summary()`) is written once, in `vk_caps_init()`, before any other thread reads it. `gpu`
+is the card for the session summary (`runtime/session_summary.h` `vk_caps_gpu()`): stored once in `vk_caps_init()` and
+published by `gpu_known`.
 
 ### `vk_caps_vec_index_bug()`
 
-`runtime/gfx/gfx_shader.c` `patch_vec_index()`: the driver reads uniform vector components at computed indices wrongly
-(the translator's HasVectorIndexingBug, which is set for AMD's Windows drivers).
+For `runtime/gfx/gfx_shader.c` `patch_vec_index()`: AMD's own Windows driver, of either branch, reads uniform vector
+components at computed indices wrongly (the translator's HasVectorIndexingBug, which is set for AMD's Windows drivers).
 
 ### `vk_caps_driver()`
 
-- AMD split RDNA 1 and 2 off into a driver branch of their own; its `driverInfo` reads "26.10.1 (AMD proprietary shader
-  compiler)" where the RDNA 3 and 4 driver names LLPC.
+AMD split RDNA 1 and 2 off into a driver branch of their own; its `driverInfo` reads "26.10.1 (AMD proprietary shader
+compiler)" where the RDNA 3 and 4 driver names LLPC. `vk_caps.amd_sc` is AMD's proprietary driver with "shader
+compiler" in that text, `vk_caps.amd_llpc` the proprietary driver without it.
 
 ### `vk_caps_gpl()`
 
@@ -1847,34 +1847,37 @@ XT the game ended with code 71 at every enemy killed, from 0.5 on, and no longer
 same ending (issue `#418`). Where in the driver it faults is not established: a kill draws its effects for the first
 time, which asks for a burst of new pipelines linked from stage libraries, and building them whole avoids it. The price
 there: with libraries off a pipeline the game needs for the first time is built whole by a worker while its draw is left
-out (`runtime/vk/vk_exec_draw.c`, "pipeline still building"), so new things appear some frames late, and the start waits
+out (`runtime/vk/vk_exec_draw.c`, the skip reason "pipeline still building"), so new things appear some frames late, and the start waits
 for every recorded pipeline instead of 20 s at most (`runtime/vk/vk_pipeline.c` `prewarm_run()`). The same driver had
 libraries off before, for device losses at boot (issue `#5`), whose cause was GPU writes past 3D BC images
-(`runtime/vk/vk_exec.c`, "3D BC render targets"); it boots with them since that was fixed, so gpl = 1 is there to try on
+(the section "3D BC render targets" of `runtime/vk/vk_exec.c`); it boots with them since that was fixed, so gpl = 1 is there to try on
 a newer driver. RDNA 4 under RADV is reported to hang the GPU at the title screen with GPL.
 
 ### `vk_caps_init()`
 
-- Gathers (TLD4) pick their four texels with Maxwell's rounding; AMD and Intel round a coordinate that sits between two
-  texels the other way, which draws dark lines along object edges in shadow-map filtering ([maxwell.md](../maxwell.md)
-  2.10; seen on AMD). The translator biases gather coordinates by the host's sub-texel precision; NVIDIA rounds as
-  Maxwell does. `NX2SARIA_GATHER_BIAS=<bits>` forces it (0: off).
-- A register read before any write is an undefined load in SPIR-V, so function-local variables start at 0
-  ([maxwell.md](../maxwell.md) 3.12). Mesa folds undefined values freely; NVIDIA's compiler gives such a read a value of
-  another lane of the warp: Ocarina's clustered-light loop reads registers that only some paths write, and on an RTX
-  5090 the Great Fairy Fountain floor took an extra light term in 4x8-pixel tiles (one 32-lane warp each) and Link went
-  dark with green speckles. On with every setting: `runtime/vk/vk_dlaa.c` knows the game's FXAA by its zeroed SPIR-V
-  hash too, and the shader cache keys (which include this) stay the same whether DLSS is on or off, so shaders prepared
-  with one setting serve the other. `NX2SARIA_ZERO_LOCALS=0` turns it off.
-- bda: global accesses the translator finds no storage buffer for go through the device address table
-  (`runtime/vk/vk_gpa.c`).
-- `for (uint32_t h = 0; h < c->mem_props.memoryHeapCount; h++)`: the largest device-local heap: the card's own memory.
+What it tells the translator (`gfx_shader_set_host`), besides the fallbacks of the file's opening:
+
+- **Gather bias.** Gathers (TLD4) pick their four texels with Maxwell's rounding; AMD and Intel round a coordinate that
+  sits between two texels the other way, which draws dark lines along object edges in shadow-map filtering
+  ([maxwell.md](../maxwell.md) 2.10; seen on AMD). The translator biases gather coordinates by the host's sub-texel
+  precision; NVIDIA rounds as Maxwell does, so the default there is 0. `NX2SARIA_GATHER_BIAS=<bits>` forces it (0: off).
+- **Zeroed locals.** A register read before any write is an undefined load in SPIR-V, so function-local variables start
+  at 0 ([maxwell.md](../maxwell.md) 3.12). Mesa folds undefined values freely; NVIDIA's compiler gives such a read a
+  value of another lane of the warp: the game's clustered-light loop reads registers that only some paths write, and on
+  an RTX 5090 the Great Fairy Fountain floor took an extra light term in 4x8-pixel tiles (one 32-lane warp each) and
+  Link went dark with green speckles. On with every setting: `runtime/vk/vk_dlaa.c` knows the game's FXAA by its zeroed
+  SPIR-V hash too, and the shader cache keys (which include this) stay the same whether DLSS is on or off, so shaders
+  prepared with one setting serve the other. `NX2SARIA_ZERO_LOCALS=0` turns it off.
+- **Device addresses.** Global accesses the translator finds no storage buffer for go through the device address table
+  (`runtime/vk/vk_gpa.c` `vk_gpa_wanted_ctx()` says whether this device has it).
+
+The session summary's video memory is the largest device-local heap: the card's own memory.
 
 ## `runtime/vk/gpu_choice.h`
 
 The graphics card the settings choose (`gpu_index`, `gpu_name`) and what the log says about the choice:
-`runtime/vk/vk_device.c` `pick_device()` and `fatal_note()`, `runtime/cfg/hw_detect.c` `probe_gpu()`, ui/menu.cpp
-`row_gpu`. Header only, and plain enough for C and `C++`, so that `tests/gpu_choice_check.c` checks the rule and every
+`runtime/vk/vk_device.c` `pick_device()` and `fatal_note()`, `runtime/cfg/hw_detect.c` `probe_gpu()`,
+`runtime/ui/menu.cpp` `row_gpu()`. Header only, and plain enough for C and `C++`, so that `tests/gpu_choice_check.c` checks the rule and every
 line without a device.
 
 The order the cards are listed in is not fixed. Vulkan says nothing of it, and on Windows the loader follows the order
@@ -1900,57 +1903,87 @@ the player's own choice and gets no such line. At each start the log also says w
 not (`gpuc_setting_line`), and the shader preparation says which card it builds the driver's cache for
 (`gpuc_prepare_line`).
 
-- `enum { GPUC_OTHER, ... }`: VkPhysicalDeviceType's values, so that this header needs no Vulkan header.
-- `GpucCard`:
-  - `const char *name`: the name the driver gives the card.
-  - `int type`: `GPUC_*`.
-  - `int usable`: the game can run on it: Vulkan 1.3, its extensions, a queue that presents. Read for discrete cards
-    only: `gpuc_legacy_alt`, `gpuc_choice_line` and `gpuc_prepare_line` look for one the game can use.
-- `gpuc_has()`: 1 when part is in s, upper and lower case alike: `gpu_name`'s match.
-- `gpuc_index()`: The position to go by, for `gpu_index` want (-1: unset) and `gpu_name` name (NULL or empty: unset)
-  over the n cards listed now: want, unless a name is set and the card at that position does not have it (the cards are
-  listed in another order than when `gpu_index` was written, or one of them is gone). Then -1, `*dropped` is 1 and the
-  name finds the card. Nothing is dropped while one of the two is unset.
-- `gpuc_legacy_applies()`: 1 when a `gpu_index` alone lists a card that is not a discrete one, the part of
-  `gpuc_legacy_alt` that needs no card's usable: want (-1: unset) over the n cards listed now lists a card that is not a
-  discrete one, no `gpu_name` is set (a name is the player's own choice of that card), and the index is not the
-  environment's (`from_env`: set for this run, on purpose). A caller that has to find out which cards the game can use
-  does so only when this is 1.
-- `gpuc_legacy_alt()`: The discrete card a `gpu_index` alone gives way to, or -1 when the position stands: the first
-  discrete card the game can use, when `gpuc_legacy_applies`. Nothing to give way for with Auto, a position past the
-  list, a discrete card at it, a name, an environment setting, or with no discrete card to use (the card at the position
-  is then the only one that runs the game).
-- `gpuc_resolve()`: The position the pick goes by for the settings want and name (as `gpuc_index` and `gpuc_legacy_alt`
-  take them), the one call for the device choice (`runtime/vk/vk_device.c` `pick_device()`) and the preset's probe
-  (`runtime/cfg/hw_detect.c` `probe_gpu()`), so that the preset is chosen for the card the game takes: `gpuc_index`'s
-  result, or -1 when a `gpu_index` alone gives way to a discrete card. `*dropped` is `gpuc_index`'s, `*alt`
-  `gpuc_legacy_alt`'s (-1: the position stands); the caller says either in the log.
-- `gpuc_shown()`: The card the settings pick as far as the list tells, for the menu's Graphics card row: the one
-  `gpu_index` lists when it has the name (or no name is set), else the first with the name; -1 for Auto, for a position
-  past the list, for a name that no card has (the game then takes the best card, as for Auto) and for a `gpu_index`
-  alone that gives way to a discrete card (`gpuc_legacy_alt`; `from_env`: the index is the environment's).
-- `gpuc_setting_line()`: The line at each start that says what the two settings hold over the cards listed now, agreeing
-  or not, with want and name as the settings file gives them (-1 and NULL or empty: unset), and `from_env` as for
-  `gpuc_legacy_alt`.
-- `gpuc_dropped_line()`: The line for a `gpu_index` that `gpuc_index` dropped, with the want it was given: what it
-  listed, and that the name decides.
-- `gpuc_legacy_line()`: The line for a `gpu_index` alone that gives way to Auto (`gpuc_legacy_alt`), with the want it
-  was given and the card alt it returned: what the position listed, and what to do to run on that card on purpose (the
-  settings file's `gpu_name` too, for a game that cannot open its menu).
-- `enum { GPUC_BY_AUTO, ... }`: How the card the game runs on was chosen, for `gpuc_prepare_line`.
-- `gpuc_prepare_line()`: The text the shader preparation modes print after "prepare-shaders: card: "
-  ("prepare-pipelines: card: " in that mode; `runtime/vk/vk_pipeline.c`): the card whose driver cache they build, picked
-  (an index into c) by how, which is a `GPUC_BY_*` value, with want and name as the settings give them. Said in the
-  launcher's log, where a player's report of a slow update is read: the preparation's own device lines are among sixty
-  others. Where the card is not a discrete one while a discrete one the game can use is listed (the player's own choice
-  of the card by its name, or an index in the environment), it also says that one's driver cache is not the one built.
-- `gpuc_choice_line()`: The card the settings picked (want, name: what the pick went by after `gpuc_index`, -1 and NULL
-  for Auto) is not a discrete card while one the game can use is listed, and it was chosen by a `gpu_index` alone: the
-  first such card is returned, line gets the warning for the log and note (NULL: none wanted) the short form for a fatal
-  error's report. A position says little over the cards' order changing from one start to the next. A `gpu_name`, which
-  the menu writes beside the position, is the player's own choice of that card, so it gets no warning at each start.
-  Returns -1 and empties both when there is nothing to say: Auto, a `gpu_name` set, a discrete card picked, or no
-  discrete card to use.
+The `GPUC_OTHER` to `GPUC_CPU` values are those of `VkPhysicalDeviceType`, so that this header needs no Vulkan header.
+A `GpucCard` is one listed card: the name the driver gives it, its type (`GPUC_*`) and `usable`, whether the game can
+run on it (Vulkan 1.3, its extensions, a queue that presents). `usable` is read for discrete cards only:
+`gpuc_legacy_alt()`, `gpuc_choice_line()` and `gpuc_prepare_line()` look for one the game can use.
+
+### `gpuc_has()`
+
+1 when part is in s, upper and lower case alike: `gpu_name`'s match.
+
+### `gpuc_index()`
+
+The position to go by, for `gpu_index` want (-1: unset) and `gpu_name` name (NULL or empty: unset) over the n cards
+listed now: want, unless a name is set and the card at that position does not have it (the cards are listed in another
+order than when `gpu_index` was written, or one of them is gone). Then -1, `*dropped` is 1 and the name finds the card.
+Nothing is dropped while one of the two is unset.
+
+### `gpuc_legacy_applies()`
+
+1 when a `gpu_index` alone lists a card that is not a discrete one, the part of `gpuc_legacy_alt` that needs no card's
+usable: want (-1: unset) over the n cards listed now lists a card that is not a discrete one, no `gpu_name` is set (a
+name is the player's own choice of that card), and the index is not the environment's (`from_env`: set for this run, on
+purpose). A caller that has to find out which cards the game can use does so only when this is 1.
+
+### `gpuc_legacy_alt()`
+
+The discrete card a `gpu_index` alone gives way to, or -1 when the position stands: the first discrete card the game can
+use, when `gpuc_legacy_applies`. Nothing to give way for with Auto, a position past the list, a discrete card at it, a
+name, an environment setting, or with no discrete card to use (the card at the position is then the only one that runs
+the game).
+
+### `gpuc_resolve()`
+
+The position the pick goes by for the settings want and name (as `gpuc_index` and `gpuc_legacy_alt` take them), the one
+call for the device choice (`runtime/vk/vk_device.c` `pick_device()`) and the preset's probe (`runtime/cfg/hw_detect.c`
+`probe_gpu()`), so that the preset is chosen for the card the game takes: `gpuc_index`'s result, or -1 when a
+`gpu_index` alone gives way to a discrete card. `*dropped` is `gpuc_index`'s, `*alt` `gpuc_legacy_alt`'s (-1: the
+position stands); the caller says either in the log.
+
+### `gpuc_shown()`
+
+The card the settings pick as far as the list tells, for the menu's Graphics card row: the one `gpu_index` lists when it
+has the name (or no name is set), else the first with the name; -1 for Auto, for a position past the list, for a name
+that no card has (the game then takes the best card, as for Auto) and for a `gpu_index` alone that gives way to a
+discrete card (`gpuc_legacy_alt`; `from_env`: the index is the environment's).
+
+### `gpuc_setting_line()`
+
+The line at each start that says what the two settings hold over the cards listed now, agreeing or not, with want and
+name as the settings file gives them (-1 and NULL or empty: unset), and `from_env` as for `gpuc_legacy_alt`.
+
+### `gpuc_dropped_line()`
+
+The line for a `gpu_index` that `gpuc_index` dropped, with the want it was given: what it listed, and that the name
+decides.
+
+### `gpuc_legacy_line()`
+
+The line for a `gpu_index` alone that gives way to Auto (`gpuc_legacy_alt`), with the want it was given and the card alt
+it returned: what the position listed, and what to do to run on that card on purpose (the settings file's `gpu_name`
+too, for a game that cannot open its menu).
+
+
+### `gpuc_prepare_line()`
+
+The `GPUC_BY_*` values say how the card the game runs on was chosen, for this line.
+
+The text the shader preparation modes print after "prepare-shaders: card: " ("prepare-pipelines: card: " in that mode;
+`runtime/vk/vk_pipeline.c`): the card whose driver cache they build, picked (an index into c) by how, which is a
+`GPUC_BY_*` value, with want and name as the settings give them. Said in the launcher's log, where a player's report of
+a slow update is read: the preparation's own device lines are among sixty others. Where the card is not a discrete one
+while a discrete one the game can use is listed (the player's own choice of the card by its name, or an index in the
+environment), it also says that one's driver cache is not the one built.
+
+### `gpuc_choice_line()`
+
+The card the settings picked (want, name: what the pick went by after `gpuc_index`, -1 and NULL for Auto) is not a
+discrete card while one the game can use is listed, and it was chosen by a `gpu_index` alone: the first such card is
+returned, line gets the warning for the log and note (NULL: none wanted) the short form for a fatal error's report. A
+position says little over the cards' order changing from one start to the next. A `gpu_name`, which the menu writes
+beside the position, is the player's own choice of that card, so it gets no warning at each start. Returns -1 and
+empties both when there is nothing to say: Auto, a `gpu_name` set, a discrete card picked, or no discrete card to use.
 
 ## `runtime/vk/vk_exec.c`
 
