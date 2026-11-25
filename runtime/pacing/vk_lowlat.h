@@ -1,9 +1,15 @@
 #pragma once
 #include <stdint.h>
+#include <string.h>
 #include <vulkan/vulkan.h>
 
 struct VkCtx;
 
+static inline uint32_t vk_lowlat_revision(const VkExtensionProperties *e, uint32_t n) {
+    for (uint32_t i = 0; i < n; i++)
+        if (!strcmp(e[i].extensionName, VK_NV_LOW_LATENCY_2_EXTENSION_NAME)) return e[i].specVersion;
+    return 0;
+}
 void vk_lowlat_init(struct VkCtx *c);
 void vk_lowlat_release(void);
 
