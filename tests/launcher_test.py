@@ -5825,7 +5825,7 @@ class InterleavedFatalLine(Tmp):
     def test_a_whole_fatal_line_is_kept_as_it_is(self):
         line = 'access violation (0xb) at host 0x7f00 (libc.so.6+0x98e31), reading address 0x3e80010beb5'
         self.assertEqual(self.fatal(f'[host] x\nFATAL: {line}\n  not on a guest thread\n[host] fatal: at 14:24\n'), line)
-        line = 'access violation (0xc0000005) at host 0000000000000000 (outside every module), executing address 0x0'
+        line = 'access violation (0xc0000005) at host 0000000000000000 (outside every module), executing address 0'
         self.assertEqual(self.fatal(f'FATAL: {line}\n[host] input: a line\n'), line)
         line = 'vk: the GPU device was lost (seen at: q). The run ends here'
         self.assertEqual(self.fatal(f'FATAL: {line}\n[host] fatal: memory commit: 9000 MB\n'), line)
@@ -5836,6 +5836,10 @@ class InterleavedFatalLine(Tmp):
         self.assertEqual(self.fatal(f'[host] x\nFATAL: {head}{other}\n, reading address 0x3e80010beb5\n'
                                     '  not on a guest thread\n'), f'{head}, reading address 0x3e80010beb5')
         self.assertEqual(self.fatal(f'FATAL: {head}{other}\n, writing address 0x10\n'), f'{head}, writing address 0x10')
+        self.assertEqual(self.fatal(f'FATAL: {head}{other}\n, reading address 0\n'), f'{head}, reading address 0')
+        self.assertEqual(self.fatal(f'FATAL: access violation (0xc0000005) at host 00007FF8 ({other}\n'
+                                    'My Hook.dll+0x10), executing address 0\n'),
+                         'access violation (0xc0000005) at host 00007FF8 (My Hook.dll+0x10), executing address 0')
         self.assertEqual(self.fatal(f'FATAL: access violation (0xb) at host 0x7f00 ({other}\n'
                                     'libc.so.6+0x98e31), reading address 0x10\n'), f'{head}, reading address 0x10')
         self.assertEqual(self.fatal(f'FATAL: access violation (0xb) at host (nil) ({other}\noutside every module)\n'),
@@ -5848,6 +5852,8 @@ class InterleavedFatalLine(Tmp):
         self.assertEqual(self.fatal(f'FATAL: {head}[host] input: a line\nsomething else, reading address 0x1\n'), head)
         self.assertEqual(self.fatal('FATAL: vk: a fatal error[host] input: a line\n, reading address 0x1\n'),
                          'vk: a fatal error')
+        self.assertEqual(self.fatal('FATAL: [host] input: a line\nvk: a fatal error\n'), '[host] input: a line')
+        self.assertEqual(self.fatal('FATAL: romfs: mods/[wip] x is not a folder\n'), 'romfs: mods/[wip] x is not a folder')
 
 
 class MemorySettings(dict):

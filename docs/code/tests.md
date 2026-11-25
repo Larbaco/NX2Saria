@@ -1078,6 +1078,15 @@ when SDL's lock is held. A fatal note that takes a while stands for the card's a
   `fatal_end()` hands its own code to the guard (a hung FATAL must not read as a crash to the launcher).
 - The fatal error's frame-time summary comes after RTSS's end and the rumble stop, as in the orderly end.
 
+## `tests/fatal_line_check.py`
+
+Runs the game executable's busy crash probes (`runtime/main.c` `probe_busy()`, `probe_crash_stuck()`), each in a
+temporary folder of its own. `RUNS` (20) times each, `--probe-crash-busy` and `--probe-fatal-busy` must end with 71 and
+70 and exactly one FATAL line in the whole format the crash report (`CRASH_LINE`) or the probe's fatal error
+(`FATAL_LINE`) writes, with no other thread's text inside it; the check counts how many runs failed. Then
+`--probe-crash-stuck` must end with 71 within `TIMEOUT` (60 s), a whole FATAL line and one line that says stderr's lock
+was given up. Needs the executable (`--exe`); no game files, GPU or window.
+
 ## `tests/ffx_cache_check.py`
 
 Runs the game executable's `--probe-ffx-cache` twice on pipeline cache files of the test's own
@@ -2654,8 +2663,16 @@ call before `rt_log_sync()`) its lines are still written, after one line that sa
 their own, however much was dropped before. `rt_log_sync()` alone (a bug capture in play, `write_log_tail` of
 `runtime/diag/bugcap.c`) does not open the reserve. The test builds `log_sink()` with a small cap and reserve against
 stand-ins for the file and stderr, and `static_checks()` checks that every end that syncs the log marks the process as
-ending first, so its lines reach the file past the cap. No game files; it takes the path to clang as an optional
+ending first, so its lines reach the file past the cap. `stuck`: without a log file, at the end, stderr's lock held
+for good: every line still reaches stderr, after one line that says the lock was given up, and the lock is tried
+`ERR_LOCK_WAIT_MS` times in all (`err_lock_final()`). No game files; it takes the path to clang as an optional
 argument.
+
+## `tests/log_line_check.py`
+
+Builds and runs `tests/log_line_check.c` against `runtime/log_line.h`: pieces that make one line, an empty line, a line
+that fills the buffer to its last byte, one byte more, a long line cut with ` [line cut]`, and the next line starting
+clean after a cut.
 
 ## `tests/log_prefixes_check.py`
 

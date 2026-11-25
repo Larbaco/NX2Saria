@@ -25,9 +25,10 @@ FATAL_EXIT = 70
 TIMEOUT = 60
 
 HOST = r'(?:0x[0-9a-fA-F]+|[0-9a-fA-F]{8,16}|\(nil\))'
+HEX = r'(?:0x[0-9a-f]+|0)'
 CRASH_LINE = re.compile(r'^FATAL: access violation \(0x[0-9a-f]+\) at host ' + HOST +
-                        r' \((?:outside every module|[^()\[\]]+\+0x[0-9a-f]+)\)'
-                        r'(?:, (?:reading|writing|executing) address 0x[0-9a-f]+)?$')
+                        r' \((?:outside every module|[^()\[\]]+\+' + HEX + r')\)'
+                        r'(?:, (?:reading|writing|executing) address ' + HEX + ')?$')
 FATAL_LINE = 'FATAL: probe-fatal-busy: a fatal error while 4 threads log'
 STUCK_NOTE = '[host] log: the lock of the stderr writes was still held after'
 

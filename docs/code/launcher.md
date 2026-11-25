@@ -232,6 +232,20 @@ task (code 1) are not asked ends: a game that hung and was killed is worth its l
 launcher's own line goes into the game's log, which ends the search for the fatal line (`launcher/build.py`
 `last_fatal()`); `finish_game()` and `play_only()` call both before `note_exit_in_log()`.
 
+`launcher/build.py` `fatal_whole()`: in a log of a game from before each line of the crash report was one write
+(`runtime/main.c` `crash_handler()`), another thread's line can sit inside the FATAL line, with the rest of it on the
+next line:
+`FATAL: access violation (0xb) at host 0x7f00 (libc.so.6+0x98e31)[host] input: ...` and then
+`, reading address 0x3e80010beb5`. The FATAL line is cut where a second log prefix (`FATAL_INTRUDER`, `[host] `,
+the game's `[host] ` or the launcher's `[launcher] `) starts; a `[word] ` of the line's own text, as in a mod's
+folder name, is no prefix. The next line is joined back only when it is the tail the crash report writes after
+what was cut: after `(`, the module and `)` with an optional address (`FATAL_MODULE_TAIL`); after `)`, the address
+alone (`FATAL_ADDRESS_TAIL`). `%#llx` writes zero as `0`, not `0x0` (`FATAL_HEX`), and a Windows module's name can
+hold spaces. Any other next line is left out, and only the cut stays. A line whose prefix comes at
+its very start has no head to keep, and stays as it is, so the crash is still counted. The session report
+(`launcher/telemetry.py` `synthesize_crash()`) and the window's message read the line through `last_fatal()`, so the
+server groups such a crash with its whole twins.
+
 ### `launcher/play.py`: Play preflight
 
 `prepare()` decides in the old window's order: whether the executable exists, whether this launcher already follows
