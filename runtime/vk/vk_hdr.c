@@ -198,7 +198,7 @@ static int spv_literal(uint32_t op, uint32_t j) {
     case SPV_OP_TYPE_INT: case SPV_OP_TYPE_FLOAT: return j >= 2;
     case SPV_OP_TYPE_VECTOR: case SPV_OP_TYPE_MATRIX: return j == 3;
     case SPV_OP_TYPE_POINTER: return j == 2;
-    case SPV_OP_SWITCH: case SPV_OP_LINE: case SPV_OP_NO_LINE: case 63 : return -1;
+    case SPV_OP_SWITCH: case SPV_OP_LINE: case SPV_OP_NO_LINE: case 63: return -1;
     default: return 0;
     }
 }
@@ -391,8 +391,8 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         if (op == SPV_OP_VARIABLE && len >= 4 && a[1] < bound) def[a[1]] = (uint32_t)i;
         else if (first_fn && len >= 3 && a[1] < bound && !def[a[1]] && op != SPV_OP_STORE && op != SPV_OP_LABEL &&
                  op != SPV_OP_SELECTION_MERGE && op != SPV_OP_LOOP_MERGE && op != SPV_OP_BRANCH_CONDITIONAL &&
-                 op != SPV_OP_SWITCH && op != 63  && op != 99  &&
-                 op != 228  && op != 254 )
+                 op != SPV_OP_SWITCH && op != 63 && op != 99 &&
+                 op != 228 && op != 254)
             def[a[1]] = (uint32_t)i;
         i += len;
     }
@@ -523,7 +523,7 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         } else if (is_const_op(op)) {
             map[a[1]] = id++;
             if (!put_mapped(&g, L + i, map, lbound)) goto lib_fail;
-        } else if (op == SPV_OP_VARIABLE && a[2] != 1  && a[2] != SPV_SC_OUTPUT) {
+        } else if (op == SPV_OP_VARIABLE && a[2] != 1 && a[2] != SPV_SC_OUTPUT) {
             goto lib_fail;
         }
         i += len;
@@ -553,8 +553,8 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         uint32_t op = L[i] & 0xffff, len = L[i] >> 16, r;
         switch (op) {
         case SPV_OP_STORE: case SPV_OP_SELECTION_MERGE: case SPV_OP_LOOP_MERGE: case SPV_OP_BRANCH_CONDITIONAL:
-        case 249 : case 253 : case 254 : case SPV_OP_FUNCTION_END:
-        case 252 : case 255 :
+        case 249: case 253: case 254: case SPV_OP_FUNCTION_END:
+        case 252: case 255:
             continue;
         case SPV_OP_LABEL: r = len >= 2 ? L[i + 1] : 0; break;
         default: r = len >= 3 ? L[i + 2] : 0; break;
