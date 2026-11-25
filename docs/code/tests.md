@@ -2841,6 +2841,26 @@ log thread is still gathering them: `exit` as a run ends (`plat_exit`, whose hoo
 then the end). The exit code is the one the process ended with, and each file has to hold every line it logged, the
 fatal line last.
 
+## `tests/lowlat_revision_check.py`
+
+Builds `tests/lowlat_revision_check.c`, which includes `runtime/pacing/vk_lowlat.c` whole over stubs, and runs it once
+for a driver of revision 1, 2 and 3 of `VK_NV_low_latency2`: what the path may call on each ("The extension's
+revisions" in [pacing.md](pacing.md)). It needs a C compiler, `vk_mem_alloc.h` and the Vulkan headers the runtime
+builds with: no GPU, no game files.
+
+The driver is `fake_dpa()` and the `drv_*()` functions. Its `vkGetLatencyTimingsNV` of revision 1,
+`drv_timings_rev1()`, has that revision's four parameters and only counts the call and keeps its fourth argument,
+which it does not follow; called with the three arguments of revision 2 it finds there whatever the register held, and
+the check prints it. The one of revision 2 and later fills 16 reports that average to known times. `InfoRev1` is the
+info structure as revision 1 had it; the static assertions hold `pTimings` at 0x10 in it and the count at 0x10 with
+`pTimings` at 0x18 in the header's.
+
+`main()` plays 4200 frames, so two statistics lines are due (frames 600 and 4200), and checks for every revision the
+revision in the first line, one sleep mode set, a sleep for every frame start but the first (no host present yet) and
+seven markers a frame: low latency itself runs the same on all three. Revision 1: no call of `vkGetLatencyTimingsNV`,
+the first line says the timings are left out, and one statistics line of the two says there is no report. Revision 2
+and 3: two calls and the report in both lines. `listed()` checks `vk_lowlat_revision()` on a made-up extension list.
+
 ## `tests/make_game_gate_test.py`
 
 `tools/make_game.py`'s compiles through the memory gate (`tools/memgate.py`), with a stand-in script as the compiler

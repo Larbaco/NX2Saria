@@ -750,6 +750,7 @@ static int create_device(void) {
     // a driver that lists one of the two is only remembered (lists_low_latency), so the menu can say that turning the
     // setting on takes a restart.
     g_vk.lists_low_latency = 0;
+    g_vk.low_latency2_rev = 0;
     if (!vk_dlssg_dpa() && n_ext + 2 <= sizeof ext / sizeof *ext) {
         int nv = has_ext(ep, ne, VK_NV_LOW_LATENCY_2_EXTENSION_NAME) && has_ext(ep, ne, VK_KHR_PRESENT_ID_EXTENSION_NAME);
         int amd = !nv && has_ext(ep, ne, VK_AMD_ANTI_LAG_EXTENSION_NAME);
@@ -757,6 +758,7 @@ static int create_device(void) {
             g_vk.lists_low_latency = nv || amd;
         } else if (nv) {
             g_vk.has_low_latency2 = 1;
+            g_vk.low_latency2_rev = vk_lowlat_revision(ep, ne);
             ext[n_ext++] = VK_KHR_PRESENT_ID_EXTENSION_NAME;
             ext[n_ext++] = VK_NV_LOW_LATENCY_2_EXTENSION_NAME;
             CHAIN(pid, VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR);
