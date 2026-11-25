@@ -4793,6 +4793,38 @@ give the same (`fg_only_frame()`, no jitter).
 
 ### `vk_ngxfg_evaluate()`
 
-- A frame without its inputs: the next generation has no valid previous frame (`FG.reset`).
-- "DLSSG.MvecScaleX" and "Y" are 1 over the size: the vectors are in render pixels.
-- The camera planes are the frame's own (`proj_planes()`), as `runtime/vk/vk_dlssg.c` gives them.
+`bb` is the frame's picture with the HUD, `hudless` the one without it (NULL: none), `out` the `count` images the
+generated frames go to, `real` the image the rendered frame's copy goes to. It returns the frames generated, 0 for none.
+Its NGX calls are made where the present is recorded (`runtime/gfx/gfx_present.c` `ng_record()`), not from DLAA's pass
+hook. In the order of the function:
+
+1. Nothing without `vk_ngxfg_max()` (NGX up with DLSS available, frame generation available, no failure so far);
+   `count` is cut to `FG.max`.
+2. A frame without its inputs (`vk_dlaa_fg_inputs()`, `vk_dlaa_fg_views()`, `vk_dlaa_fg_camera()`): nothing is
+   generated, and the next generation has no valid previous frame (`FG.reset`).
+3. The parameter object (`FG.p`) is allocated once and reused. A failed allocation sets `FG.failed`: frame generation
+   is off for the run.
+4. A feature made for another picture size or format is released at once, here, and a new one created
+   (`NGX_FEATURE_FRAME_GENERATION`, 11) with "CreationNodeMask" and "VisibilityNodeMask" 1, "Width" and "Height" the
+   picture's and "DLSSG.BackbufferFormat" its `VkFormat`. A refused creation sets `FG.failed`, off for the run; it is
+   not tried again. A new feature starts with a reset.
+5. The images: "DLSSG.Backbuffer", "DLSSG.Depth" (depth aspect), "DLSSG.MVecs" and "DLSSG.HUDLess" (NULL without
+   one) are read only; "DLSSG.OutputReal" and "DLSSG.OutputInterpolated" are writable. "DLSSG.UI", "DLSSG.UIAlpha",
+   "DLSSG.BidirectionalDistortionField", "DLSSG.OutputDisableInterpolation" and "DLSSG.ClipToLensClip" are NULL.
+6. The camera (`fg_camera()`): the four matrices as pointers to 16 floats, the position, up, right and forward vectors,
+   "DLSSG.CameraNear" and "DLSSG.CameraFar" (the frame's own planes, `proj_planes()`, as `runtime/vk/vk_dlssg.c` gives
+   them), "DLSSG.CameraFOV" (vertical, radians), "DLSSG.CameraAspectRatio", the pinhole offsets 0.
+7. "DLSSG.JitterOffsetX" and "Y" are the frame's jitter in render pixels. "DLSSG.MvecScaleX" and "Y" are 1 over the
+   motion image's size: the vectors are in render pixels.
+8. The flags: "DLSSG.ColorBuffersHDR" 0, always; "DLSSG.DepthInverted" from `proj_planes()`;
+   "DLSSG.CameraMotionIncluded" 1 (the vectors hold the camera's motion); "DLSSG.Reset" when the inputs ask for one
+   (`vk_dlaa_fg_inputs()`) or `FG.reset` is set (`vk_ngxfg_reset()`, a frame without inputs, a new feature);
+   "DLSSG.AutomodeOverrideReset", "DLSSG.NotRenderingGameFrames", "DLSSG.OrthoProjection", "DLSSG.MvecDilated" and
+   "DLSSG.MenuDetectionEnabled" 0.
+9. Each image's rectangle starts at 0, 0: the motion vectors' and the depth's are their own sizes, the HUD-less
+   picture's, the input's and both outputs' the picture's (`bb`), so a HUD-less picture is taken to have that size.
+10. "DLSSG.MultiFrameCount" is `count`, and the feature is evaluated once per generated frame with
+    "DLSSG.OutputInterpolated" that frame's image and "DLSSG.MultiFrameIndex" 1 to `count`. The first evaluation that
+    fails ends the loop (logged for the first 5): the frames made before it are returned, nothing is switched off, and
+    the next present tries again.
+11. `FG.reset` is cleared, also when no frame was made. One line at the first frame with generation and every 3600.
