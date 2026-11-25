@@ -14,15 +14,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from source_comments_check import C_LIKE, PYTHON, TREES, c_comments  # noqa: E402
 
 USAGE = '''Check that every file and function docs/code/ cites exists: the drift between the implementation notes and
-the code. The citation format is in docs/code/README.md ("Citing the code"). Until the last area is done the check
-only warns.
+the code. The citation format is in docs/code/README.md ("Citing the code"). A stale citation fails the check.
 
-  python tests/code_docs_check.py                each stale citation of docs/code/*.md; exit 0 (warning mode)
-  python tests/code_docs_check.py --strict       exit 1 on a stale citation
+  python tests/code_docs_check.py                each stale citation of docs/code/*.md; exit 1 when there is one
   python tests/code_docs_check.py --all-docs     also read docs/*.md
   python tests/code_docs_check.py --self-test    planted citations first, then the docs'''
 
-STRICT = False
 
 DOCS = 'docs/code'
 
@@ -352,7 +349,7 @@ def self_test():
 
 def main():
     ap = argparse.ArgumentParser(description=USAGE, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--strict', action='store_true', help='exit 1 on a stale citation')
+    ap.add_argument('--strict', action='store_true', help=argparse.SUPPRESS)
     ap.add_argument('--all-docs', action='store_true', help='also read docs/*.md')
     ap.add_argument('--self-test', action='store_true', help='check the reader on planted citations, then the docs')
     ap.add_argument('--root', default=str(ROOT), help=argparse.SUPPRESS)
@@ -363,14 +360,11 @@ def main():
         print(g)
     for p in problems:
         print(p)
-    strict = args.strict or STRICT
-    label = '' if strict else 'warning: '
-    print(f'code_docs_check: {label}{read} pages, {count} citations, {len(generated)} of generated files, '
-          f'{len(problems)} stale'
-          + ('' if strict else ' (warning mode until the last area is done; --strict fails on them)'))
+    print(f'code_docs_check: {read} pages, {count} citations, {len(generated)} of generated files, '
+          f'{len(problems)} stale')
     if failed_self:
         return 1
-    return 1 if strict and problems else 0
+    return 1 if problems else 0
 
 
 if __name__ == '__main__':

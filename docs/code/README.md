@@ -16,10 +16,9 @@ requests behind it.
 
 ## Areas
 
-Each area's comments move here in one pull request: its notes onto the page in one commit, the comments out of the code
-in the next. Until an area's page exists its notes are still comments in its files. The order is the one in which the
-areas are cleaned; `tools/xlate/`, the vendored code and the third-party code are never part of it (see
-[The checks](#the-checks)).
+Each area has its page. The comments the areas held moved to these pages, one area per pull request, in the order
+below, and the code has none now; `tools/xlate/`, the vendored code and the third-party code were never part of it
+(see [The checks](#the-checks)). New code puts its notes on its area's page.
 
 | Order | Area | Page | Status |
 |---|---|---|---|
@@ -104,15 +103,16 @@ path with `*`, `<...>` or `{...}` in it (a pattern), and anything inside a fence
 
 ## The checks
 
-Both run in `tests/run.py`, with their planted cases first (`--self-test`), and only warn until the last area is done;
-then `STRICT` in each becomes `True`. The two files hold no comments, so their notes are here.
+Both run in `tests/run.py`, with their planted cases first (`--self-test`), and both fail the run: a comment outside
+the exceptions, or a citation of something that does not exist. The two files hold no comments, so their notes are
+here.
 
 ### `tests/source_comments_check.py`
 
 Counts the comment lines left in the source, per area (`runtime/<folder>`, the top level of `runtime/`, `recomp`,
-`tools`, `launcher`, `tests`), and prints the table. `--strict <area or path>...` exits 1 when a comment
-is left there: the pull request that cleans an area runs it on that area. `--list` prints each line counted, `--kept`
-each line kept and why, `--exceptions` the list below.
+`tools`, `launcher`, `tests`), prints the table, and exits 1 when a comment is left. With areas or paths as arguments
+it looks only there. `--list` prints each line counted, `--kept` each line kept and why, `--exceptions` the list
+below.
 
 What it reads: the files git tracks (and new files not ignored) under the source folders, in C, C++, C#, GLSL
 (`.comp`, `.frag`, `.vert`, `.glsl`, `.mesh`, `.task`), resource scripts (`.rc`), SPIR-V assembly (`;` comments) and
@@ -146,7 +146,6 @@ Kept in the files it reads:
 | the `GENERATED_MARKER` | the content guard looks for it (`tools/check_content.py`) |
 | shebang, Python coding line | the system and Python read them |
 | tool and compiler directives | `# noqa`, `# type: ignore`, `# pragma`, `# fmt:`, `# pylint:`; `# needs:` and `# args:` in `tests/` (`tests/run.py` reads them); `// clang-format off`/`on`, `// NOLINT`, `// IWYU pragma:`; `// build_shaders: keep functions` (`tools/build_shaders.py`); a fall-through marker, which GCC's `-Wimplicit-fallthrough` reads (clang does not) |
-| the part of a module docstring the program prints | `argparse.ArgumentParser(description=__doc__)` and `print(__doc__)` keep the whole docstring, `__doc__.splitlines()[0]` and `.split('\n')[0]` its first line, `.split('\n\n')[0]` its first paragraph; the rest counts. The area's pull request turns the kept part into a plain string |
 
 Every other Python docstring counts as a comment: a function's, a class's, a string on a line of its own. Preprocessor
 directives (`#pragma`, `#version`, `#extension`) are code. `//`, `/*` and `#` inside a string or character literal,
@@ -168,11 +167,8 @@ tree at the time it was written it found the same comment lines as Pygments' C a
 #### `python_parts()`
 
 Comments come from `tokenize`, so a `#` inside any string, f-strings included, is not one. Docstrings come from `ast`:
-every expression statement that is a string constant, each line it spans.
-
-#### `runtime_doc_use()`
-
-How the module uses `__doc__`, from the `ast`: as a whole, or only its first line or paragraph.
+every expression statement that is a string constant, each line it spans. A docstring the program prints (`description=__doc__`,
+`print(__doc__)`) counts like any other: the text a program shows is a string constant (`DESCRIPTION`, `USAGE`).
 
 #### `license_lines()`
 
@@ -192,14 +188,14 @@ Sorts each comment line of one file into counted or kept, with the reason.
 #### `self_test()`
 
 Planted files in a scratch folder: each kind of line kept, a plain comment and a trailing block counted, comment-like
-text in strings and URLs left alone, a run-time `__doc__` kept and the rest of it counted, each folder not read, a file
+text in strings and URLs left alone, a docstring the program prints counted like any other, each folder not read, a file
 kept with its comments counted on the line of its own and not in its area while a plain comment in the file beside it
-still fails, and `--strict` failing on the planted area and passing on one with only directives.
+still fails, and the check failing on the planted area and passing on one with only directives.
 
 ### `tests/code_docs_check.py`
 
 Reads every `docs/code/*.md` (with `--all-docs`, `docs/*.md` too) and lists each cited path that does not exist and
-each cited function its file does not define. `--strict` exits 1 when there is one. It needs git, for the generated files.
+each cited function its file does not define. It exits 1 when there is one. It needs git, for the generated files.
 
 #### `citations()`
 

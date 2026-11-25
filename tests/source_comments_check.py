@@ -18,18 +18,17 @@ sys.path.insert(0, str(ROOT / 'tools'))
 from check_content import GENERATED_MARKER  # noqa: E402
 
 USAGE = '''Count the comments left in the source code, per area, against the rule in AGENTS.md ("No comments in the
-code"): source code has no comments, the explanation lives in docs/code/. The comments are removed area by area; until
-the last area is done the check only warns. docs/code/README.md ("The checks") says what is read and what is kept.
+code"): source code has no comments, the explanation lives in docs/code/. A comment outside the exceptions fails the
+check. docs/code/README.md ("The checks") says what is read and what is kept.
 
-  python tests/source_comments_check.py                 the table per area; exit 0 (warning mode)
-  python tests/source_comments_check.py --strict [P...] exit 1 when a comment outside the exceptions is left, in the
-                                                        areas or paths P (all of them when none is given)
+  python tests/source_comments_check.py [P...]          the table per area; exit 1 when a comment outside the
+                                                        exceptions is left, in the areas or paths P (all of them
+                                                        when none is given)
   python tests/source_comments_check.py --list [P...]   each comment line counted, as path:line: text
   python tests/source_comments_check.py --kept [P...]   each line kept, with the exception that keeps it
   python tests/source_comments_check.py --exceptions    the exceptions and the reason for each
   python tests/source_comments_check.py --self-test     planted cases first, then the table'''
 
-STRICT = False
 
 TREES = ('runtime', 'recomp', 'tools', 'launcher', 'tests')
 
@@ -77,8 +76,6 @@ KEPT_REASONS = {
                  'tests/run.py markers (# needs:, # args:), // clang-format off/on, // NOLINT, // IWYU pragma, '
                  '// build_shaders: keep functions (tools/build_shaders.py), a fall-through marker (GCC '
                  '-Wimplicit-fallthrough reads it; clang does not)',
-    'runtime doc': 'the part of a module docstring the program prints (argparse description=__doc__, '
-                   'print(__doc__)); it becomes an explicit string when its area is cleaned',
 }
 
 NOT_COMMENTS = ('#pragma, #extension, #version and the other preprocessor directives are code, not comments, and are '
@@ -269,7 +266,7 @@ def comment_lines(text, spans):
 
 
 def python_parts(text):
-    comments, docs, doc_kept = {}, {}, set()
+    comments, docs = {}, {}
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
     except (tokenize.TokenError, SyntaxError, IndentationError):
@@ -282,60 +279,13 @@ def python_parts(text):
     try:
         tree = ast.parse(text)
     except SyntaxError:
-        return comments, docs, doc_kept, False
+        return comments, docs, False
     src_lines = text.split('\n')
     for node in ast.walk(tree):
         if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
             for ln in range(node.lineno, (node.end_lineno or node.lineno) + 1):
                 docs[ln] = src_lines[ln - 1].strip().strip('"\'').strip() if ln <= len(src_lines) else ''
-    module_doc = tree.body[0] if tree.body and isinstance(tree.body[0], ast.Expr) and \
-        isinstance(tree.body[0].value, ast.Constant) and isinstance(tree.body[0].value.value, str) else None
-    if module_doc is not None:
-        used = runtime_doc_use(tree)
-        if used:
-            value = module_doc.value.value
-            start, end = module_doc.lineno, module_doc.end_lineno or module_doc.lineno
-            if used == 'whole':
-                doc_kept.update(range(start, end + 1))
-            else:
-                value_lines = value.split('\n')
-                if used == 'first line':
-                    take = 1
-                else:
-                    take = next((k for k, v in enumerate(value_lines) if not v.strip() and k), len(value_lines))
-                last = min(end, start + take - 1)
-                if last == end - 1 and src_lines[end - 1].strip().strip('"\'') == '':
-                    last = end
-                doc_kept.update(range(start, last + 1))
-    return comments, docs, doc_kept, True
-
-
-def runtime_doc_use(tree):
-    parents = {}
-    for node in ast.walk(tree):
-        for child in ast.iter_child_nodes(node):
-            parents[child] = node
-    uses = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name) and node.id == '__doc__':
-            up = parents.get(node)
-            kind = 'whole'
-            if isinstance(up, ast.Attribute) and up.attr in ('splitlines', 'split', 'strip'):
-                call = parents.get(up)
-                sub = parents.get(call)
-                arg = call.args[0].value if isinstance(call, ast.Call) and call.args and \
-                    isinstance(call.args[0], ast.Constant) else None
-                first = isinstance(sub, ast.Subscript) and isinstance(sub.slice, ast.Constant) and sub.slice.value == 0
-                if first and (up.attr == 'splitlines' or arg == '\n'):
-                    kind = 'first line'
-                elif first and arg == '\n\n':
-                    kind = 'first paragraph'
-            uses.append(kind)
-    if not uses:
-        return None
-    if 'whole' in uses:
-        return 'whole'
-    return 'first paragraph' if 'first paragraph' in uses else 'first line'
+    return comments, docs, True
 
 
 def license_lines(lines):
@@ -403,7 +353,7 @@ def classify(rel, text, root=None):
     if GENERATED_MARKER in text:
         return counted, {0: ('generated', 'the whole file carries GENERATED_MARKER')}, True
     if suffix in PYTHON:
-        comments, docs, doc_kept, parsed = python_parts(text)
+        comments, docs, parsed = python_parts(text)
         lic = license_lines(comments) | license_lines(docs)
         for ln, body in comments.items():
             content = body.lstrip('#').strip()
@@ -420,9 +370,7 @@ def classify(rel, text, root=None):
             else:
                 counted[ln] = content
         for ln, body in docs.items():
-            if ln in doc_kept:
-                kept.setdefault(ln, ('runtime doc', body))
-            elif ln in lic:
+            if ln in lic:
                 kept.setdefault(ln, ('license', body))
             elif ln not in kept:
                 counted[ln] = body
@@ -604,7 +552,7 @@ def self_test():
         'tools/plant.py': (
             '#!/usr/bin/env python3\n'
             '# -*- coding: utf-8 -*-\n'
-            '"""The first line, used by --help.\n'
+            '"""The first line, printed by --help and counted all the same.\n'
             '\n'
             'The rest of the docstring, counted.\n'
             '"""\n'
@@ -642,8 +590,8 @@ def self_test():
         'runtime/diag/plant.c': {1, 5, 9, 10},
         'runtime/shaders/plant.frag': {10},
         'runtime/plant.spvasm': {1},
-        'tools/plant.py': {4, 5, 6, 8, 14},
-        'tools/whole.py': set(),
+        'tools/plant.py': {3, 4, 5, 6, 8, 14},
+        'tools/whole.py': {1, 2, 3},
         'tests/plant_check.py': set(),
         'runtime/gen_plant.c': set(),
         'runtime/simd_fp.h': set(),
@@ -658,10 +606,7 @@ def self_test():
         ('runtime/shaders/plant.frag', 2): 'directive', ('runtime/shaders/plant.frag', 3): 'license',
         ('runtime/shaders/plant.frag', 4): 'license', ('runtime/shaders/plant.frag', 9): 'license',
         ('runtime/shaders/plant.frag', 6): 'license', ('runtime/shaders/plant.frag', 8): 'license',
-        ('tools/plant.py', 1): 'shebang', ('tools/plant.py', 2): 'encoding', ('tools/plant.py', 3): 'runtime doc',
-        ('tools/plant.py', 7): 'directive',
-        ('tools/whole.py', 1): 'runtime doc', ('tools/whole.py', 2): 'runtime doc',
-        ('tools/whole.py', 3): 'runtime doc',
+        ('tools/plant.py', 1): 'shebang', ('tools/plant.py', 2): 'encoding', ('tools/plant.py', 7): 'directive',
         ('tests/plant_check.py', 1): 'directive', ('tests/plant_check.py', 2): 'directive',
     }
     bad = 0
@@ -695,24 +640,26 @@ def self_test():
         print(f'self-test: runtime/simd_fp.h kept with its 2 comment lines, outside its area\'s count: '
               f'{"ok" if ok else f"WRONG ({got})"}')
         bad += not ok
-        strict = run_strict(report, ['runtime/simd_fp.h'])
-        print(f'self-test: --strict runtime/simd_fp.h passes: {"ok" if strict == 0 else "WRONG"}')
-        bad += strict != 0
-        strict = run_strict(report, ['runtime/plant_top.c'])
-        print(f'self-test: --strict runtime/plant_top.c fails on the plain comment beside it: '
-              f'{"ok" if strict == 1 else "WRONG"}')
-        bad += strict != 1
-        strict = run_strict(report, ['runtime/audio'])
-        print(f'self-test: --strict runtime/audio fails on the planted comment: {"ok" if strict == 1 else "WRONG"}')
-        bad += strict != 1
-        strict = run_strict(report, ['tests'])
-        print(f'self-test: --strict tests passes with only directives there: {"ok" if strict == 0 else "WRONG"}')
-        bad += strict != 0
+        code = exit_code(report, ['runtime/simd_fp.h'])
+        print(f'self-test: runtime/simd_fp.h alone passes: {"ok" if code == 0 else "WRONG"}')
+        bad += code != 0
+        code = exit_code(report, ['runtime/plant_top.c'])
+        print(f'self-test: runtime/plant_top.c fails on the plain comment beside it: {"ok" if code == 1 else "WRONG"}')
+        bad += code != 1
+        code = exit_code(report, ['runtime/audio'])
+        print(f'self-test: runtime/audio fails on the planted comment: {"ok" if code == 1 else "WRONG"}')
+        bad += code != 1
+        code = exit_code(report, ['tools/whole.py'])
+        print(f'self-test: tools/whole.py fails on the docstring it prints: {"ok" if code == 1 else "WRONG"}')
+        bad += code != 1
+        code = exit_code(report, ['tests'])
+        print(f'self-test: tests passes with only directives there: {"ok" if code == 0 else "WRONG"}')
+        bad += code != 0
     print(f'source_comments_check self-test: {"FAILED" if bad else "ok"}')
     return bad
 
 
-def run_strict(report, filters):
+def exit_code(report, filters):
     left = sum(len(c) for rel, c in report['files'].items() if selected(rel, filters))
     return 1 if left else 0
 
@@ -720,7 +667,7 @@ def run_strict(report, filters):
 def main():
     ap = argparse.ArgumentParser(description=USAGE, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('paths', nargs='*', help='areas (runtime/vk, tools) or paths to look at')
-    ap.add_argument('--strict', action='store_true', help='exit 1 when a comment outside the exceptions is left')
+    ap.add_argument('--strict', action='store_true', help=argparse.SUPPRESS)
     ap.add_argument('--list', action='store_true', help='print each comment line counted')
     ap.add_argument('--kept', action='store_true', help='print each line kept, with its exception')
     ap.add_argument('--exceptions', action='store_true', help='print the exceptions and their reasons')
@@ -742,18 +689,13 @@ def main():
             for rel, ln, text in items:
                 if selected(rel, args.paths):
                     print(f'{reason}: {rel}:{ln}: {text[:150]}')
-    total = print_table(report)
-    strict = args.strict or STRICT
+    print_table(report)
     left = sum(len(c) for rel, c in report['files'].items() if selected(rel, args.paths))
     scope = ', '.join(args.paths) if args.paths else 'the source trees'
-    if strict:
-        print(f'source_comments_check: {left:,} comment lines left in {scope}: {"FAILED" if left else "clean"}')
-    else:
-        print(f'source_comments_check: warning: {total:,} comment lines left (warning mode until the last area is '
-              f'done; --strict fails on them)')
+    print(f'source_comments_check: {left:,} comment lines left in {scope}: {"FAILED" if left else "clean"}')
     if failed_self:
         return 1
-    return 1 if strict and left else 0
+    return 1 if left else 0
 
 
 if __name__ == '__main__':
