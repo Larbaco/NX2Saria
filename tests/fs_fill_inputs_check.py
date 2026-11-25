@@ -122,7 +122,7 @@ def main():
     if win and MSYS_BIN.exists():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     src = (ROOT / 'runtime' / 'vk' / 'vk_pipeline.c').read_text(encoding='utf-8')
-    body = src[src.index('// The locations a mesh module writes'):src.index('// Two fixes for what the translator declares')]
+    body = src[src.index('static uint32_t spirv_mesh_outputs('):src.index('static uint32_t *spirv_fixup(')]
     fails = 0
     with tempfile.TemporaryDirectory(prefix='nx2navi-fs-fill-') as tmp:
         t = Path(tmp)

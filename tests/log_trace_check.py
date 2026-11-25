@@ -284,7 +284,7 @@ def main():
     out = {}
     progs = {
         'stamp': STAMP % function(pipe, 'static void cache_stamp_check(void) {'),
-        'gate': GATE % between(pipe, '// ---- the play gate', '// --probe-buildgate'),
+        'gate': GATE % between(pipe, 'static int bf_waiting(void);', 'int vk_pipeline_probe_buildgate(void) {'),
         'swap': SWAP % function(present, 'static int swapchain_unusable('),
         'samp': SAMP % function(tex, 'static VkSampler make_sampler(VkCtx *c, const samp_par *d) {'),
     }
