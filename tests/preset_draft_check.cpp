@@ -17,6 +17,7 @@ struct PerfSizes;
 
 extern "C" {
 void menu_sound_play(MenuSound id) { (void)id; }
+void session_summary_header(const char *at) { (void)at; }
 int vk_dlaa_needs_restart(void) { return 0; }
 int vk_hdr_restart_for(const char *value) { (void)value; return 0; }
 int vk_dlssg_wanted(void) { return 0; }

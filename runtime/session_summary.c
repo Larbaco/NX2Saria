@@ -17,10 +17,14 @@ __attribute__((weak)) int rt_patches_on(const char **names, int cap) { (void)nam
 __attribute__((weak)) int mods_in_use(int *count, int *code) { (void)count, (void)code; return 0; }
 
 #define FILE_NAME "session-summary.json"
+#define HEADER_NAME "session-start.json"
+#define HEADER_LINES 8
 
 static volatile int32_t armed, written;
 static uint64_t start_ns;
-static char path[PLAT_PATH_MAX * 3 + 32];
+static char path[PLAT_PATH_MAX * 3 + 32], header_path[PLAT_PATH_MAX * 3 + 32];
+static PlatMutex header_lock = PLAT_MUTEX_INIT;
+static int header_lines;
 static char version[64], game_version[16], os_name[256], cpu_name[128];
 static int64_t cpu_threads = -1, ram_mb = -1;
 static int wine = -1;
@@ -45,7 +49,12 @@ void session_summary_start(void) {
         if (s) snprintf(s + 1, sizeof path - (size_t)(s + 1 - path), "%s", FILE_NAME);
         else path[0] = 0;
     }
-    if (path[0]) plat_file_delete(path);
+    if (path[0]) {
+        size_t dir = strlen(path) - (sizeof FILE_NAME - 1);
+        snprintf(header_path, sizeof header_path, "%.*s%s", (int)dir, path, HEADER_NAME);
+        plat_file_delete(path);
+        plat_file_delete(header_path);
+    }
     snprintf(version, sizeof version, "%.*s", (int)strcspn(rt_port_version, "+"), rt_port_version);
     snprintf(game_version, sizeof game_version, "%d.%d.%d", rt_game_version / 100, rt_game_version / 10 % 10,
              rt_game_version % 10);
@@ -69,6 +78,7 @@ void session_summary_start(void) {
                "only while session reports are on)", FILE_NAME);
     else
         rt_log("telemetry: no session summary this run: no folder for it");
+    session_summary_header("start");
 }
 
 static const char *setting(const char *key, char *out, size_t cap) {
@@ -81,13 +91,15 @@ static const char *setting(const char *key, char *out, size_t cap) {
 
 static const char *priv(const char *s, char *out, size_t cap) { return s && *s ? log_privacy_str_always(s, out, cap) : NULL; }
 
-static void write_summary(const char *end, const char *fatal_line) {
-    if (!__atomic_load_n(&armed, __ATOMIC_ACQUIRE) || plat_xchg32(&written, 1)) return;
-    static char json[8192], fatal[1024], os_p[256], cpu_p[256], gpu_p[256], drv_p[288];
-    static char out_v[40], scale_v[40], aspect_v[40], picture_v[40], up_v[40], taa_v[40], dlss_v[40], fg_v[40],
-        fps_v[40], present_v[40];
-    static SsGpu gpu;
-    static const char *patch_names[96];
+typedef struct {
+    char json[8192], fatal[1024], os_p[256], cpu_p[256], gpu_p[256], drv_p[288];
+    char out_v[40], scale_v[40], aspect_v[40], picture_v[40], up_v[40], taa_v[40], dlss_v[40], fg_v[40], fps_v[40],
+        present_v[40];
+    SsGpu gpu;
+    const char *patch_names[96];
+} Gathered;
+
+static int gather(SessionSummary *ps, Gathered *g, const char *end, int whole) {
     SessionSummary s = {
         .version = version, .game_version = game_version,
 #ifdef _WIN32
@@ -100,65 +112,101 @@ static void write_summary(const char *end, const char *fatal_line) {
         .shader_prewarm_ms = -1, .shaders_translated = -1, .pipelines_built = -1, .pipeline_build_ms = -1,
         .n_patches = -1, .mods_count = -1, .mods_code = -1,
     };
-    s.patches = patch_names;
-    s.n_patches = rt_patches_on(patch_names, (int)(sizeof patch_names / sizeof *patch_names));
+    s.patches = g->patch_names;
+    s.n_patches = rt_patches_on(g->patch_names, (int)(sizeof g->patch_names / sizeof *g->patch_names));
     int mods_n, mods_c;
     if (mods_in_use(&mods_n, &mods_c)) s.mods_count = mods_n, s.mods_code = mods_c;
-    s.os_name = priv(os_name, os_p, sizeof os_p);
-    s.cpu_name = priv(cpu_name, cpu_p, sizeof cpu_p);
-    if (vk_caps_gpu(&gpu)) {
-        s.gpu_name = priv(gpu.name, gpu_p, sizeof gpu_p);
-        s.gpu_driver = priv(gpu.driver, drv_p, sizeof drv_p);
-        s.gpu_vendor = gpu.vendor, s.gpu_device = gpu.device;
-        s.vram_mb = gpu.vram_mb ? (int64_t)gpu.vram_mb : -1;
+    s.os_name = priv(os_name, g->os_p, sizeof g->os_p);
+    s.cpu_name = priv(cpu_name, g->cpu_p, sizeof g->cpu_p);
+    int gpu_known = vk_caps_gpu(&g->gpu);
+    if (gpu_known) {
+        s.gpu_name = priv(g->gpu.name, g->gpu_p, sizeof g->gpu_p);
+        s.gpu_driver = priv(g->gpu.driver, g->drv_p, sizeof g->drv_p);
+        s.gpu_vendor = g->gpu.vendor, s.gpu_device = g->gpu.device;
+        s.vram_mb = g->gpu.vram_mb ? (int64_t)g->gpu.vram_mb : -1;
     }
-    s.output = setting("OUTPUT_RES", out_v, sizeof out_v);
-    s.render_scale = setting("RENDER_SCALE", scale_v, sizeof scale_v);
+    s.output = setting("OUTPUT_RES", g->out_v, sizeof g->out_v);
+    s.render_scale = setting("RENDER_SCALE", g->scale_v, sizeof g->scale_v);
     s.fullscreen = cfg_meta("FULLSCREEN") ? cfg_bool("NX2SARIA_FULLSCREEN") : -1;
-    s.game_aspect = setting("GAME_ASPECT", aspect_v, sizeof aspect_v);
+    s.game_aspect = setting("GAME_ASPECT", g->aspect_v, sizeof g->aspect_v);
     unsigned pw, ph;
     if (wide_picture_known(&pw, &ph)) {
-        snprintf(picture_v, sizeof picture_v, "%ux%u", pw, ph);
-        s.picture = picture_v;
+        snprintf(g->picture_v, sizeof g->picture_v, "%ux%u", pw, ph);
+        s.picture = g->picture_v;
     }
     int tier = cfg_preset_in_use();
     if (tier >= 0) s.preset = cfg_preset_custom() ? "custom" : cfg_preset_name(tier);
-    s.upscaler = setting("UPSCALER", up_v, sizeof up_v);
-    s.taa = setting("TAA", taa_v, sizeof taa_v);
-    s.dlss = setting("DLSS", dlss_v, sizeof dlss_v);
-    s.framegen = setting("FRAMEGEN", fg_v, sizeof fg_v);
-    s.vk_present = setting("VK_PRESENT", present_v, sizeof present_v);
-    const char *fps = setting("FPS_LIMIT", fps_v, sizeof fps_v);
+    s.upscaler = setting("UPSCALER", g->up_v, sizeof g->up_v);
+    s.taa = setting("TAA", g->taa_v, sizeof g->taa_v);
+    s.dlss = setting("DLSS", g->dlss_v, sizeof g->dlss_v);
+    s.framegen = setting("FRAMEGEN", g->fg_v, sizeof g->fg_v);
+    s.vk_present = setting("VK_PRESENT", g->present_v, sizeof g->present_v);
+    const char *fps = setting("FPS_LIMIT", g->fps_v, sizeof g->fps_v);
     if (fps && fps[0] >= '0' && fps[0] <= '9') {
         int64_t v = 0;
         for (const char *p = fps; *p >= '0' && *p <= '9' && v < 100000; p++) v = v * 10 + (*p - '0');
         s.fps_limit = v;
     }
-    uint64_t now = plat_now_ns();
-    s.duration_s = now > start_ns ? (int64_t)((now - start_ns + 500000000ull) / 1000000000ull) : 0;
-    PerfSession ps;
-    if (perf_session_stats(&ps)) {
-        s.frames = (int64_t)ps.frames;
-        s.has_frametime = 1;
-        s.fps_mean = ps.fps_mean, s.fps_low_1pct = ps.fps_low_1pct, s.worst_ms = ps.worst_ms;
-        s.over_25ms = (int64_t)ps.over25, s.over_100ms = (int64_t)ps.over100;
+    if (!whole) {
+        s.duration_s = -1, s.frames = -1;
+    } else {
+        uint64_t now = plat_now_ns();
+        s.duration_s = now > start_ns ? (int64_t)((now - start_ns + 500000000ull) / 1000000000ull) : 0;
+        PerfSession pf;
+        if (perf_session_stats(&pf)) {
+            s.frames = (int64_t)pf.frames;
+            s.has_frametime = 1;
+            s.fps_mean = pf.fps_mean, s.fps_low_1pct = pf.fps_low_1pct, s.worst_ms = pf.worst_ms;
+            s.over_25ms = (int64_t)pf.over25, s.over_100ms = (int64_t)pf.over100;
+        }
     }
     gfx_shader_prewarm_stats(&s.shader_prewarm_ms, &s.shaders_translated);
     vk_pipeline_boot_stats(&s.pipelines_built, &s.pipeline_build_ms);
+    *ps = s;
+    return gpu_known;
+}
+
+void session_summary_header(const char *at) {
+    if (!__atomic_load_n(&armed, __ATOMIC_ACQUIRE) || __atomic_load_n(&written, __ATOMIC_ACQUIRE) || !header_path[0])
+        return;
+    static Gathered g;
+    SessionSummary s;
+    plat_mutex_lock(&header_lock);
+    int gpu = gather(&s, &g, "running", 0);
+    int startup = s.pipeline_build_ms >= 0 || s.shader_prewarm_ms >= 0;
+    int n = ss_format(&s, g.json, sizeof g.json);
+    int ok = n >= 0 && plat_file_write_atomic(header_path, g.json, (size_t)n);
+    int line = header_lines++;
+    plat_mutex_unlock(&header_lock);
+    if (line < HEADER_LINES && ok)
+        rt_log("telemetry: session header written to logs/%s at %s (%d bytes; gpu %s; startup %s)", HEADER_NAME, at, n,
+               gpu ? "known" : "not yet known", startup ? "known" : "not yet known");
+    else if (line < HEADER_LINES)
+        rt_log("telemetry: session header not written at %s: %s", at,
+               n < 0 ? "it does not fit its buffer" : "the file could not be written");
+    if (line == HEADER_LINES - 1)
+        rt_log("telemetry: session header: %d writes logged; later ones are not", HEADER_LINES);
+}
+
+static void write_summary(const char *end, const char *fatal_line) {
+    if (!__atomic_load_n(&armed, __ATOMIC_ACQUIRE) || plat_xchg32(&written, 1)) return;
+    static Gathered g;
+    SessionSummary s;
+    gather(&s, &g, end, 1);
     if (fatal_line) {
-        const char *f = priv(fatal_line, fatal, sizeof fatal);
+        const char *f = priv(fatal_line, g.fatal, sizeof g.fatal);
         s.fatal = f ? f : "";
     }
     if (!path[0]) {
         rt_log("telemetry: session summary not written: no folder for it");
         return;
     }
-    int n = ss_format(&s, json, sizeof json);
+    int n = ss_format(&s, g.json, sizeof g.json);
     if (n < 0) {
         rt_log("telemetry: session summary not written: it does not fit its buffer");
         return;
     }
-    if (!plat_file_write_atomic(path, json, (size_t)n)) {
+    if (!plat_file_write_atomic(path, g.json, (size_t)n)) {
         rt_log("telemetry: session summary not written: the file could not be written");
         return;
     }

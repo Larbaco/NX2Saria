@@ -5323,6 +5323,7 @@ static void bf_wait(void);
 void vk_pipeline_prewarm(void) {
     prewarm_run();
     __atomic_store_n(&pw_phase, 5, __ATOMIC_RELEASE);
+    session_summary_header("the boot prewarm");
 }
 
 typedef struct {
