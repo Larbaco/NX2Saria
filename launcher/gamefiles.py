@@ -1,21 +1,3 @@
-"""The player's game files, as far as the launcher reads them itself: finding a .nup dump, the game's Cetra
-Display font for the window (runtime/ui/menu_assets.c reads the same font for the in-game menu's titles) and the game's
-interface sounds for the window's sound effects (runtime/ui/menu_sound.c plays the same files in the in-game menu).
-
-They come from the built game's romfs/ (romfs.bin and index.json, tools/make_game.py) or, before the first
-build, straight from the .nup. They are decoded once into data/cache/fonts and data/cache/sounds, which stay on the
-player's PC like the rest of what is built from their game. Nothing of the game ships with the launcher.
-
-- .zs files are zstd frames, most with one of the dictionaries of Pack/ZsDic.pack.zs (a SARC, compressed without a
-  dictionary; a frame names its dictionary by id).
-- A .bfotf font is an OpenType file behind an 8-byte header, every big-endian 32-bit word XORed with one key: the
-  first word is 0x7f9a0218 under it, the second the payload size.
-- A .bwav sound: "BWAV", a byte order mark, a version, a CRC32, a prefetch flag and the channel count (u16 at 0x0e),
-  then 0x4c bytes per channel from 0x10: the codec (u16: 0 PCM16, 1 DSP-ADPCM), the pan (u16: 0 left, 1 right,
-  2 middle), the sample rate and the sample count (u32 each), 16 DSP coefficients (s16 from +0x10) and the offset of
-  the samples in the file (u32 at +0x30). DSP-ADPCM: 8-byte frames of a header byte (coefficient pair, scale
-  exponent) and 14 four-bit samples.
-"""
 import json
 import os
 import struct
@@ -23,10 +5,10 @@ import sys
 from pathlib import Path
 
 TITLE_ID = 0x0400486024DEC000
-FONTS = {   # role -> RomFS path; the window sets all its text in Cetra Display
+FONTS = {
     'title': 'Font2/Scalable/CetraDisplayPro-Medium.Nin_Ounce_NVN2.bfotf.zs',
 }
-SOUNDS = {   # the window's sound effect (launcher/ui/sound.py) -> the game's interface sound
+SOUNDS = {
     'select': 'Sound/Resource/Stream/SE_Sys_Do00.bwav',
     'back': 'Sound/Resource/Stream/SE_Sys_Cancel00.bwav',
 }
@@ -42,11 +24,7 @@ def _nup_module(layout):
     return nup
 
 
-# ---------------------------------------------------------------- finding a dump
-
 def candidate_dirs(extra=()):
-    """The folders the dump is looked for in: extra first, then Downloads, Desktop and Documents (the desktop's own,
-    translated or moved, and the English names), then the home folder."""
     from . import winsys
     home = Path.home()
     dirs = [Path(d) for d in extra if d]
@@ -66,7 +44,6 @@ def candidate_dirs(extra=()):
 
 
 def is_game_nup(layout, path):
-    """True when the file is a .nup holding Ocarina of Time (title 0400486024DEC000 or its update)."""
     try:
         n = _nup_module(layout).Nup(path)
     except Exception:
@@ -74,24 +51,16 @@ def is_game_nup(layout, path):
     return any(p['title_id'] in (TITLE_ID, TITLE_ID | 0x800) for p in n.packages)
 
 
-# The other drives' search (find_dumps drives): two folder levels below each drive's root (D:\Games\NX2Saria,
-# /mnt/data/Games/Switch), at most FOLDERS_PER_LEVEL folders of each, for at most DRIVES_SECONDS in all. On a 1 TB
-# NTFS partition two levels were 502 folders, listed in 0.3 s; three levels were 3373 folders and 1.2 s.
 DRIVES_DEPTH = 2
 DRIVES_SECONDS = 5.0
 FOLDERS_PER_LEVEL = 200
 
 
 def find_dumps(layout, extra=(), depth=1, drives=(), report=None):
-    """.nup files with the game in the usual places (the setup's folder first), then in the folders drives names (the
-    mounted disks, launcher/platform/linux.py mounted_drives) DRIVES_DEPTH levels deep, newest first. report, a dict,
-    gets 'folders' (how many were looked in) and 'stopped' (True when the drives' search ran out of time)."""
     import time
     found, folders, stopped = [], 0, False
 
     def look(pd, deadline=None):
-        """The game's .nup files in pd into found; its first FOLDERS_PER_LEVEL folders, from the same listing. A
-        folder with tens of thousands of entries is read one entry at a time, so the deadline holds inside it."""
         nonlocal folders, stopped
         folders += 1
         subs = []
@@ -142,11 +111,7 @@ def is_game_folder(path):
     return (p / 'exefs' / 'main').is_file() and (p / 'romfs').is_dir()
 
 
-# ---------------------------------------------------------------- reading RomFS files
-
 class RomfsImage:
-    """The built game's romfs/romfs.bin through its index.json."""
-
     def __init__(self, folder):
         folder = Path(folder)
         index = json.loads((folder / 'index.json').read_text(encoding='utf-8'))
@@ -163,8 +128,6 @@ class RomfsImage:
 
 
 class NupRomfs:
-    """The RomFS of the game's update (or base) package inside a .nup."""
-
     def __init__(self, layout, path):
         nup = _nup_module(layout)
         self.n = nup.Nup(path)
@@ -183,7 +146,6 @@ class NupRomfs:
 
 
 def open_romfs(layout, game_dir='', dump=''):
-    """A RomFS reader for the built game, else the dump, else None."""
     if game_dir and (Path(game_dir) / 'romfs' / 'index.json').is_file():
         try:
             return RomfsImage(Path(game_dir) / 'romfs')
@@ -208,11 +170,9 @@ class FolderRomfs:
         return p.read_bytes() if p.is_file() else None
 
 
-# ---------------------------------------------------------------- zstd with the game's dictionaries
-
 def _zstd():
     try:
-        from compression import zstd   # Python 3.14
+        from compression import zstd
         return 'stdlib', zstd
     except ImportError:
         import zstandard
@@ -236,14 +196,12 @@ def _decompress(data, dict_bytes=None):
 
 
 def _dict_id(dict_bytes):
-    """The id a zstd dictionary carries (magic 0xEC30A437, then the id)."""
     if len(dict_bytes) >= 8 and struct.unpack_from('<I', dict_bytes, 0)[0] == 0xEC30A437:
         return struct.unpack_from('<I', dict_bytes, 4)[0]
     return 0
 
 
 def sarc_members(data):
-    """{name: bytes} of a SARC archive."""
     if len(data) < 0x14 or data[:4] != b'SARC':
         return {}
     hl = struct.unpack_from('<H', data, 4)[0]
@@ -294,10 +252,7 @@ class ZsReader:
         return _decompress(data)
 
 
-# ---------------------------------------------------------------- fonts
-
 def bfotf_to_otf(b):
-    """The OpenType (or TrueType) bytes inside a .bfotf/.bfttf, or None."""
     if not b or len(b) < 12:
         return None
     key = struct.unpack_from('>I', b, 0)[0] ^ 0x7F9A0218
@@ -313,7 +268,6 @@ def bfotf_to_otf(b):
 
 
 def font_family(otf):
-    """The family name in an OpenType 'name' table (name id 16, else 1), or None."""
     try:
         num = struct.unpack_from('>H', otf, 4)[0]
         for i in range(num):
@@ -345,7 +299,6 @@ def font_family(otf):
 
 
 def cached_fonts(layout):
-    """{role: (path, family)} of the fonts decoded earlier."""
     d = layout.cache / 'fonts'
     out = {}
     for role in FONTS:
@@ -357,7 +310,6 @@ def cached_fonts(layout):
 
 
 def extract_fonts(layout, game_dir='', dump=''):
-    """Decode the game's Cetra Display into data/cache/fonts; {role: (path, family)} of the fonts found."""
     romfs = open_romfs(layout, game_dir, dump)
     if romfs is None:
         return {}
@@ -374,18 +326,14 @@ def extract_fonts(layout, game_dir='', dump=''):
         if not otf or not fam:
             continue
         p = d / f'{role}.otf'
-        if not (p.is_file() and p.read_bytes() == otf):   # a file this process registered as a font stays as it is
+        if not (p.is_file() and p.read_bytes() == otf):
             p.write_bytes(otf)
         (d / f'{role}.family').write_text(fam, encoding='utf-8')
         out[role] = (d / f'{role}.otf', fam)
     return out
 
 
-# ---------------------------------------------------------------- interface sounds
-
 def bwav_to_pcm(b):
-    """A .bwav as (sample rate, frames): frames a list of (left, right) 16-bit samples, or None when it is no BWAV of
-    one or two channels this reads. A middle-panned channel goes to both sides at 0.707 when it is the only one."""
     if not b or len(b) < 0x10 or b[:4] != b'BWAV':
         return None
     channels = struct.unpack_from('<H', b, 0x0e)[0]
@@ -433,21 +381,17 @@ def bwav_to_pcm(b):
 
 
 def pcm_to_wav(rate, frames):
-    """A 16-bit stereo WAV of frames, a list of (left, right) samples."""
     pcm = struct.pack(f'<{len(frames) * 2}h', *[v for fr in frames for v in fr])
     return (b'RIFF' + struct.pack('<I', 36 + len(pcm)) + b'WAVEfmt '
             + struct.pack('<IHHIIHH', 16, 1, 2, rate, rate * 4, 4, 16) + b'data' + struct.pack('<I', len(pcm)) + pcm)
 
 
 def cached_sounds(layout):
-    """{effect: path} of the game's interface sounds decoded earlier."""
     d = layout.cache / 'sounds'
     return {name: d / f'{name}.wav' for name in SOUNDS if (d / f'{name}.wav').is_file()}
 
 
 def extract_sounds(layout, game_dir='', dump=''):
-    """Decode the game's select and back sounds into data/cache/sounds as WAV files; {effect: path} of the ones
-    found."""
     romfs = open_romfs(layout, game_dir, dump)
     if romfs is None:
         return {}

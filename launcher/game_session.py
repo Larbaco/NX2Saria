@@ -30,8 +30,6 @@ ASKED_SIGNALS = tuple(getattr(signal, name) for name in ('SIGTERM', 'SIGINT', 'S
 
 
 def exit_code_text(code):
-    """The exit code as the game's log and Windows show it: hex for a Windows status, with its meaning when known.
-    Elsewhere a negative code is subprocess's for a process a signal ended, shown with the signal's name."""
     if code < 0 and os.name != 'nt':
         try:
             name = signal.Signals(-code).name
@@ -54,9 +52,6 @@ LOG_CUT_LINE = 'log: the file reached 64 MiB'
 
 
 def log_has_own_exit(game_dir):
-    """Whether the end of the current or legacy game log holds a line of the game's own end (OWN_EXIT_LINES); None
-    when the log cannot be read, or when it was cut at its size cap (LOG_CUT_LINE) and so cannot tell. A line this
-    launcher added for an earlier run's end (note_exit_in_log) ends the search."""
     if not game_dir:
         return None
     try:
@@ -77,8 +72,6 @@ def log_has_own_exit(game_dir):
 
 
 def note_exit_in_log(game_dir, text):
-    """Adds the exit code to the end of the game's log, so a log a player sends shows how the run ended even when the
-    process died before it could write a line itself."""
     if not game_dir:
         return
     log = game_log_path(game_dir)
@@ -90,9 +83,6 @@ def note_exit_in_log(game_dir, text):
 
 
 def log_is_new(game_dir, started):
-    """Whether the selected game log was written at or after started (time.time() before the game was started). A run that
-    ends before it moves and opens its log (runtime/main.c log_open) leaves the log of a run before it in place. FAT
-    and exFAT drives keep a file's time to 2 s, hence the slack."""
     if not game_dir or started is None:
         return False
     try:
@@ -102,8 +92,6 @@ def log_is_new(game_dir, started):
 
 
 def shown_path(*parts):
-    """A path inside the game folder as the player's system writes it, for the window's sentences: logs\\nx2saria.log
-    on Windows, logs/nx2saria.log elsewhere."""
     return ('\\' if os.name == 'nt' else '/').join(parts)
 
 
@@ -119,13 +107,6 @@ def shown_fatal(fatal):
 
 
 def game_end(game_dir, code, started=None, restarted=False):
-    """What the launcher says about an end of the game (App.watch_game, play_only): a GameEnd of the line for
-    launcher.log, the sentence for the player ('' for none), the text note_exit_in_log adds to the game's log ('' for
-    none), and alarm: whether the end is worth a message box where no window shows the sentence (a FATAL line, a code
-    of FATAL_CODES or a Windows status; not 0, nor 1, which Task Manager's End task gives). code is the exit code of
-    the run's last process, or None when it is not known, which happens only for a copy the game's own Restart started
-    that could not be followed (GameRun). started is time.time() before the game was started, restarted whether it
-    restarted itself on the way."""
     how = ' after restarting itself' if restarted else ''
     if code not in (0, None) and code < 0 and os.name != 'nt':
         text = exit_code_text(code)
@@ -186,30 +167,15 @@ def end_asked(game_dir, code):
 
 
 class GameRun:
-    """A Play of the game, followed through the copies its own Restart starts. The Restart (runtime/gfx/gfx_present.c
-    gfx_window_closed) starts the exe again (runtime/platform/win32.c plat_restart) and ends the process before it
-    with code 0, so the code the game really ended with is its last copy's: once the process followed has ended with
-    0 while the exe still runs, the copy is looked for (winsys.game_copy) and followed from then on. On Linux the
-    Restart (runtime/platform/linux.c plat_restart) spawns the copy as a child of the old process; winsys.start_game
-    makes the launcher a child subreaper, so the copy becomes the launcher's child once the old process has ended and
-    its code can be waited for. proc is the process followed, None while a copy could not be found (it ended before
-    the next look, or the system did not show it): it is looked for again each second while the game still runs, and
-    the end's code is not known if none is found. started is time.time() before the start (game_end's
-    log_is_new)."""
-
     def __init__(self, proc, game_dir, started):
         self.proc, self.game_dir, self.started, self.restarted = proc, game_dir, started, False
         self.last_pid = None
         self.kind, self.asked = '', False
 
     def alive(self):
-        """Whether the process followed runs; nothing else is looked at. A winsys.GameCopy whose exit code could not
-        be read has ended all the same."""
         return self.proc is not None and self.proc.poll() is None and getattr(self.proc, 'ended', False) is not True
 
     def running(self):
-        """Whether the game still runs, this launcher's process or another of the same exe (build.game_running);
-        asked once a second until it says False."""
         if self.alive():
             return True
         if not (self.game_dir and saves.game_running(self.game_dir)):
@@ -224,8 +190,6 @@ class GameRun:
         return True
 
     def finished(self):
-        """The run is over: a copy the Restart started that ended before running() looked for it is the run's last
-        process, and its code is the end's (winsys.game_finished)."""
         if not self.game_dir:
             return
         codes = winsys.game_finished(game_executable(self.game_dir),
@@ -238,7 +202,6 @@ class GameRun:
         return None if self.proc is None else self.proc.returncode
 
     def end(self):
-        """game_end for this run, once running() said False."""
         return game_end(self.game_dir, None if self.proc is None else self.proc.returncode, self.started,
                         self.restarted)
 
