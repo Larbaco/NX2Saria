@@ -94,7 +94,9 @@ AMD FSR 3.1 temporal upscaling recorded by the runtime: the upscaler's compute p
 over the headers in `runtime/shaders/ffx3/`, built into `runtime/fsr3_*_spv.h` by `tools/build_shaders.py`).
 `runtime/vk/vk_ffx.cpp` sends `vk_ffx_upscale()` here in the builds that load no `amd_fidelityfx_vk.dll` (all but
 Windows). Frame generation is not here: on Windows it runs through that library's own API calls
-(`runtime/vk/vk_fg.cpp`), and elsewhere through `runtime/vk/vk_fsr3fg.c`.
+(`runtime/vk/vk_fg.cpp`), and elsewhere through `runtime/vk/vk_fsr3fg.c`. The file has no platform condition and the
+build picks the runtime's sources by name alone (`tools/build_game.py` `other_os()`), so it is compiled on Windows too:
+there the game never calls it, and only `--probe-fsr3` (`runtime/vk/fsr3_probe.c`) runs these passes.
 
 The inputs are `runtime/vk/vk_dlaa.c`'s, the ones `runtime/vk/vk_ffx.cpp` hands the library: the scene light (linear
 HDR), its D32F depth (OpenGL-style, 0 near and 1 far, with the frame's near and far planes; not inverted), motion
@@ -1997,6 +1999,10 @@ them:
   upscaling make. Their ratio compares runs with the per-object pass on and off (it does not depend on the pass's own
   vectors) and modes.
 
+A check needs a frame before it: the light target of the frame before the check frame is copied too, and the check is
+skipped when that frame is not the previous one, the size changed, an analysis is still pending or the light target is
+neither B10G11R11 nor RGBA16F. `<frames>` is at least 4.
+
 One `mv_check:` line per check. Disocclusion and changing light add error to every candidate alike, so the comparison
 between candidates counts, not the absolute values. Copies and analysis cost a few ms on check frames only.
 
@@ -2039,8 +2045,9 @@ than the box's average (over half of it).
 
 Logged every `TOTAL_EVERY` (20) checks: end-point error histograms in `HBIN` (0.05) px bins of the object samples
 (camera, final) and of the static samples (the measurement's own noise floor), and the object warp errors. `KN` (120)
-bins hold the histogram of per-sample scale ratios, -2 to 4 in steps of 0.05; `T.cal` counts the checks where k = 0.5, k
-= 1 and k = 1.5 fit the static pixels best.
+bins hold the histogram of per-sample scale ratios, -2 to 4 in steps of 0.05; `T.cal` counts the checks where k = 0.5
+and where k = 1 fit the static pixels best, and in its third place the checks counted at all (those with over 1000
+calibration pixels). The end-point histograms have `HN` (640) bins, so errors of 32 px and more share the last.
 
 ### `hist_add()`
 
@@ -2059,7 +2066,7 @@ A fixed pseudo-random pick of pixels, spread over the picture.
 - The object pixels first, for the sampling rates: about `FLOW_MAX` object and `FLOW_MAX` / 4 static samples.
 - `huge` counts camera vectors over 256 px or not finite.
 - Object samples the final vector misses by more than 1.5 px where the camera's fits better: where and how.
-- Calibration: static pixels with a small camera vector (known right), at k = 0.5, 1, 1.5 of it.
+- Calibration: static pixels with a small camera vector (between 0.25 and 2 px, known right), at k = 0.5, 1, 1.5 of it.
 - Where the object part is over half a pixel: the scale of the object part the measured motion shows.
 - DLSS's output against this frame's input, on samples moving on their own and static ones (the picture's motion).
 - A check counts as wrong when the object pixels are over 0.5 % of the picture and the final vectors are not the best
@@ -2124,7 +2131,11 @@ ask at once.
 
 ### `moved()`
 
-Translation distance between the first matrices of two blocks (rows' fourth floats).
+Translation distance between the first matrices of two blocks (rows' fourth floats). The summary counts under 0.01 as
+still and under 1.0 as "under one unit".
+
+`vk_mvprev_step()` is what the uniform snapshot asks to copy both neighbours: the block's size rounded up to 256 bytes
+for a kept vertex-stage bank while this is on, else 0.
 
 ### `vk_mvprev_find()`
 
@@ -2147,8 +2158,11 @@ Without `NX2SARIA_MVOBJ_TIMES` the draw is not timed: the clock reads were 1 % o
 
 ### `vk_mvprev_frame()`
 
-- Without DLSS (no NGX, no RTX GPU, dlaa = 0) and without frame generation alone (`vk_dlaa_fg_only()`) nothing reads
-  last frame's blocks: `P.on` stays 0, no tables.
+- Without a temporal upscaler (`runtime/vk/vk_dlaa.c` `vk_dlaa_available()`: dlaa = 1 and either DLSS through NGX or
+  FSR 3.1 as the upscaler is there) and without frame generation alone (`vk_dlaa_fg_only()`) nothing reads last frame's
+  blocks: `P.on` stays 0, no tables.
+- The tables are made at the first frame that gets this far, with `NX2SARIA_DLAA_OBJMV` read once; turning DLAA off or
+  on later empties them, and the frame of the change pairs nothing.
 
 ## `runtime/vk/vk_mvsurvey.c`
 
@@ -2172,7 +2186,8 @@ even frames and another in odd ones. To find the rule that pairs them, a bank's 
 frame (this frame's copy) are sorted by address, and so are last frame's blocks not bound this frame (the other copy);
 with equal counts they are paired in order:
 
-- pairs, delta: the paired blocks and the commonest address differences (this frame's minus last frame's);
+- pairs, delta: the paired blocks and their address differences (this frame's minus last frame's): the first three
+  values seen in the window, with their counts, not the commonest;
 - psame / pnear / pfar: the pairs' contents, as same / near / far above (near: the same object, moved);
 - unequal: frames whose two lists had different lengths (no pairing that frame).
 
@@ -2184,8 +2199,8 @@ at right angles, finite), counted over the whole block as of the submit:
 Every `SURVEY_FRAMES` (300) frames the log gets two lines per bank with the window's totals:
 
 ```
-mv_survey: c<n>: <draws> draws, <blocks> blocks (<per frame>), sizes <top three>; repeat1 a %, repeat2 b %; same c %, near d %, far e %
-mv_survey: c<n>: pairs <n> (<unequal> frames unequal), delta <top three>; psame a %, pnear b %, pfar c %; mats 0 x<n> 1 x<n> 2-7 x<n> 8+ x<n>, at most <m>
+mv_survey: c<n>: <draws> draws, <blocks> blocks (<per frame>), sizes <first three>; repeat1 a %, repeat2 b %; same c %, near d %, far e %, unread f %
+mv_survey: c<n>: pairs <n> (<unequal> frames unequal), delta <first three>; psame a %, pnear b %, pfar c %; mats 0 x<n> 1 x<n> 2-7 x<n> 8+ x<n>, at most <m>
 ```
 
 `TABLE` (1 << 15): blocks per frame, all banks; a town frame binds about 10,000 uniform ranges.
@@ -2200,11 +2215,14 @@ A full table gives NULL: the block goes uncounted.
 
 ### `note_size()`
 
-A fifth size is counted with the last.
+The first four sizes seen in the window are kept with their counts (the line prints three); a fifth is counted with
+the last. `note_delta()` does the same for the pairs' address differences. `unread` in the line is the repeated blocks
+whose bytes were not in the snapshot.
 
 ### `lead_mats()`
 
-Leading 3x4 matrices: three rows of about the same length (a uniform scale), at right angles, all finite.
+Leading 3x4 matrices: three rows of about the same length (a uniform scale: within 2 % of the first, between 0.001 and
+1000), at right angles (dot products within 2 % of the lengths' product), all finite; at most 4096 are counted.
 
 ### `compare()`
 
@@ -2465,7 +2483,8 @@ What `runtime/vk/vk_dlssg.c` promises its callers: DLSS Frame Generation through
 `nx2navi_dlssg.dll` ([dlssg.md](dlssg.md)).
 
 - `vk_dlssg_wanted()`: `NX2SARIA_FRAMEGEN` = dlss, with any upscaler or none (read once).
-- `vk_dlssg_early()`: before the instance exists: loads the DLL and Streamline; 1 when its proxies are there.
+- `vk_dlssg_early()`: before the instance exists: loads the DLL and Streamline; 1 when its proxies are there. Always 0
+  outside Windows.
 - `vk_dlssg_create_instance()`: for `runtime/vk/vk_device.c`: the instance and device through Streamline's proxies when
   `vk_dlssg_early()` succeeded, else the loader's.
 - `vk_dlssg_enumerate()`: through the interposer too.
@@ -2503,9 +2522,11 @@ Frames are numbered by the game's presents (frame n ends with the n-th). Reflex'
 - `vk_dlssg_multiplier()`: the frames the display gets per game frame now: the multiplier while generation runs, 1 while
   it is off or paused (the menu). `runtime/pacing/frame_rate.c` paces the game at the frame limit over it. Any thread.
 
-- `vk_dlssg_status()`: why DLSS-G runs or not: `DLSSG_NOT_WANTED` (`NX2SARIA_FRAMEGEN` was not dlss at start, or no DLSS
-  or FSR 3.1 upscaling), `DLSSG_NO_FILES` (`nx2navi_dlssg.dll`, Streamline or its swapchain hooks missing or failing),
-  `DLSSG_UNAVAILABLE` (Streamline loaded but DLSS-G or a required plugin function was unavailable).
+- `vk_dlssg_status()`: why DLSS-G runs or not: `DLSSG_RUNS`; `DLSSG_NOT_WANTED` (`NX2SARIA_FRAMEGEN` was not dlss at
+  start; the upscaler does not matter, `vk_dlssg_wanted()`); `DLSSG_NO_FILES` (`nx2navi_dlssg.dll`, Streamline or its
+  swapchain hooks missing or failing, and every build but the Windows one); `DLSSG_UNAVAILABLE` (Streamline loaded but
+  DLSS-G was unavailable, the card in use is not an NVIDIA one, or the interposer could not make the device).
+- `vk_dlssg_release()`: shuts Streamline down where it was loaded and marks frame generation as not running.
 
 - `vk_dlssg_why()`: why DLSS-G is unavailable, where known: 1 when the card in use has none (another vendor's card, or
   Streamline's support check found no adapter with it: an RTX 30 or older); else 0, with Streamline's result for another
@@ -2533,17 +2554,18 @@ asks the card for NVIDIA's extensions (`VK_NV_low_latency2` among them) and fail
 For `pick_device()`: a card the player chose (`gpu_index`, `gpu_name`) counts as not usable while the interposer is in
 use and the card is of another vendor, so the best usable card is taken instead, as for a chosen card that is gone.
 Without a choice nothing is skipped: the pass takes what there is, and `dlssg_device_create()` makes the device.
-
-`DlssgCreate`: a creation attempt: 0 (`VK_SUCCESS`) or the `VkResult` it failed with.
-
-`DLSSG_DEV_*`: how the device was made, or tried: by the loader with the interposer not in use (`DLSSG_DEV_LOADER`);
-through the interposer (`DLSSG_DEV_INTERPOSER`); by the loader because the card is not an NVIDIA one
-(`DLSSG_DEV_NOT_NVIDIA`: the interposer is not asked); by the loader after the interposer refused (`DLSSG_DEV_REFUSED`:
-`*refused` holds its result). In the last two frame generation is off for the run.
+`DLSSG_VENDOR_NVIDIA` is NVIDIA's PCI vendor id, 0x10de.
 
 ### `dlssg_device_create()`
 
-Returns the result of the attempt that counts: the interposer's when it made the device, else the loader's.
+Makes the device by one or two attempts and returns the result of the attempt that counts: the interposer's when it made
+the device, else the loader's. `DlssgCreate` is a creation attempt: 0 (`VK_SUCCESS`) or the `VkResult` it failed with.
+
+`*how` says how the device was made, or tried (`DLSSG_DEV_*`): by the loader with the interposer not in use
+(`DLSSG_DEV_LOADER`); through the interposer (`DLSSG_DEV_INTERPOSER`); by the loader because the card is not an NVIDIA
+one (`DLSSG_DEV_NOT_NVIDIA`: the interposer is not asked); by the loader after the interposer refused
+(`DLSSG_DEV_REFUSED`: `*refused` holds the interposer's result, 0 in every other case). In the last two frame generation
+is off for the run (`runtime/vk/vk_dlssg.c` `vk_dlssg_create_device()`), also when the loader's attempt fails too.
 
 ## `runtime/vk/vk_dlssg.c`
 
@@ -2622,8 +2644,15 @@ start and at each change).
 
 ### `vk_dlssg_early()`
 
-Three entry points of the DLL are optional, for an older build of it: `nx2sl_support` (without it the reason DLSS-G is
-unavailable is not known), `nx2sl_frames_max` (2x only without) and `nx2sl_reflex2` (the pacer keeps the limit).
+Windows only; every other build answers 0. `nx2navi_dlssg.dll` is loaded from the executable's folder, once: a failure
+is not tried again in the run. The DLL must report `NX2SL_VERSION` (3) from `nx2sl_version` and have `nx2sl_init`,
+`nx2sl_instance_proc`, `nx2sl_device_proc`, `nx2sl_available`, `nx2sl_frame`, `nx2sl_present_marker`, `nx2sl_sleep`,
+`nx2sl_submit_end`, `nx2sl_shown` and `nx2sl_reflex`, or it is "from another build" and frame generation is off. Then
+`nx2sl_init` gets the folder (without its last backslash) and the log callback; its 0 leaves frame generation off.
+
+Five entry points are optional: `nx2sl_support` (without it the reason DLSS-G is unavailable is not known),
+`nx2sl_frames_max` (2x only without) and `nx2sl_reflex2` (the pacer keeps the limit), for an older build of the DLL, and
+`nx2sl_log_unavailable` and `nx2sl_shutdown`, which are called only where they exist.
 
 ### `vk_dlssg_instance_proc()`
 
@@ -2642,7 +2671,11 @@ and `sl.common` called a null `GetPhysicalDeviceMemoryProperties` while it set u
 Frame generation is off for the run from here on: every later call goes to the loader alone, as when Streamline's files
 are missing, and the settings menu says it is unavailable (`vk_dlssg_status()`).
 
-### `create_interposed()`
+### `vk_dlssg_create_device()`
+
+`create_interposed()` and `create_loader()` are the two attempts it hands to `dlssg_device_create()`. A card that is not
+an NVIDIA one sets `S.no_gpu` and gives up; a device the interposer refused gives up with its `VkResult` in the log. The
+loader's result is returned either way.
 
 The interposer's `vkCreateDevice` asks the device for NVIDIA's extensions (`VK_NV_low_latency2` among them) and fails
 without them (`VK_ERROR_EXTENSION_NOT_PRESENT`). On a laptop with an NVIDIA card and Intel graphics, frame generation
@@ -2652,6 +2685,13 @@ loader, without frame generation, and so is one the interposer refuses for any o
 is `runtime/vk/vk_dlssg_device.h` `dlssg_device_create()` (`tests/dlssg_device_check.c`).
 
 ### `vk_dlssg_device_ready()`
+
+Nothing unless Streamline is loaded and the device was made through it. When `nx2sl_available` says DLSS-G is not there:
+`DLSSG_UNAVAILABLE`, the DLL logs why (`nx2sl_log_unavailable`), and `nx2sl_support` gives the reason kept for
+`vk_dlssg_why()`: 0 means no adapter with it (`S.no_gpu`), 2 another reason whose name is kept (`S.sl_why`). Otherwise
+the five swapchain entry points are taken from Streamline's device table (`vkCreateSwapchainKHR`,
+`vkDestroySwapchainKHR`, `vkGetSwapchainImagesKHR`, `vkAcquireNextImageKHR`, `vkQueuePresentKHR`), and frame generation
+is active only with all five.
 
 Reflex's mode is set here without a limit: there is no swapchain and no present yet.
 
@@ -2693,9 +2733,15 @@ One line after the first 600 blits of a game frame and every 3600 after that (60
 present thread outside the queue lock (`vk_dlssg_frame()`): who holds the frame limit, and how many frame starts
 Reflex's sleep held and for how long.
 
+### `vk_dlssg_present()`
+
+The host present through Streamline's hook, between the DLL's two present markers for the frame being shown (`S.cur`):
+`nx2sl_present_marker` with 0 before and 1 after. The time after it is kept (`hosted_ns`) for `vk_dlssg_frame_start()`
+and `vk_dlssg_pace()`.
+
 ### `FG_SETTLE_FRAMES`
 
-Turning generation on or off is an `slDLSSGSetOptions` call and Streamline's own rebuild, and it can be seen: around a
+`FG_SETTLE_FRAMES` is 12. Turning generation on or off is an `slDLSSGSetOptions` call and Streamline's own rebuild, and it can be seen: around a
 menu, a fade or a swapchain change the depth and motion-vector views come and go for a frame or two. Following them
 frame by frame switched generation off and on dozens of times a second (a run logged 32 changes, in pairs, a frame
 apart), so a change waits until the new state has held for `FG_SETTLE_FRAMES` frames.
@@ -2726,22 +2772,43 @@ Who holds the frame limit, as a log line when it changes (the first 40). `why`: 
 ### `vk_dlssg_pace()`
 
 The limit wanted is stored for the present thread, which hands it over (`vk_dlssg_frame()`). A limit Streamline has yet
-to take is no change: the present thread hands it over next.
+to take is no change: the present thread hands it over next. The decision is `runtime/pacing/dlssg_pace.h`
+`dlssg_pace_step()`'s; what it finds over a window of `DLSSG_PACE_WINDOW` (60) frames is logged here: Reflex does not
+hold the limit (the pacer keeps it for the run), Reflex held the frames on screen to the limit and not the frames the
+game draws (it is then given the period over the multiplier), or the frames still came the multiplier times the period
+apart (the pacer keeps the limit for the run). `DLSSG_HOLD_IDLE_NS` is 200 ms.
 
 ### `vk_dlssg_frame()`
 
-- A change of generation waits (`FG_SETTLE_FRAMES`): the state the driver has is held until the new one stays.
-- `shown_mult` is the pacer's divisor (`runtime/pacing/frame_rate.c`).
-- Reflex's frame limit as the presenting guest thread last asked for it (`vk_dlssg_pace()`), before this present.
-- The frame's own near and far planes (`runtime/vk/vk_dlaa.c` `proj_planes()`); `nx2navi_dlssg.dll` tells Streamline the
-  depth is not inverted, which holds for every projection the game has shown (0 near, 1 far).
-- Render pixels: the scene's size, which is the output's or smaller (an upscaling mode, or the game's own scale without
-  an upscaler); Streamline takes the depth and the vectors at their own size and the output at ext.
-- The frames to generate between two rendered ones: the multiplier less the rendered one, 0 off.
+On the present thread, under the present lock, before the present's command buffer is submitted. In the order of the
+function:
+
+1. The frame's inputs (`runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()`, `vk_dlaa_fg_views()`, `vk_dlaa_fg_camera()`): all
+   three, or the frame has none. Generation is wanted with inputs and the menu closed.
+2. A change of generation waits (`FG_SETTLE_FRAMES`): the state the driver has is held until the new one stays.
+3. `shown_mult` is the pacer's divisor (`runtime/pacing/frame_rate.c`): the multiplier while generation is on, 1 while
+   it is off.
+4. Reflex's frame limit as the presenting guest thread last asked for it (`vk_dlssg_pace()`), before this present; sent
+   only when it differs from what Streamline last took.
+5. The depth and the motion vectors go to the DLL as images in GENERAL with their views, formats and sizes; the fourth
+   image, the picture without the HUD, is always NULL here.
+6. The camera: the four matrices, position, up, right and forward, the vertical field of view and the aspect as
+   `fg_camera()` made them, and the frame's own near and far planes (`runtime/vk/vk_dlaa.c` `proj_planes()`);
+   `nx2navi_dlssg.dll` tells Streamline the depth is not inverted, which holds for every projection the game has shown
+   (0 near, 1 far). An inverted projection is logged once and still sent as it is.
+7. The jitter, in render pixels, and the vectors' scale, 1 over the depth's width and height: the vectors are in render
+   pixels of the scene's size, which is the output's or smaller (an upscaling mode, or the game's own scale without an
+   upscaler); Streamline takes the depth and the vectors at their own size and the output at ext. The reset flag is the
+   inputs' (`vk_dlaa_fg_inputs()`).
+8. `nx2sl_frame` gets the command buffer, the images and the camera (NULL for each on a frame without inputs), the
+   swapchain's extent, the frames to generate between two rendered ones (the multiplier less the rendered one, 0 off)
+   and the frame's number (`S.cur`). While a change is settling, a frame without inputs can still ask for generated
+   frames, and one with inputs for none.
 
 ### `vk_dlssg_release()`
 
-A device made again starts without a limit.
+Streamline is shut down where it was loaded (`nx2sl_shutdown`, when the DLL has it) and frame generation is no longer
+active. A device made again starts without a limit.
 
 ## `runtime/vk/vk_hdr.c`
 
