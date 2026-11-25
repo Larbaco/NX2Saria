@@ -44,6 +44,14 @@ def fixed_drive(drive):
         return True
 
 
+def install_folder(path):
+    folder = Path(path)
+    if (folder.exists() and any(folder.iterdir()) and not (folder / 'build-cache').is_dir()
+            and folder.name.lower() not in ('nx2navi', 'nx2saria')):
+        return folder / 'NX2Saria'
+    return folder
+
+
 class Layout:
     def __init__(self, root=None, app=None):
         self.app = Path(app or APP)

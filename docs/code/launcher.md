@@ -1440,6 +1440,10 @@ launcher's) is resumed as before, and so is one whose note could not be written.
 
 ## `launcher/paths.py`
 
+`install_folder()` keeps the chosen folder if it is empty, has a build cache, or already has an NX2Saria or
+NX2navi name. Otherwise it returns the NX2Saria child. The Tk picker saves this result as it always did.
+The Electron worker uses it as a proposal without creating the folder or saving settings.
+
 Where the launcher keeps everything ([launcher.md](../launcher.md#the-launchers-folder)).
 
 An installed launcher (`NX2Saria-Setup.exe` puts it in `%LOCALAPPDATA%\Programs\NX2Saria`) is one folder:
@@ -3578,6 +3582,11 @@ through completion. During a job it requests cancellation and waits for marker, 
 
 `inspect` uses the read-only installation check. `set_hide_while_playing` accepts a boolean while idle
 and requires a held lock. It acknowledges the change after the settings write succeeds.
+
+`install_destination()` offers a proposed game folder for an unconfigured or unavailable game. The worker
+uses the saved path if present and otherwise asks `Layout.default_game_dir()`. A picker result must be an
+absolute existing directory and uses the shared `install_folder()` policy. The worker refuses the proposal
+during a Play, memory decision or job, and reports only the proposal's source or rejection in the log.
 
 For Play, a memory decision has an attempt number. The worker rejects a stale answer and checks for another
 game before resuming. Mod rebuilds use the shared completion policy and wait for `finished` before resuming

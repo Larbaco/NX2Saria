@@ -7,11 +7,11 @@ import sys
 import threading
 from pathlib import Path
 
-from . import commit, game_session, jobs, locks, mods_job, play, saves, updater, versions, winsys
+from . import build, commit, game_session, jobs, locks, mods_job, play, saves, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context
 from .inspect_installation import inspect_installation
-from .paths import Layout
+from .paths import Layout, install_folder
 
 PROTOCOL = 1
 MAX_FRAME = 65536
@@ -126,6 +126,20 @@ def action_log(ctx, counts, action, detail):
         ctx.log(f'worker: {action} {detail}')
     elif count == MAX_ACTION_LOGS:
         ctx.log(f'worker: {action} further events suppressed')
+
+
+def install_destination(ctx, request):
+    saved = ctx.settings.get('game_dir')
+    if saved and build.installed(saved):
+        return None
+    if 'folder' not in request:
+        if saved:
+            return {'folder': saved, 'source': 'saved'}
+        return {'folder': str(ctx.layout.default_game_dir()), 'source': 'default'}
+    folder = request['folder']
+    if not isinstance(folder, str) or '\0' in folder or not Path(folder).is_absolute() or not Path(folder).is_dir():
+        return None
+    return {'folder': str(install_folder(folder)), 'source': 'selected'}
 
 
 def defer_crash_offer(ctx, run, end):
@@ -442,6 +456,17 @@ def main(argv=None):
                         emit({'event': 'game_started', 'sequence': sequence, 'session': session})
                 else:
                     emit({'id': request['id'], 'result': {'status': prepared.status}})
+            elif request.get('method') == 'install_destination':
+                try:
+                    destination = None if run or job or pending else install_destination(ctx, request)
+                except (OSError, ValueError, RuntimeError, TypeError, AttributeError):
+                    destination = None
+                if destination:
+                    action_log(ctx, counts, 'install', f'destination {destination["source"]}')
+                    emit({'id': request['id'], 'result': destination})
+                else:
+                    action_log(ctx, counts, 'install', 'destination rejected')
+                    error(request['id'], 'invalid_destination')
             elif request.get('method') == 'set_hide_while_playing':
                 value = request.get('value')
                 if type(value) is not bool:

@@ -5867,6 +5867,10 @@ the test releases it. The native restart test checks that the worker records one
 lock, emits no intermediate end and reports the second copy's exit code under the original Play session.
 Linux compiles only this stand-in. Windows accepts the compiled fixture through `NX2_TEST_RESTART_GAME`.
 
+The first-run destination test checks the default, normalizes a selected nonempty folder and refuses a
+relative path without modifying settings or the chosen directory. `launcher-electron/ui-tests/first-run-synthetic.cjs`
+also checks the native dialog boundary, the displayed proposal and cancellation.
+
 Uses temporary launcher roots and child workers to check pre-validation without writes, including malformed settings,
 the versioned handshake, inspection, idle EOF, lock refusal and release, the unopenable-lock fallback, sanitized startup
 and inspection failures, CLI contention and both Steam behaviors while the worker owns the lock. The Steam test replaces

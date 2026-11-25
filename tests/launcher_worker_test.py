@@ -170,6 +170,35 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(worker.wait(timeout=15), 0)
         self.assertIn('worker: play status=not_built', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
 
+    def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
+        from launcher.paths import Layout
+
+        selected = Path(self.tmp.name) / 'games'
+        selected.mkdir()
+        (selected / 'unrelated.txt').write_text('keep')
+        frames = [
+            {'id': 1, 'method': 'hello', 'protocol': 1},
+            {'id': 2, 'method': 'install_destination'},
+            {'id': 3, 'method': 'install_destination', 'folder': str(selected)},
+            {'id': 4, 'method': 'install_destination', 'folder': 'relative'},
+        ]
+        result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)],
+                                input=''.join(json.dumps(frame) + '\n' for frame in frames),
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, default, proposed, invalid = map(json.loads, result.stdout.splitlines())
+        self.assertEqual(default, {'id': 2, 'result': {
+            'folder': str(Layout(root=self.root).default_game_dir()), 'source': 'default'}})
+        self.assertEqual(proposed, {'id': 3, 'result': {'folder': str(selected / 'NX2Saria'), 'source': 'selected'}})
+        self.assertEqual(invalid, {'id': 4, 'error': {'code': 'invalid_destination'}})
+        self.assertEqual({entry.name for entry in selected.iterdir()}, {'unrelated.txt'})
+        self.assertEqual((selected / 'unrelated.txt').read_text(), 'keep')
+        self.assertEqual((self.root / 'data' / 'launcher.json').read_text(), '{}')
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: install destination default', log)
+        self.assertIn('worker: install destination selected', log)
+        self.assertIn('worker: install destination rejected', log)
+
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()

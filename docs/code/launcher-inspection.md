@@ -24,6 +24,10 @@ The home-screen checkbox uses the inspected `hide_while_playing` value for the s
 and the checkbox during a pending save. It uses the acknowledged setting on success and restores the
 previous checkbox value with an error message on failure.
 
+For first run, `main.ts` asks the worker for the proposed game folder. It takes alternative folders only
+from the native picker and sends the renderer the validated path to show. A cancelled picker returns no
+new proposal. This flow leaves the saved game directory and existing files untouched.
+
 `launcher-electron/ui-tests/worker-synthetic.cjs` exercises inspection, two synthetic games, hide and restore,
 reselection, cancellation that disables Play, refusal while a job marker is present and closing the window during a third game, which finishes while the worker records its end. It also kills the worker during a synthetic game and checks that the window returns, Play is disabled and the game finishes. The folder dialog is stubbed. It uses temporary files and a fake
 executable, and is not a real-game test.

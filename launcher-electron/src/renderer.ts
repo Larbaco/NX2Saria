@@ -1,6 +1,6 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<string | null>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -8,6 +8,10 @@ const playButton = document.querySelector<HTMLButtonElement>('#play')!;
 const cancelJob = document.querySelector<HTMLButtonElement>('#cancel-job')!;
 const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-playing')!;
 const settingError = document.querySelector<HTMLElement>('#setting-error')!;
+const firstRun = document.querySelector<HTMLElement>('#first-run')!;
+const gameFolderProposal = document.querySelector<HTMLElement>('#game-folder-proposal')!;
+const pickGameFolder = document.querySelector<HTMLButtonElement>('#pick-game-folder')!;
+const gameFolderError = document.querySelector<HTMLElement>('#game-folder-error')!;
 const messages: Record<string, string> = { ready: 'Instalação encontrada', not_ready: 'Jogo não está pronto', not_configured: 'Jogo não configurado', inspection_error: 'Não foi possível verificar' };
 let installation: Result | null = null;
 let selecting = false;
@@ -32,13 +36,36 @@ function showResult(result: Result | null) {
   if (result.reason === 'runtime_incompatible') { detail.textContent = 'Atualize ou repare esta instalação pelo launcher atual do NX2Saria e tente novamente.'; return; }
   detail.textContent = (result.game_dir || result.root || 'Confira a instalação e tente novamente.') + (result.job_marker_present ? ' Há um registro de trabalho: ele pode estar em andamento ou ter sido interrompido.' : '') + (result.game_running === true ? ' O jogo já está em execução.' : '');
 }
+async function showInstallDestination(pick: boolean) {
+  pickGameFolder.disabled = true;
+  gameFolderError.textContent = '';
+  try {
+    const folder = await window.launcher.installDestination(pick);
+    if (folder) gameFolderProposal.textContent = folder;
+  } catch {
+    gameFolderError.textContent = 'Não foi possível verificar a pasta do jogo.';
+  } finally {
+    pickGameFolder.disabled = false;
+  }
+}
+pickGameFolder.onclick = () => { void showInstallDestination(true); };
+
 async function loadSelection(action: () => Promise<Result | null>) {
   selecting = true;
   installation = null;
   playFailed = false;
   settingError.textContent = '';
+  gameFolderProposal.textContent = '';
+  firstRun.hidden = true;
   updateControls();
-  try { installation = await action(); showResult(installation); }
+  try {
+    installation = await action();
+    showResult(installation);
+    if (installation?.status === 'not_configured' || installation?.status === 'not_ready') {
+      firstRun.hidden = false;
+      await showInstallDestination(false);
+    }
+  }
   catch { statusElement.textContent = 'Não foi possível verificar'; detail.textContent = 'Tente novamente.'; }
   finally { selecting = false; updateControls(); }
 }
@@ -108,6 +135,7 @@ window.launcher.onPlayEnded(result => {
   cancelJob.hidden = true;
   playing = false;
   installation = result.state ?? null;
+  firstRun.hidden = true;
   updateControls();
   showPlayFeedback(result);
 });

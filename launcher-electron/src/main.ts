@@ -186,6 +186,22 @@ app.whenReady().then(() => {
     log?.write('inspection', 'selection_cancelled');
     return null;
   });
+  ipcMain.handle('install-destination', async (event, pick) => {
+    if (event.sender !== window.webContents || !worker || playing || typeof pick !== 'boolean' ||
+        (state?.status !== 'not_configured' && state?.status !== 'not_ready')) throw new Error('Unavailable');
+    const active = worker;
+    let options = {};
+    if (pick) {
+      const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Escolher pasta do jogo' });
+      if (chosen.canceled || !chosen.filePaths[0]) return null;
+      options = { folder: chosen.filePaths[0] };
+    }
+    if (worker !== active || playing) throw new Error('Unavailable');
+    const result = await active.request('install_destination', options);
+    if (worker !== active || typeof result?.folder !== 'string' || !path.isAbsolute(result.folder) ||
+        !['default', 'saved', 'selected'].includes(result.source)) throw new Error('Unavailable');
+    return result.folder;
+  });
   ipcMain.handle('play', async event => {
     if (event.sender !== window.webContents) return { error: 'unavailable' };
     log?.write('play', 'requested');

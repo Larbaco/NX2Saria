@@ -19,7 +19,7 @@ from ..context import Context, shorten
 from ..game_session import (ASKED_SIGNALS, EXIT_CODES, FATAL_CODES, FATAL_SHOWN, GameEnd, GameRun, LOG_CUT_LINE,
                             LOG_WHERE, OWN_EXIT_LINES, exit_code_text, game_end, log_has_own_exit, log_is_new, note_exit_in_log,
                             shown_fatal, shown_path)
-from ..paths import long_path_problem
+from ..paths import install_folder, long_path_problem
 from ..platform import game_executable
 from . import art, picture, sound
 
@@ -988,11 +988,7 @@ class App:
                            log=self.ctx.log)
         if not path:
             return
-        p = Path(path)
-        if (p.exists() and any(p.iterdir()) and not (p / 'build-cache').is_dir()
-                and p.name.lower() not in ('nx2navi', 'nx2saria')):
-            p = p / 'NX2Saria'
-        self.settings['game_dir'] = str(p)
+        self.settings['game_dir'] = str(install_folder(path))
         self.settings.save()
         self.show(self.screen, self.focus)
 
