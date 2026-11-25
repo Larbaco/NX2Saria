@@ -30,7 +30,7 @@ what each notice covers.
 
 Vulkan-internal header of the graphics layer. Host code only; the guest never sees it.
 
-- `vk_vma_create_image()`: Every VMA allocation goes by the device-local heaps' live budgets
+- `vk_vma_create_image()` and the other allocation wrappers: Every VMA allocation goes by the device-local heaps' live budgets
   (`runtime/vk/vk_vma_budget.c`): a heap within the reserve of its budget takes nothing new while another heap can. Each
   allocation is also counted under its owner, by the source file that made it, until it is freed through the wrappers
   below (`vk_vma_owner_bytes`, for the memory report: `runtime/vk/vk_memory.c` `owner_log()`).
@@ -60,7 +60,9 @@ Vulkan-internal header of the graphics layer. Host code only; the guest never se
   - `has_astc_ldr`: `textureCompressionASTC_LDR` (enabled when reported).
   - `has_calibrated`: `VK_KHR/EXT_calibrated_timestamps` (GPU idle split in the perf line).
   - `has_hdr_metadata`: `VK_EXT_hdr_metadata` (`runtime/vk/vk_hdr.c` `vk_hdr_metadata()`).
-  - `has_mesh_shader, has_vrs`: `VK_EXT_mesh_shader` with `taskShader` and `meshShader` (NVN2 task/mesh stages).
+  - `has_mesh_shader`: `VK_EXT_mesh_shader` with `taskShader` and `meshShader` (NVN2 task/mesh stages); `has_vrs`
+    beside it is `VK_KHR_fragment_shading_rate` with `pipelineFragmentShadingRate` (`runtime/vk/vk_device.c`
+    `create_device()`).
   - `has_maximal_reconvergence`: `VK_KHR_shader_maximal_reconvergence`
     (`runtime/vk/vk_pipeline.c` `spirv_reconverge()`).
   - `has_pipeline_binary`: `VK_KHR_pipeline_binary` with `VK_KHR_maintenance5`
@@ -76,13 +78,12 @@ Vulkan-internal header of the graphics layer. Host code only; the guest never se
     `mesh_fallback` = 1: `mesh_fallback_batch` = auto batches there.
   - `int mesh_emulation`: they are drawn by the mesh emulation (`mesh_emulation` = 1 where `runtime/vk/vk_mesh_path.h`
     lets it act; `runtime/vk/vk_exec_draw.c`, `runtime/vk/vk_pipeline.c`).
-  - `int feedback`: Feedback loops ([maxwell.md](../maxwell.md) 1.9, `runtime/vk/vk_exec_draw.c` `feedback_prepare()`):
+  - `int feedback` (`VK_FEEDBACK_*`): Feedback loops ([maxwell.md](../maxwell.md) 1.9, `runtime/vk/vk_exec_draw.c` `feedback_prepare()`):
     a draw samples a target of its open pass that an earlier draw of the pass wrote. `NX2SARIA_FEEDBACK=0`:
     `VK_FEEDBACK_OFF` (sampled in GENERAL without a barrier, the old behaviour); `VK_FEEDBACK_LAYOUT` with
     `VK_EXT_attachment_feedback_loop_layout` and `dynamicRenderingLocalRead` (attachable images get feedback usage, a
     by-region barrier inside the pass); else (or `NX2SARIA_FEEDBACK=restart`) `VK_FEEDBACK_RESTART` (the pass ends and
     restarts behind the full barrier).
-  - `int feedback`: `VK_FEEDBACK_*`.
   - `uint32_t min_imported_host_alignment`: `VK_EXT_external_memory_host`.
   - `int device_index`: index in `vkEnumeratePhysicalDevices`.
 - `VkCaps`: `runtime/vk/vk_caps.c`: fallbacks for GPUs other than the RX 9070, decided at device creation.
@@ -248,15 +249,13 @@ Calls serialise on an internal lock.
 - `vk_hdr_luminance_stats()`: Luminance statistics of an HDR10 shot inside rect {x, y, w, h}: the darkest pixel, the
   0.1st, 1st, 50th and 99th percentiles and the brightest pixel in nits, and the share of pixels under 0.01 nits
   (`runtime/vk/vk_hdr.c`).
-- `vk_hdr_images_release()`: the swapchain has no HDR: the encode's images go (waits for the device); before the
-  device goes away.
+- `vk_hdr_release()`: before the device goes away.
+- `vk_hdr_images_release()`: the swapchain has no HDR: the encode's images go (waits for the device).
 - `vk_hdr_support()`: The support buffer's HDR settings, five vec4 at 1440
   (`runtime/vk/vk_exec_draw.c` `support_fill()`; read by the game's tonemap with `shaders/hdr_tonemap.frag` spliced in,
   `runtime/vk/vk_hdr.c` `tonemap_splice()`).
 - `vk_contact_strength()`: `runtime/vk/vk_contact.c`: screen-space contact shadows on the game's composed scene colour
-  (`NX2SARIA_CONTACT_SHADOWS`).
-
-  percent, 0 = off.
+  (`NX2SARIA_CONTACT_SHADOWS`); the strength in percent, 0 = off.
 - `vk_contact_release()`: before the device goes away.
 - `vk_present_swapchain_mem()`: The swapchain's images, their size and their pixels' bytes, for the memory report
   (`runtime/vk/vk_memory.c` `outside_log()`).
@@ -268,9 +267,10 @@ Calls serialise on an internal lock.
   queue (`vk_sync_flush_held`); the raw forms leave them held, for `runtime/vk/vk_sync.c` itself.
 - `vk_queue_trylock_raw()`: 1 when acquired.
 - `vk_sync_flush_held()`: queue lock held: the held submissions go to the queue in one call (`runtime/vk/vk_sync.c`).
-- `gfx_fit_rect()`: Copy of the last presented swapchain image, for probes: on, the next presents read the image back
-  into a host buffer and wait for the GPU. `*px` stays valid until the next present; the format is the swapchain's.
-  Returns 0 with no frame. The rectangle {x, y, w, h} of a dw x dh swapchain image a cw x ch picture is presented in
+- `vk_present_capture()`, `vk_present_captured()`: Copy of the last presented swapchain image, for probes: on, the next
+  presents read the image back into a host buffer and wait for the GPU. `*px` stays valid until the next present; the
+  format is the swapchain's. Returns 0 with no frame.
+- `gfx_fit_rect()`: The rectangle {x, y, w, h} of a dw x dh swapchain image a cw x ch picture is presented in
   (`runtime/gfx/gfx_present.c`, `NX2SARIA_ASPECT`); the rest is black.
 - `VkGrab`: The next presented frame, as the window gets it with the overlay on it, for a bug capture
   (`runtime/diag/bugcap.c`): its pixels are copied (px, malloc'd, as the swapchain holds them) and cb gets them on the
@@ -308,7 +308,7 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   and takes effect at the end.
 - `vk_texture_release()`: TextureFinalize: the image stays for slots that still name its storage.
 - `vk_guest_written()`: a host write write-watch may miss: textures there re-upload.
-- `VkMemSpan`: GPU address -> backing (section 3.1). avail: bytes from offset that stay contiguous in buffer.
+- `VkMemSpan`: GPU address -> backing. avail: bytes from offset that stay contiguous in buffer.
   `alloc/alloc_offset`: the device-local memory behind physical and (through the page table) virtual pool addresses,
   NULL for imported pools. cls: the pool class of the backing (`VK_MCLS_*`), for the traffic census.
   - `void *pool`: the imported pool record behind the span (NULL for device memory), for `VK_MEM_BOUND`.
@@ -366,8 +366,8 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   blocks, for per-object motion vectors. `vk_mvprev_step`: the distance of the game's other copy of a vertex-stage block
   the snapshot also copies, 0: none. `vk_mvprev_find`: last frame's block of that object (prev, its address; how,
   `MVPREV_*`), 0: none.
-- `vk_mvprev_want()`: also keep these binding indices' last-frame copies (bit n: index n); DLAA on and
-  `NX2SARIA_DLAA_OBJMV` not 0, as of the last present.
+- `vk_mvprev_on()`: DLAA on and `NX2SARIA_DLAA_OBJMV` not 0, as of the last present.
+- `vk_mvprev_want()`: also keep these binding indices' last-frame copies (bit n: index n).
 - `vk_mvprev_frame()`: each present, beside `vk_dlaa_frame`.
 - `vk_mem_gpa_late()`: --probe-vkmem: `NX2SARIA_GPA_LATE`, the table takes a new mirror up in queue order.
 - `vk_mem_note_live()`: Staged mirror uploads (`runtime/vk/vk_memory.c`): the GPU of the submission being recorded reads
@@ -377,7 +377,7 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   (`runtime/vk/vk_exec_xfer.c`): `vk_sync_recorded_wait` waits for the newest such submission up to the one it waits
   for.
 - `vk_exec_note_results()`: `VK_RES_*`.
-- `VkExec`: The early tail (`runtime/vk/vk_exec.c` "the early tail", `NX2SARIA_TAIL_EARLY`). `vk_exec_tail`: the replay
+- `vk_exec_tail_begin()`: The early tail (`runtime/vk/vk_exec.c` "the early tail", `NX2SARIA_TAIL_EARLY`). `vk_exec_tail`: the replay
   is recording a submission's tail. `runtime/vk/vk_sync.c`: the tail's command buffer set aside for the write-backs' one
   (hold), then the part with the write-backs handed over with the executed timeline's signal and the tail put behind it
   (release); whether a part can take that order now (ok); the game's wait for a fence (`game_wait`); for a value whose
@@ -391,7 +391,7 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
 - `vk_mem_lazy_decide()`: once the driver is known (after `vk_caps_driver`): on or off, with one log line.
 - `vk_mem_fatal_note()`: the memory mode and the lazy write-back's state, for a fatal error's line.
 - `vk_sync_rec_fence()`: replay thread: the timeline value of the submission being recorded.
-- `vk_sync_release_held()`: `runtime/vk/vk_sync.c`: submits what `vk_queue_submit` holds back when it is needed for the
+- `vk_sync_release_held()`: `runtime/vk/vk_sync.c`: submits what `queue_submit()` there holds back when it is needed for the
   timeline to reach value.
 - `vk_mem_merge_cpu_wait()`: `NX2SARIA_MERGE_CPU`: the lists up to value are stored.
 - `vk_mem_shadow_sync()`: Shadow storage (`runtime/vk/vk_memory.c`): `runtime/vk/vk_sync.c` calls `vk_mem_shadow_sync`
@@ -454,13 +454,14 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   the regions were queried in this epoch (a guest submission). For checks that may see writes made during the epoch one
   epoch late.
 - `vk_mem_snap_stats()`: since the last call.
-- `vk_fix_zero()`: Upload batch: one command buffer on `gfx_queue` that texture uploads and texel copies record into.
-  begin/end bracket the recording (recursive lock); `vk_staging` (between them) returns a mapped host buffer that lives
-  until the batch completes, or, with alloc non-NULL, until the caller's `vmaDestroyBuffer` after `vk_upload_flush(1)`.
-  The replay calls `vk_upload_flush(0)` before each submission that may read uploaded images; queue order and the
-  batch's closing barrier make the uploads visible to it. Returns the batch sequence number; `wait=1` blocks until it
-  completed. `NX2SARIA_FIX_ZERO` (default 1): physical pools are zeroed once at creation and GPU-only images with memory
-  of their own are cleared when created; 0 leaves both as the driver hands them out.
+- `vk_fix_zero()`: `NX2SARIA_FIX_ZERO` (default 1): physical pools are zeroed once at creation and GPU-only images with
+  memory of their own are cleared when created; 0 leaves both as the driver hands them out.
+- `vk_upload_begin()`, `vk_upload_end()`, `vk_staging()`, `vk_upload_flush()`: Upload batch: one command buffer on
+  `gfx_queue` that texture uploads and texel copies record into. begin/end bracket the recording (recursive lock);
+  `vk_staging` (between them) returns a mapped host buffer that lives until the batch completes, or, with alloc
+  non-NULL, until the caller's `vmaDestroyBuffer` after `vk_upload_flush(1)`. The replay calls `vk_upload_flush(0)`
+  before each submission that may read uploaded images; queue order and the batch's closing barrier make the uploads
+  visible to it. `vk_upload_flush` returns the batch sequence number; `wait=1` blocks until it completed.
 - `vk_staging_at()`: A 256-byte-aligned range of the staging arena owned by the open upload batch
   (`runtime/vk/vk_memory.c`): `*buf` at `*off`. Only between `vk_upload_begin` and `vk_upload_end`; a large request gets
   a buffer of its own at offset 0.
@@ -472,9 +473,7 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   SCRATCH: a new scratch buffer); `STG_NEW`: staging buffers made by `vmaCreateBuffer`; DEVMEM: new `VkDeviceMemory` of
   32 MiB or more (VMA blocks, dedicated allocations); FLUSH: `vk_upload_flush` (submit, retire, frees).
 - `vk_defer_image()`: Deferred destruction: freed once the upload batches recorded so far and the timeline value last
-  noted have completed.
-
-  alloc NULL: `vkDestroyImage` only.
+  noted have completed. alloc NULL: `vkDestroyImage` only.
 - `vk_defer_free()`: `free(p)` once the GPU is past the submission being recorded, as `vk_defer_image`: a host record
   other threads may still read (a destroyed texture's, `runtime/vk/vk_texture.c` `destroy_tex()`).
 - `vk_exec_image_gone()`: texture lock held: the replay's views of image go with it; returns how many.
@@ -554,7 +553,7 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   become the float picture the game copied into it, when the last draw into it was that copy and the swapchain is HDR10.
 - `vk_texture_get()`: created and made current; NULL for BUFFER or unmapped formats.
 - `vk_texture_by_id()`: A texture slot; a slot whose texture was finalized follows the live texture at the same storage
-  (`hle_nvn.c`).
+  (`runtime/vk/vk_texture.c` `slot_resolve()`).
 - `vk_texture_lock()`: The replay looks up many slots per draw: it takes the texture lock once around them
   (`vk_texture_lock`) and uses the `_locked` lookups; `vk_texture_slots_gen` changes whenever a slot may resolve to
   another image or view.
@@ -602,20 +601,19 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   (1) or a stand-in (0): a slot on screen whose texture is not made is made by that lookup beside the creation budget
   (`runtime/vk/vk_texture.c` `slot_resolve()`).
 - `vk_texture_pool_make_ns_take()`: ns the pool's lookups spent making and first uploading entries since the last call.
-- `vk_texture_create_deferred_locked()`: a lookup since the last call left a creation to the budget; one past the
-  highest texture slot registered so far (or more).
+- `vk_texture_slot_count_locked()`: one past the highest texture slot registered so far (or more).
+- `vk_texture_create_deferred_locked()`: a lookup since the last call left a creation to the budget.
 - `VK_POOL_TEX`: Bindless pools (`runtime/vk/vk_exec_draw.c`, "texture and sampler pools"): set 2 of every pipeline
   layout. Shaders that index the texture or sampler pool with handles from memory have their pool arrays moved there
   (`runtime/vk/vk_pipeline.c` `spirv_pool_rebind()`); `VK_POOL_KINDS` image bindings, one per view kind, then the
-  sampler pool. `VK_POOL_TEX` covers the game's whole texture pool: Ocarina makes one of 33068 descriptors
+  sampler pool. `VK_POOL_TEX`, as the translator's Accessor.TexturePoolLength, covers the game's whole texture pool: the
+  game makes one of 33068 descriptors
   (`nvnTexturePoolInitialize`), and with 32768 the translator's clamp sent every handle from 32768 up to slot 32767, so
   the textures the game numbered there (some ground after an area load) were drawn with whatever slot 32767 held, often
   an empty image: see-through ground until the area was loaded again. 16 kinds x 40960 = 655,360 sampled images in set
   2, under NVIDIA's 1,048,576 update-after-bind limit with room for the bound slots;
   `runtime/vk/vk_exec_draw.c` `pool_layout_make()` logs the device's limits and says which one a failed layout passed.
   `vk_texture_register` logs a slot past the pool.
-
-  as the translator's Accessor.TexturePoolLength.
 - `VK_POOL_TEX_CARRIED`: the length before: carried translations still declare it.
 - `VK_POOL_SAMP`: Accessor.SamplerPoolLength.
 - `VK_POOL_KINDS`: kind = depth * 8 + dim * 2 + arrayed, dim 1D 2D 3D CUBE.
@@ -633,10 +631,8 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   submission's first pool use takes the next set and brings it up to date. `vk_pool_takes` counts the takes whose sync
   left no slot behind (`runtime/vk/vk_exec_draw.c` `pool_sync()`); once it has moved on by more than `VK_POOL_SETS`
   since a pool entry changed, every set holds the change (`runtime/vk/vk_texture.c` `retire_sweep()`). It may count
-  fewer takes than there were, which only delays that.
-
-  4 before: with the game no longer held for the GPU after a frame's first submission, the replay waited for a set's GPU
-  work at 15% of the switches.
+  fewer takes than there were, which only delays that. 8 sets; 4 before: with the game no longer held for the GPU after
+  a frame's first submission, the replay waited for a set's GPU work at 15% of the switches.
 - `vk_texture_pool_ctx()`: Texture lock held: 1 while the texture pool refresh looks its slots up
   (`runtime/vk/vk_exec_draw.c` `pool_sync_entries()`), 0 after. Those lookups leave out a texture evicted by disuse, and
   are not counted as the texture being used.
@@ -655,8 +651,8 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
   under 0.
 - `vk_texture_bucket_stats()`: diagnosis for the pool log (`runtime/vk/vk_texture.c`).
 - `vk_texture_slot_khash_locked()`: `runtime/vk/vk_texture.c`: descriptor hash of a GPU-written slot, 0 otherwise.
-- `vk_texture_entry_gen()`: `runtime/vk/vk_texture.c`: bumped by every entry change; registrations that changed
-  nothing (`vk_texture_register`), for the pool log.
+- `vk_texture_same_regs()`: registrations that changed nothing (`vk_texture_register`), for the pool log.
+- `vk_texture_entry_gen()`: `runtime/vk/vk_texture.c`: bumped by every entry change.
 - `vk_texture_dirty_slots_locked()`: Slots whose token may have changed since `*pos` (0 at first; then the value these
   calls leave): fn is called for each (some more than once) and `*pos` advanced. 0 when too many changes came since: the
   caller looks at every slot. `*pos` from `vk_texture_dirty_pos_locked` after such a walk. Texture lock held. gfn, when
@@ -697,8 +693,7 @@ Guest or host threads; every call needs `vk_init()`. The first nine have the `Gf
 - `vk_texture_write_back_small()`: writes those rendered by work up to fence back to storage.
 - `vk_texture_debug()`: `vk_dump`.
 - `vk_texture_slot_swz()`: `vk_dump`: swizzle of the descriptor in slot id.
-- `vk_texture_read_image()`:
-  - `uint64_t img)`: always from the image (GPU copy, waited for); 0 on failure.
+- `vk_texture_read_image()`: always from the image (GPU copy, waited for); 0 on failure.
 - `vk_texture_cpu_stale()`: a GPU-written mirrored texture there has stale storage.
 - `vk_texture_dirty_fence()`: newest recorded writer of such a texture; 0: none.
 - `vk_texture_write_back()`: writes those images back into their storage (waits).
@@ -825,26 +820,24 @@ once the GPU reached it and the completion thread ran its side effects. Guest or
 - `vk_completion_add_first()`: As `vk_completion_add`, but before every `vk_completion_add` callback of the values
   reached (in their own order): the merge lists the CPU stores into guest memory (`NX2SARIA_MERGE_CPU`), which the GPU
   events of the same value come after.
-- `rdoc_init()`: `gfx_vulkan_backend` (`runtime/vk/vk_backend.c`): presents go to a present thread and run after the
-  submissions made before them.
-
-  runtime/rdoc.c: `NX2SARIA_RDOC` debug capture; before `vkCreateInstance`.
-- `vk_present_drain()`: returns once every queued present was submitted to `gfx_queue`.
+- `rdoc_init()`: `runtime/diag/rdoc.c`: `NX2SARIA_RDOC` debug capture; before `vkCreateInstance`.
+- `vk_present_drain()`: `gfx_vulkan_backend` (`runtime/vk/vk_backend.c`): presents go to a present thread and run
+  after the submissions made before them; this returns once every queued present was submitted to `gfx_queue`.
 - `vk_replay_async()`: `NX2SARIA_REPLAY_ASYNC` (default 0): submissions replay on the replay thread.
-- `vk_program_release()`: `GfxBackend.program_release`: `runtime/vk/vk_pipeline.c`; weak no-op in
-  `runtime/vk/vk_backend.c`.
+- `vk_program_release()`: `GfxBackend.program_release`: a weak no-op in `runtime/vk/vk_backend.c`, which no other file
+  replaces.
 - `vk_backend_shutdown()`: presents, `vk_sync_shutdown`, `vk_mem_shutdown`, `vk_shutdown` in that order.
 
 ### Pipelines (`runtime/vk/vk_pipeline.c`)
 
-Binding model (comment block at the top of `runtime/vk/vk_pipeline.c`): one descriptor set, set 0, per pipeline. Binding
-0 is the translator's support buffer (a uniform buffer every stage shares); the vertex stage keeps its own bindings, the
-fragment stage's follow them (its SPIR-V is renumbered). Set 0 is a push-descriptor set unless the pipeline needs more
-than `maxPushDescriptors` (32 here) descriptors; `VkPipeInfo.bindings` says what goes where. No push constants.
-Everything a graphics pipeline depends on, as the op stream carries it. Fields covered by dynamic state are read by
-`vk_pipeline_set_dynamic` only and left out of the pipeline key.
+Binding model (the binding model of `runtime/vk/vk_pipeline.c` on [vk-pipeline.md](vk-pipeline.md)): one descriptor
+set, set 0, per pipeline. Binding 0 is the translator's support buffer (a uniform buffer every stage shares); the
+vertex stage keeps its own bindings, the fragment stage's follow them (its SPIR-V is renumbered). Set 0 is a
+push-descriptor set unless the pipeline needs more than `maxPushDescriptors` (32 here) descriptors;
+`VkPipeInfo.bindings` says what goes where. No push constants.
 
-- `VkPipeState`:
+- `VkPipeState`: Everything a graphics pipeline depends on, as the op stream carries it. Fields covered by dynamic
+  state are read by `vk_pipeline_set_dynamic` only and left out of the pipeline key.
   - `const GfxShader *vs, *fs`: `gfx_shader_get` results; fs NULL: no fragment stage (depth only). vs is the mesh stage
     of a mesh draw (`gfx_shader_stage` `GFX_STAGE_MS`).
   - `const GfxShader *ts`: mesh draws: the task stage, or NULL.
@@ -892,7 +885,7 @@ Everything a graphics pipeline depends on, as the op stream carries it. Fields c
     2 one (its draws read guest memory as the GPU runs).
 - `VkDescSlot`: One descriptor of the packed array a descriptor update template reads (`VkPipeInfo.tpl`), 24 bytes for
   every type; the bytes a type leaves unused are zero, so equal descriptors compare equal byte for byte.
-- `vk_pipeline_graphics()`: Both return the cached pipeline (created on first use; failures are cached and logged once).
+- `vk_pipeline_graphics()`, `vk_pipeline_compute()`: Both return the cached pipeline (created on first use; failures are cached and logged once).
   info: may be NULL. Valid until `vk_pipeline_shutdown`; thread-safe.
 - `vk_pipeline_graphics_async()`: The replay's variant: after `vk_pipeline_async_enable` a missing pipeline is built by
   background workers and this returns `VK_NULL_HANDLE` with `*pending` 1 until it is ready (the draw is skipped);
@@ -944,15 +937,12 @@ Everything a graphics pipeline depends on, as the op stream carries it. Fields c
   = 1): recorded when s draws lines and the device has wide lines, whose pipelines take the width as dynamic state.
   Nothing otherwise.
 - `VkVtxInput`: Vertex input as vkCmdSetVertexInputEXT takes it (`runtime/vk/vk_pipeline.c` `vertex_input()`).
-- `enum { VK_DYN_CORE, ... }`: The dynamic state `vk_pipeline_set_dynamic_delta` last recorded into a command buffer, as
-  the values its calls took. have: the groups that still hold what the command buffer has. Zeroed, nothing is known and
-  the next call records everything; the owner zeroes it whenever the command buffer begins again or other code records
-  pipelines or dynamic state into it (the replay keeps it in `runtime/vk/vk_exec_draw.c`'s B, which
-  `vk_exec_draw_new_cb` clears).
-
-  VTX: topology, primitive restart, vertex input.
-- `VkDynShadow`:
-  - `uint32_t nt`: colour targets the blend arrays cover.
+- `VkDynShadow`: The dynamic state `vk_pipeline_set_dynamic_delta` last recorded into a command buffer, as the values
+  its calls took. have: the groups (`VK_DYN_*`; VTX is topology, primitive restart and vertex input) that still hold
+  what the command buffer has. Zeroed, nothing is known and the next call records everything; the owner zeroes it
+  whenever the command buffer begins again or other code records pipelines or dynamic state into it (the replay keeps
+  it in `runtime/vk/vk_exec_draw.c`'s B, which `vk_exec_draw_new_cb` clears). nt: the colour targets the blend arrays
+  cover.
 - `vk_pipeline_set_dynamic_delta()`: `vk_pipeline_set_dynamic` recording only what differs from `*sh`, which it then
   updates. mesh: the bound pipeline is a mesh pipeline, which keeps topology, primitive restart and vertex input static,
   so binding it dropped them: they are left out and marked unknown. Returns the number of state calls recorded and adds
@@ -985,13 +975,13 @@ Everything a graphics pipeline depends on, as the op stream carries it. Fields c
 - `vk_pipeline_shutdown()`: waits for background builds, saves, destroys pipelines, layouts and the cache; before
   `vk_shutdown`.
 - `vk_pipeline_selftest()`: one graphics and one compute pipeline from census shaders; 0 on success.
-- `vk_pipeline_create_foreign()`: Pipelines a library creates on our device without a pipeline cache of its own (FSR
+- `vk_pipeline_create_foreign()`: Pipelines a library creates on the game's device without a pipeline cache of its own (FSR
   3.1, `runtime/vk/vk_ffx.cpp`), through the pipeline caches kept across runs; as `vkCreateComputePipelines` (compute 1)
   or `vkCreateGraphicsPipelines` with no cache.
 - `VkForeignPipes`: How many it made so far: `from_cache` came without a compile and compiled went into the play cache
-  (both only with a play cache, which is what can tell them apart); uncached were created with no cache of ours.
+  (both only with a play cache, which is what can tell them apart); uncached were created with no cache of the game's.
 - `#include "vk_rec.h"`: last: its macros route the `vkCmd*` calls of every file that includes `runtime/vk/vk.h`.
-- `VkExec`: Select the main scene view for selective animated motion, and decide which of the frame's other skinned
+- `vk_fg_pose_prepare()`: Select the main scene view for selective animated motion, and decide which of the frame's other skinned
   draws continue a draw of last frame (`runtime/vk/vk_skin_motion.inc` `skin_resolve()`). ex: the submission that
   records the motion vectors, which are made for the camera block cam and tested against the depth image depth of w x h.
   1: the frame has motion draws to record.
