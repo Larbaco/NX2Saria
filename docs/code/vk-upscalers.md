@@ -2379,7 +2379,7 @@ Without a choice nothing is skipped: the pass takes what there is, and `dlssg_de
 `DLSSG_DEV_*`: how the device was made, or tried: by the loader with the interposer not in use (`DLSSG_DEV_LOADER`);
 through the interposer (`DLSSG_DEV_INTERPOSER`); by the loader because the card is not an NVIDIA one
 (`DLSSG_DEV_NOT_NVIDIA`: the interposer is not asked); by the loader after the interposer refused (`DLSSG_DEV_REFUSED`:
-(`*refused` holds its result). In the last two frame generation is off for the run.
+`*refused` holds its result). In the last two frame generation is off for the run.
 
 ### `dlssg_device_create()`
 
