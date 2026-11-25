@@ -1243,11 +1243,14 @@ class WorkerTest(unittest.TestCase):
                   "mock.patch.object(app.time,'sleep'), mock.patch.object(app,'tell'):\n"
                   " run.return_value.running.return_value=False\n"
                   " run.return_value.end.return_value=end\n"
+                  " run.return_value.code.return_value=0\n"
                   " app.play_only(ctx)\n"
                   " print('started' if spawn.called else 'refused')\n")
         def steam():
-            return subprocess.run([sys.executable, '-c', script, str(self.root)], text=True,
-                                  capture_output=True, cwd=ROOT, timeout=15, check=True).stdout.strip()
+            result = subprocess.run([sys.executable, '-c', script, str(self.root)], text=True,
+                                    capture_output=True, cwd=ROOT, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.strip()
         self.assertEqual(steam(), 'started')
         marker = self.root / 'data' / 'job-running.json'
         marker.write_text(json.dumps({'task': 'synthetic job', 'kind': 'rebuild', 'started': 1}))
