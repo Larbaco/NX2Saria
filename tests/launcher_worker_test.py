@@ -568,6 +568,19 @@ class WorkerTest(unittest.TestCase):
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
+    def assert_game_finished(self, marker):
+        deadline = time.monotonic() + 10
+        observed = None
+        while time.monotonic() < deadline:
+            try:
+                observed = marker.read_text()
+            except FileNotFoundError:
+                pass
+            if observed == 'done':
+                return
+            time.sleep(0.05)
+        self.assertEqual(observed, 'done')
+
     def test_killed_worker_does_not_kill_synthetic_game(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()
@@ -597,10 +610,7 @@ class WorkerTest(unittest.TestCase):
         worker.kill()
         worker.wait(timeout=15)
         marker = Path(self.tmp.name) / 'game-finished'
-        deadline = time.monotonic() + 10
-        while not marker.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertEqual(marker.read_text(), 'done')
+        self.assert_game_finished(marker)
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
@@ -633,10 +643,7 @@ class WorkerTest(unittest.TestCase):
         worker.kill()
         worker.wait(timeout=15)
         marker = game / 'game-finished'
-        deadline = time.monotonic() + 10
-        while not marker.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertEqual(marker.read_text(), 'done')
+        self.assert_game_finished(marker)
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
@@ -667,10 +674,7 @@ class WorkerTest(unittest.TestCase):
         worker.kill()
         worker.wait(timeout=15)
         marker = game / 'game-finished'
-        deadline = time.monotonic() + 10
-        while not marker.exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-        self.assertEqual(marker.read_text(), 'done')
+        self.assert_game_finished(marker)
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
