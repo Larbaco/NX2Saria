@@ -1,22 +1,3 @@
-"""Updating the launcher's own release folder (launcher/paths.py, "app/").
-
-An update is staged beside the running version and switched to with two small files, so a failed or interrupted
-update never leaves a half-written release in use:
-
-1. The app archive goes to data/downloads, is checked against the manifest's size and sha256 and unpacks into
-   app/<version>.part, which is renamed to app/<version> once it is complete and holds the expected VERSION.
-2. A new Python (the manifest's runtime id differs from python/runtime-id.txt) unpacks into python.next on Windows;
-   Linux stages it beside the app and switches it while keeping python.old for recovery.
-3. app/previous.txt gets the running version and app/current.txt the new one. Windows starts the native stub again;
-   Linux starts the installed wrapper, which restores previous.txt and python.old if startup exits with code 86.
-4. The new version rebuilds the game (launcher/jobs.py), then prune() removes every version but these two.
-
-The launcher also stages a release in the background while it runs, the game included (stage()), and installs it
-later, when the game is not running (install_staged()). Such a release waits in app/<version> with its Python, when it
-brings one, in app/<version>/python.staged rather than python.next: the stub swaps python.next in at every start, and
-the running version must not start on another Python before current.txt names the new one. app/<version>/staged.json,
-written last, says the release is complete; a folder without it is never installed and is staged again.
-"""
 import json
 import os
 import shutil
@@ -25,8 +6,8 @@ from pathlib import Path
 
 from . import net, versions
 
-STAGED = 'staged.json'             # in app/<version>: the background staging of that release finished
-STAGED_PYTHON = 'python.staged'    # in app/<version>: the Python the release brings, until it installs
+STAGED = 'staged.json'
+STAGED_PYTHON = 'python.staged'
 
 
 class UpdateError(Exception):
@@ -60,13 +41,10 @@ def runtime_id(layout):
 
 
 def _linux_runtime(layout):
-    """Installed Linux runtimes have the relocatable python-build-standalone bin/python3 entry point."""
     return os.name != 'nt' and (layout.python / 'bin' / 'python3').is_file()
 
 
 def safe_extract(zip_path, dest):
-    """Unpack a zip into dest, refusing absolute names and names that climb out of it, and, before anything is
-    written, a zip whose files do not fit the disk (net.space_problem)."""
     dest = Path(dest)
     root = dest.resolve()
     with zipfile.ZipFile(zip_path) as z:
@@ -101,7 +79,6 @@ def _fetch(release, key, layout, progress, cancel, version, log=None):
 
 
 def stage_app(layout, release, progress=None, cancel=None, version='dev', log=None):
-    """Download, check and unpack the release's app archive into app/<version>; returns that folder."""
     zip_path = _fetch(release, 'app', layout, progress, cancel, version, log)
     ver = versions.display(release.version)
     final = layout.apps / ver
@@ -131,8 +108,6 @@ def runtime_needed(layout, release):
 
 
 def stage_runtime(layout, release, progress=None, cancel=None, version='dev', dest=None, log=None):
-    """Unpack a new Python into dest (python.next, for the stub to swap in at the next start); False when the running
-    one is current."""
     if not runtime_needed(layout, release):
         return False
     zip_path = _fetch(release, 'runtime', layout, progress, cancel, version, log)
@@ -152,8 +127,6 @@ def stage_runtime(layout, release, progress=None, cancel=None, version='dev', de
 
 
 def prerelease(release):
-    """True for a GitHub pre-release or a version with a pre-release tag (0.5.0-rc1): only the Preview channel
-    installs it."""
     try:
         return bool(release.prerelease) or versions.parse(release.version)[1] != (1,)
     except ValueError:
@@ -161,9 +134,6 @@ def prerelease(release):
 
 
 def stage(layout, release, progress=None, cancel=None, version='dev', log=None):
-    """Download, check and unpack a release into app/<version>, with the Python it brings in python.staged there,
-    without switching to it; staged.json, written last, marks it complete. Earlier staged releases it supersedes are
-    removed. Returns the folder."""
     ver = versions.display(release.version)
     folder = stage_app(layout, release, progress=progress, cancel=cancel, version=version, log=log)
     runtime = ''
@@ -182,8 +152,6 @@ def stage(layout, release, progress=None, cancel=None, version='dev', log=None):
 
 
 def staged_info(layout, ver):
-    """What staged.json says about app/<ver> ({'version', 'runtime', 'prerelease', 'notes'}) when stage() finished
-    it and it is still whole (its launcher, its VERSION, the Python it needs), else None."""
     folder = layout.apps / ver
     try:
         m = json.loads((folder / STAGED).read_text(encoding='utf-8'))
@@ -200,8 +168,6 @@ def staged_info(layout, ver):
 
 
 def staged(layout, channel='stable', skip=''):
-    """The newest release stage() left complete that is newer than the running version, as staged_info() gives it,
-    or None. A pre-release counts only on the Preview channel; skip is a version that failed to start."""
     best = None
     if not layout.apps.is_dir():
         return None
@@ -220,9 +186,6 @@ def staged(layout, channel='stable', skip=''):
 
 
 def install_staged(layout, ver, log=None):
-    """Make a release stage() finished the one the stub starts at its next start: its Python goes to python.next for
-    the stub to swap in, current.txt names it (previous.txt the running version), and staged.json goes, so a version
-    the stub rolls back from is not installed again by itself."""
     m = staged_info(layout, ver)
     if not m:
         raise UpdateError(f'app/{ver} is not a complete staged release')
@@ -233,8 +196,6 @@ def install_staged(layout, ver, log=None):
         live = layout.python
         old = layout.root / 'python.old'
         if live.exists():
-            # A running launcher has already made it through App.start(), which removes stale python.old backups.
-            # A leftover here can only be from an earlier failed start, so replace it with this live runtime.
             shutil.rmtree(old, ignore_errors=True)
             os.replace(live, old)
         try:
@@ -256,7 +217,7 @@ def install_staged(layout, ver, log=None):
     try:
         switch_to(layout, ver)
     except BaseException:
-        if moved:   # the running version stays: it must not start on the new Python
+        if moved:
             os.replace(nxt, py)
         raise
     shutil.rmtree(py, ignore_errors=True)
@@ -264,7 +225,6 @@ def install_staged(layout, ver, log=None):
 
 
 def switch_to(layout, ver):
-    """Make ver the version the stub starts, keeping the running one as previous."""
     if not (layout.apps / ver / 'launcher' / 'start.pyw').is_file():
         raise UpdateError(f'app/{ver} is not a complete release')
     now = current(layout)
@@ -274,7 +234,6 @@ def switch_to(layout, ver):
 
 
 def rollback(layout):
-    """Back to previous.txt's version; False when there is none to go back to."""
     prev = previous(layout)
     if not prev or not (layout.apps / prev / 'launcher' / 'start.pyw').is_file():
         return False
@@ -284,15 +243,12 @@ def rollback(layout):
 
 
 def prune(layout):
-    """Remove every app version but the current and previous one and a staged release newer than the current one,
-    an old Python the stub set aside, and stale downloads."""
     now = current(layout)
     keep = {now, previous(layout)}
     if layout.apps.is_dir():
         for d in layout.apps.iterdir():
             if d.is_dir() and d.name not in keep and not _waiting(layout, d.name, now):
                 shutil.rmtree(d, ignore_errors=True)
-    # python.old is the rollback runtime until the launcher wrapper confirms the new version started.
     if layout.downloads.is_dir():
         for f in layout.downloads.iterdir():
             if f.suffix in ('.part', '.zip', net.PART_OF):
@@ -300,7 +256,6 @@ def prune(layout):
 
 
 def _waiting(layout, name, now):
-    """True for a staged release newer than version now: it waits to be installed."""
     try:
         return versions.newer(name, now) and staged_info(layout, name) is not None
     except ValueError:

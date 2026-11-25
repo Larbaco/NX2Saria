@@ -1,5 +1,3 @@
-/* Shared by NX2Saria.exe (nx2saria.c) and NX2Saria-Setup.exe (setup.c): paths, small files, shortcuts and the
-   uninstall entry. Wide-character Win32 throughout, so folder names in any language work. */
 #pragma once
 #define COBJMACROS
 #define WIN32_LEAN_AND_MEAN
@@ -17,8 +15,6 @@
 #define APP_NAME L"NX2Saria"
 #define UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NX2Saria"
 #define LEGACY_UNINSTALL_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\NX2navi"
-/* The launcher window's taskbar identity (launcher/winsys.py app_id): a shortcut that carries it is the one the
-   taskbar groups and pins the window under, with the shortcut's icon. */
 #define APP_USER_MODEL_ID L"NX2Saria.Launcher"
 static const PROPERTYKEY NX_PKEY_AppUserModel_ID = {
     {0x9F4C2855, 0x9F79, 0x4B39, {0xA8, 0xD0, 0xE1, 0xD4, 0x2D, 0xE1, 0xD5, 0xF3}}, 5};
@@ -40,7 +36,6 @@ static inline int is_dir(const wchar_t *p)
     return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY);
 }
 
-/* The first line of a small UTF-8 text file, trimmed, as wide text; 0 when absent or empty. */
 static inline int read_line(const wchar_t *path, wchar_t *out, size_t n)
 {
     char buf[256];
@@ -74,7 +69,6 @@ static inline int write_line(const wchar_t *path, const wchar_t *text)
     return ok && put == (DWORD)len;
 }
 
-/* Compare dotted versions ("0.3.11" > "0.3.9"); build metadata after '+' is ignored. */
 static inline int version_cmp(const wchar_t *a, const wchar_t *b)
 {
     for (;;) {
@@ -101,7 +95,6 @@ static inline int known_folder(REFKNOWNFOLDERID id, wchar_t *out, size_t n)
     return ok;
 }
 
-/* A .lnk at lnk that starts target (with its own icon). */
 static inline int make_shortcut(const wchar_t *lnk, const wchar_t *target, const wchar_t *workdir, const wchar_t *desc)
 {
     IShellLinkW *sl = NULL;
@@ -133,7 +126,6 @@ static inline int make_shortcut(const wchar_t *lnk, const wchar_t *target, const
     return ok;
 }
 
-/* The Desktop or Start menu shortcut's path. */
 static inline int shortcut_path(int desktop, wchar_t *out, size_t n)
 {
     wchar_t dir[PATHN];
@@ -148,7 +140,6 @@ static inline int legacy_shortcut_path(int desktop, wchar_t *out, size_t n)
     return swprintf(out, n, L"%ls\\NX2navi.lnk", dir) > 0;
 }
 
-/* A legacy shortcut may belong to a separate install. Only replace/remove it for this root. */
 static inline int shortcut_in_root(const wchar_t *lnk, const wchar_t *root)
 {
     IShellLinkW *sl = NULL;
@@ -171,7 +162,6 @@ static inline int shortcut_in_root(const wchar_t *lnk, const wchar_t *root)
     return match;
 }
 
-/* Create (on) or remove (off) the Desktop and/or Start menu shortcut to root\NX2Saria.exe. */
 static inline int set_shortcut(const wchar_t *root, int desktop, int on)
 {
     wchar_t lnk[PATHN], legacy[PATHN], target[PATHN];
@@ -198,7 +188,6 @@ static inline void reg_dword(HKEY k, const wchar_t *name, DWORD value)
     RegSetValueExW(k, name, 0, REG_DWORD, (const BYTE *)&value, sizeof value);
 }
 
-/* The entry in Settings > Apps that runs "NX2Saria.exe --uninstall". */
 static inline int write_uninstall_entry(const wchar_t *root, const wchar_t *version, DWORD size_kb)
 {
     HKEY k;

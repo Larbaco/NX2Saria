@@ -1,5 +1,3 @@
-"""What every part of the launcher shares: the folder layout, the settings and the log (data/logs/launcher.log,
-the run before it in launcher.1.log)."""
 import os
 import sys
 import threading
@@ -16,10 +14,6 @@ LOG_LIMIT = 4 << 20
 
 
 def install_kind(layout, env=None):
-    """How this launcher was installed, for the start line: a checkout of the repository; on Windows the setup's
-    install (NX2Saria.exe beside app/) or an unpacked release; on Linux the AppImage's install (the nx2saria-launcher
-    script beside app/, which the AppImage writes and the menu entry starts), and whether the AppImage started this
-    run (it passes APPIMAGE on) or the menu entry did."""
     env = os.environ if env is None else env
     if layout.dev:
         return 'checkout'
@@ -32,7 +26,6 @@ def install_kind(layout, env=None):
 
 
 def system_text(env=None, os_release='/etc/os-release'):
-    """The system for the start line: the Windows version, or the Linux distribution and the graphical session."""
     if os.name == 'nt':
         try:
             v = sys.getwindowsversion()
@@ -62,7 +55,7 @@ class Context:
             self._file = open(path, 'a', encoding='utf-8', errors='replace')
         except OSError:
             self._file = None
-        self.settings.log = self.log   # each changed setting gets a line when it is saved (Settings.save)
+        self.settings.log = self.log
         self.log(f'--- NX2Saria launcher {self.version} ({install_kind(self.layout)}) in {self.layout.root}; '
                  f'platform {sys.platform}; {system_text()}; {describe()}')
         if sys.platform.startswith('linux'):
@@ -80,10 +73,6 @@ class Context:
                      'it was is kept as launcher.json.bad')
 
     def log(self, line):
-        """One line (or several) into launcher.log. A log that cannot be written (a full disk, a file closed under
-        it) loses the line and nothing else: the callers log from the build's reader thread and from the window's
-        timers, where an exception would stop the build's output from being read or the timer from running. The
-        account's folders are written short (tools/private_paths.py): players attach this log to public issues."""
         line = shorten(str(line))
         stamp = time.strftime('%H:%M:%S')
         with self._lock:
@@ -92,7 +81,7 @@ class Context:
                     for part in str(line).splitlines() or ['']:
                         self._file.write(f'{stamp} {part}\n')
                     self._file.flush()
-                except (OSError, ValueError):   # ValueError: the file was closed
+                except (OSError, ValueError):
                     pass
         if self.echo:
             print(line, flush=True)

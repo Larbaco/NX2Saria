@@ -1,16 +1,3 @@
-/* NX2Saria-Setup.exe: the one-click setup. This program with the launcher's folder appended as a zip.
-
-   It unpacks the zip into %LOCALAPPDATA%\Programs\NX2Saria (no administrator rights), adds the Start menu and Desktop
-   shortcuts and the entry in Settings > Apps, and starts NX2Saria.exe with --from <the setup's folder>, where the
-   launcher looks for the player's dump first. A small window in the launcher's colours shows while it unpacks.
-   When the folder already holds a newer version than the setup carries, the setup leaves the files alone (the
-   launcher updates itself) and only repairs the shortcuts.
-
-   The end of the file is a trailer: "NX2NSET1", the zip's offset and size (u64 little endian) and the version (24
-   bytes, NUL padded), written by tools/make_launcher.py. The zip is read here with zlib's inflate, so the setup
-   needs nothing from Windows beyond its own DLLs.
-
-   Options: --dest DIR, --no-shortcuts, --no-launch, --quiet (no window; for tests). */
 #include "common.h"
 #include <stdint.h>
 #include <stdlib.h>
@@ -24,7 +11,7 @@ typedef struct {
     uint64_t off, size;
     wchar_t version[32];
     int shortcuts, launch, quiet;
-    int result;            /* 0 ok, else an error message id */
+    int result;
     wchar_t error[512];
     uint64_t written;
 } Setup;
@@ -32,7 +19,6 @@ typedef struct {
 static Setup S;
 static HWND g_wnd;
 
-/* Original three-leaf sprig in the NX2Saria forest palette; no game-derived artwork. */
 static void draw_sprig(HDC dc)
 {
     POINT leaves[3][6] = {
@@ -67,8 +53,6 @@ static void fail_msg(const wchar_t *fmt, const wchar_t *arg)
     swprintf(S.error, 512, fmt, arg ? arg : L"");
     S.result = 1;
 }
-
-/* ---------------------------------------------------------------- reading our own file */
 
 typedef struct { HANDLE f; uint64_t base, size; } Src;
 
@@ -110,9 +94,7 @@ static int read_trailer(void)
     return S.off + S.size <= (uint64_t)size.QuadPart;
 }
 
-/* ---------------------------------------------------------------- unzip */
-
-static int make_dirs(wchar_t *path)   /* every folder above path (path is a file) */
+static int make_dirs(wchar_t *path)
 {
     for (wchar_t *p = path + 3; *p; p++) {
         if (*p == L'\\') {
@@ -194,7 +176,6 @@ static int unzip(void)
     if (z.f == INVALID_HANDLE_VALUE) { fail_msg(L"The setup cannot read itself.", NULL); return 0; }
     z.base = S.off;
     z.size = S.size;
-    /* the end-of-central-directory record: the zip has no comment, so it is the last 22 bytes */
     if (!src_read(&z, z.size - 22, eocd, 22) || le32(eocd) != 0x06054b50) {
         CloseHandle(z.f);
         fail_msg(L"The setup is damaged. Download it again.", NULL);
@@ -248,9 +229,6 @@ static int unzip(void)
     return ok;
 }
 
-/* ---------------------------------------------------------------- the work */
-
-/* The installed release ver can start: its launcher (launcher/native/nx2saria.c release_ok) and the Python it runs on. */
 static int installed_ok(const wchar_t *dest, const wchar_t *ver)
 {
     wchar_t p[PATHN];
@@ -265,8 +243,6 @@ static DWORD WINAPI work(void *arg)
     wchar_t cur[PATHN], have[64];
     (void)arg;
     swprintf(cur, PATHN, L"%ls\\app\\current.txt", S.dest);
-    /* A newer launcher (one that updated itself) stays, unless it cannot start: the stub sends the player to this
-       setup to repair just that, and the setup's own release then replaces it. */
     int newer_installed = read_line(cur, have, 64) && version_cmp(have, S.version) > 0 && installed_ok(S.dest, have);
     wchar_t probe[PATHN];
     swprintf(probe, PATHN, L"%ls\\x", S.dest);
@@ -285,8 +261,6 @@ static DWORD WINAPI work(void *arg)
     if (g_wnd) PostMessageW(g_wnd, WM_DONE, 0, 0);
     return 0;
 }
-
-/* ---------------------------------------------------------------- the window */
 
 static LRESULT CALLBACK wndproc(HWND w, UINT m, WPARAM wp, LPARAM lp)
 {
@@ -377,7 +351,6 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
     if (!S.dest[0]) {
         wchar_t base[PATHN];
         if (!known_folder(&FOLDERID_UserProgramFiles, base, PATHN)) {
-            // 0 when unset; PATHN or more when it does not fit (base is then left unwritten); room for \Programs
             DWORD got = GetEnvironmentVariableW(L"LOCALAPPDATA", base, PATHN);
             if (!got || got >= PATHN - 16) return 1;
             wcscat(base, L"\\Programs");
@@ -385,7 +358,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmdline, int show)
         wchar_t legacy[PATHN];
         swprintf(S.dest, PATHN, L"%ls\\%ls", base, APP_NAME);
         swprintf(legacy, PATHN, L"%ls\\NX2navi", base);
-        if (!is_dir(S.dest) && is_dir(legacy)) wcscpy(S.dest, legacy);   /* prefer the current install, else update in place */
+        if (!is_dir(S.dest) && is_dir(legacy)) wcscpy(S.dest, legacy);
     }
     size_t dl = wcslen(S.dest);
     while (dl > 3 && (S.dest[dl - 1] == L'\\' || S.dest[dl - 1] == L'/')) S.dest[--dl] = 0;
