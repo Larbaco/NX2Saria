@@ -334,6 +334,7 @@ const char *ui_text_lang(const char *switch_code);
 
 typedef struct { const char *code; UiTextId name; } UiGameLang;
 int ui_text_game_langs(int game_version, UiGameLang *out, int max);
+const char *ui_text_game_lang_mals(const char *code);
 int ui_text_game_langs_in(const char *const *regions, int nregions, UiGameLang *out, int max);
 
 const char *menu_text(UiTextId id);

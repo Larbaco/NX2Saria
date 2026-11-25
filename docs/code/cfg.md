@@ -53,6 +53,7 @@ Cfg_reload_file: the file's lines as a list of (key, value), a repeated key keep
 - `HEAP_RETRY`, `HEAP_RETRY_TEST_FAIL`, `HEAP_RETRY_TEST_SHIPPED`: `heap_retry.c`: the set heap_retry and its test switches
 - `CHANGEBANK_HOLD`, `CHANGEBANK_HOLD_MS`: `changebank_hold.c`: the set changebank_hold and its hold
 - `CAMERA_CLEARANCE_FIX`: `camera_clearance.c`: the set camera_clearance
+- `QUIT_MENU`, `QUIT_MENU_TEST`: `quit_menu.c`: the set quit_menu and its test switches; no menu row
 - `POS_TRACE`: `debug_tools.c`: Link's position each frame to a file, for movement checks; no menu row
 - `HANG_WATCH_S`: `hang_watch.c`: the hang watch's seconds
 - `COOP`, `COOP_BETA`, `COOP_NAME`, `COOP_SERVER`, `COOP_PORT`, `COOP_ROOM`, `COOP_AUTO`, `COOP_DROP`: retired: the settings of the co-op of versions up to 0.9.2; read by nothing, listed so that a file which still sets them logs no unknown key

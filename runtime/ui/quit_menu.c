@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <zstd.h>
 
 #include "cfg.h"
 #include "cpu.h"
@@ -13,13 +12,11 @@
 #include "platform/platform.h"
 #include "quit_menu.h"
 #include "quit_menu_core.h"
-#include "sarc.h"
 #include "ui/menu.h"
 
 #define UI_SYSTEM 0x4e982e0ull
 #define UI_SYSTEM_VT 0x4c73ce0ull
 #define MAIN_SIZE 0x4ea0000ull
-#define MAX_RAW (64u << 20)
 
 enum { UI_SCREENS = 0x38, SM_FOCUS = 0x60, FM_CONTROL = 0x28 };
 enum { CTL_FOCUSED = 0x78, CTL_RESERVED = 0x80, CTL_FLAGS = 0xb4 };
@@ -27,20 +24,12 @@ enum { ENT_BUTTON = 0x18, ENT_SCREEN = 0x20 };
 enum { SCR_LAYOUT = 0x28, SCR_HEAD = 0x88, SCR_FIRST = 0x90, SCR_LINK = 0x9c, SCR_STATE = 0x1a6, SCR_PROJ = 0x1c0,
        SCR_OPEN = 2 };
 enum { BTN_FLAGS = 0x40, BTN_ROOT = 0x58, BTN_ENABLED = 0x10 };
-enum { PANE_ALPHA = 0x74, PANE_FLAGS = 0xa8, PANE_STRIDE = 0xb0, PANE_SHOWN = 1 };
+enum { PANE_LAYOUT = 0x18, PANE_MTX = 0x28, PANE_ALPHA = 0x74, PANE_FLAGS = 0xa8, PANE_STRIDE = 0xb0, PANE_SHOWN = 1 };
+enum { LYT_PANES = 0x100, LYT_HOST = 0x108, LYT_TREE = 0x110 };
 enum { TITLE_COUNT = 0x2c8, TITLE_BUTTONS = 0x2d0, TITLE_MENU = 0x2e8, TITLE_ENTRIES = 4, TITLE_SPARE = 3 };
 enum { WINDOW_KIND_TITLE = 2, WINDOW_ENTRIES = 3, WINDOW_SPARE = 2 };
 enum { AT_NONE, AT_TITLE, AT_PAUSE };
 #define ARMED_MS 250
-
-#define MSG_QUIT "LayoutMsg/GameOver_00.msbt"
-#define MSG_PAUSE "LayoutMsg/PlusMenu_00.msbt"
-#define MSG_SAVE "LayoutMsg/SystemSaveLoad_00.msbt"
-#define MSG_WINDOW "LayoutMsg/SystemWindow_00.msbt"
-#define MSG_TITLE "LayoutMsg/Title_00.msbt"
-#define LABEL_QUIT "Pa_Button_01-T_Btn_00"
-#define LABEL_TITLE_SCREEN "Pa_System_00-Pa_Button_04-T_Btn_00"
-#define LABEL_CANCEL "Pa_CheckButton_01-T_Btn_00"
 
 static uint64_t main_lo, main_hi;
 static volatile int32_t g_texts, g_quit;
@@ -70,7 +59,7 @@ int quit_menu_wanted(void) {
 
 static int enabled(void) { return quit_menu_wanted() && __atomic_load_n(&g_texts, __ATOMIC_RELAXED); }
 
-void quit_menu_texts(int made, int archives, double ms, const char *why) {
+void quit_menu_texts(int made, int archives, const char *language, double ms, const char *why) {
     int set = rt_patch_set("quit_menu");
     if (!RT_V111) return;
     if (!quit_menu_wanted()) {
@@ -81,140 +70,12 @@ void quit_menu_texts(int made, int archives, double ms, const char *why) {
     if (archives > 0 && made == archives) {
         __atomic_store_n(&g_texts, 1, __ATOMIC_RELEASE);
         rt_log("quit_menu: on (NX2SARIA_QUIT_MENU): Quit Game on the title screen and in the pause menu's Title Screen "
-               "confirmation; the game's own labels in %d message archives (%.0f ms)", archives, ms);
+               "confirmation; the game's own labels in %d message archive(s) for the language %s (%.0f ms)", archives,
+               language, ms);
         return;
     }
-    rt_log("quit_menu: off: the labels are in %d of %d message archives (%s); the game's menus stay as they are", made,
-           archives, why && *why ? why : "no message archive in the RomFS");
-}
-
-static int add_labels(const uint8_t *sarc, size_t n, const char *member, const QmText *add, int nadd,
-                      const uint8_t **with, size_t *with_n, int count, uint8_t **made) {
-    unsigned next = 0;
-    size_t at, size;
-    *made = NULL;
-    if (sarc_next(sarc, n, member, &next, &at, &size) != 1 || (int)next - 1 >= count) return -1;
-    size_t out_n = 0;
-    int r = qm_msbt_add(sarc + at, size, add, nadd, made, &out_n);
-    if (r > 0) with[next - 1] = *made, with_n[next - 1] = out_n;
-    return r;
-}
-
-static int archive(uint8_t **sarc, size_t *n, char *why, size_t why_n) {
-    static const struct { const char *member, *label; } from[3] = {
-        {MSG_QUIT, LABEL_QUIT}, {MSG_PAUSE, LABEL_TITLE_SCREEN}, {MSG_SAVE, LABEL_CANCEL}};
-    const uint8_t *text[3];
-    size_t text_n[3], at, size;
-    for (int i = 0; i < 3; i++)
-        if (!sarc_member(*sarc, *n, from[i].member, &at, &size) ||
-            !qm_msbt_find(*sarc + at, size, from[i].label, &text[i], &text_n[i]) || !text_n[i]) {
-            snprintf(why, why_n, "%s has no %s", from[i].member, from[i].label);
-            return -1;
-        }
-    const QmText window[] = {
-        {"1010", text[1], text_n[1]}, {"1011", text[2], text_n[2]},
-        {"Pa_Button_02-T_Btn_00", text[0], text_n[0]}, {"Pa_Button_02-T_Btn_01", text[0], text_n[0]}};
-    const QmText title[] = {
-        {"Pa_Button_03-T_Btn_00", text[0], text_n[0]}, {"Pa_Button_03-T_Btn_01", text[0], text_n[0]},
-        {"Pa_Button_03-T_Btn_02", text[0], text_n[0]}, {"Pa_Button_03-T_BtnSh_00", text[0], text_n[0]}};
-    int count = sarc_count(*sarc, *n), result = -1;
-    if (count <= 0) {
-        snprintf(why, why_n, "the message archive is no SARC");
-        return -1;
-    }
-    const uint8_t **with = calloc((size_t)count, sizeof *with);
-    size_t *with_n = calloc((size_t)count, sizeof *with_n);
-    uint8_t *made[2] = {NULL, NULL};
-    if (!with || !with_n) {
-        snprintf(why, why_n, "out of memory");
-        goto done;
-    }
-    int a = add_labels(*sarc, *n, MSG_WINDOW, window, 4, with, with_n, count, &made[0]);
-    int b = add_labels(*sarc, *n, MSG_TITLE, title, 4, with, with_n, count, &made[1]);
-    if (a < 0 || b < 0) {
-        snprintf(why, why_n, "%s is not the message file this expects", a < 0 ? MSG_WINDOW : MSG_TITLE);
-        goto done;
-    }
-    if (a + b == 0) {
-        result = 0;
-        goto done;
-    }
-    size_t rn = 0;
-    uint8_t *rebuilt = sarc_rebuild(*sarc, *n, with, with_n, &rn);
-    if (!rebuilt) {
-        snprintf(why, why_n, "the message archive cannot be laid out again");
-        goto done;
-    }
-    free(*sarc);
-    *sarc = rebuilt, *n = rn;
-    result = a + b;
-done:
-    free(made[0]);
-    free(made[1]);
-    free(with);
-    free(with_n);
-    return result;
-}
-
-int quit_menu_build(const void *in, size_t n, const void *zsdic, size_t zsdic_n, void **out, size_t *out_n, char *why,
-                    size_t why_n) {
-    *out = NULL;
-    int result = -1;
-    uint8_t *dics = NULL, *raw = NULL;
-    void *z = NULL;
-    ZSTD_DDict *dd = NULL;
-    ZSTD_CDict *cd = NULL;
-    unsigned id = ZSTD_getDictID_fromFrame(in, n);
-    size_t dn = 0, dic_at = 0, dic_n = 0;
-    if (id && (!(dics = zsdic_unpack(zsdic, zsdic_n, MAX_RAW, &dn)) || !zsdic_find(dics, dn, id, &dic_at, &dic_n))) {
-        snprintf(why, why_n, "no dictionary %u in Pack/ZsDic.pack.zs", id);
-        goto done;
-    }
-    if (id && (!(dd = ZSTD_createDDict(dics + dic_at, dic_n)) || !(cd = ZSTD_createCDict(dics + dic_at, dic_n, 3)))) {
-        snprintf(why, why_n, "dictionary %u of Pack/ZsDic.pack.zs cannot be loaded", id);
-        goto done;
-    }
-    unsigned long long rn = ZSTD_getFrameContentSize(in, n);
-    if (rn == ZSTD_CONTENTSIZE_UNKNOWN || rn == ZSTD_CONTENTSIZE_ERROR || !rn || rn > MAX_RAW) {
-        snprintf(why, why_n, "the message archive is not a zstd frame with a size");
-        goto done;
-    }
-    if (!(raw = malloc((size_t)rn))) {
-        snprintf(why, why_n, "out of memory");
-        goto done;
-    }
-    ZSTD_DCtx *dctx = ZSTD_createDCtx();
-    size_t got = !dctx ? 0 : dd ? ZSTD_decompress_usingDDict(dctx, raw, (size_t)rn, in, n, dd)
-                                : ZSTD_decompressDCtx(dctx, raw, (size_t)rn, in, n);
-    ZSTD_freeDCtx(dctx);
-    if (ZSTD_isError(got) || got != rn) {
-        snprintf(why, why_n, "the message archive does not decompress");
-        goto done;
-    }
-    size_t raw_n = (size_t)rn;
-    int changed = archive(&raw, &raw_n, why, why_n);
-    if (changed <= 0) {
-        result = changed;
-        goto done;
-    }
-    size_t cap = ZSTD_compressBound(raw_n), zn = 0;
-    ZSTD_CCtx *cctx = ZSTD_createCCtx();
-    if (cctx && (z = malloc(cap)))
-        zn = cd ? ZSTD_compress_usingCDict(cctx, z, cap, raw, raw_n, cd) : ZSTD_compressCCtx(cctx, z, cap, raw, raw_n, 3);
-    ZSTD_freeCCtx(cctx);
-    if (!z || !zn || ZSTD_isError(zn)) {
-        snprintf(why, why_n, "the message archive cannot be compressed again");
-        goto done;
-    }
-    *out = z, *out_n = zn, z = NULL;
-    result = 1;
-done:
-    free(z);
-    free(raw);
-    free(dics);
-    ZSTD_freeDDict(dd);
-    ZSTD_freeCDict(cd);
-    return result;
+    rt_log("quit_menu: off: the labels are in %d of %d message archives for the language %s (%s); the game's menus "
+           "stay as they are", made, archives, language, why && *why ? why : "no message archive in the RomFS");
 }
 
 static int screen_is(uint64_t s, const char *want) {
@@ -252,23 +113,59 @@ static int entries_of(uint64_t s, uint64_t *out, int max) {
     return n;
 }
 
+static uint64_t pane_parent(uint64_t p) {
+    uint64_t lyt = rd64(p + PANE_LAYOUT);
+    if (!ok_at(lyt, LYT_TREE + 8)) return 0;
+    uint64_t arr = rd64(lyt + LYT_PANES);
+    if (p < arr || (p - arr) % PANE_STRIDE) return 0;
+    uint64_t idx = (p - arr) / PANE_STRIDE;
+    if (!idx) return rd64(lyt + LYT_HOST);
+    uint64_t tree = rd64(lyt + LYT_TREE);
+    if (!ok_at(tree + idx * 8, 8)) return 0;
+    uint16_t up;
+    memcpy(&up, (const void *)(uintptr_t)(tree + idx * 8 + 2), 2);
+    return up == 0xffff ? 0 : arr + up * (uint64_t)PANE_STRIDE;
+}
+
+static int pane_alpha(uint64_t p) {
+    float a = rdf(p + PANE_ALPHA) * 255.0f;
+    return a >= 1.0f && a < 1e6f;
+}
+
+static int hidden_at(uint64_t p, uint64_t *where) {
+    int depth = 0;
+    *where = 0;
+    if (!ok_at(p, PANE_STRIDE)) return -1;
+    if (!(rd32(p + PANE_FLAGS) & PANE_SHOWN) || !pane_alpha(p)) return *where = p, 0;
+    for (uint64_t a = pane_parent(p); a; a = pane_parent(a)) {
+        if (!ok_at(a, PANE_STRIDE) || ++depth > 48) return -1;
+        uint32_t f = rd32(a + PANE_FLAGS);
+        if (!(f & PANE_SHOWN) || ((f & 8) && !pane_alpha(a))) return *where = a, depth;
+    }
+    return -2;
+}
+
 static void describe(uint64_t s, char *out, size_t cap) {
-    uint64_t e[8];
-    int n = entries_of(s, e, 8), at = snprintf(out, cap, "state %d, %d entries:", rd8(s + SCR_STATE), n);
+    uint64_t e[8], focused = focused_entry();
+    int n = entries_of(s, e, 8), at = snprintf(out, cap, "state %d, menu %d, %d entries:", rd8(s + SCR_STATE),
+                                               rd8(s + TITLE_MENU), n);
     for (int i = 0; i < n && i < 8 && at > 0 && at < (int)cap; i++) {
-        uint64_t btn = rd64(e[i] + ENT_BUTTON), root = ok_at(btn, BTN_ROOT + 8) ? rd64(btn + BTN_ROOT) : 0;
-        int pane = ok_at(root, PANE_STRIDE);
-        at += snprintf(out + at, cap - at, " [%d] button flags %#x, pane %s alpha %.2f", i,
+        uint64_t btn = rd64(e[i] + ENT_BUTTON), root = ok_at(btn, BTN_ROOT + 8) ? rd64(btn + BTN_ROOT) : 0, where = 0;
+        int depth = hidden_at(root, &where);
+        at += snprintf(out + at, cap - at, " [%d]%s flags %#x y %.0f", i, e[i] == focused ? "*" : "",
                        ok_at(btn, BTN_FLAGS + 4) ? rd32(btn + BTN_FLAGS) : 0,
-                       pane && (rd32(root + PANE_FLAGS) & PANE_SHOWN) ? "shown" : "hidden",
-                       pane ? (double)rdf(root + PANE_ALPHA) : -1.0);
+                       ok_at(root, PANE_STRIDE) ? (double)rdf(root + PANE_MTX + 0x28) : 0.0);
+        if (depth == -2) at += snprintf(out + at, cap - at, " shown");
+        else if (at < (int)cap)
+            at += snprintf(out + at, cap - at, " hidden at ancestor %d (flags %#x alpha %.2f)", depth,
+                           where ? rd32(where + PANE_FLAGS) : 0, where ? (double)rdf(where + PANE_ALPHA) : 0.0);
     }
 }
 
 static void trace(const char *what, uint64_t s) {
-    static char last[2][600];
+    static char last[2][900];
     static int lines;
-    char now[600];
+    char now[900];
     int slot = what[0] == 't';
     if (!test_flag("log")) return;
     describe(s, now, sizeof now);

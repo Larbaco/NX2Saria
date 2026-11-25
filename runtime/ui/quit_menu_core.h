@@ -58,9 +58,9 @@ static inline int qm_msbt_open(const uint8_t *p, size_t n, QmMsbt *m) {
 static inline int qm_msbt_text(const QmMsbt *m, uint32_t index, const uint8_t **text, size_t *n) {
     if (index >= m->texts) return 0;
     uint32_t at = qm_u32(m->txt + 4 + index * 4), end = index + 1 < m->texts ? qm_u32(m->txt + 8 + index * 4) : m->txt_n;
-    const uint8_t *z = memchr(m->txt + at, 0, end - at);
+    if (end <= at || m->txt[end - 1]) return 0;
     *text = m->txt + at;
-    *n = z ? (size_t)(z - (m->txt + at)) : end - at;
+    *n = end - at - 1;
     return 1;
 }
 
@@ -123,12 +123,10 @@ static inline int qm_msbt_add(const uint8_t *p, size_t n, const QmText *add, int
     for (uint32_t i = 0; i < m.texts; i++) {
         texts[i].label = NULL;
         if (!qm_msbt_text(&m, i, &texts[i].text, &texts[i].n)) goto done;
-        uint32_t at = qm_u32(m.txt + 4 + i * 4), end = i + 1 < m.texts ? qm_u32(m.txt + 8 + i * 4) : m.txt_n;
-        if (texts[i].n == end - at) goto done;
     }
     for (int a = 0; a < nadd; a++) {
         size_t len = strlen(add[a].label);
-        if (!len || len > 255 || memchr(add[a].text, 0, add[a].n)) goto done;
+        if (!len || len > 255) goto done;
         int at = -1;
         for (int k = 0; k < list.n && at < 0; k++)
             if (list.l[k].len == len && !memcmp(list.l[k].name, add[a].label, len)) at = k;

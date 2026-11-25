@@ -12,7 +12,9 @@
 #include "host.h"
 #include "input_map.h"
 #include "mods.h"
+#include "ov.h"
 #include "quit_menu.h"
+#include "ui_text.h"
 #include "romfs_config.h"
 #include "romfs_path.h"
 #include "platform/platform.h"
@@ -845,16 +847,18 @@ static void quit_menu_overlay(void) {
     int archives = 0, made = 0;
     double t0 = now_s();
     if (!quit_menu_wanted()) {
-        quit_menu_texts(0, 0, 0, "");
+        quit_menu_texts(0, 0, "", 0, "");
         return;
     }
     Overlay *dic_base;
     size_t dn = 0;
     void *dic = read_served("Pack/ZsDic.pack.zs", &dic_base, &dn, keeps);
+    const char *region = ui_text_game_lang_mals(ov_language());
     for (uint64_t i = 0; dic && i < file_count; i++) {
         char rel[256];
         if (snprintf(rel, sizeof rel, "%s", entry_name(entry(i))) >= (int)sizeof rel) continue;
         if (strncmp(rel, "Mals/", 5) || !ends_with(rel, ".sarc.zs")) continue;
+        if (region && (strncmp(rel + 5, region, strlen(region)) || rel[5 + strlen(region)] != '.')) continue;
         archives++;
         Overlay *base;
         size_t n = 0, out_n = 0;
@@ -875,7 +879,7 @@ static void quit_menu_overlay(void) {
     }
     if (!dic) snprintf(why, sizeof why, "Pack/ZsDic.pack.zs cannot be read");
     free(dic);
-    quit_menu_texts(made, archives, (now_s() - t0) * 1e3, why);
+    quit_menu_texts(made, archives, ov_language(), (now_s() - t0) * 1e3, why);
 }
 
 #define PROMPTS_PADS 3
