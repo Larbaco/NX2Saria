@@ -1,60 +1,25 @@
-// VRAM headroom: the next VMA block of a memory type is allocated on a background thread, not on the render thread.
-//
-// VMA places an allocation in an existing block of its memory type and allocates a new block (vkAllocateMemory, an
-// eighth of the default block size up to all of it, vk_vma_block_size) only when none has room. On the render thread
-// that took 8-19 ms per 256 MiB block, several times in the first minute of play while VRAM grows (textures from
-// create_tex, mirrors). A new VkDeviceMemory made by any other thread
-// (VMA's pfnAllocate callback) wakes this thread for its memory type, which it then checks every 500 ms. A check
-// allocates half a default block of that type (the largest size VMA still places in blocks, not in dedicated memory).
-// When a block has that much room the allocation lands there and is freed at once. When none has, VMA allocates a new
-// block here, and the allocation stays as that block's anchor: VMA deletes an empty block at the next free of its
-// type (VmaBlockVector::Free, "we have another empty block"), so a spare block left empty lasted until the next
-// texture went. The previous anchor is freed then, which gives its half block to the render thread, so at most half
-// a block per memory type is held back.
-// Only the memory types textures and VRAM mirrors grow in get a spare (spare_type): the device-local types the CPU
-// cannot map, or on a GPU that has none of those (integrated, every type mappable), the device-local ones. In one
-// session the others, the host heap's two types (system memory, charged to the commit) and the device-local mappable
-// one (VRAM behind the PCIe BAR), each got a 256 MiB spare early on and never needed another; to the end the BAR type
-// held 320 MiB of blocks for 37 MiB of allocations and one host type 288 MiB for 0.1 MiB, as VMA keeps an empty block
-// until the next free of its type, and these types seldom free anything.
-// Under VRAM pressure no headroom is kept: the spare block counts against the budget that decides whether a pool gets
-// its VRAM mirror (vk_memory.c), so while use plus two blocks passes 85% of the budget the anchor goes and nothing new
-// is allocated. Nor while the system's commit is low (vk_texture_commit_low) where device memory counts against it:
-// on Windows the driver charges device memory to the commit, and a spare block of each type held up to 256 MiB of it
-// empty when an allocation that failed there ended the game; an integrated GPU's memory is the machine's RAM. Linux's
-// limits (plat_commit_counts_vram) do not count a discrete card's own memory, so dropping its spare would free nothing
-// they count and only put the block allocations back on the render thread.
-// NX2SARIA_VRAM_HEADROOM=0 turns it off.
-
 #include "cfg.h"
 #include "host.h"
 #include "vk.h"
 #include "platform/platform.h"
 
 #define HR_PERIOD_MS 500
-#define HR_SMALL_HEAP (1ull << 30)   // VMA_SMALL_HEAP_MAX_SIZE: smaller heaps use blocks of a heap eighth
+#define HR_SMALL_HEAP (1ull << 30)
 
 static struct {
     int on, stop;
-    PlatMutex lock;             // held around each top-up; vk_headroom_stop takes it before the allocator goes
+    PlatMutex lock;
     int started;
-    PlatEvent ev;               // auto-reset: another thread allocated, or stop
-    volatile uint32_t tid;      // the headroom thread's id
-    volatile int64_t types;    // memory types a thread other than this one allocated device memory of
-    volatile int64_t made;     // blocks this thread brought in
-    volatile int64_t other;    // device memory of 32 MiB or more other threads allocated (VMA blocks, large dedicated)
-    VmaAllocation anchor[64]; // per memory type: the half block that keeps the newest spare block from being deleted
-    volatile int64_t held;     // bytes of the anchors, for the log's VRAM breakdown (vk_headroom_held)
-    volatile uint32_t hold_until;   // plat_now_ms(): no spare block before then (vk_headroom_release)
+    PlatEvent ev;
+    volatile uint32_t tid;
+    volatile int64_t types;
+    volatile int64_t made;
+    volatile int64_t other;
+    VmaAllocation anchor[64];
+    volatile int64_t held;
+    volatile uint32_t hold_until;
 } H;
 
-// NX2SARIA_VMA_BLOCK_MB (16 to 256, default 64): the size of VMA's blocks on heaps over 1 GiB (its
-// preferredLargeHeapBlockSize; VMA's own default is 256 MiB). A freed texture or mirror leaves a hole its block keeps,
-// and the driver counts the whole block against the VRAM budget and the system's commit until its last allocation
-// goes. With 256 MiB blocks one session held 2.1 GiB free inside them beside 8.2 GiB of allocations after a few area
-// changes, every block pinned by a texture or mirror that outlived its neighbours; a smaller block empties, and goes
-// back to the driver, once fewer allocations have gone. Allocations over half a block get memory of their own (VMA),
-// which matches the 32 MiB from which create_tex gives images their own memory.
 VkDeviceSize vk_vma_block_size(void) {
     static VkDeviceSize size;
     if (!size) {
@@ -66,8 +31,6 @@ VkDeviceSize vk_vma_block_size(void) {
     return size;
 }
 
-// The memory types a spare block is kept for (see the top): device-local without host access, or device-local at all
-// where the device has no such type.
 static int spare_type(const VkCtx *c, uint32_t type) {
     const VkPhysicalDeviceMemoryProperties *m = &c->mem_props;
     VkMemoryPropertyFlags f = m->memoryTypes[type].propertyFlags;
@@ -83,7 +46,7 @@ static int spare_type(const VkCtx *c, uint32_t type) {
 uint64_t vk_headroom_held(void) { return (uint64_t)__atomic_load_n(&H.held, __ATOMIC_RELAXED); }
 
 static void VKAPI_PTR on_allocate(VmaAllocator a, uint32_t type, VkDeviceMemory m, VkDeviceSize size, void *user) {
-    (void)a, (void)m, (void)size, (void)user;   // the trace's mark of the allocation, with its time: vk_device.c timed_alloc
+    (void)a, (void)m, (void)size, (void)user;
     if (!H.on || type >= 64) return;
     if (plat_thread_id() == __atomic_load_n(&H.tid, __ATOMIC_ACQUIRE)) {
         plat_inc64(&H.made);
@@ -91,14 +54,12 @@ static void VKAPI_PTR on_allocate(VmaAllocator a, uint32_t type, VkDeviceMemory 
     }
     if (size >= 32ull << 20) {
         plat_inc64(&H.other);
-        vk_texstat_add(VK_TS_DEVMEM, 1, size);   // counted when the render or replay thread made it
+        vk_texstat_add(VK_TS_DEVMEM, 1, size);
     }
     plat_or64(&H.types, (int64_t)(1ull << type));
     plat_event_set(&H.ev);
 }
 
-// NX2SARIA_TEX_COMPACT: every device memory VMA gives back to the driver is reported to the texture compaction, which
-// counts the blocks its pass emptied (vk_texture.c vk_texture_block_freed). Any thread; the callback takes no lock.
 static void VKAPI_PTR on_free(VmaAllocator a, uint32_t type, VkDeviceMemory m, VkDeviceSize size, void *user) {
     (void)a, (void)type, (void)size, (void)user;
     vk_texture_block_freed((uint64_t)(uintptr_t)m);
@@ -107,15 +68,15 @@ static void VKAPI_PTR on_free(VmaAllocator a, uint32_t type, VkDeviceMemory m, V
 const VmaDeviceMemoryCallbacks *vk_headroom_callbacks(void) {
     static const VmaDeviceMemoryCallbacks cb = {.pfnAllocate = on_allocate};
     static const VmaDeviceMemoryCallbacks cb_free = {.pfnAllocate = on_allocate, .pfnFree = on_free};
-    const char *v = cfg_get("NX2SARIA_VRAM_HEADROOM");   // empty is unset: the key has no settings row for cfg_bool
+    const char *v = cfg_get("NX2SARIA_VRAM_HEADROOM");
     H.on = !v || !*v || cfg_bool("NX2SARIA_VRAM_HEADROOM");
-    if (vk_texture_compact_on()) return &cb_free;   // on_allocate does nothing for the headroom while H.on is 0
+    if (vk_texture_compact_on()) return &cb_free;
     return H.on ? &cb : NULL;
 }
 
 static VkDeviceSize block_size(const VkCtx *c, uint32_t type) {
     VkDeviceSize heap = c->mem_props.memoryHeaps[c->mem_props.memoryTypes[type].heapIndex].size;
-    return heap <= HR_SMALL_HEAP ? heap / 8 : vk_vma_block_size();   // VMA's preferredLargeHeapBlockSize (vk_device.c)
+    return heap <= HR_SMALL_HEAP ? heap / 8 : vk_vma_block_size();
 }
 
 static int room(const VkCtx *c, uint32_t type, VkDeviceSize block) {
@@ -126,9 +87,6 @@ static int room(const VkCtx *c, uint32_t type, VkDeviceSize block) {
     vmaGetHeapBudgets(c->vma, b);
     const VmaBudget *h = &b[c->mem_props.memoryTypes[type].heapIndex];
     if (!h->budget || h->usage + 2 * block > h->budget / 100 * 85) return 0;
-    // A budget taken as smaller for a test (NX2SARIA_VRAM_BUDGET_MB, vk_mem_vram) is what the mirrors and the textures
-    // go by; measured against the driver's budget alone, a capped run kept its spare blocks where the card it stands
-    // for keeps none. Only then: without a cap the heap's own figure above decides, heap by heap.
     uint64_t all = 0, used, capped;
     int exact;
     for (uint32_t i = 0; i < c->mem_props.memoryHeapCount && i < VK_MAX_MEMORY_HEAPS; i++)
@@ -158,7 +116,7 @@ static void top_up(const VkCtx *c, uint32_t type) {
     VmaAllocation a;
     int64_t before = H.made;
     if (vmaAllocateMemory(c->vma, &req, &ai, &a, NULL) != VK_SUCCESS) return;
-    if (H.made == before) {   // there was room
+    if (H.made == before) {
         vmaFreeMemory(c->vma, a);
         return;
     }
@@ -177,7 +135,7 @@ static void headroom_main(void *arg) {
     (void)arg;
     __atomic_store_n(&H.tid, plat_thread_id(), __ATOMIC_RELEASE);
     plat_thread_priority(PLAT_PRIO_BELOW_NORMAL);
-    uint64_t watch = 0;   // memory types seen so far
+    uint64_t watch = 0;
     for (;;) {
         if (watch) plat_event_wait_ns(&H.ev, (uint64_t)HR_PERIOD_MS * 1000000u);
         else plat_event_wait(&H.ev);
@@ -194,8 +152,6 @@ static void headroom_main(void *arg) {
     }
 }
 
-// An allocation the driver refused (vk_memory.c give_back): the anchors go, so VMA can use or delete their blocks, and
-// no spare block is made for HR_RELEASE_HOLD_MS. Returns the bytes the anchors held.
 #define HR_RELEASE_HOLD_MS 30000
 uint64_t vk_headroom_release(void) {
     if (!H.started) return 0;
@@ -208,7 +164,6 @@ uint64_t vk_headroom_release(void) {
     return was;
 }
 
-// Before the allocator is destroyed: waits for a running top-up, frees the anchors, and the thread allocates no more.
 void vk_headroom_stop(void) {
     if (!H.started) return;
     plat_mutex_lock(&H.lock);
