@@ -1003,9 +1003,9 @@ The Vulkan graphics back end: `gfx_vulkan_backend` wires the memory and texture 
 device on first use.
 
 Present: the game texture is resolved on the calling thread and its blit is handed to a present thread, so
-`nvnQueuePresentTexture` returns at once (section 5). Queue order does the rest: the submissions that wrote the texture
-are already on `gfx_queue`, and every call that may write or free GPU state the blit reads (submit, finish, pool and
-texture teardown, texel writes) first waits until the queued blit was submitted (`vk_present_drain`).
+`nvnQueuePresentTexture` returns at once. Queue order does the rest: the submissions that wrote the texture are already
+on `gfx_queue`, and every call that may write or free GPU state the blit reads (submit, finish, pool and texture
+teardown, texel writes) first waits until the queued blit was submitted (`vk_present_drain`).
 
 Back-edge pacing: the present thread submits the blit at once, then holds the host present (`vkQueuePresentKHR`) until
 the frame's display time from the pacer (`runtime/nvn/nvn_api_obj.c`), so present-to-present intervals stay even
@@ -1020,32 +1020,27 @@ submission it was handed out for. The game runs at most one frame ahead: queuein
 thread handled present N-1. Calls that read or free GPU state that queued work may use drain the queue first
 (`replay_drain`), each cause counted.
 
-- `PresentJob`: `handoff_ns`: how long the presenting thread waited to hand this job over (`present_image`), for the
-  present lines. owed: the presenting thread left the frame's bookkeeping to the next holder of the submission lock
-  (`present_image`, `runtime/vk/vk_frame_owed.h`); the present thread makes sure it ran before the blit
-  (`present_frame_closed`).
-- `pcv`: job queued, job taken, job submitted.
-- `present_frame_closed()`: "a frame's bookkeeping in replay order".
+A `PresentJob` is one present handed to the present thread under `pl`; `pcv` signals job queued, job taken and job
+submitted. Its `handoff_ns` is how long the presenting thread waited to hand it over (`present_image()`), for the
+present lines. Its `owed` says the presenting thread left the frame's bookkeeping to the next holder of the submission
+lock (`present_image()`, `runtime/vk/vk_frame_owed.h`); the present thread makes sure it ran before the blit
+(`present_frame_closed()`, "A frame's bookkeeping in replay order" below).
 
 ### `wait_until()`
 
 Sleeps on a high-resolution timer to 1 ms before at, then yields until at: the timer alone wakes up to ~0.5 ms late.
 
-### `pace_smooth()`
-
-- `pace_avg_ns`: the present thread's.
+### `pace_smooth()`, `pace_shown()`
 
 `NX2SARIA_PACE_SMOOTH` (default 1; 0 = off): a picture goes out no sooner than seven eighths of the recent interval
 after the one before it. The game's frames reach the present thread in uneven steps although each costs about the same:
 with the replay on the submitting thread, work held for an event is replayed with the next frame, so pictures came 13 to
 31 ms apart around a mean of 22 ms in a village (5th to 95th percentile), which shows as judder at a frame rate that
-would look even. Only the early ones wait, a few milliseconds each, so the rate stays what it was; the recent interval
-is a moving average over about four pictures of intervals under 100 ms, so the floor follows a scene that gets lighter
-within a second. Not with frame generation, which paces its own presents.
-
-### `pace_shown()`
-
-- `if (interval_ns >= 100000000ull) return`: a load or a hitch is not the rate.
+would look even. Only the early ones wait, a few milliseconds each, so the rate stays what it was, and never to more
+than 50 ms from now. The recent interval (`pace_avg_ns`, the present thread's) is a moving average over about four
+pictures (`pace_shown()` moves it a quarter of the way to each interval) of intervals under 100 ms: a load or a hitch is
+not the rate. So the floor follows a scene that gets lighter within a second. Not with frame generation (`vk_fg_active`
+or `vk_dlssg_active`), which paces its own presents.
 
 ### `present_window()`
 
@@ -1056,46 +1051,61 @@ frame limiter sleeps. With the presenting thread's wait to hand each picture ove
 
 ### `present_main()`
 
-- `unsigned tr = rt_trace`: read once: the stamps and both lines below follow the same flags.
-- `if (j.owed) present_frame_closed(j.frame)`: `vk_dlaa_frame`'s state of this frame, before anything reads it.
-- `if (flight_on || vk_dump_white) vk_thumbs_frame(j.frame)`: `NX2SARIA_DUMP_WHITE` reads them too.
-- `vk_lowlat_present_frame(j.frame)`: the frame's number for the blit's submit and the present's markers.
-- `uint64_t f = vk_sync_submit(NULL, 0)`: a timeline value after the blit: deferred destruction waits for the blit too.
-- `perfmon_shown(t1)`: the overlay's frame times: the pictures as shown.
-- `NX2SARIA_TRACE=present`: one line per present: the host present's interval, the interval of the game's present calls
-  (when the host present went out before back-edge pacing), the wait and how far past its target it went; then how long
-  the present call took and how long the presenting thread waited to hand this picture over.
-- `vk_pipeline_autosave()`: starts the autosave thread once.
+The present thread. For each job it takes:
+
+1. The trace flags are read once (`rt_trace`), so the stamps and both lines below follow the same flags.
+2. A frame whose bookkeeping was left owed is closed first (`present_frame_closed()`): `vk_dlaa_frame`'s state of this
+   frame, before anything reads it. The thumbnails are taken with the flight recorder on or `NX2SARIA_DUMP_WHITE`,
+   which reads them too.
+3. `vk_lowlat_present_frame()` gives the frame's number to the blit's submit and the present's markers.
+4. The blit, then a submission of its own (`vk_sync_submit(NULL, 0)`): a timeline value after the blit, so deferred
+   destruction waits for the blit too. A present queued by the asynchronous replay must signal the value it was
+   queued as, else the run stops.
+5. The wait for the picture's time (`wait_until()`, `pace_smooth()`), the host present, and `perfmon_shown()` with the
+   time the picture went out: the overlay's frame times are the pictures as shown.
+6. `NX2SARIA_TRACE=present`: one line per present: the host present's interval, the interval of the game's present
+   calls (when the host present went out before back-edge pacing), the wait and how far past its target it went; then
+   how long the present call took and how long the presenting thread waited to hand this picture over.
+   `NX2SARIA_TRACE=perf` adds the job to `present_window()`.
+7. `vk_pipeline_autosave()` starts the autosave thread once.
+
+### Frame hold
+
+`NX2SARIA_FRAME_HOLD_MS` (default 120, at most 500; 0 = off): a frame whose draws were skipped because a shader or
+pipeline was still building (`runtime/vk/vk_exec_draw.c` `vk_exec_pending_draws_take()`) is not shown: the previous
+picture stays on screen until a frame is complete again. Such a frame lacks what was skipped, which showed for a frame
+or two as a black or unlit picture with the interface intact (a lighting pass), a light going out, or ground and walls
+missing and then back. The game runs on meanwhile, so nothing waits. The hold comes from an allowance of this many
+milliseconds, used up by the time held and filled again at an eighth of the clock's rate: a pipeline that takes longer,
+or a run of them on a first visit with nothing recorded, shows its incomplete frames as before and does not freeze the
+picture. Not with DLSS Frame Generation, which is told about every frame.
+
+The same hold covers a change of the scene's size (a DLSS or FSR 3.1 mode picked in the menu, `runtime/vk/vk_dlaa.c`
+`vk_dlaa_resized_take()`): the first frames drawn into the game's new, empty scene targets come out dark or black, so
+the previous picture stays for `RESIZE_HOLD` (6) presents from the first frame of the new size. That is once per change
+of a setting and does not use the allowance. It holds with DLSS Frame Generation too: a present left out is a longer gap
+between two rendered frames to it (its constants and tags are set at the host present, `runtime/gfx/gfx_present.c`),
+and a dark frame it is given comes out as several generated ones.
+
+And it covers an area load (`runtime/vk/vk_exec_draw.c` `vk_exec_pool_loading()`): while the texture pool still makes
+the area's textures, the frames show the ground and the walls as black stand-ins, so the picture before the load stays
+for up to `LOAD_HOLD_NS` (2 s), also beside the allowance.
+
+And with version 1.1.1 of the game (`RT_V111`) it covers the frame the game leaves empty when it opens a screen over
+the scene (the Conversation Log over a line of dialogue): that frame clears the picture and draws a few interface
+parts, and the screen with its backdrop follows one frame later, so one black frame was shown. A frame of fewer than
+`THIN_DRAWS` (32) draws right after one of `SCENE_DRAWS` (200) or more is not shown; the frames after it follow a
+frame of few draws and are.
+
+`frame_hold()`, at the present, is the only writer of `FH`. The replay asks what is left of the allowance as it records
+(`vk_frame_hold_left()`, from `runtime/vk/vk_exec_draw.c`), on whatever thread holds the submission lock, which need
+not be the one that presents: so that reader works out the allowance from `limit_ns`, `left_ns`, `last_ns` and
+`holding` (atomics) and writes nothing. When it refilled `FH` itself, a refill on the replaying thread beside one at the
+present on another thread counted the same interval twice or not at all. A refill writes `left_ns` and `last_ns` as a
+pair under a sequence word (`seq`, odd while it writes), so the reader does not pair a new `left_ns` with an old
+`last_ns` either.
 
 ### `fh_limit()`
-
-- `THIN_DRAWS`: `NX2SARIA_FRAME_HOLD_MS` (default 120; 0 = off): a frame whose draws were skipped because a shader or
-  pipeline was still building (`runtime/vk/vk_exec_draw.c` `pending_draws`) is not shown: the previous picture stays on
-  screen until a frame is complete again. Such a frame lacks what was skipped, which showed for a frame or two as a
-  black or unlit picture with the interface intact (a lighting pass), a light going out, or ground and walls missing and
-  then back. The game runs on meanwhile, so nothing waits. The hold comes from an allowance of this many milliseconds,
-  used up by the time held and filled again at an eighth of the clock's rate: a pipeline that takes longer, or a run of
-  them on a first visit with nothing recorded, shows its incomplete frames as before and does not freeze the picture.
-  Not with DLSS Frame Generation, which is told about every frame. The same hold covers a change of the scene's size (a
-  DLSS or FSR 3.1 mode picked in the menu, `runtime/vk/vk_dlaa.c` `vk_dlaa_resized_take()`): the first frames drawn into
-  the game's new, empty scene targets come out dark or black, so the previous picture stays for `RESIZE_HOLD` presents
-  from the first frame of the new size. That is once per change of a setting and does not use the allowance. It holds
-  with DLSS Frame Generation too: a present left out is a longer gap between two rendered frames to it (its constants
-  and tags are set at the host present, `runtime/gfx/gfx_present.c`), and a dark frame it is given comes out as several
-  generated ones. And it covers an area load (`runtime/vk/vk_exec_draw.c` `vk_exec_pool_loading()`): while the texture
-  pool still makes the area's textures, the frames show the ground and the walls as black stand-ins, so the picture
-  before the load stays for up to `LOAD_HOLD_NS`, also beside the allowance. And on Ocarina it covers the frame the game
-  leaves empty when it opens a screen over the scene (the Conversation Log over a line of dialogue): that frame clears
-  the picture and draws a few interface parts, and the screen with its backdrop follows one frame later, so one black
-  frame was shown. A frame of fewer than `THIN_DRAWS` draws right after one of `SCENE_DRAWS` or more is not shown; the
-  frames after it follow a frame of few draws and are.
-- `FH`: `frame_hold`, at the present, is the only writer of FH. The replay asks what is left of the allowance as it
-  records (`vk_frame_hold_left`, `runtime/vk/vk_exec_draw.c`), on whatever thread holds the submission lock, which need
-  not be the one that presents: so that reader works out the allowance from `limit_ns`, `left_ns`, `last_ns` and holding
-  (atomics) and writes nothing. When it refilled FH itself, a refill on the replaying thread beside one at the present
-  on another thread counted the same interval twice or not at all. A refill writes `left_ns` and `last_ns` as a pair
-  under a sequence word (seq, odd while it writes), so the reader does not pair a new `left_ns` with an old `last_ns`
-  either.
 
 `NX2SARIA_FRAME_HOLD_MS`, read once by whichever thread asks first; that one logs it.
 
@@ -1106,27 +1116,25 @@ an eighth of the clock's rate while they were not, never above the limit. Full b
 
 ### `frame_hold_refill()`
 
-`frame_hold` only; returns the limit.
-
-- `__atomic_thread_fence(__ATOMIC_RELEASE)`: a reader that sees either new field also sees the odd sequence.
+`frame_hold()` only; returns the limit. The release fence after the odd sequence is stored makes a reader that sees
+either new field also see the odd sequence.
 
 ### `vk_frame_hold_left()`
 
 Whether a frame that skipped draws now would be held (`runtime/vk/vk_exec_draw.c`: a full-screen draw is skipped only
-then). Any thread; reads FH only. `left_ns` and `last_ns` come from one refill: a read that overlaps a refill is made
-again, and after `FH_READ_TRIES` such reads the last one is used (it can count one interval twice or not at all, for
-this one decision), so the reader never waits for the present. holding is stored at the present just after its refill; a
-read between the two applies the previous frame's holding to the few microseconds since that refill. The fields are
-loaded before the clock, so now is not before last.
-
-- `__atomic_thread_fence(__ATOMIC_ACQUIRE)`: the fields are read before the sequence is read again.
+then). Any thread; reads `FH` only. `left_ns` and `last_ns` come from one refill: a read that overlaps a refill is made
+again (the acquire fence keeps the fields read before the sequence is read again), and after `FH_READ_TRIES` such reads
+the last one is used (it can count one interval twice or not at all, for this one decision), so the reader never waits
+for the present. `holding` is stored at the present just after its refill; a read between the two applies the previous
+frame's holding to the few microseconds since that refill. The fields are loaded before the clock, so now is not before
+last.
 
 ### `frame_hold()`
 
-1: this frame is not shown. skipped: the draws it lacks; resized: its scene is the first of a new size.
-
-- `uint64_t d = vk_exec_frame.draws`: counted up over the run; set back with `NX2SARIA_TRACE=gfx`.
-- `if (FH.resize_left)`: beside the allowance: nothing below counts these frames.
+1: this frame is not shown. skipped: the draws it lacks; resized: its scene is the first of a new size. The frame's
+draws are the difference of `vk_exec_frame.draws`, which counts up over the run and is set back with
+`NX2SARIA_TRACE=gfx` (a count below the last one is taken whole). The holds for a new size, an area load and a thin
+frame come first and are beside the allowance: nothing below them counts these frames.
 
 ### A frame's bookkeeping in replay order (`runtime/vk/vk_frame_owed.h`)
 
@@ -1148,22 +1156,20 @@ moment later anyway. Nothing in `frame_end` may wait for the present thread, sub
 `vk_texture_get` with its upload flush and `vk_present_drain` stay in `present_image`, outside the lock.
 `NX2SARIA_PRESENT_ORDER=0`: at the present, whatever another thread replays, as in 0.10.1.
 
+The state, all atomics: `fo_tex` holds the newest frames' presented textures, by frame % `FO_TEX`; `fo_owed_n` counts
+the presents that left it to a submission and `fo_late_n` the frames a submission caught up; `fo_blit_n` and
+`fo_blit_ns` count the frames the present thread caught up before their blits and the time that took with the wait for
+the lock (the present thread's, read by `order_log()`).
+
 ### `frame_end()`
 
-t: the presented texture, for the trace = gfx line.
-
-- The frame's draws for the play gate of the background pipeline builds
-  (`runtime/vk/vk_pipeline.c` `vk_pipeline_frame_note()`): the game's draws the replay recorded for it, the count
-  `frame_hold` tells a scene from a thin frame by. Read before `vk_exec_frame_log`, which sets the run's count back with
-  `NX2SARIA_TRACE=gfx`.
-- `dynres_frame()`: before `vk_dlaa_frame` reads the DLSS mode it may override.
+t: the presented texture, for the trace = gfx line. It first gives the play gate of the background pipeline builds
+(`runtime/vk/vk_pipeline.c` `vk_pipeline_frame_note()`) the frame's draws: the game's draws the replay recorded for
+it, the count `frame_hold` tells a scene from a thin frame by. They are read before `vk_exec_frame_log`, which sets the
+run's count back with `NX2SARIA_TRACE=gfx`. `dynres_frame()` runs before `vk_dlaa_frame`, which reads the DLSS mode it
+may override.
 
 ### `present_order_on()`
-
-- `fo_tex`: the newest frames' presented textures, by frame % `FO_TEX` (atomics).
-- `fo_owed_n`: presents that left it to a submission; frames a submission caught up (atomics).
-- `fo_blit_n`: frames the present thread caught up before their blits, and the time it took with the wait for the lock
-  (the present thread's; read by `order_log`: atomics).
 
 Read once; `present_image` runs one at a time.
 
@@ -1174,7 +1180,7 @@ lock. Their time counts as this thread's replay time (`perf_replay`), as submit'
 DLSS release in `vk_dlaa_frame` (tens of milliseconds) then shows as replay in the frame-time and slow-frame lines, not
 unattributed.
 
-### `fo_blit_here()`
+### `present_frame_closed()`, `fo_blit_here()`
 
 The present thread, before it uses frame (`present_main`): `frame_end` of a frame the presenting thread left owed has
 run by then. When no submission came between, the present thread runs it itself, under `sub_lock`, waiting for a replay
@@ -1183,20 +1189,16 @@ a frame whose bookkeeping ran (the presenting thread got the lock, or a submissi
 
 ### `present_image()`
 
-- `order_log()`: after the held present's state (PH).
-
 The present after the frame count: resolves the image and hands the blit to the present thread. queued: when the game
 presented; value: the timeline value queued for this present (asynchronous replay), 0 for the next one (synchronous).
 
-- `if (!vram_probe) vram_probe = 1, perfmon_set_vram_game(vk_mem_device_used_mb)`: the overlay's "game" beside VRAM.
-- `int owed = 0`: the frame's bookkeeping may still be owed when the present thread takes it (`PresentJob.owed`).
-- `vk_sampler_aniso_live()`: `NX2SARIA_ANISO` changed in the menu: the surface textures' samplers take the new level.
-- `if (value)`: the queued value is still signalled, in order.
-- `vk_hdr_present_source(img, &j.image, &j.format)`: `NX2SARIA_HDR`: the float picture the game copied into it, same
-  size.
-- `vk_upload_flush(0)`: an upload `vk_texture_get` just recorded goes before the blit.
-- One present in waiting at most: the wait for the present thread to take the previous one is the hand-off
-  (`PERF_HANDOFF`), timed from under pl, where pending is read.
+On the first present it gives the overlay the "game" figure beside VRAM (`perfmon_set_vram_game`). The frame's
+bookkeeping runs or is left owed (`owed`, carried to the present thread in `PresentJob.owed`). `vk_sampler_aniso_live()`
+gives the surface textures' samplers a new `NX2SARIA_ANISO` level picked in the menu. A frame held back or without a
+colour image is not handed over, but a queued value is still signalled, in order. With `NX2SARIA_HDR`,
+`vk_hdr_present_source()` swaps in the float picture the game copied into the image, same size. `vk_upload_flush(0)`
+puts an upload `vk_texture_get` just recorded before the blit. One present waits at most: the wait for the present
+thread to take the previous one is the hand-off (`PERF_HANDOFF`), timed from under `pl`, where pending is read.
 
 ### Registrations in submit order
 
@@ -1205,36 +1207,33 @@ the slots as they were at about its submit ([maxwell.md](../maxwell.md) 4.9). Th
 writes the submission's bindless set as it goes; the set is read when the submission runs. A registration applied at
 once while a submission is being recorded (made by another of the game's threads, or by the game ahead of a replay on
 its own thread) therefore reaches that submission's draws, the ones recorded before it too: they sample the slot's next
-texture, which the game registered for a later frame. Ocarina registers a round of 30 to 60 streamed textures every four
-or five frames in a town. So a registration takes effect between submissions, in the order the game made it:
+texture, which the game registered for a later frame. The game registers a round of 30 to 60 streamed textures every
+four or five frames in a town. So a registration takes effect between submissions, in the order the game made it:
 
-- Replay on the submitting thread: one made while a submission is being recorded (`reg_replaying`, set by
-  `runtime/vk/vk_sync.c` submit around the replay) waits in regq, and so does any made behind it; the submitting thread
-  applies them once the submission has gone to the queue (`vk_reg_replay_end`). With no submission being recorded it is
-  applied at once.
-- Replay on its own thread: every one waits in regq and goes into the replay queue ahead of the next item queued
+- Replay on the submitting thread: one made while a submission is being recorded (`reg_replaying`, an atomic set by
+  `runtime/vk/vk_sync.c` submit around the replay) waits in `regq`, and so does any made behind it; the submitting
+  thread applies them once the submission has gone to the queue (`vk_reg_replay_end`). With no submission being
+  recorded it is applied at once.
+- Replay on its own thread: every one waits in `regq` and goes into the replay queue ahead of the next item queued
   (`regs_queue_locked`), so the replay applies it where the game made it among its submits, as it does a release.
 
 A texture finalized while its own registration waits is released at once as before, and once more behind that
 registration (`RG_RELEASE`): `vk_texture_release` marks the slots the texture object registered, which the first call
 could not see. `NX2SARIA_REG_ORDER=0`: every registration at once, as before.
 
-- `RegItem`:
-  - `tex_t t`: `RG_TEX`, `RG_RELEASE`: a copy (the game may reuse the object's memory).
-  - `samp_par s`: `RG_SAMP`.
-- `regl`: regq and the order of what is applied at once; taken before the texture lock.
-- `reg_replaying`: atomic.
-- `reg_waited`: under regl: registrations that waited for a submission, and the times some did.
+A `RegItem` keeps a copy of the texture (`RG_TEX`, `RG_RELEASE`: the game may reuse the object's memory) or the sampler
+parameters (`RG_SAMP`). `regl` guards `regq` and the order of what is applied at once; it is taken before the texture
+lock. `reg_waited` and `reg_rounds` (under `regl`) count the registrations that waited for a submission and the times
+some did.
 
 ### `reg_push()`
 
-Regl held.
+`regl` held.
 
 ### `reg_add()`
 
-A registration from the game: applied now, or kept for its place among the submissions.
-
-- `else reg_apply(r, 1)`: under regl: in call order with the other threads' registrations.
+A registration from the game: applied now, or kept for its place among the submissions. Applied now, it is applied
+under `regl`: in call order with the other threads' registrations.
 
 ### `vk_reg_replay_begin()`
 
@@ -1242,29 +1241,26 @@ A registration from the game: applied now, or kept for its place among the submi
 
 ### `vk_reg_replay_end()`
 
-The submission has gone to the queue with its set: what waited is applied, before the next submission is recorded.
-
-- `reg_apply(regq, n)`: under regl: a registration made meanwhile comes after these.
+The submission has gone to the queue with its set: what waited is applied, before the next submission is recorded,
+under `regl`, so a registration made meanwhile comes after these.
 
 ### Asynchronous replay
 
-- `ReplayItem`:
-  - `const tex_t *tex`: `RI_RELEASE`: a copy the item owns (the game may reuse the object's memory).
-  - `RegItem *regs`: `RI_REGS`: n registrations the item owns, in the order the game made them.
-- `RQ_CAP`: a frame queues 1 submit and 1 present, and up to a few hundred releases.
-- `rcv`: item queued, item taken, item done.
-- `dr_calls`: Under rl: calls, calls that waited and the time waited per cause, since the last `replay_log` line and
-  over the run.
-- `ck_reads`: `NX2SARIA_REPLAY_CHECK`: ReadTexels compared with a read after a full drain (under rl): checked,
-  differing, differing although no submission recorded a write to the texture in between, differing with the queue idle
-  at the first read.
+A `ReplayItem` owns what it carries: `RI_RELEASE` a copy of the texture (the game may reuse the object's memory),
+`RI_REGS` n registrations in the order the game made them, `RI_SUBMIT` a copy of the handles. `RQ_CAP` (1024): a frame
+queues 1 submit and 1 present, and up to a few hundred releases. `rcv` signals item queued, item taken and item done.
+Under `rl`, `dr_calls`, `dr_waits` and `dr_ns` count the calls, the calls that waited and the time waited per cause
+since the last `replay_log()` line, and the `dr_t*` arrays the same over the run. `ck_reads` and its siblings count
+`NX2SARIA_REPLAY_CHECK`'s ReadTexels compared with a read after a full drain (under `rl`): checked, differing,
+differing although no submission recorded a write to the texture in between, differing with the queue idle at the first
+read.
 
 ### `vk_replay_async()`
 
-- Off by default. Where the game waits for the GPU it overlaps the replay with the game threads (a GTX 1650 in one scene
-  went from 450-686 frames over 50 ms a minute to 10-13, issue `#88`), the only place a gain was measured. While it was
-  the default, a GTX 1660 Ti at the 60 fps cap with the GPU at 26 % reported uneven motion that 0.3.4 did not have
-  (`#659`). It adds up to a frame of latency.
+Off by default. Where the game waits for the GPU it overlaps the replay with the game threads (a GTX 1650 in one scene
+went from 450-686 frames over 50 ms a minute to 10-13, issue `#88`), the only place a gain was measured. While it was
+the default, a GTX 1660 Ti at the 60 fps cap with the GPU at 26 % reported uneven motion that 0.3.4 did not have
+(`#659`). It adds up to a frame of latency.
 
 ### `vk_be_gpu_wait()`
 
@@ -1297,24 +1293,22 @@ came with the frame's whole submission held (4 held submissions, nothing drawn s
 picture from before, a flash of the whole picture; the frame was then drawn after its present, in the present thread's
 empty submission, next to the following frame. So with work held at a present, what can go on now goes first, in a
 submission of its own (`held_resume`); if work is still held, the present waits and goes out right after the submission
-that replays the last of it, at the next present, or after `PH_MAX` submissions at the latest. Only with the replay on
-the submitting thread, as the event order. `NX2SARIA_PRESENT_HELD=0`: every present goes out at once. The game presents
-from one thread while others submit, so the submission that puts a held present out may be another thread's, while the
-presenting thread goes on to its next present. `runtime/pacing/vk_present_held.h` keeps that whole: one lock (PH.lock)
-around arming, putting out and every synchronous present while held presents are on, so a held frame goes out once, in
-one piece and before the next one. A submitting thread only tries it and never waits; the presenting thread waits for it
-only while another thread is putting a held present out (counted, and timed as `PERF_DRAIN`). No path holds it across
-`held_resume`, which is a replay; `present_image`'s callees take `sub_lock` only by trying it.
+that replays the last of it, at the next present, or after `PH_MAX` (8) submissions at the latest. Only with the replay
+on the submitting thread, as the event order. `NX2SARIA_PRESENT_HELD=0`: every present goes out at once. The game
+presents from one thread while others submit, so the submission that puts a held present out may be another thread's,
+while the presenting thread goes on to its next present. `runtime/pacing/vk_present_held.h` keeps that whole: one lock
+(PH.lock) around arming, putting out and every synchronous present while held presents are on, so a held frame goes out
+once, in one piece and before the next one. A submitting thread only tries it and never waits; the presenting thread
+waits for it only while another thread is putting a held present out (counted, and timed as `PERF_DRAIN`). No path
+holds it across `held_resume`, which is a replay; `present_image`'s callees take `sub_lock` only by trying it.
+
+The counts: `ph_ran`, held work run at a present (`held_resume`) on any thread (atomic); `ph_logged`, the "went out"
+lines so far (under PH.lock); `ph_other`, held presents another thread's submission put out (written under PH.lock,
+atomic).
 
 ### `ph_lock_waited()`
 
 `perf_begin`'s clock is `plat_now_ns`'s.
-
-### `present_held_on()`
-
-- `ph_ran`: held work run at a present (`held_resume`), on any thread: atomic.
-- `ph_logged`: PH.lock: "went out" lines so far.
-- `ph_other`: held presents another thread's submission put out (written under PH.lock, atomic).
 
 ### `held_resume()`
 
@@ -1327,7 +1321,7 @@ The present thread first finishes what it was handed: its empty submission repla
 `runtime/pacing/vk_present_held.h`'s present callback, with PH.lock held: a held present (why `PH_AFTER`, `PH_CAPPED`,
 `PH_NEXT`) or one that did not wait (`PH_NONE`) goes to `present_image`.
 
-### `ph_why_before()`
+### `ph_why_before()`, `ph_why_after()`
 
 Asked with PH.lock held, after a submission that ran held work first (before) or after this thread's submission: whether
 the held present goes out now.
@@ -1338,61 +1332,58 @@ The presenting thread, PH.lock held: work is still held, so its present waits.
 
 ### `submit_sync()`
 
-- `if (n && ph_armed(&PH))`: a present waits: what can go on goes first, then the present, then this submission.
-- `vk_exec_gate_wait(handles, n)`: a submission that begins with a wait for the CPU's signal: before its copies.
-- The submission stopped at a wait whose signal the CPU gave while it was being replayed (`runtime/vk/vk_exec_xfer.c`
-  "events the CPU signals"): it goes on now, in a submission of its own with copies taken after the signal, and that
-  submission's value is the one the game's fence stands for.
-- `if (n) ph_flush_try(&PH, ph_why_after, ph_out, NULL)`: at once unless a present waits.
+A submission on the submitting thread (or the replay thread's synchronous body):
+
+1. If a present waits, what can go on goes first (`held_resume()`), then the present, then this submission.
+2. `vk_exec_gate_wait()`: a submission that begins with a wait for the CPU's signal waits for it before its copies.
+3. The submission. If it stopped at a wait whose signal the CPU gave while it was being replayed
+   (`runtime/vk/vk_exec_xfer.c` "events the CPU signals"), it goes on now, in a submission of its own with copies taken
+   after the signal, and that submission's value is the one the game's fence stands for.
+4. A waiting present goes out now unless work is still held (`ph_why_after()`).
 
 ### `vk_sub_in_frame_publish()`
 
-- `sub_place_next`: this thread's next submission's place in its frame.
-
 `vk_sub_in_frame` is the replay's: `runtime/vk/vk_sync.c` submit sets it under the submission lock from the place the
-submitting thread noted for its submission (`vk_sub_in_frame_publish`), so another thread about to submit cannot change
-it under a replay in progress (`runtime/vk/vk_memory.c` `sub_place()` reads it there and on the replay workers).
-Submissions without commands of their own (held work, the present thread's blit) leave it as it was.
+submitting thread noted for its submission (`sub_place_next`, this thread's next submission's place in its frame), so
+another thread about to submit cannot change it under a replay in progress (`runtime/vk/vk_memory.c` `sub_place()`
+reads it there and on the replay workers). Submissions without commands of their own (held work, the present thread's
+blit) leave it as it was.
 
 ### `replay_main()`
 
-- `int sub_idx = 0`: submissions since the last present, in queue order.
-- `vk_dlssg_submitted(frame)`: the frame's submissions were replayed before its present.
+`sub_idx` counts the submissions since the last present, in queue order. At a present, `vk_dlssg_submitted()` is told
+the frame's submissions were replayed before it.
 
 ### `wait_counted()`
 
-Rl held.
+`rl` held.
 
-### `core_away_unlocked()`
+### `core_away_unlocked()`, `core_back_unlocked()`
 
 A guest thread waiting for the replay gives its virtual core up, as around any blocking host wait (`NVN_BLOCKING`):
 `guest_read` (memcpy, pool invalidate), pool and texture finalize run without it, and a drain lasts up to a replay.
-Called and returning with rl held; rl is not held while the core is taken back.
+Called and returning with `rl` held; `rl` is not held while the core is given up or taken back.
 
 ### `rq_room()`
 
-Rl held: the replay thread runs, and the queue has room for `room` items (waits while it has not).
-
-- Rl is dropped while the core is taken back, and another thread may fill the queue again meanwhile: check again.
+`rl` held: the replay thread runs, and the queue has room for `room` items (waits while it has not). `rl` is dropped
+while the core is taken back, and another thread may fill the queue again meanwhile, so the room is checked again.
 
 ### `regs_queue_locked()`
 
-Rl held, with room for an item (`rq_room`): the registrations made since the last queued item go into the queue, to be
-applied before whatever is queued next ("registrations in submit order"). Taken and queued without letting go of rl, so
-two threads' lists keep their order.
+`rl` held, with room for an item (`rq_room`): the registrations made since the last queued item go into the queue, to be
+applied before whatever is queued next ("registrations in submit order"). Taken and queued without letting go of `rl`,
+so two threads' lists keep their order.
 
 ### `replay_enqueue()`
 
-Queues an item (waits while the queue is full) and returns its value, reserved under rl so values follow queue order.
-
-- `rq_room(2)`: the item, and the registrations made before it.
-- `it->value = it->kind == RI_RELEASE ? 0 : vk_sync_reserve()`: a release signals nothing.
+Queues an item (waits while the queue has no room for it and the registrations made before it) and returns its value,
+reserved under `rl` so values follow queue order. A release signals nothing: its value is 0.
 
 ### `replay_drain()`
 
 Returns once every queued item was replayed and submitted. Back-end entries only: the replay thread never calls them.
-
-- `if (__atomic_load_n(&regn, __ATOMIC_RELAXED))`: this thread's own registrations are in: replayed too.
+This thread's own registrations go into the queue first, so they are replayed too.
 
 ### `replay_log()`
 
@@ -1406,9 +1397,7 @@ thread caught up before their blits (`present_frame_closed`) and how long that t
 held presents another thread's submission put out (`ph_out`), and the presenting thread's waits for PH.lock while one
 went out (`runtime/pacing/vk_present_held.h` `ph_lock()`). total: the run, at exit (`gfx_exit_log`); else
 `NX2SARIA_TRACE=perf` every 600 presents (`present_image`), the window since the last line, logged only when a count
-moved.
-
-- `static uint64_t last[7], last_frame`: `present_image`'s (one at a time): the counts at the last line.
+moved. The counts at the last line (`last`, `last_frame`) are `present_image`'s, which runs one at a time.
 
 ### `gfx_exit_log()`
 
@@ -1417,19 +1406,19 @@ The run total, once: the game exits through `prof_write` (`runtime/boot.c` `_exi
 
 ### `vk_be_present()`
 
-- `perf_present(frame)`: before `vk_exec_frame_log`, which resets the frame's exec counts the flight recorder reads.
-- `if (present_held_on())`: `present_held`.
-- `vk_present_drain()`: the present thread's empty submission may run held work: done before it is read.
-- `if (ph_armed(&PH)) held_resume(), ph_flush_next(&PH, ph_out, NULL)`: the last present still waits: out now.
-- `ph_present(&PH, &j, ph_hold, ph_out, NULL)`: waits for the held work, or goes out now.
-- `present_image(t, crop, at_ns, queued, frame, 0)`: only this thread presents: no lock.
-- Frame bound: the replay thread handled the previous present before this one is queued.
+With the replay on the submitting thread: the frame is counted and `perf_present()` runs before `vk_exec_frame_log`,
+which resets the frame's exec counts the flight recorder reads. With held presents on ("A present that waits for held
+work"), the present thread's empty submission may run held work, so it is drained before the held state is read; a
+present that still waits from before goes out now, and then this one waits for the held work or goes out now. Else
+`present_image()` runs here: only this thread presents, so no lock. With the asynchronous replay the frame is bound:
+the replay thread handled the previous present before this one is queued.
 
 ### `vk_program_release()`
 
-`runtime/vk/vk_pipeline.c` drops a released program's pipelines here.
+A weak, empty stand-in: no file defines a stronger `vk_program_release()`, so a released program only drains the replay
+queue (`vk_be_program_release()`).
 
-### `vk_be_texture_register()`
+### `vk_be_texture_register()`, `vk_be_sampler_register()`
 
 Both take effect between submissions ("registrations in submit order").
 
@@ -1439,28 +1428,26 @@ Asynchronous: the release is queued behind the submissions before it, so their r
 to its image (a released slot follows another live texture at the storage), and the ones after it see it released, the
 order of the synchronous replay. `vk_texture_release` reads only the object's key fields: a copy.
 
-- Its own registration still waits for the submission being replayed: released again behind it, which marks the slot
-  that registration fills ("registrations in submit order").
+Synchronous: when its own registration still waits for the submission being replayed, it is released again behind it,
+which marks the slot that registration fills ("registrations in submit order").
 
 ### `vk_be_submit()`
 
-Asynchronous: the handles (`nvn_submit_prepare_async` ran under the front end's submit lock) are copied and queued; the
-value returned is the one the replay will signal.
-
-- `vk_lowlat_submit_start()`: a frame's first submission: its simulation is over (nothing while low latency is off).
-- `sub_place_next = __atomic_load_n(&nvn_submits_in_frame, __ATOMIC_RELAXED)`: counted up after the submit returns.
-- `vk_usnap_take(handles, n)`: the uniform blocks as they are now: the game writes on once this returns.
+`vk_lowlat_submit_start()` first: a frame's first submission ends its simulation (nothing while low latency is off).
+Synchronous: the submission's place in its frame is the front end's count (`nvn_submits_in_frame`), counted up after
+the submit returns. Asynchronous: the handles (`nvn_submit_prepare_async` ran under the front end's submit lock) are
+copied and queued, and the value returned is the one the replay will signal; `vk_usnap_take()` takes the uniform blocks
+as they are now, as the game writes on once this returns.
 
 ### `vk_be_read_texels()`
 
 ReadTexels with the replay queued: waits for the newest submission recorded to write the texture (replayed and
-completed), not for the whole queue. The readback copy goes through the upload batch on the same queue, after every
-submission the replay has submitted. Submissions still queued or being recorded run after the copy, as on hardware when
-the GPU has not reached them yet: the game only sees their texels after waiting on a sync, and every sync value covers
-replay and GPU, so a read the game synchronised sees them. `NX2SARIA_REPLAY_CHECK` compares with a full drain.
-
-- `vk_sync_fence_wait(f, UINT64_MAX)`: counts as a fence wait in perf.
-- `memcpy(again, dst, n)`: bytes between the rows stay the caller's.
+completed), not for the whole queue; the wait counts as a fence wait in perf. The readback copy goes through the upload
+batch on the same queue, after every submission the replay has submitted. Submissions still queued or being recorded
+run after the copy, as on hardware when the GPU has not reached them yet: the game only sees their texels after waiting
+on a sync, and every sync value covers replay and GPU, so a read the game synchronised sees them.
+`NX2SARIA_REPLAY_CHECK` compares with a full drain; the second read starts from a copy of the first, so the bytes
+between the rows stay the caller's.
 
 ### `vk_be_guest_read()`
 
@@ -1481,11 +1468,11 @@ same time, and each line is logged by the thread whose add reached it. A wait fo
 acquire's sync stands for no submission (`runtime/nvn/nvn_api_obj.c` `nvnWindowAcquireTexture` gives it fence 0), and
 such waits were half of the lines in two sessions of 2026-11-13.
 
-### `vk_be_frame_start()`
+### `vk_be_frame_start()`, `vk_be_input_read()`
 
 A frame of the game starts. DLSS Frame Generation's low latency sleeps at the acquire (`runtime/vk/vk_dlssg.c`); the
-direct path (`runtime/pacing/vk_lowlat.c`) at the acquire or the pad read, whichever the game makes first in the frame.
-At most one of the two is in effect in a run, and each returns at once while it is not.
+direct path (`runtime/pacing/vk_lowlat.c`) at the acquire or the pad read (`vk_be_input_read()`), whichever the game
+makes first in the frame. At most one of the two is in effect in a run, and each returns at once while it is not.
 
 ### `vk_be_frame_paced()`
 
