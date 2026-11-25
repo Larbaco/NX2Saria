@@ -1,15 +1,19 @@
 # runtime/vk: pipelines, their caches and the shader modules
 
 This page holds the notes of the pipeline files of `runtime/vk/` ([README.md](README.md#the-pages-of-runtimevk) lists
-them). The notes of `runtime/vk/vk_pipeline.c` are still comments in it.
+them).
 
-The headers below are the rules `vk_pipeline.c` applies, each in a header of its own so that a test checks it without
-Vulkan, a driver or files: how `pipeline-cache.bin` is read (`vk_cache_file.h`), the translator stamp of the cache files
-(`vk_cache_stamp.h`), the memory gate and the play gate of the background builds (`vk_build_gate.h`,
-`vk_play_gate.h`), the library warm's hint (`vk_warm_hint.h`), when the caches are saved again (`vk_save_retry.h`),
-what a start owes from an earlier one (`boot_warm.h`) and NVIDIA's shader disk cache folder (`nvidia_cache.h`). The
-mesh files decide how the game's task and mesh programs are drawn (`vk_mesh_path.h`) and hold the buffers and records
-of the mesh fallback (`vk_mesh_fb.c`, `vk_mesh_fb.h`).
+`vk_pipeline.c` maps the state the replay collects to Vulkan pipelines and descriptor layouts, rewrites the translator's
+SPIR-V where Vulkan or a driver needs it, and keeps what was built across runs: the pipeline cache's two files, the
+pipeline keys, the stage libraries and their warm, the compute pipelines the boot keeps, and the background builds with
+their gates. Its first line is a licence notice that stays in the code; the rows of `THIRD_PARTY_NOTICES.md` say what it
+covers. The headers below it are the rules `vk_pipeline.c` applies, each in a header of its own so that a test checks it
+without Vulkan, a driver or files: how `pipeline-cache.bin` is read (`vk_cache_file.h`), the translator stamp of the
+cache files (`vk_cache_stamp.h`), the memory gate and the play gate of the background builds (`vk_build_gate.h`,
+`vk_play_gate.h`), the library warm's hint (`vk_warm_hint.h`), when the caches are saved again (`vk_save_retry.h`), what
+a start owes from an earlier one (`boot_warm.h`) and NVIDIA's shader disk cache folder (`nvidia_cache.h`). The mesh
+files decide how the game's task and mesh programs are drawn (`vk_mesh_path.h`) and hold the buffers and records of the
+mesh fallback (`vk_mesh_fb.c`, `vk_mesh_fb.h`).
 
 The feature docs: "4. Graphics" in [architecture.md](../architecture.md) (the pipeline cache's two files, the stamp,
 the boot warm, the mesh fallback), [performance.md](../performance.md#background-builds-in-play) (the play gate and
@@ -2626,6 +2630,515 @@ The library state from the key file's records (prewarm); defaults without one.
 
 - State index: clamp | poly (0 fill, 1 line, 2 point -> `VkPolygonMode`) << 1 | `minus_w` << 3 (pr); samples log2 (fs).
 - `if (!pr_hist[best]) best = 8`: no key file: NX2Saria clips -w..w (all 2706 records of a recorded key file).
+
+### The driver's cache of stage libraries, warmed again during play
+
+The preparation (`lb_warm_prepared()`) builds every prepared variant's stage library once, so the driver's disk cache
+holds it and the library a draw needs later takes a few milliseconds instead of a compile: 3 ms against 100 ms for a
+vertex and 340 ms for a fragment library on an RX 7900 XT (driver 26.10.1). The driver's cache does not outlive
+everything, though: a driver update empties it, the AMD driver keeps a limited amount and drops old entries, and a
+change to what a library is built with (the dynamic states it lists, as when dynamic vertex input was turned off for
+this driver) gives every library another entry. After any of them each pipeline a draw first needs compiles cold: the
+draw is skipped for the frames that takes, or waits for it. Measured on that card with the cache cold, a walk through a
+village not seen before skipped 11,180 draws while their pipelines built and 94 draws waited 5.5 s in all, one of them
+1.9 s.
+
+So every start checks: a sample of the prepared fragment libraries is built (`lw_probe()`), and when their median time
+says the cache is cold, the whole prepared list is built again into the driver's cache on a few idle-priority threads
+while the game runs (`lw_worker()`), as the preparation does but without stopping play. `shader-warm.txt` beside the
+caches says where that stands: "warming" while it runs, so a start after a run that ended meanwhile goes on, and "done"
+with the driver and a count of the times the cache was cold again right after a finished warm. At two in a row the
+driver does not keep stage libraries at all and warming stops being tried (`NX2SARIA_LIB_WARM=0` turns it off; =force
+warms at every start).
+
+The check times builds, which a busy CPU only makes longer: as the guest starts beside the boot's background builds, a
+sample built at below-normal priority read a warm cache as cold on an RTX 5080 (0.9.2, a median of 136 ms on 16 logical
+processors), and the whole list of 42,231 libraries was built again in 873 s on 4 idle threads, although
+`--warm-shaders` gave all of them back in 10.6 s and the driver's cache file did not change. So the sample is built at
+normal priority, into the driver's cache only (`no_cache`: a library our own pipeline cache holds would read fast
+whatever the driver has), and a sample that says cold is built again 10 s later before the cache counts as cold, except
+while the start waits for the whole warm after a driver change, where cold is the expected answer. The cache counts as
+warm when `LW_WARM_SHARE` of the sample was fast: a cache the driver has partly evicted (a size limit keeps some of the
+libraries and drops others) is to be warmed, and one or two fast builds say little. `shader-warm.txt` also keeps how far
+a warm came ("warming <driver> <strikes> <variant>"), written every 8,000 variants and when the warm ends for a run
+before it is done (`lw_keep_progress()`): a run that ends before the warm does is followed by one that goes on from
+there, not from the first variant again, which on a PC whose sessions were shorter than a warm under play (15 minutes)
+began the list again at every start.
+
+- `#define LW_BOOT_THREADS 32`: while the start waits for the warm (`bf_wait()`): every core, as the preparation.
+
+`LW`:
+
+- `volatile int32_t short_mem`: the memory gate refused a build for `GATE_WAIT_MS`: the warm ended for this run.
+- `volatile int32_t checked`: `lw_main()` has returned: the workers it started, if any, are counted in running.
+- `size_t from`: the variant this run's warm began at (an earlier run's progress, `lw_check()`).
+- `int bg_threads`: the workers that go on beside the game (`lw_worker()`).
+- `uint32_t vendor`: the GPU's vendor id, for what a cold cache's log line adds (`runtime/vk/vk_warm_hint.h`).
+
+### `lw_stamp_at()`
+
+at: for "warming", the variant a later run goes on from (all before it are built).
+
+### `lw_build()`
+
+One prepared vertex or fragment variant's library into the driver's cache; its time in ms, negative when the variant is
+on the skip list, not in the shader cache or of another stage.
+
+### `lw_keep_progress()`
+
+A warm that ends for a run before it is done keeps how far it came, as the 8,000-variant marks do: the memory gate
+stopped it (`lw_worker()`) or the window closed (`vk_pipeline_save_exit()`). Without it a PC whose runs each end a few
+hundred variants in (an integrated GPU whose memory is the system's, with the commit near its limit) begins the list
+again at every start and never gets past its first variants.
+
+- The workers take the variants in order, each holds at most one unbuilt: all below this are built.
+
+### `lw_worker()`
+
+- `int me = (int)(intptr_t)arg, idle = 0`: me: its journal slot while the start waits (`bf_wait()`).
+- `no_cache = 1`: into the driver's own cache only (see `no_cache`).
+- Beside the game: idle priority, and of the workers the whole warm started only the background's count.
+- The play gate (`play_rest_wait()`), then the memory gate (`gate_wait()`): without room the warm waits, and after
+  `GATE_WAIT_MS` it ends for this run. `shader-warm.txt` keeps saying "warming", so the next start goes on with it.
+- `journal_mark(me, &LW.e[i])`: from here to its clearing, a process that dies names this variant.
+- The workers take the variants in order, each holds at most one unbuilt: all below this are built.
+- `if (plat_dec32(&LW.running)) return`: the last worker out says how the warm ended.
+- `lw_keep_progress()`: ended for this run before it was done (no commit headroom).
+
+### `lw_time_sample()`
+
+The median time of `LW_SAMPLE` prepared fragment libraries spread over the list, in ms, and in `*fast` how many were
+under `LW_COLD_MS`, in `*got` how many were built; negative without enough of them.
+
+- `for (size_t j = i; j < i + step && j < LW.n; j++)`: the next fragment variant from here.
+
+### `lw_warm_sample()`
+
+1 when the sample says the driver's cache has the prepared libraries.
+
+### `lw_probe()`
+
+`lw_time_sample()` at normal priority, and once more 10 s later when it says cold, unless the start waits
+(`bf_waiting()`). The better of the two counts. The thread goes back to below normal afterwards when the game runs
+beside it.
+
+### `lw_say_cache_folder()`
+
+One line before the sample: the folder NVIDIA's driver keeps its shader cache in and what it holds, so a log that finds
+the prepared libraries gone says whether the files were gone from the disk or were there and did not match (the
+launcher's log says the same around an update, for every driver's folder). It is the folder the environment names, which
+is the game's own beside the exe unless the player named one (`runtime/vk/vk_device.c` `nvidia_cache_beside_exe()`); the
+driver's default folder is not in the environment, and without the variable there is no line.
+
+### `lw_check()`
+
+- `no_cache = 1`: the sample's libraries go into the driver's cache only, as the workers' do (see `no_cache`).
+- `if (sscanf(line, "%15s %63s %d %llu", was, id, &strikes, &at) < 2) was[0] = 0`: no count: from the start.
+- A resumed warm is not sampled: the variants the earlier run built are in the driver's cache and the rest are not, so a
+  sample would read the cache as warm or cold by how far it came. It goes on from where it stopped.
+- `if (same && strikes) lw_stamp("done", 0)`: the driver kept them this time.
+- `else`: cold right after a finished warm on this driver says more than a first cold (`runtime/vk/vk_warm_hint.h`).
+- `lw_warm_sample(fast, got) ? LW_WARM_FORCED`: warm, but `lib_warm` = force.
+
+### `lw_start()`
+
+Boot, once the library state is known (`lb_state()`): the prepared list is read and the check starts on its own thread.
+
+- `uint8_t *f = gfx_shader_prepared_read(path, &n, NULL, NULL)`: the records alone, whichever version the file is.
+- `if (!LW.e) return`: nothing prepared (a build without the preparation step).
+
+### `lb_start()`
+
+Boot: compute shaders of the warm list (recorded and prepared), those whose pipeline stays first, then the first KEEP
+recorded graphics variants.
+
+- `const char *te = cfg_get("NX2SARIA_LIB_PREBUILD_THREADS")`: no fixed default: 2 when unset (1 under 4 CPUs).
+- `mesh_pre_start()`: the recorded mesh pipelines' libraries.
+- `lb_state(pr_hist, fs_hist)`: the libraries' state, also for `lw_start()`.
+- `if (BF.on) BF.lw = 1`: after the compute pipelines, with the start waiting (`bf_wait()`).
+- The compute shaders whose pipeline stays come first: they are the ones the game is about to dispatch.
+- `if (atoi(e) > 1 && (size_t)atoi(e) < n) n = (size_t)atoi(e)`: a count above 1 caps the list; 1 is plain on.
+- Two threads by default, not half the CPUs. On a 32-thread CPU with NVIDIA's driver, 16 builders kept the driver's lock
+  busy: 77% of the process's running time was a spin loop in `nvoglv64.dll` (about 8 cores), the prebuild had not
+  finished after 34,000 frames, and `lib_prebuild` = 0 took it to 5% and the game to its frame limit (RTX 4080 SUPER,
+  driver 617.14, 2026-11-08). With the driver's disk cache warm (`--prepare-shaders`, `--warm-shaders`) a build takes
+  well under a millisecond, so two threads still finish the list quickly. The two take the shaders dispatched most
+  recently (e[0..`n_keep`)); one goes on with the rest (`lb_next()`), which is only built into the caches. Where the
+  rest still runs during play, two builders there cost frames: one against two for the whole list, one 20 s route each
+  on an RTX 5090, Castle Town 76.1 against 73.7 fps with 1 frame over 25 ms against 6, Hyrule Field 85.7 against 80.7
+  fps. `NX2SARIA_LIB_PREBUILD_THREADS` keeps its count for the whole list.
+- `int t = te && *te ? atoi(te) : (cpus < 4 ? 1 : 2)`: idle priority; a cold driver takes ~2 s per large compute shader.
+- The whole warm (`bf_wait()`): no game runs beside these builds until they are done, so every core takes them, as in
+  the preparation; should the game start first, the count above goes on (`lb_next()`).
+
+### `lb_stop()`
+
+- `if (BG.th) plat_thread_join(BG.th), BG.th = NULL`: after its current build, if one runs.
+
+### `bf_time_up()`
+
+1 once the whole warm's time on the boot screen is up (`BF.t_end`): the builders go on as on any other start.
+
+### `bf_wait()`
+
+The whole warm's wait (comment at `bf_decide()`), on the prewarm thread after the recorded pipelines: the compute
+pipelines `lb_start()` has just started, then the library warm. The counts go to the boot screen
+(`vk_pipeline_prewarm_progress()`). It ends with the warm, at the warm's time limit, or when the boot stops waiting
+(`vk_pipeline_prewarm_detach()`); in the last two the builders go on beside the game.
+
+- `int up = bf_time_up()`: the recorded pipelines took all of it.
+- `lw_start()`: beside the game when the wait is over: the check and the warm as on any other start.
+- `__atomic_store_n(&pw_pipe_total, (int64_t)(LW.n - LW.from), __ATOMIC_RELAXED)`: a resumed warm's rest.
+- `journal_close()`: the warm is over, or the game runs.
+- `if (!stopped)`: the boot screen's turn is over for this GPU and driver (`runtime/vk/boot_warm.h`).
+- `vk_pipeline_prewarm_detach()`: nothing waits from here on: later builders are the background's.
+
+### `pw_mark()`
+
+What each preparation worker hands the driver now (under `LB.stat`): the variant's index + 1 (0: none), since when, and
+its SPIR-V length. `lb_warm_prepared()` reads it to stop waiting for builds that do not end (`prep_stalled()`).
+
+`PW`:
+
+- The first `PW_OUT` large compute shaders the preparation left out (`lb_big_left_out()`), named in its last lines.
+- `int test_ms`: `NX2SARIA_PREPARE_STALL_TEST_MS`: the last variant waits this long first, a stalled build for tests.
+
+### `lb_warm_worker()`
+
+Preparation: one prepared variant at a time into the driver's disk cache (private shader copy, nothing kept). arg is the
+worker's journal slot.
+
+- `pw_mark(slot, i + 1, 0)`: from the hand-out on, so `prep_stalled()` never takes a worker loading one for idle.
+- `if (sh) journal_mark(slot, &LB.e[i])`: from here to its clearing below, a crash names this variant.
+- `plat_mutex_lock(&LB.stat)`: as the boot leaves it (`lb_big_left_out()`): its first dispatch builds it.
+
+### `prep_stalled()`
+
+The preparation's wait for its workers, every 2 s: once every variant has been handed out, and every build still running
+has been in the driver's hands for `stall_ms` or more (`NX2SARIA_PREPARE_STALL_S`), the wait is given up. A Vulkan
+create cannot be cancelled, and on NVIDIA 546.18 a few compute shaders took 16 and 74 min each after the other 42,139
+variants were done in 28 min, while the launcher's update showed "built 42141 of 42142". So:
+
+- Each build still running is named with its time (the variant's input id, as `shader-prepare-skip.txt` names one);
+- `shader-warm.txt` says where the game goes on (`lw_check()`): "warming" from the first unfinished variant when one is
+  a vertex or fragment library, so a later start builds the rest on idle threads beside play (the variants already built
+  come back from the driver's cache in a few ms); "done" when all are compute shaders, which every boot builds ahead
+  anyway (`lb_compute()`);
+- The journal goes first, so the next start does not take the builds it names for a driver crash (`skip_init()`);
+- The process ends with code 0 (`plat_exit`): the step did its work, and `tools/make_game.py` says the rest goes on in
+  the game. What the driver finished is in its disk cache already; the pipeline cache was saved before the libraries
+  (`seed_pipelines()`). k: the workers; jp: the journal's path.
+
+- `if (__atomic_load_n(&LB.next, __ATOMIC_RELAXED) < (int64_t)LB.n) return`: variants still to hand out.
+- built: the variants that ended, less those that build nothing (skip list, no shader, no library, large left out).
+- `char size[48] = ""`: no length while its shader is still being read.
+- `plat_mutex_lock(&SK.jlock)`: a worker that returns now marks nothing more (`journal_mark()`).
+
+### `prep_sample_warm()`
+
+`--warm-shaders`, before the whole list: `LW_SAMPLE` prepared fragment libraries spread over it, built into the driver's
+own cache alone (`no_cache`, as the library warm in play builds) and timed, as the game's check at every start does
+(`lw_check()`). 1 when at least `LW_WARM_SHARE` of them came from the driver's cache. `*fast` and `*got`: the counts.
+
+- `for (size_t j = i; j < i + step && j < LB.n; j++)`: the next fragment variant from here.
+- `journal_mark(0, &LB.e[j])`: a driver that dies on it names it, as the full pass would.
+
+### `lb_warm_prepared()`
+
+Preparation: every variant of `<dir>`/`shader-prepared.bin` on every core at normal priority. sample: `--warm-shaders`
+after an update, which first asks the driver's cache (`prep_sample_warm()`) and builds nothing more when it has them. It
+took 10 to 20 s on a player's PC at every update, all of it 42,000 libraries the driver gave back at once, and it still
+takes the minutes of a full build when the driver no longer has them (a driver update, or a change of what they are
+built with: 380 s on that PC once). `NX2SARIA_LIB_WARM=force` builds the whole list whatever the sample says.
+
+- `uint8_t *f = gfx_shader_prepared_read(path, &n, NULL, NULL)`: the records alone, whichever version the file is.
+- `lb_big_words_init()`: the boot's line for large compute shaders, and its record of the dispatched ones.
+- `SK.journal = plat_fs_create(jp, NULL)`: `skip_init()` removed a leftover one.
+- `shader-warm.txt` (`lw_check()`) says "warming" with this driver while a warm the game began in play has not come to
+  the end of the list. The variants before the point it reached are in the driver's cache and the rest are not, and the
+  sample, spread over the list, finds about that share fast: at 31,996 of 42,239 it found 9 of 12, which is
+  `LW_WARM_SHARE`, and read the cache as warm. `--warm-shaders` built nothing, and the next start went on warming the
+  rest on idle threads during play (10,243 of 42,239 variants left on an RTX 5080, with the replay at 20-39 ms a frame
+  in Castle Town meanwhile). An unfinished warm is built here whatever the sample says, and a preparation that builds
+  the whole list marks the warm done, so the game does not start it again.
+- Every 2 s a count on stdout for `tools/make_game.py` (`step_shaders`), as `runtime/gfx/gfx_shader.c` `prepare_files()`
+  prints for the translation: a driver building for a long time still shows the step moving.
+- `if (stall_ms > 0) prep_stalled(stall_ms, k, jp)`: does not return when it gives up the wait.
+- `if (SK.journal) plat_file_close(SK.journal), SK.journal = NULL, plat_file_delete(jp)`: every build returned.
+- `if (P.gpl && !LB.nolib) lw_stamp("done", 0)`: the whole list is in the driver's cache (see `shader-warm.txt` above).
+- With gpl off only compute variants are built: say so, rather than count the skipped ones as built.
+- `if (skipped)`: `installer/steps.py` Prepare reads this line.
+
+### The shared pipeline list
+
+`tools/pipeline_list.py`; `seed-pipeline-keys.bin` next to the game.
+
+`tools/prepare_shaders.py` writes the list's key records there, in the layout of `pipeline-keys.bin`, after putting the
+shader variants they name into the seed. The preparation builds them once, after the seed is translated: each pipeline
+goes through the pipeline cache and so into `pipeline-cache.bin` and the driver's own disk cache, and is dropped with
+the process. Nothing is added to this folder's `pipeline-keys.bin`; every boot then counts the list as recorded
+pipelines beside the install's own (`keys_open_seed()`) and builds them before play, from those caches.
+`NX2SARIA_PREPARE_PIPELINES`: all (default) builds every record; mesh, the list's mesh pipelines only (and every record
+without the graphics pipeline library); 0, none. A vertex pipeline's module depends on the vertex output union of the
+pairs known (`vs_outs()`): here the list's, as at the first boot of a new install, which reads the list and none of its
+own yet, so a vertex pipeline built here is the one that boot asks for. An install that has drawn more pairs since may
+need some of them again with wider outputs; the boot builds those. Without the graphics pipeline library (`vk_caps_gpl`:
+AMD's Windows driver for RDNA 2 and older) a vertex pipeline's outputs come from its own pair (no independent layouts),
+so a listed one always is the one a draw asks for. A mesh pipeline, which has no stage libraries, otherwise leaves its
+draws out of the picture for its whole compile (0.2 to 1.1 s each on a first visit of a forest, 18 of them). Where mesh
+pipelines have stage libraries (`mesh_libs()`) the listed ones are still built whole, and the libraries of their stages
+are built after them (`mesh_pre_run()`), for the mesh pipelines no list names. A driver whose compiler crashes on one of
+these would crash at every preparation: `seed-pipelines-running.txt` marks the step, and a run that finds the marker of
+a run that died skips the step for good on this folder (the pipelines are then built at their first draw, as without a
+list) until the marker is deleted.
+
+### `seed_pipelines()`
+
+- `if (!f) return 0`: no list: nothing to say.
+- `K.t0 = t0, K.prep = 1`: `prebuild_report()`'s start: this mode never runs `prewarm_run()`, which sets it in play.
+- `if (is_mesh(&s) && (!vk_ctx()->has_mesh_shader || vk_ctx()->mesh_fallback))`: no mesh draw uses one.
+- `if (!is_mesh(&s) && P.indep && fs && gfx_shader_stage(vs) == GFX_STAGE_VS)`: its vertex output union, as the boot.
+- `K.until = 0`: every one of them: no boot waits for this.
+- `GATE.off = 1`: and no game runs beside it: the memory gate (`gate_enter()`) refuses nothing.
+- `if (queued) warm_builder((void *)1)`: the first alone (`warm_builder()`).
+- `while (K.left) plat_cond_wait(&done_cv, &P.lock)`: those a pool worker took.
+- The listed mesh pipelines' stage libraries, before the save and inside the marker: the file then holds them, and a
+  driver that dies on one is met by the next preparation as one that died on a listed pipeline.
+- `int saved = cache_save(5000, 0) > 0`: explicit preparation waits for a moment with no build running.
+
+### `prep_card_line()`
+
+The first line a preparation mode prints once it has its device: the card it builds the graphics driver's cache for, and
+by what the settings chose it (`runtime/vk/vk_device.c` `pick_device()`, which the game takes its card with too;
+`runtime/vk/gpu_choice.h` `gpuc_prepare_line()`). The launcher's log keeps every line of the step, and the device lines
+the choice also logs are among sixty others there, so a report of a slow update, or of one that built for the wrong
+card, is answered from this one.
+
+### `vk_pipeline_prepare_pipelines()`
+
+`nx2saria.exe` `--prepare-pipelines`: the list's pipelines alone, for a folder whose shaders are prepared already.
+
+- `prep_mode = 1`: builds into `pipeline-cache.bin` alone (`cache_load()`).
+
+### `vk_pipeline_prepare_shaders()`
+
+`nx2saria.exe` `--prepare-shaders` (`tools/prepare_shaders.py`): the device sets the translator's host answers (they are
+in every cache key), the seed next to `nx2saria.exe` is translated on every core, then every prepared variant's stage
+library or compute pipeline is built once into the driver's disk cache (`lb_warm_prepared()`). No game runs.
+
+- `prep_mode = 1`: builds into `pipeline-cache.bin` alone (`cache_load()`).
+- `const char *pe = cfg_get("NX2SARIA_PREWARM_XLATE")`: no fixed default: half the CPUs, at most 16, when unset.
+- The listed pipelines before the stage libraries: the pipeline cache is saved with them in it and without the tens of
+  thousands of libraries the next step builds, which would take the file past its size limit.
+
+### `vk_pipeline_warm_shaders()`
+
+`nx2saria.exe` `--warm-shaders`: every variant of `shader-prepared.bin` built into the driver's disk cache again from
+the shader cache, without translating the seed. The AMD cache is keyed to the exe path (a relink keeps it: 29,587
+variants in 1.8 s) and holds a limited amount: preparing another build dir evicted this one's libraries, and a library a
+draw needed then took 40-220 ms in play instead of 0.2 ms. Seconds when the libraries are still there.
+
+- `prep_mode = 1`: builds into `pipeline-cache.bin` alone (`cache_load()`).
+- `prep_card_line("prepare-shaders")`: the lines the update's step reads all begin so, whichever of the two modes prints
+  them.
+- `seed_pipelines(dir)`: before the libraries, as in `vk_pipeline_prepare_shaders()`.
+
+### `vk_pipeline_probe_prewarm()`
+
+`nx2saria.exe` `--probe-prewarm`: the boot's shader and pipeline stages without the game, from the caches next to
+`nx2saria.exe` (`pipeline-cache.bin`, `pipeline-keys.bin`, `shader-answers.bin`, the shader cache): the pipeline cache
+load, the shader prewarm, the recorded pipelines and the compute pipeline prebuild, each followed by
+`vk_mem_stage_log`'s line, so the log tells what every stage leaves in device memory and in the process's commit. Then
+up to `PROBE_DISPATCHES` compute shaders whose pipeline the boot did not keep are asked for as a dispatch would
+(`gfx_shader_load_input` for the shader, then `vk_pipeline_compute()`), which gives what a first dispatch costs on this
+machine and how many of them the pipeline cache held. Fails when one of those pipelines is not created, when the
+prebuild kept a pipeline it should not have, when a large compute shader went to the background builder although no run
+dispatched it, or when the record of dispatched shaders, written to a file of the probe's own and read back, does not
+hold the probe's dispatches. `compute-used.bin` itself stays as it is; the pipeline cache is saved as after a boot.
+
+- `vk_pipeline_prewarm()`: brings the device up itself: it has to own the key file before `ensure_init()` runs.
+- `int fails = kept > LB.n_keep`: a dispatch never waits in this mode, so nothing else may have been kept.
+- `if (queued > LB.n_keep)`: only a shader a run dispatched may be built ahead when it is large.
+- `const GfxShader *sh = gfx_shader_load_input(LB.e[i].iid, 0)`: from the disk: the boot released its copy.
+- `if (LB.big_words && words > LB.big_words) continue`: a first dispatch of one compiles it: not what is timed here.
+
+### Dynamic state
+
+### `vk_pipeline_set_dynamic()`
+
+- `sh.have = 0`: nothing known: every call is recorded.
+
+### `vk_pipeline_set_dynamic_delta()`
+
+Every graphics pipeline the replay binds lists the same dynamic states (`P.dyn`; mesh pipelines leave out topology,
+primitive restart and vertex input), so a value recorded into a command buffer holds across pipeline binds until it is
+set again. Each call is recorded only when its value differs from the one `*sh` says the command buffer has: a new
+pipeline usually changes the shaders and a field or two, not the twenty states this used to record with every bind.
+
+- The front face maps unchanged: the game sets the upper-left window origin, and the y-flipped viewport (`y_flip`) puts
+  NDC +y at row 0 as NVN does, so the framebuffer winding Vulkan tests is the one NVN tests (a lower-left origin would
+  need it mirrored).
+- `VkCullModeFlags cull = (VkCullModeFlags)(pl->cull & 3)`: `NVN_FACE_*` has `VkCullModeFlagBits`' values.
+- `NVN_POLYGON_OFFSET_ENABLE_*` bit of the polygon mode in use: point 1, line 2, fill 4.
+- `sh->vi.n_attr = UINT32_MAX`: not recorded: unknown to the next draw.
+- `if (P.dyn_a2c)`: the same signature as the depth clamp call.
+- The calls write targets [0, nt); targets past nt keep what the command buffer had.
+
+### Statistics, persistence, teardown
+
+### `cache_save_one()`
+
+Copies a pipeline cache's data into its file, with `cache_rw` held exclusively for the copy only (not the file write):
+`P.play` into `pipeline-cache-play.bin` when there is a play cache, else `P.cache` into `pipeline-cache.bin`; and
+`P.cache` once, with or without a play cache, after the play file was merged into it at the start (`P.fold`), which then
+removes the play file, and at the exit of a run that started without `pipeline-cache.bin` (`P.base_at_exit`;
+`runtime/vk/vk_cache_stamp.h` `cache_save_writes_base()` chooses).
+
+Only when the data changed: the size of a cache's data is asked first, and a cache whose data has the size its file
+holds is neither copied nor written. A pipeline cache only gains entries, so the same size is the same data. Before,
+every save copied and wrote the whole cache whenever a pipeline had been created since the last one, also when the cache
+had held it: three saves of 358.1 MB in one run that added 0.3 MB (2026-11-11).
+
+The lock is only ever tried, never waited for: a waiting exclusive request would hold back every new build (a shared
+request queues behind it), so a pending autosave could stall the replay. The save at exit (exiting) holds new builds
+back instead (`cache_saving_at_exit`) and so only waits for the builds already running. `wait_ms`: how long to keep
+trying while builds run (0: one try). Returns 0 when no build-free moment came, -1 when the data could not be copied or
+its file not written (the log says which), 1 otherwise (saved, or nothing to save).
+
+The driver writes the data straight into the new file, mapped (`plat_file_swap_begin`), not into a buffer that is then
+written out: a buffer the size of the cache was committed for every save, 450 to 560 MB about every 20 s while new
+pipelines were built, on top of a process that already took the system's commit to its limit. Each save raised the
+process by 480 to 1490 MB for its length, the commit left fell to 17 MB, and two runs lost the Vulkan device in the
+middle of a save (their .tmp files stayed behind, cut short). The mapped pages belong to the file and take no commit.
+
+- `static PlatMutex save_lock = PLAT_MUTEX_INIT`: one cache save at a time; shutdown takes it to destroy the cache.
+- `#define SAVE_SLOW_MS 1000`: a save's copy or write this long or longer is logged with the time it ended.
+- A cache past the limit is not written: the next start would drop the file whole (`cache_data_read()`), so the file
+  keeps its last save under the limit and only the pipelines made since then are compiled again. A preparation writes
+  anyway: what it builds is the base every start reads, and a file it cannot write would leave none.
+- With the size just asked for, under the lock that keeps builds out, the second call returns everything. Should a
+  driver return `VK_INCOMPLETE` all the same, the file is not replaced.
+- The held-back builds go on before the log line and the file write: one of them may hold a lock those wait for.
+- A save that took `SAVE_SLOW_MS` or more, in the copy of the driver's data or in the file's write, says when it ended,
+  to line it up with the system's journal: a session of 2026-11-21 had one of 5.2 s among stalls of 1 to 3 s, and the
+  line could not say which came first.
+- `if (!which && P.fold)`: the play file's content is in `pipeline-cache.bin` now.
+
+### `cache_save()`
+
+Both caches' saves (`cache_save_one()`): 1 when each is done, 0 when one found no build-free moment, -1 when one failed.
+
+- Not under `P.lock`: holding `P.lock` through the copy and the file write (about 60 ms on the 1.4.3 fight) stopped
+  every pipeline lookup of the replay, a freeze at each 20 s autosave.
+- `if (!P.cache)`: `vk_pipeline_shutdown()` destroyed it.
+- `pipeline-cache.bin`: at every save without a play cache, once for a fold, and at the exit of a run that started
+  without it (`P.base_at_exit`); the play file beside it as usual.
+- While a fold is not written yet (`P.fold`: refused at the limit, or no build-free moment) the play file still holds
+  what was folded in memory only: written over with this run's play cache, that would be in neither file.
+- `ok = r`: the worse of the two.
+
+### `save_with()`
+
+Returns `cache_save()`'s answer.
+
+`SAVE_WAIT_MS`: Builds still running after this long at a save that waits (exit, the shader preparation) leave the file
+as it was.
+
+- The mesh pipelines by themselves: with stage libraries the first two numbers follow each other and the times are a
+  link's; without (the start's line says why) none is linked and the time is a whole build's.
+- `if (P.ready && !P.cache) pb_log("at a save")`: with `P.cache` the line comes with its own save below.
+
+### `vk_pipeline_save()`
+
+The save after the shader preparation and at shutdown: it waits up to `SAVE_WAIT_MS` for a moment with no build running.
+
+### `vk_pipeline_save_exit()`
+
+The save as the process ends (window closed, the game's exit, a timed run's end): new builds wait while it waits up to
+`SAVE_WAIT_MS` for the running ones to finish (`cache_saving_at_exit`).
+
+- `journal_close()`: an orderly end during the whole warm is not a driver crash.
+- The process ends without joining the library warm's workers: a warm still under way keeps how far it came. They stop
+  taking variants first; one that finishes its build before the exit writes the mark again, a little further.
+
+### `cache_sizes_ask()`
+
+The memory report's figure for the pipeline caches the driver keeps in process memory (`vk_pipeline_mem()`): the size of
+each cache's data, asked once a minute here on the autosave thread, and by every save (`cache_save_one()`). The size is
+asked as the save asks it, at a moment no build runs into either cache (`cache_rw`, tried once and never waited for),
+and under `save_lock`, which the shutdown takes before it destroys the caches. The play file holds what this run
+compiled, but `pipeline-cache.bin` is not written in play (only at the exit of a run that started without it): its cache
+grows in memory with the compute pipelines the boot builds for it alone, and only this query says by how much.
+
+### `autosave_once()`
+
+The game never shuts the device down (`runtime/boot.c` and the window end the process), so the cache is saved while it
+runs: at most every 20 s, and only after new pipelines were built or while a save that did not happen is still owed
+(`runtime/vk/vk_save_retry.h`). New pipeline keys are appended every 2 s.
+
+- `release_drain()`: the pipelines given back earlier that the GPU is done with.
+- `pressure_release(now)`: while video memory is short: the pipelines no draw used go.
+- `uint64_t n = s.graphics + s.compute + cache_merges`: a merge comes after its pipeline was counted (`bg_main()`).
+- `if (!save_due(&sr, n, now, P.fold)) return`: `P.fold`: the play file merged at the start is to be written.
+- Only at a moment with no build running (`cache_save()`): while one runs the save waits for the next tick, 500 ms on,
+  before it logs or flushes anything, so a busy stretch does not repeat the statistics lines every tick.
+
+### `autosave_main()`
+
+On its own thread: the save (`vkGetPipelineCacheData` and the file write, about 60 ms) and the key appends (a flush to
+the disk each) ran on the present thread, and the render thread waited for it to take the next frame.
+
+### `vk_pipeline_shutdown()`
+
+- `workers_drain()`: jobs point at layouts and Pipe entries freed below.
+- `plat_mutex_lock(&save_lock)`: not while the autosave thread copies it.
+
+### Self-test
+
+Census shaders (`probe_census_dir`, `tools/shader_census.py`) through `gfx_shader_get` into pipelines.
+
+Graphics pairs are a fragment shader and a vertex shader of the same source file, spread over the census; compute
+shaders are spread the same way. Every pipeline is built twice (the second call must hit the cache) and the dynamic
+state of the first graphics pipeline is recorded into a throwaway command buffer.
+
+### `census_shader()`
+
+The program the game would hand NVN for a census entry, translated with default answers (as
+`runtime/gfx/gfx_shader_probe.c`).
+
+### `selftest_state()`
+
+A state for a census pair: one target per fragment output (RGBA8 of the output's type), D32S8 depth with the test on,
+alpha blending on target 0, one RGBA32 attribute per vertex input, interleaved in stream 0.
+
+### `selftest_record()`
+
+Records the dynamic state of a pipeline into a command buffer that is never submitted (validation checks the calls).
+
+### `vk_pipeline_selftest()`
+
+- `if (!probe_census_dir(root, sizeof root))`: the census folder, build/`<version>`/shaders.
+- Candidate pairs: each fragment shader of a source file with one of the file's vertex shaders (round robin).
+- `if (e[j].stage == GFX_STAGE_VS && v0 < 0) v0 = j`: sorted by stage within a file: vertex shaders first.
+
+### `vk_pipeline_sizes()`
+
+`NX2SARIA_TRACE=perf` "mem: sizes" (`runtime/diag/perf.c`): the pipeline table's entries with their pipelines and fast
+links (only `pressure_release()` takes entries out, while video memory is short), layouts, stage libraries, the job
+queues and the `pipeline-keys.bin` set. A walk of the hash chains under `P.lock` held shared: the workers' inserts and a
+draw's memo miss wait for it (well under a millisecond).
+
+### `vk_pipeline_mem()`
+
+The memory report's pipeline figures (`runtime/vk/vk_memory.c` `outside_log()` and `system_log`), once a report: what
+holds device memory outside VMA, counted because the driver gives no size for a pipeline, and the host memory of the
+tables. A walk of the hash chains under `P.lock` held shared, as `vk_pipeline_sizes()` walks them (well under a
+millisecond: the draws' lookups wait for it). A graphics entry's pipeline is whole (built in one piece, no fast link
+before it), fast-linked (from its stage libraries, the optimised build not done or failed) or optimised (the whole build
+that replaced a fast link). Not used lately: no lookup since `idle_min` wall minutes (`pipe_used()`), never: none in
+this run (the boot's prebuild made it from the key file or the shared list).
+
+- `memcpy(&kind, b->key, sizeof kind)`: every library key starts with its `LIB_*` kind.
 
 ## `runtime/vk/vk_cache_file.h`
 
