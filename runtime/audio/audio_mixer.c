@@ -88,7 +88,7 @@ static float host_volume(void) {
     return v;
 }
 static _Atomic int window_focused = 1;
-static _Atomic int background_mute_logged;
+static _Atomic int background_mute_logged, background_back_logged;
 
 void audio_window_focus(int focused) { atomic_store(&window_focused, focused != 0); }
 
@@ -98,10 +98,18 @@ static float background_gain(void) {
     static _Thread_local int on;
     unsigned ver = cfg_version();
     if (ver != seen) seen = ver, on = cfg_bool("NX2SARIA_BACKGROUND_MUTE");
-    int muted = focus_mute_step(&state, on, atomic_load(&window_focused));
-    if (muted && !atomic_exchange(&background_mute_logged, 1))
-        rt_log("audio: background_mute: the window lost the focus, so the game's sound is muted until it has it again "
-               "(the first time this session)");
+    static _Thread_local uint64_t muted_at, passes;
+    int was = state.muted, muted = focus_mute_step(&state, on, atomic_load(&window_focused));
+    if (muted && !was) {
+        muted_at = kern_now_ns(), passes = 0;
+        if (!atomic_exchange(&background_mute_logged, 1))
+            rt_log("audio: background_mute: the window lost the focus, so the game's sound is muted until it has it "
+                   "again (the first time this session)");
+    }
+    if (muted) passes++;
+    if (was && !muted && !atomic_exchange(&background_back_logged, 1))
+        rt_log("audio: background_mute: the sound came back with the focus after %.2f s muted, %llu mix passes at gain 0 "
+               "(the first time this session)", (kern_now_ns() - muted_at) / 1e9, (unsigned long long)passes);
     return muted ? 0.0f : 1.0f;
 }
 

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=dc09f58a237a160e34e5226227de48eca0b769db reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=06aa1dba612e0c8763dce7f041315d307482c6d9 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -590,6 +590,7 @@ relatório, não é reconhecido pelo leitor e passa pelo SDL ou pelo XInput, com
 <frame> POINTER <x> <y>                    # the pointer for the game's menus at x, y of the window (0..1 from top left)
 <frame> MOUSEL|MOUSER [hold_frames]        # the left or right mouse button, for the game's menus only
 <frame> WHEEL <notches>                    # the mouse wheel for the game's menus, up positive
+<frame> FOCUS 0|1                          # the window loses the focus (0) or gets it back (1), as an alt-tab
 ```
 
 `<frame>` conta ticks de 60 Hz de tempo de jogo desde o primeiro quadro (quadros apresentados a 60 fps). Cada evento é

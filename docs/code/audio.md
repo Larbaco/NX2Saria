@@ -82,7 +82,9 @@ parsed again when `cfg_version` changes. Render thread only.
 while the window does not have the focus (`runtime/input/window_idle.c` `focus_mute_step()`), and by 1 when it has it.
 `runtime/gfx/gfx_present.c` `gfx_window_focus_changed()` tells `audio_window_focus()` of each change, on both platforms;
 the render thread reads it at each pass, so the sound stops within one pass and comes back the same way. The state is
-per render thread (`_Thread_local`), the line `audio: background_mute: the window lost the focus ...` once per session.
+per render thread (`_Thread_local`). Two lines, each once per session: `audio: background_mute: the window lost the
+focus ...` at the first mute, and at the first return `... the sound came back with the focus after <s> s muted, <n>
+mix passes at gain 0`, which a script's `FOCUS 0` and `FOCUS 1` lines check (the frames between them over 60).
 The menu's own sounds are not muted: they play when the menu, which needs the focus, is used.
 
 ### `guest_range_ok()`

@@ -229,7 +229,11 @@ the real input. The game menus' mouse (`runtime/ui/menu_mouse.c`) has its own li
 the pointer at those fractions of the window (0..1 from its top left; it stays there until the next `POINTER`),
 `<frame> MOUSEL|MOUSER [hold]` holds the left or right mouse button for it, `<frame> WHEEL <notches>` turns the wheel (up
 positive). They reach only that module (`input_menu_pointer()`, `input_menu_mouse_presses()`,
-`input_menu_wheel_take()`), never the key bindings.
+`input_menu_wheel_take()`), never the key bindings. `<frame> FOCUS 0|1` takes the focus from the window or gives it
+back, as an alt-tab would, for runs without a window (`background_mute`, `cursor_hide`): `script_apply()` holds `lock`,
+so it only leaves the value in `script_focus`, and `input_poll()` passes it to `runtime/gfx/gfx_wsys.h`
+`wsys_probe_focus()` after the lock is let go (the window thread takes the event). `tools/run_game.py` sets
+`NX2SARIA_ASSUME_FOCUS`, so the game itself still sees the focus.
 
 `<frame>` and its hold are 60 Hz ticks of game time since the first present (`frame_step_ticks()`: presents at 60 fps),
 so the title menus get the presses at the same game time at any frame limit. A line `@<ms> ...` is timed instead: `<ms>`

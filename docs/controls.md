@@ -270,6 +270,7 @@ The PS button is not used. The Controls tab binds and remaps its buttons like an
 <frame> POINTER <x> <y>                    # the pointer for the game's menus at x, y of the window (0..1 from top left)
 <frame> MOUSEL|MOUSER [hold_frames]        # the left or right mouse button, for the game's menus only
 <frame> WHEEL <notches>                    # the mouse wheel for the game's menus, up positive
+<frame> FOCUS 0|1                          # the window loses the focus (0) or gets it back (1), as an alt-tab
 ```
 
 `<frame>` counts 60 Hz ticks of game time since the first frame (presented frames at 60 fps). Each event logs once (`input: script frame N tick T: A`).
