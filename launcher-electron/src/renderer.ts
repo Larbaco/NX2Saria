@@ -11,12 +11,15 @@ type ModRow = {
 };
 type ModPage = { page: number; pages: number; count: number; items: ModRow[] };
 type ModAction = { status: string; name?: string; problem?: string; detail?: string; page?: number };
+type InstalledKey = 'channel' | 'auto_check' | 'auto_install' | 'keep_cache' | 'warn_low_commit';
+type InstalledSettings = { game_dir: string; dump: string; channel: 'stable' | 'preview'; auto_check: boolean;
+  auto_install: boolean; keep_cache: boolean; warn_low_commit: boolean | null; writable: boolean };
 type UpdateView = { status: string; version?: string; notes?: string[] };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; settingsInfo(): Promise<InstalledSettings>; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -49,6 +52,24 @@ const previousModPage = document.querySelector<HTMLButtonElement>('#previous-mod
 const nextModPage = document.querySelector<HTMLButtonElement>('#next-mod-page')!;
 const modsPageNumber = document.querySelector<HTMLElement>('#mods-page-number')!;
 const modsResult = document.querySelector<HTMLElement>('#mods-result')!;
+const settingsControl = document.querySelector<HTMLElement>('#settings-control')!;
+const settingsButton = document.querySelector<HTMLButtonElement>('#settings-button')!;
+const settingsPanel = document.querySelector<HTMLElement>('#settings-panel')!;
+const settingsFields = document.querySelector<HTMLFieldSetElement>('#settings-fields')!;
+const settingsChannel = document.querySelector<HTMLSelectElement>('#settings-channel')!;
+const settingsChecks = {
+  auto_check: document.querySelector<HTMLInputElement>('#settings-auto-check')!,
+  auto_install: document.querySelector<HTMLInputElement>('#settings-auto-install')!,
+  keep_cache: document.querySelector<HTMLInputElement>('#settings-keep-cache')!,
+  warn_low_commit: document.querySelector<HTMLInputElement>('#settings-warn-commit')!,
+};
+const settingsCommitOption = document.querySelector<HTMLElement>('#settings-commit-option')!;
+const settingsGameDir = document.querySelector<HTMLElement>('#settings-game-dir')!;
+const settingsDumpName = document.querySelector<HTMLElement>('#settings-dump-name')!;
+const settingsDump = document.querySelector<HTMLButtonElement>('#settings-dump')!;
+const settingsOpenGame = document.querySelector<HTMLButtonElement>('#settings-open-game')!;
+const settingsOpenLogs = document.querySelector<HTMLButtonElement>('#settings-open-logs')!;
+const settingsResult = document.querySelector<HTMLElement>('#settings-result')!;
 const updateControl = document.querySelector<HTMLElement>('#update-control')!;
 const checkUpdatesButton = document.querySelector<HTMLButtonElement>('#check-updates')!;
 const updateResult = document.querySelector<HTMLElement>('#update-result')!;
@@ -83,6 +104,8 @@ let savesBusy = false;
 let saveOptions: SaveOptions | null = null;
 let modPage: ModPage | null = null;
 let modsBusy = false;
+let launcherSettings: InstalledSettings | null = null;
+let settingsBusy = false;
 let savingPreference = false;
 let playFailed = false;
 let choosingSource = false;
@@ -93,10 +116,10 @@ let proposedFolder: InstallDestination | null = null;
 let proposedDump: string | null = null;
 
 function updateControls() {
-  const busy = selecting || playing || savingPreference || choosingSource || savesBusy || modsBusy;
+  const busy = selecting || playing || savingPreference || choosingSource || savesBusy || modsBusy || settingsBusy;
   button.disabled = busy || askingRecovery || savesBusy;
   savesControl.hidden = installation?.status !== 'ready';
-  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy || modsBusy ||
+  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy || modsBusy || settingsBusy ||
     (playing && !gameWindowReady) || installation?.job_marker_present === true;
   savesButton.disabled = chooseSaveExport.disabled = includeSaveReport.disabled = exportSaveButton.disabled = savesDisabled;
   openSavesDir.disabled = savesDisabled;
@@ -119,6 +142,23 @@ function updateControls() {
   const orderDisabled = modsDisabled || playing || installation?.game_running === true;
   for (const control of modsList.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button')) {
     control.disabled = orderDisabled || control.hasAttribute('data-at-boundary');
+  }
+  settingsControl.hidden = installation?.status !== 'ready';
+  settingsPanel.hidden = !launcherSettings;
+  settingsButton.setAttribute('aria-expanded', String(!settingsPanel.hidden));
+  const settingsOpeningDisabled = selecting || settingsBusy || savingPreference || choosingSource || savesBusy || modsBusy;
+  settingsButton.disabled = settingsOpeningDisabled;
+  settingsOpenLogs.disabled = settingsOpeningDisabled;
+  settingsOpenGame.disabled = settingsOpeningDisabled || !launcherSettings?.game_dir;
+  settingsFields.disabled = settingsDump.disabled = busy || !launcherSettings?.writable || installation?.job_marker_present === true;
+  settingsCommitOption.hidden = launcherSettings?.warn_low_commit == null;
+  if (launcherSettings && !settingsBusy) {
+    settingsChannel.value = launcherSettings.channel;
+    settingsGameDir.textContent = launcherSettings.game_dir || 'Não escolhida';
+    settingsDumpName.textContent = launcherSettings.dump || 'Nenhum dump registrado';
+    for (const key of Object.keys(settingsChecks) as (keyof typeof settingsChecks)[]) {
+      settingsChecks[key].checked = launcherSettings[key] === true;
+    }
   }
   updateControl.hidden = installation?.status !== 'ready';
   checkUpdatesButton.disabled = checkingUpdates || busy || installation?.job_marker_present === true;
@@ -257,6 +297,8 @@ async function loadSelection(action: () => Promise<Result | null>) {
   modPage = null;
   modsList.replaceChildren();
   modsResult.textContent = '';
+  launcherSettings = null;
+  settingsResult.textContent = '';
   checkingUpdates = false;
   updateResult.textContent = updateNotes.textContent = '';
   updateNotes.hidden = true;
@@ -513,6 +555,70 @@ nextModPage.onclick = () => { if (modPage) void loadMods(modPage.page + 1); };
 openModsDir.onclick = () => { void runModAction(() => window.launcher.openModsDir()); };
 addModFolder.onclick = () => { void runModAction(() => window.launcher.modAdd('folder')); };
 addModArchive.onclick = () => { void runModAction(() => window.launcher.modAdd('archive')); };
+
+async function runSettingsAction(action: () => Promise<void>, failure: string) {
+  settingsBusy = true;
+  settingsResult.textContent = '';
+  updateControls();
+  try { await action(); } catch { settingsResult.textContent = failure; }
+  finally { settingsBusy = false; updateControls(); }
+}
+
+settingsButton.onclick = () => {
+  if (launcherSettings) {
+    launcherSettings = null;
+    settingsResult.textContent = '';
+    updateControls();
+    return;
+  }
+  void runSettingsAction(async () => { launcherSettings = await window.launcher.settingsInfo(); },
+    'Não foi possível abrir as configurações.');
+};
+
+function changeInstalledSetting(key: InstalledKey, value: boolean | string) {
+  const options = launcherSettings;
+  if (!options) return;
+  void runSettingsAction(async () => {
+    const saved = await window.launcher.settingsPreference(key, value);
+    if (key === 'channel') {
+      if (saved !== 'stable' && saved !== 'preview') throw new Error('Canal inválido');
+      options.channel = saved;
+      updateResult.textContent = updateNotes.textContent = '';
+      updateNotes.hidden = true;
+    } else {
+      if (typeof saved !== 'boolean') throw new Error('Preferência inválida');
+      options[key] = saved;
+    }
+  }, 'Não foi possível salvar a configuração.');
+}
+settingsChannel.onchange = () => changeInstalledSetting('channel', settingsChannel.value);
+for (const key of Object.keys(settingsChecks) as (keyof typeof settingsChecks)[]) {
+  settingsChecks[key].onchange = () => changeInstalledSetting(key, settingsChecks[key].checked);
+}
+settingsDump.onclick = () => {
+  const options = launcherSettings;
+  if (!options) return;
+  void runSettingsAction(async () => {
+    const result = await window.launcher.settingsDump();
+    if (!result) return;
+    if (result.status === 'ok' && result.name) {
+      options.dump = result.name;
+      settingsResult.textContent = 'Dump salvo. Ele será usado na próxima recompilação.';
+    } else {
+      settingsResult.textContent = result.status === 'invalid_dump'
+        ? 'O arquivo escolhido não é um dump válido de Ocarina of Time.'
+        : 'Não foi possível salvar o dump.';
+    }
+  }, 'Não foi possível salvar o dump.');
+};
+function openSettingsFolder(target: 'game' | 'logs') {
+  void runSettingsAction(async () => {
+    await window.launcher.settingsOpen(target);
+    settingsResult.textContent = target === 'game' ? 'Pasta do jogo aberta.' : 'Pasta dos logs aberta.';
+  }, 'Não foi possível abrir a pasta.');
+}
+settingsOpenGame.onclick = () => openSettingsFolder('game');
+settingsOpenLogs.onclick = () => openSettingsFolder('logs');
 
 const updateMessages: Record<string, string> = {
   up_to_date: 'O launcher está atualizado.',

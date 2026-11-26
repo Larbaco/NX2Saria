@@ -5902,9 +5902,9 @@ lock, emits no intermediate end and reports the second copy's exit code under th
 Linux compiles only this stand-in. Windows accepts the compiled fixture through `NX2_TEST_RESTART_GAME`.
 
 `launcher-electron/ui-tests/linux-portable-synthetic.cjs` opens the extracted Electron binary
-with a published app and runtime in a temporary installation. It exercises Play and the crash-log
-marker, then recovers an invalid job marker and opens first run with a generated metadata-only
-dump. The saved synthetic dump keeps the automatic finder away from the host's drives.
+with a published app and runtime in a temporary installation. It exercises export, import and backup of a scratch save, adds a folder mod,
+checks Play and the crash-log marker, and recovers an invalid job marker. It then
+opens first run with a generated metadata-only dump. The saved synthetic dump keeps the automatic finder away from the host's drives.
 
 The save export test generates a scratch account and checks the exact ZIP members. It also
 tests the diagnostic attachments and redaction, rejection of a relative export directory
@@ -5918,6 +5918,15 @@ and moves it into the existing imported folder. The test also imports one slot a
 a complete backup. The Linux window test uses the native dialog seams for the exported ZIP
 and the generated backup folder. A Node check verifies that a save transaction can finish
 after the ordinary request timeout.
+
+The installed settings test changes the update channel, check and install flags,
+and cache preference while keeping unrelated keys. Windows also exercises the
+low-commit warning setting. An invalid dump leaves the stored choice unchanged;
+a metadata-only dump passes the existing validator. The test substitutes the
+platform folder opener, verifies both allowed targets and rejects an arbitrary path.
+The Linux first-run window test reaches the Settings panel after installing a
+scratch game and exercises preference writes, cancellation, dump validation and
+logs. The only update request is the one explicitly made by the test.
 
 The Mods worker test adds a folder and ZIP with overlapping synthetic files, checks the
 winner after changing the order, crosses a page boundary, and refuses toggles and moves

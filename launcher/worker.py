@@ -21,6 +21,7 @@ PROTOCOL = 1
 MAX_FRAME = 65536
 MAX_ACTION_LOGS = 10
 MODS_PAGE_SIZE = 6
+SETTINGS_FLAGS = ('auto_check', 'auto_install', 'keep_cache')
 _input_buffer = bytearray()
 _output = None
 _output_disconnected = False
@@ -337,6 +338,57 @@ def change_mod(ctx, game, run, counts, request):
     return result
 
 
+def installed_settings(ctx):
+    settings = ctx.settings
+    return {**{key: settings[key] for key in SETTINGS_FLAGS},
+            'game_dir': settings['game_dir'], 'dump': settings['dump'],
+            'channel': 'preview' if settings['channel'] == 'preview' else 'stable',
+            'warn_low_commit': settings['warn_low_commit'] if os.name == 'nt' else None}
+
+
+def write_installed_setting(ctx, request):
+    key, value = request.get('key'), request.get('value')
+    if key == 'channel':
+        valid = value in ('stable', 'preview')
+    else:
+        valid = (key in SETTINGS_FLAGS or (key == 'warn_low_commit' and os.name == 'nt')) and type(value) is bool
+    if not valid:
+        return None, 'invalid_preference'
+    try:
+        ctx.settings.save_preference(key, value)
+    except (OSError, ValueError):
+        return None, 'preference_save_failed'
+    return {'key': key, 'value': value}, None
+
+
+def write_installed_dump(ctx, request):
+    try:
+        selected = install_dump(ctx, request)
+        if not selected or selected['source'] != 'selected':
+            return None, 'invalid_dump'
+        file = selected['file']
+        ctx.settings.save_preference('dump', file)
+    except (OSError, ValueError):
+        return None, 'preference_save_failed'
+    return {'file': file}, None
+
+
+def open_settings_folder(ctx, target):
+    if target == 'logs':
+        folder = ctx.layout.logs
+    elif target == 'game':
+        folder = ctx.settings.get('game_dir')
+        if not folder or not Path(folder).is_dir():
+            return None, 'settings_unavailable'
+    else:
+        return None, 'invalid_target'
+    try:
+        winsys.open_path(folder)
+    except OSError:
+        return None, 'open_failed'
+    return {'status': 'ok'}, None
+
+
 def install_space(folder):
     complete = (Path(folder) / 'romfs' / 'romfs.bin').is_file()
     available = paths.free_gb(folder) + paths.partial_image_gb(folder)
@@ -507,7 +559,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
@@ -970,6 +1022,31 @@ def main(argv=None):
                 else:
                     result = change_mod(ctx, game, run, counts, request)
                 emit({'id': request['id'], 'result': result})
+            elif request.get('method') in ('settings_info', 'settings_preference', 'settings_dump', 'settings_open'):
+                method = request['method']
+                if method == 'settings_info':
+                    emit({'id': request['id'], 'result': installed_settings(ctx)})
+                    continue
+                if method == 'settings_open':
+                    target = request.get('target')
+                    result, refusal = open_settings_folder(ctx, target)
+                    action = f'open target={target}' if target in ('game', 'logs') else 'open'
+                elif lock_state != 'held' or run or job or pending or build_recovery.blocked(layout):
+                    action, result, refusal = 'change', None, 'settings_unavailable'
+                elif method == 'settings_dump':
+                    action = 'dump'
+                    result, refusal = write_installed_dump(ctx, request)
+                else:
+                    result, refusal = write_installed_setting(ctx, request)
+                    action = f'key={result["key"]}' if result else 'preference'
+                status = refusal or ('ok' if method == 'settings_open' else 'saved')
+                action_log(ctx, counts, f'settings {action}', f'result={status}')
+                if refusal == 'invalid_dump':
+                    emit({'id': request['id'], 'result': {'status': refusal}})
+                elif refusal:
+                    error(request['id'], refusal)
+                else:
+                    emit({'id': request['id'], 'result': result})
             elif request.get('method') == 'check_updates':
                 if lock_state != 'held' or build_recovery.blocked(layout):
                     status = 'unavailable'

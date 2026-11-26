@@ -2761,6 +2761,22 @@ Add to Steam: the game in the Steam library, started from there without the laun
 exception of the work is caught and logged with its traceback: a Steam folder in a state nobody expected must say so
 instead of ending the launcher.
 
+### Electron settings for an installed game
+
+The Settings panel reads the configured game folder, dump, update channel, update
+preferences and build-cache preference. The low-commit warning is only editable on
+Windows. The main process receives the registered dump path for the native file
+picker and passes only its filename to the renderer. The worker checks the
+replacement with the first-run dump validator and writes only the dump key.
+
+Each write uses `Settings.save_preference()` to preserve unknown keys and is refused
+during an owned game, a job, recovery or failure to acquire the launcher lock.
+The Windows memory check and the jobs read the same in-memory preferences once a
+write succeeds. The update settings are stored for the installed launcher. The
+manual check reads the selected channel. Opening the game or log folder accepts a
+named target, resolved in Python with the existing desktop opener. This is
+available in read-only Settings during game or job recovery.
+
 ### Electron Mods
 
 The worker reads the ordered list with `mods.scan()` and the same conflict winners as Tk.

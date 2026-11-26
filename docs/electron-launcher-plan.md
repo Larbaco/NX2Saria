@@ -43,11 +43,11 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Staging, automatic checks and application, rebuild after update, handover and rollback remain open.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
-- [ ] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. Synthetic worker and Linux window tests exercise export, optional diagnostic attachments and the selected folder. Synthetic imports cover validation, ZIP and folder selection, a single-slot replacement, backup restoration, and rollback on a failed swap. This flow uses synthetic saves only.
-- [ ] Mods: add files/folders, enable/disable, ordering, rebuild and errors. Linux worker and window tests cover folder and archive selection, ordering, conflict winners, toggling and invalid inputs. The synthetic worker also verifies resuming Play after the rebuild, mutation refusal with a game open and moving a mod across pages. Package and owner evidence follow below.
+- [x] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. The synthetic worker passed in the Linux and Windows jobs of Electron launcher tests run `45759008861`. The Linux Electron window verifies picker cancellation, both source types and restoring the backup. The portable package `f53b2481` also passed export, import and backup creation with the published runtime. All automated scenarios use scratch saves.
+- [x] Mods: add files/folders, enable/disable, ordering, rebuild and errors. The Linux window verifies folder and archive selection, ordering, conflicts, toggling and invalid inputs. The worker tests passed on Linux and Windows in run `45759008861`, including resuming Play after the stand-in rebuild, refusing a mutation during Play and moving a mod across pages. The Linux portable package `f53b2481` verified folder addition with the published runtime. A real build still has its own acceptance item.
 - [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
-- [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads and changes the same Hide Launcher While Playing preference through the lock-owning worker. A synthetic Linux window test covers both values, persistence and preservation of the other settings. Verify the control separately on real Linux and Windows installations.
+- [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads and changes the same Hide Launcher While Playing preference through the lock-owning worker. A synthetic Linux window test covers both values, persistence and preservation of the other settings. The installed-game panel exposes the current channel, update flags, cache preference, folders, registered dump and the Windows memory warning. Settings for reports, system features and uninstall remain open. Verify the hide control separately on real Linux and Windows installations.
 - [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. Electron still needs the existing question, choices, preview, comments, sending and recovery behavior before parity.
 - [ ] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. This remains outside the current worker milestone; no new sending or question is implemented here.
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
@@ -361,6 +361,47 @@ resumes Play only when the build has finished and released its claims. Tests use
 files to prove import from an archive and folder, conflict resolution, game-running refusal,
 persistent ordering, and rebuild after enabling a code mod. The Electron window test uses
 scratch pickers and shows invalid inputs without changing the visible list.
+
+### Private Saves and Mods test packages
+
+Both packages use commit `f53b2481`. The included LEIA-ME lists Saves and Mods and
+where to find their logs. Linux launch, save export and import, backup creation and
+mod addition passed from the extracted tarball under Xvfb. The temporary installation
+used the published 0.27.0-rc.1 app and runtime and a stand-in game. The Windows ZIP
+passed integrity and content checks. This specific ZIP still awaits a native window
+test by the owner. The worker CI already ran on native Windows and Linux.
+
+- Linux `NX2Saria-Electron-Worker-Linux-x64-f53b2481.tar.gz`, 122,388,221 bytes.
+  SHA-256 `f4bb9c5c6ca92524ffc8def60c8e55c38e31f18103571223b4b8cc6cc224d5c0`.
+- Windows `NX2Saria-Electron-Worker-Windows-x64-f53b2481.zip`, 147,010,377 bytes.
+  SHA-256 `b086918a5ba936529301c2570ff5c2ed207b0912bf2ad4dc473adada197cd59c`.
+
+## Installed launcher settings
+
+The Settings panel shows the installed game's folder and registered dump, opens the
+game and launcher log folders through the existing platform opener, and changes the
+registered dump through a native picker and the same title validation as first run.
+Cancellation and an invalid dump leave the previous selection in place. A valid
+selection changes only the dump setting. It takes effect when the game is rebuilt.
+
+Read and write the existing channel, update checks on startup, automatic application
+of updates, and build cache settings. Include the low-commit warning on Windows,
+with the existing memory decision on the next Play request. Keep the existing control
+for hiding the launcher while playing. A successful preference write changes only
+that key and preserves unknown fields. The panel describes the update preferences
+as choices for the installed launcher while activation is deferred. This slice
+does not schedule, download or apply an update. The existing manual check still
+uses the selected channel and discards a result for an earlier channel.
+
+The worker validates the allowed keys and values and keeps writes behind its lock.
+Block changes during an owned game, build or unresolved job marker. Opening the
+log folder from Settings remains possible during recovery on an installed game. The worker returns only the requested
+view, without feed, account or report secrets. Settings changes use the existing
+shortened Python log. The window records operation names and outcomes. Test the
+view, typed writes, cancellation, invalid dump refusal, preservation of other keys,
+and folder open on synthetic installations. Test the Linux window and exercise
+the worker on both CI runners. Report settings, platform administration and
+uninstall retain their own acceptance evidence.
 
 ## Provisioning and handover design
 

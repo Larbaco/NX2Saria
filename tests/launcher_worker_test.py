@@ -595,6 +595,84 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('worker: mods move result=ok', log)
         self.assertIn('worker: play status=rebuild', log)
 
+    def test_installed_settings_write_only_allowed_fields_and_open_known_folders(self):
+        from fixtures.worker_install_dump import write_dump
+        from launcher.platform import game_executable
+
+        base = Path(self.tmp.name)
+        game, original, incoming, invalid = (base / name for name in ('game', 'old.nup', 'new.nup', 'wrong.nup'))
+        (game / 'build-cache').mkdir(parents=True)
+        (game / 'build-cache' / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        game_executable(game).touch()
+        write_dump(incoming)
+        invalid.write_text('not a game dump')
+        settings = self.root / 'data' / 'launcher.json'
+        initial = {'game_dir': str(game), 'dump': str(original), 'auto_check': False, 'auto_install': False,
+                   'keep_cache': True, 'channel': 'stable', 'telemetry': 'off', 'future_key': 'kept',
+                   'github_token': 'scratch-feed-secret'}
+        settings.write_text(json.dumps(initial))
+        opened = base / 'opened'
+        script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import winsys\n"
+                  "root,opened=map(Path,sys.argv[1:])\n"
+                  "def remember(path):\n"
+                  " with opened.open('a', encoding='utf-8') as f: print(path,file=f)\n"
+                  "sys.argv=['launcher.worker','--root',str(root)]\n"
+                  "with mock.patch.object(winsys,'open_path',remember):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        requests = [
+            {'method': 'hello', 'protocol': 1},
+            {'method': 'settings_info'},
+            {'method': 'settings_preference', 'key': 'channel', 'value': 'preview'},
+            {'method': 'settings_preference', 'key': 'auto_install', 'value': True},
+            {'method': 'settings_preference', 'key': 'auto_check', 'value': True},
+            {'method': 'settings_preference', 'key': 'keep_cache', 'value': False},
+            {'method': 'settings_preference', 'key': 'warn_low_commit', 'value': False},
+            {'method': 'settings_preference', 'key': 'keep_cache', 'value': 1},
+            {'method': 'settings_preference', 'key': 'telemetry', 'value': 'on'},
+            {'method': 'settings_dump', 'file': str(invalid)},
+            {'method': 'settings_info'},
+            {'method': 'settings_dump', 'file': str(incoming)},
+            {'method': 'settings_open', 'target': 'game'},
+            {'method': 'settings_open', 'target': 'logs'},
+            {'method': 'settings_open', 'target': str(base)},
+        ]
+        result = subprocess.run([sys.executable, '-c', script, str(self.root), str(opened)], cwd=ROOT, text=True,
+                                input=''.join(json.dumps({'id': i, **request}) + '\n'
+                                              for i, request in enumerate(requests, 1)),
+                                capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        (hello, view, channel, auto_install, auto_check, keep_cache, warn, wrong_type, unrelated, wrong_dump,
+         after_wrong, dump, game_folder, logs, wrong_folder) = map(json.loads, result.stdout.splitlines())
+        self.assertIn('settings', hello['result']['capabilities'])
+        self.assertEqual(view['result'], {key: initial[key] for key in (
+            'game_dir', 'dump', 'channel', 'auto_check', 'auto_install', 'keep_cache')} |
+            {'warn_low_commit': True if os.name == 'nt' else None})
+        self.assertEqual([frame['result']['key'] for frame in [channel, auto_install, auto_check, keep_cache]],
+                         ['channel', 'auto_install', 'auto_check', 'keep_cache'])
+        if os.name == 'nt':
+            self.assertEqual(warn['result']['value'], False)
+            initial['warn_low_commit'] = False
+        else:
+            self.assertEqual(warn['error']['code'], 'invalid_preference')
+        self.assertEqual(wrong_type['error']['code'], 'invalid_preference')
+        self.assertEqual(unrelated['error']['code'], 'invalid_preference')
+        self.assertEqual(wrong_dump['result']['status'], 'invalid_dump')
+        self.assertEqual(after_wrong['result']['dump'], str(original))
+        self.assertEqual(dump['result']['file'], str(incoming))
+        self.assertEqual([game_folder['result'], logs['result']], [{'status': 'ok'}, {'status': 'ok'}])
+        self.assertEqual(wrong_folder['error']['code'], 'invalid_target')
+        self.assertEqual(opened.read_text().splitlines(), [str(game), str(self.root / 'data' / 'logs')])
+        self.assertEqual(json.loads(settings.read_text()), initial | {
+            'channel': 'preview', 'auto_install': True, 'auto_check': True, 'keep_cache': False, 'dump': str(incoming)})
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: settings key=keep_cache result=saved', log)
+        self.assertIn('worker: settings dump result=invalid_dump', log)
+        self.assertIn('worker: settings open target=logs result=ok', log)
+        self.assertNotIn('scratch-feed-secret', log)
+
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout
 

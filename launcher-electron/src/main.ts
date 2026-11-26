@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { parseInstalledSettings, validSetting } from './installed-settings';
 import { parseModAction, parseModsPage } from './mods-protocol';
 import { parseInspection, type Inspection } from './inspection';
 import { openWorker, WorkerRequestError, type WorkerClient } from './worker-client';
@@ -89,7 +90,7 @@ app.whenReady().then(() => {
     let answer: { accept: boolean } | { dialog_error: true };
     try {
       const response = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Cancelar', 'Jogar'], defaultId: 1, cancelId: 0,
-        message: 'A memória disponível pode ser insuficiente.', detail: `Disponível: ${Math.trunc(memory.remaining)} MiB de memória comprometida (RAM e arquivo de paginação). Estimativa do jogo: ${estimate}. Feche programas que usam muita memória e ative ou aumente o arquivo de paginação do Windows. Para 16 GB de RAM, use 32 GB fixos (32768 MB) e reinicie o Windows. Para não mostrar este aviso novamente, desative a opção de memória no launcher instalado ou ajuste mem_need_mb = 0 em nx2saria.ini.` });
+        message: 'A memória disponível pode ser insuficiente.', detail: `Disponível: ${Math.trunc(memory.remaining)} MiB de memória comprometida (RAM e arquivo de paginação). Estimativa do jogo: ${estimate}. Feche programas que usam muita memória e ative ou aumente o arquivo de paginação do Windows. Para 16 GB de RAM, use 32 GB fixos (32768 MB) e reinicie o Windows. Para não mostrar este aviso novamente, desative o aviso de memória em Configurações ou ajuste mem_need_mb = 0 em nx2saria.ini.` });
       answer = { accept: response.response === 1 };
     } catch { answer = { dialog_error: true }; }
     return parsePlayResult(await active.request('memory_response', { attempt: result.attempt, ...answer }));
@@ -486,6 +487,71 @@ app.whenReady().then(() => {
     return modAction(gameWorker(event, 'mods'), 'mod_move', { name, direction });
   });
   ipcMain.handle('open-mods-dir', event => modAction(gameWorker(event, 'mods'), 'open_mods_dir', {}));
+  function settingsWorker(event: Electron.IpcMainInvokeEvent, write = false) {
+    if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('settings') ||
+        state?.status !== 'ready' || (write && (worker.handshake.lock !== 'held' || playing || state.job_marker_present))) {
+      throw new Error('Settings unavailable');
+    }
+    return worker;
+  }
+  ipcMain.handle('settings-info', async event => {
+    const active = settingsWorker(event);
+    const result = parseInstalledSettings(await active.request('settings_info'));
+    if (active !== worker) throw new Error('Settings unavailable');
+    return { ...result, dump: result.dump ? path.basename(result.dump) : '', writable: active.handshake.lock === 'held' };
+  });
+  ipcMain.handle('settings-preference', async (event, key, value) => {
+    const active = settingsWorker(event, true);
+    if (!validSetting(key, value, process.platform)) throw new Error('Invalid launcher preference');
+    try {
+      const result = await active.request('settings_preference', { key, value });
+      if (active !== worker || result?.key !== key || result?.value !== value) throw new Error('Save unsuccessful');
+      log?.write('settings', `key=${key} result=saved`);
+      return value;
+    } catch {
+      log?.write('settings', `key=${key} result=save_failed`);
+      throw new Error('Save unsuccessful');
+    }
+  });
+  ipcMain.handle('settings-dump', async event => {
+    const active = settingsWorker(event, true);
+    const current = parseInstalledSettings(await active.request('settings_info'));
+    if (settingsWorker(event, true) !== active) throw new Error('Settings unavailable');
+    const chosen = await dialog.showOpenDialog(window, {
+      defaultPath: path.isAbsolute(current.dump) ? path.dirname(current.dump) : app.getPath('home'),
+      title: 'Escolher dump do jogo', properties: ['openFile'],
+      filters: [{ name: 'Dump do jogo', extensions: ['nup'] }, { name: 'Todos os arquivos', extensions: ['*'] }],
+    });
+    if (chosen.canceled || !chosen.filePaths[0]) return null;
+    const picked = chosen.filePaths[0];
+    if (settingsWorker(event, true) !== active || !path.isAbsolute(picked)) throw new Error('Settings unavailable');
+    try {
+      const result = await active.request('settings_dump', { file: picked });
+      if (active !== worker) throw new Error('Settings unavailable');
+      if (result?.status === 'invalid_dump') {
+        log?.write('settings', 'dump result=invalid_dump');
+        return { status: 'invalid_dump' };
+      }
+      if (result?.file !== picked) throw new Error('Save unsuccessful');
+      log?.write('settings', 'dump result=saved');
+      return { status: 'ok', name: path.basename(picked) };
+    } catch {
+      log?.write('settings', 'dump result=failed');
+      return { status: 'failed' };
+    }
+  });
+  ipcMain.handle('settings-open', async (event, target) => {
+    const active = settingsWorker(event);
+    if (target !== 'game' && target !== 'logs') throw new Error('Invalid launcher folder');
+    try {
+      const result = await active.request('settings_open', { target });
+      if (active !== worker || result?.status !== 'ok') throw new Error('Open unsuccessful');
+      log?.write('settings', `open target=${target} result=ok`);
+    } catch {
+      log?.write('settings', `open target=${target} result=failed`);
+      throw new Error('Open unsuccessful');
+    }
+  });
   ipcMain.handle('check-updates', async event => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('check_updates') ||
         worker.handshake.lock !== 'held' || !state || state.job_marker_present) return 'unavailable';

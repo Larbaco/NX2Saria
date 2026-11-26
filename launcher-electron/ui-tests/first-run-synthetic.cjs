@@ -147,7 +147,7 @@ async function main() {
     assert.equal(await dump.textContent(), valid);
     assert.deepEqual(await fs.readdir(folder), ['unrelated.txt']);
     assert.equal(await fs.readFile(settings, 'utf8'), '{"desktop_shortcut":false}');
-    const channel = page.getByLabel('Canal de atualizações');
+    const channel = page.locator('#first-run').getByLabel('Canal de atualizações');
     const autoCheck = page.getByRole('checkbox', { name: 'Procurar atualizações ao abrir' });
     assert.equal(await channel.inputValue({ timeout: 5000 }), 'stable');
     assert.equal(await autoCheck.isChecked(), true);
@@ -309,6 +309,54 @@ async function main() {
     assert.equal(await fs.readFile(currentSave, 'utf8'), 'newer local save');
     await page.getByRole('button', { name: 'Abrir pasta dos saves' }).click();
     await page.getByText('Pasta dos saves aberta.', { exact: true }).waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: 'Configurações', exact: true }).click({ timeout: 6000 });
+    const panel = page.locator('#settings-panel');
+    const installedChannel = panel.getByLabel('Canal de atualizações');
+    assert.equal(await installedChannel.inputValue(), 'preview');
+    await installedChannel.selectOption('stable');
+    await panel.getByLabel('Instalar atualizações automaticamente').uncheck();
+    await panel.getByLabel('Manter cache de compilação').uncheck();
+    await page.waitForFunction(() => !document.querySelector('#settings-keep-cache').matches(':disabled'));
+    const updated = JSON.parse(await fs.readFile(settings, 'utf8'));
+    assert.equal(updated.channel, 'stable');
+    assert.equal(updated.auto_install, false);
+    assert.equal(updated.keep_cache, false);
+    assert.equal(updated.game_dir, game);
+    assert.equal(updated.save_export_dir, exportFolder);
+    assert.deepEqual(feedRequests, ['/manifest.json']);
+    assert.equal(await panel.getByText(game, { exact: true }).count(), 1);
+
+    const previousDump = await panel.locator('#settings-dump-name').textContent();
+    const chooseDump = panel.getByRole('button', { name: 'Escolher dump do jogo' });
+    await app.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+    });
+    await chooseDump.click();
+    await page.waitForFunction(() => !document.querySelector('#settings-dump').disabled);
+    assert.equal(await panel.locator('#settings-dump-name').textContent(), previousDump);
+    const invalidDump = path.join(base, 'invalid.nup');
+    await fs.writeFile(invalidDump, 'not a game dump');
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, invalidDump);
+    await chooseDump.click();
+    await page.locator('#settings-result').getByText(/não é um dump válido/i).waitFor({ timeout: 5000 });
+    assert.equal(await panel.locator('#settings-dump-name').textContent(), previousDump);
+    const nextDump = path.join(base, 'replacement.nup');
+    await fs.copyFile(updated.dump, nextDump);
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, nextDump);
+    await chooseDump.click();
+    await panel.getByText('replacement.nup', { exact: true }).waitFor({ timeout: 5000 });
+    assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).dump, nextDump);
+    await panel.getByRole('button', { name: 'Abrir pasta dos logs' }).click();
+    await page.locator('#settings-result').getByText('Pasta dos logs aberta.', { exact: true }).waitFor({ timeout: 5000 });
+    const workerLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
+    const electronLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
+    assert.match(workerLog, /worker: settings dump result=saved/);
+    assert.match(electronLog, /electron: settings open target=logs result=ok/);
+    assert.doesNotMatch(electronLog, /replacement\.nup|nx2-first-run-ui-/);
   } finally {
     if (app) await app.close();
     server.close();

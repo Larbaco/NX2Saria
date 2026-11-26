@@ -32,7 +32,7 @@ async function main() {
     const launch = () => _electron.launch({
       executablePath: path.resolve(executable),
       args: ['--user-data-dir=' + path.join(base, 'electron-profile')],
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base },
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, GSETTINGS_BACKEND: 'memory' },
     });
     app = await launch();
     const page = await app.firstWindow();
@@ -121,14 +121,14 @@ async function main() {
     app = await launch();
     reopened = await app.firstWindow();
     await reopened.locator('#game-dump-proposal').getByText(dump, { exact: true }).waitFor({ timeout: 15000 });
-    assert.equal(await reopened.getByLabel('Canal de atualizações').inputValue(), 'stable');
+    assert.equal(await reopened.locator('#first-run').getByLabel('Canal de atualizações').inputValue(), 'stable');
     assert.ok(path.isAbsolute(await reopened.locator('#game-folder-proposal').textContent()));
     assert.equal(await reopened.getByRole('button', { name: 'Iniciar instalação' }).isEnabled(), true);
     assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), firstRun);
     console.log('Packaged Linux Electron: published runtime, Saves, Mods, Play, crash offer, marker recovery and first run passed');
   } finally {
     if (app) await app.close().catch(() => {});
-    await fs.rm(base, { recursive: true, force: true });
+    await fs.rm(base, { recursive: true, force: true, maxRetries: 3 });
   }
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
