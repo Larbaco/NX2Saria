@@ -4,34 +4,24 @@ Extraia o .tar.gz numa pasta em que você possa executar programas.
 Na pasta extraída, abra NX2Saria-Electron-Teste ou execute
 ./NX2Saria-Electron-Teste no terminal.
 O build usa o Python 3.14 e as ferramentas da instalação selecionada.
-A referência desta rodada é a versão 0.27.0-rc.1 (canal Prévia). Use
+A referência desta rodada é a versão 0.27.0-rc.3 (canal Prévia). Use
 o launcher instalado para atualizar e feche-o antes de abrir o
 Electron. Os dois usam o mesmo lock.
 
 O que testar nesta rodada
 
-1. Em Configurações, confira o canal, as opções de atualização e
-   cache, o dump registrado e os botões para abrir as pastas do jogo
-   e dos logs. Abra o seletor do dump e cancele para conferir que a
-   escolha anterior continua lá. O launcher instalado aplica as
-   atualizações.
-2. Em Configurações > Relatórios de sessão, confira a preferência e
-   abra Ver o que é enviado. Se a pergunta de consentimento estiver
-   pendente, abra a prévia e confira que a contagem para. O pacote
-   permite abrir a tela de comentário.
-3. Se o jogo terminar com erro, confira a oferta de log e sua prévia.
-   Escolher Não enviar dispensa a oferta. A opção Perguntar depois
-   de um erro no jogo fica em Relatórios de sessão.
+1. Em Steam, confira o estado e adicione ou atualize o atalho.
+   Confira se os outros atalhos continuam na biblioteca.
+   Feche a Steam nativa antes de adicionar o atalho e abra-a depois.
+2. Em Personalizar, troque o tema, ajuste uma cor personalizada
+   e use o botão para restaurá-la. Escolha uma imagem de fundo,
+   altere o escurecimento e remova a imagem.
+3. Confira animações e sons. Quando a instalação tiver a fonte e
+   os sons do próprio jogo, o launcher os carrega. Alterne o volume
+   e escolha Desligados para conferir a preferência.
 
-O modo privado mantém todos os envios suspensos por padrão. Se os
-relatórios estiverem ligados, o resumo fica para o launcher instalado.
-O log do worker registra essa decisão. A prévia funciona nesse modo.
-Quando você decidir testar o envio, abra o launcher com a variável
-NX2SARIA_ELECTRON_TEST_SEND_REPORTS=1 nesta execução. A preferência
-de Relatórios de sessão continua valendo, e comentários e oferta de
-log exigem confirmação própria.
-
-    NX2SARIA_ELECTRON_TEST_SEND_REPORTS=1 ./NX2Saria-Electron-Teste
+O launcher instalado aplica as atualizações. O envio de relatórios,
+comentários e logs permanece suspenso por padrão no modo privado.
 
 Depois do teste, copie os logs. Na pasta padrão ficam em:
 - ~/.local/share/nx2saria/data/logs/launcher-electron.log

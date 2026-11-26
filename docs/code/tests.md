@@ -5941,7 +5941,10 @@ The background test uses generated images and verifies rollback after an injecte
 settings write failure. The window test covers the native picker, cancel, invalid
 input, rendered image dimensions, dimming and removing the retained copy. The
 Linux window lifecycle test waits for installation controls to be initialized
-before asserting the stored hide preference.
+before asserting the stored hide preference. The asset test substitutes the
+game extractors, then reads the fixed font and PCM effect from the real cache.
+The window uses a fixture font and generated WAVs to check both cues, volume,
+and muting without opening the game's media.
 
 The Steam test uses a scratch account and the real VDF writer. It updates a
 legacy shortcut without changing its ID or an unrelated entry, checks image

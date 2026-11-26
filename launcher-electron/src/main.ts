@@ -550,6 +550,35 @@ app.whenReady().then(() => {
     return { status: result.status,
       appearance: result.status === 'ok' ? { ...parseAppearance(result.appearance), writable: true } : null };
   });
+  ipcMain.handle('appearance-assets', async event => {
+    const active = appearanceWorker(event);
+    if (!active) return null;
+    let assets = await active.request('appearance_assets');
+    while (worker === active && assets?.status === 'loading') {
+      await new Promise(resolve => setTimeout(resolve, 150));
+      assets = await active.request('appearance_assets');
+    }
+    if (worker !== active || assets?.status !== 'ready' || typeof assets.title !== 'boolean' ||
+        !Array.isArray(assets.effects) || assets.effects.some((effect: unknown) => effect !== 'select' && effect !== 'back')) {
+      return null;
+    }
+    const mediaWorker = active;
+    async function readAsset(asset: 'title' | 'select' | 'back') {
+      const first = await mediaWorker.request('appearance_asset', { asset, offset: 0 });
+      if (!first || worker !== active) return null;
+      const { bytes } = await readWorkerBytes(offset => offset === 0 ? Promise.resolve(first) :
+        mediaWorker.request('appearance_asset', { asset, offset }), asset === 'title' ? 16 * 1024 * 1024 : 4 * 1024 * 1024);
+      return worker === active ? bytes.toString('base64') : null;
+    }
+    const [title, select, back] = await Promise.all([
+      assets.title ? readAsset('title') : null,
+      assets.effects.includes('select') ? readAsset('select') : null,
+      assets.effects.includes('back') ? readAsset('back') : null,
+    ]);
+    if (worker !== active) return null;
+    log?.write('appearance', `assets title=${Boolean(title)} effects=${Number(Boolean(select)) + Number(Boolean(back))}`);
+    return { title, select, back };
+  });
   const steamStatuses = ['added', 'available', 'not_found', 'flatpak_unsupported', 'unavailable'];
   async function steamStatus(active: WorkerClient) {
     const result = await active.request('steam_info');

@@ -861,6 +861,73 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse((game / 'logs' / telemetry.SUMMARY).exists())
         self.assertEqual(json.loads((game / 'logs' / telemetry.SENT).read_text())['session']['frames'], 2)
 
+    def test_appearance_assets_reuse_the_installed_cache_and_fixed_names(self):
+        import base64
+        from launcher.ui import sound
+
+        base = Path(self.tmp.name)
+        game = base / 'game'
+        game.mkdir()
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(game), 'sounds': 'medium'}))
+        script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import gamefiles\n"
+                  "root,game=sys.argv[1:]\n"
+                  "def fonts(layout,gd,dump):\n"
+                  " assert (gd,dump)==(game,'')\n"
+                  " d=layout.cache/'fonts'; d.mkdir(parents=True,exist_ok=True)\n"
+                  " (d/'title.otf').write_bytes(b'OTTO-synthetic-title')\n"
+                  " (d/'title.family').write_text('Synthetic Title')\n"
+                  " (layout.data/'fonts-extracted').touch()\n"
+                  "def sounds(layout,gd,dump):\n"
+                  " assert (gd,dump)==(game,'')\n"
+                  " d=layout.cache/'sounds'; d.mkdir(parents=True,exist_ok=True)\n"
+                  " (d/'select.wav').write_bytes(gamefiles.pcm_to_wav(8000,[(0,0),(500,-500)]))\n"
+                  " (layout.data/'sounds-extracted').touch()\n"
+                  "sys.argv=['launcher.worker','--root',root]\n"
+                  "with (mock.patch.object(gamefiles,'extract_fonts',fonts), "
+                  "mock.patch.object(gamefiles,'extract_sounds',sounds)):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), str(game)], cwd=ROOT,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop_worker, worker)
+        serial = 0
+
+        def request(method, **fields):
+            nonlocal serial
+            serial += 1
+            worker.stdin.write(json.dumps({'id': serial, 'method': method, **fields}) + '\n')
+            worker.stdin.flush()
+            frame = json.loads(worker.stdout.readline())
+            self.assertEqual(frame['id'], serial)
+            return frame
+
+        self.assertIn('appearance', request('hello', protocol=1)['result']['capabilities'])
+        self.assertEqual(request('appearance_info')['result']['sound_gain'], sound.LEVELS['medium'])
+        self.assertFalse((self.root / 'data' / 'fonts-extracted').exists())
+        until = time.monotonic() + 10
+        while time.monotonic() < until:
+            manifest = request('appearance_assets')['result']
+            if manifest['status'] != 'loading':
+                break
+            time.sleep(0.025)
+        self.assertEqual(manifest, {'status': 'ready', 'title': True, 'effects': ['select']})
+        self.assertTrue((self.root / 'data' / 'sounds-extracted').exists())
+        self.assertTrue((self.root / 'data' / 'fonts-extracted').exists())
+        title = request('appearance_asset', asset='title', offset=0)['result']
+        self.assertEqual(base64.b64decode(title['chunk']), b'OTTO-synthetic-title')
+        wav = request('appearance_asset', asset='select', offset=0)['result']
+        decoded = sound.read_wav(base64.b64decode(wav['chunk']))
+        self.assertEqual((decoded[0], decoded[1]), (8000, 2))
+        self.assertTrue(request('appearance_asset', asset='bad', offset=0).get('error'))
+        self.assertIsNone(request('appearance_asset', asset='back', offset=0)['result'])
+        self.assertEqual(request('appearance_assets')['result'], manifest)
+        self.assertEqual(json.loads(settings.read_text()), {'game_dir': str(game), 'sounds': 'medium'})
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+
     def test_background_uses_shared_cache_and_keeps_previous_picture_on_failure(self):
         import base64
         from PIL import Image

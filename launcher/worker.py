@@ -553,7 +553,7 @@ def main(argv=None):
             parent.close()
         error(request['id'], 'busy')
         return 1
-    ctx = reports = run = steam_work = None
+    ctx = reports = run = steam_work = appearance_work = None
     try:
         if args.app_version:
             try:
@@ -607,6 +607,8 @@ def main(argv=None):
         check_channel = None
         steam_result = {'status': 'idle'}
         background_image = None
+        appearance_source = None
+        appearance_bytes = {}
         while True:
             if steam_work and steam_work.done():
                 steam_result = steam_work.result()
@@ -1058,7 +1060,7 @@ def main(argv=None):
                     result = change_mod(ctx, game, run, counts, request)
                 emit({'id': request['id'], 'result': result})
             elif request.get('method') in ('appearance_info', 'appearance_preference',
-                                               'appearance_background', 'appearance_image'):
+                                               'appearance_background', 'appearance_image', 'appearance_assets', 'appearance_asset'):
                 method = request['method']
                 if method in ('appearance_preference', 'appearance_background') and (
                         lock_state != 'held' or job or pending or build_recovery.blocked(layout)):
@@ -1069,6 +1071,25 @@ def main(argv=None):
                     if method == 'appearance_info':
                         result = worker_appearance.view(ctx.settings)
                         action_log(ctx, counts, 'appearance', f'theme={result["theme"]} read')
+                    elif method == 'appearance_assets':
+                        if appearance_work and appearance_work.done():
+                            appearance_work = None
+                        source = ctx.settings['game_dir'], ctx.settings['dump']
+                        if (not appearance_work and appearance_source != source and any(source) and lock_state == 'held'
+                                and not (job or pending or build_recovery.blocked(layout))):
+                            appearance_source = source
+                            appearance_work = Future()
+                            threading.Thread(target=worker_appearance.extract_assets,
+                                             args=(ctx, *source, appearance_work), daemon=True).start()
+                        result = {'status': 'loading'} if appearance_work else worker_appearance.asset_manifest(layout)
+                    elif method == 'appearance_asset':
+                        asset, offset = request.get('asset'), request.get('offset')
+                        if asset not in ('title', 'select', 'back') or type(offset) is not int or offset < 0:
+                            error(request['id'], 'invalid_asset')
+                            continue
+                        if offset == 0:
+                            appearance_bytes[asset] = worker_appearance.asset_bytes(layout, asset)
+                        result = preview_frame(appearance_bytes.get(asset), offset)
                     elif method == 'appearance_image':
                         offset = request.get('offset')
                         if type(offset) is not int or offset < 0:
@@ -1297,6 +1318,8 @@ def main(argv=None):
                 action_log(ctx, counts, 'unknown', 'method')
                 error(request['id'], 'unknown_method')
     finally:
+        if appearance_work:
+            appearance_work.result()
         if steam_work:
             steam_result = steam_work.result()
             action_log(ctx, counts, 'steam', f'add result={steam_result["status"]}')

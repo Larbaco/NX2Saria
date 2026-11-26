@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('launcher', {
   openModsDir: () => ipcRenderer.invoke('open-mods-dir'),
   appearanceInfo: () => ipcRenderer.invoke('appearance-info'),
   appearancePreference: (key: string, value: string | number | boolean) => ipcRenderer.invoke('appearance-preference', key, value),
+  appearanceAssets: () => ipcRenderer.invoke('appearance-assets'),
   appearanceImage: () => ipcRenderer.invoke('appearance-image'),
   appearanceBackground: (choose: boolean) => ipcRenderer.invoke('appearance-background', choose),
   steamInfo: () => ipcRenderer.invoke('steam-info'),

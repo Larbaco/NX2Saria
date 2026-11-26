@@ -1,5 +1,5 @@
 type AppearanceState = {
-  theme: string; sounds: string; animations: boolean; background_dim: number; background: string; writable: boolean;
+  theme: string; sounds: string; sound_gain: number; animations: boolean; background_dim: number; background: string; writable: boolean;
   colors: { background: string; panel: string; buttons: string };
   palette: { background: string; panel: string; text: string; muted: string; button: string; border: string; button_text: string };
 };
@@ -21,6 +21,9 @@ const appearanceSlots = ['background', 'panel', 'buttons'] as const;
 let appearanceState: AppearanceState | null = null;
 let appearanceBusy = false;
 let appearanceOpen = false;
+let assetRequest = 0;
+let titleFont: FontFace | null = null;
+const appearanceEffects: Partial<Record<'select' | 'back', HTMLAudioElement>> = {};
 
 function applyAppearance(state: AppearanceState | null) {
   appearanceState = state;
@@ -35,6 +38,10 @@ function applyAppearance(state: AppearanceState | null) {
 }
 
 function resetAppearance() {
+  assetRequest++;
+  setAppearanceFont(null);
+  delete appearanceEffects.select;
+  delete appearanceEffects.back;
   applyAppearance(null);
   showAppearanceImage(null);
   appearanceOpen = false;
@@ -45,9 +52,50 @@ async function loadAppearance() {
   try {
     applyAppearance(await window.launcher.appearanceInfo());
     if (appearanceState?.background) await refreshAppearanceImage();
+    if (appearanceState) void loadAppearanceAssets();
   }
   catch { applyAppearance(null); }
 }
+
+function setAppearanceFont(font: FontFace | null) {
+  if (titleFont) document.fonts.delete(titleFont);
+  titleFont = font;
+  if (font) document.fonts.add(font);
+  document.documentElement.classList.toggle('game-display-font', Boolean(font));
+}
+
+async function loadAppearanceAssets() {
+  const request = ++assetRequest;
+  try {
+    const assets = await window.launcher.appearanceAssets();
+    if (request !== assetRequest || !assets) return;
+    for (const cue of ['select', 'back'] as const) {
+      if (assets[cue]) appearanceEffects[cue] = new Audio('data:audio/wav;base64,' + assets[cue]);
+    }
+    if (!assets.title) return;
+    const bytes = Uint8Array.from(atob(assets.title), character => character.charCodeAt(0));
+    const font = await new FontFace('NX2Saria Game Display', bytes).load();
+    if (request === assetRequest) setAppearanceFont(font);
+  } catch {}
+}
+
+function playAppearanceEffect(cue: 'select' | 'back') {
+  const effect = appearanceEffects[cue];
+  const gain = appearanceState?.sound_gain ?? 0;
+  if (!effect || gain === 0) return;
+  effect.volume = gain;
+  effect.currentTime = 0;
+  void effect.play().catch(() => {});
+}
+
+document.addEventListener('click', event => {
+  if (!(event.target instanceof Element)) return;
+  const control = event.target.closest('button, input, select');
+  if (control) playAppearanceEffect(/(?:-back|-close|-cancel)$/.test(control.id) ? 'back' : 'select');
+}, true);
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !event.repeat) playAppearanceEffect('back');
+});
 
 function updateAppearanceControls(disabled: boolean) {
   appearanceControl.hidden = !appearanceState;

@@ -20,11 +20,42 @@ async function main() {
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), '{"kit":"0.0.1","steps":{"compile":{}}}');
     await fs.writeFile(path.join(game, 'ocarina'), 'synthetic executable marker');
 
+    const fonts = path.join(root, 'data', 'cache', 'fonts');
+    const sounds = path.join(root, 'data', 'cache', 'sounds');
+    await fs.mkdir(fonts, { recursive: true });
+    await fs.mkdir(sounds, { recursive: true });
+    const font = execFileSync('fc-match', ['-f', '%{file}', 'serif'], { encoding: 'utf8' }).trim();
+    await fs.copyFile(font, path.join(fonts, 'title.otf'));
+    await fs.writeFile(path.join(fonts, 'title.family'), 'Fixture Serif');
+    execFileSync(process.env.NX2SARIA_PYTHON || 'python3', ['-c', `
+import sys
+from pathlib import Path
+from launcher.gamefiles import pcm_to_wav
+sounds=Path(sys.argv[1])
+(sounds/'select.wav').write_bytes(pcm_to_wav(8000,[(0,0),(500,-500)]))
+(sounds/'back.wav').write_bytes(pcm_to_wav(8000,[(0,0),(-500,500)]))
+`, sounds], { cwd: path.resolve(__dirname, '../..') });
     app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none',
         NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', GSETTINGS_BACKEND: 'memory' } });
     const page = await app.firstWindow();
+    await page.waitForFunction(() => document.documentElement.classList.contains('game-display-font'));
+    assert.match(await page.locator('h1').evaluate(el => getComputedStyle(el).fontFamily), /NX2Saria Game Display/);
+    await page.evaluate(() => {
+      window.testSounds = [];
+      HTMLMediaElement.prototype.play = function () {
+        window.testSounds.push({ source: this.src, volume: this.volume });
+        return Promise.resolve();
+      };
+    });
     await page.getByRole('button', { name: 'Personalizar', exact: true }).click({ timeout: 6000 });
+    await page.keyboard.press('Escape');
+    const cues = await page.evaluate(() => window.testSounds);
+    assert.equal(cues.length, 2);
+    assert.equal(cues[0].volume, 0.18);
+    assert.equal(cues[1].volume, 0.18);
+    assert.match(cues[0].source, /^data:audio\/wav;base64,/);
+    assert.notEqual(cues[0].source, cues[1].source);
     const scheme = page.getByLabel('Tema de cores');
     assert.equal(await scheme.inputValue(), 'lake');
     const original = await page.evaluate(() => document.documentElement.style.getPropertyValue('--shell-panel'));
@@ -46,6 +77,10 @@ async function main() {
     const saved = JSON.parse(await fs.readFile(settings, 'utf8'));
     assert.deepEqual({ theme: saved.theme, animations: saved.animations, sounds: saved.sounds,
       untouched: saved.future_option }, { theme: 'custom', animations: false, sounds: 'off', untouched: 'preserved' });
+    const beforeMuted = await page.evaluate(() => window.testSounds.length);
+    await page.getByRole('button', { name: 'Personalizar', exact: true }).click();
+    await page.getByRole('button', { name: 'Personalizar', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.testSounds.length), beforeMuted);
     const selected = path.join(base, 'test-background.png');
     const invalid = path.join(base, 'test-invalid.png');
     execFileSync(process.env.NX2SARIA_PYTHON || 'python3',
@@ -73,6 +108,7 @@ async function main() {
     assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).background, '');
     await fs.access(selected);
     const log = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
+    assert.match(log, /electron: appearance assets title=true effects=2/);
     assert.match(log, /electron: appearance key=custom_panel result=saved/);
     assert.match(log, /electron: appearance background choose result=invalid_picture/);
     assert.doesNotMatch(log, /test-background\.png|nx2-appearance-/);

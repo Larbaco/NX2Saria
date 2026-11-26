@@ -5,6 +5,7 @@ from pathlib import Path
 
 import numpy as np
 
+from . import gamefiles
 from .ui import art, picture, sound
 
 COLORS = tuple(f'custom_{slot}' for slot in art.CUSTOM_SLOTS)
@@ -19,8 +20,9 @@ def view(settings):
               for slot, color in colors.items()}
     button = palette['orange']
     dim = min(picture.DIMS, key=lambda candidate: abs(candidate - settings['background_dim']))
+    level = settings['sounds'] if settings['sounds'] in sound.LEVELS else sound.DEFAULT_LEVEL
     return {'theme': theme, 'colors': colors, 'animations': settings['animations'],
-            'sounds': settings['sounds'] if settings['sounds'] in sound.LEVELS else sound.DEFAULT_LEVEL,
+            'sounds': level, 'sound_gain': sound.LEVELS[level],
             'background_dim': dim, 'background': Path(settings['background']).name if settings['background'] else '',
             'palette': {'background': palette['window'], 'panel': palette['desc'], 'text': palette['text_bright'],
                         'muted': palette['muted'], 'button': button, 'border': palette['frame'],
@@ -97,3 +99,62 @@ def change_background(layout, settings, source):
                 store.unlink(missing_ok=True)
             raise
     return {'status': 'ok', 'appearance': view(settings)}
+
+
+def cached_assets(layout):
+    try:
+        fonts = gamefiles.cached_fonts(layout)
+    except (OSError, ValueError):
+        fonts = {}
+    try:
+        sounds = gamefiles.cached_sounds(layout)
+    except OSError:
+        sounds = {}
+    return fonts, sounds
+
+
+def asset_manifest(layout):
+    fonts, sounds = cached_assets(layout)
+    return {'status': 'ready', 'title': 'title' in fonts, 'effects': [name for name in sound.EFFECTS if name in sounds]}
+
+
+def extract_assets(ctx, game, dump, complete):
+    fonts, sounds = cached_assets(ctx.layout)
+    if not fonts:
+        try:
+            gamefiles.extract_fonts(ctx.layout, game, dump)
+        except Exception as e:
+            ctx.log(f'fonts: {e}')
+    if not sounds:
+        try:
+            gamefiles.extract_sounds(ctx.layout, game, dump)
+        except Exception as e:
+            ctx.log(f'sounds: {e}')
+    result = asset_manifest(ctx.layout)
+    ctx.log(f'worker: appearance assets title={result["title"]} effects={len(result["effects"])}')
+    complete.set_result(result)
+
+
+def asset_bytes(layout, asset):
+    try:
+        if asset == 'title':
+            file = gamefiles.cached_fonts(layout).get('title', (None, ''))[0]
+            maximum = 16 * 1024 * 1024
+        else:
+            file = gamefiles.cached_sounds(layout).get(asset)
+            maximum = 4 * 1024 * 1024
+        if not file or not file.resolve().is_relative_to(layout.cache.resolve()) or file.stat().st_size > maximum:
+            return None
+        with file.open('rb') as source:
+            data = source.read(maximum + 1)
+        if len(data) > maximum:
+            return None
+        if asset == 'title':
+            return data if data.startswith((b'OTTO', b'\x00\x01\x00\x00')) else None
+        pcm = sound.read_wav(data)
+        if pcm:
+            rate, channels, samples = pcm
+            return sound.wav_bytes(samples, 1.0, rate, channels)
+    except (OSError, ValueError, RuntimeError):
+        pass
+    return None

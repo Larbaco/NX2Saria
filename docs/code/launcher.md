@@ -2798,6 +2798,12 @@ if the settings write fails. Removing the background affects only the retained
 cache. The renderer sees a scaled PNG in bounded frames. The picker supplies the
 original path directly to the worker, and the Electron log keeps only outcomes.
 
+The worker can fill the existing title-font and effect caches using
+`gamefiles.extract_fonts()` and `extract_sounds()`. It publishes only fixed
+asset names and sends the cached bytes in bounded frames. The window registers
+a valid title font with Chromium and plays the select and back effects at the
+same gain as Tk. The default font and silence cover absent or invalid assets.
+
 ### Steam in Electron
 
 The worker uses the same Steam detection, binary VDF and art writer as Tk.

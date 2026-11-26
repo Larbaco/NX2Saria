@@ -79,6 +79,18 @@ async function main() {
     assert.equal(await fs.readFile(path.join(game, 'mods', 'Portable Fixture', 'romfs', 'stand-in.txt'), 'utf8'),
       'portable synthetic mod');
     await page.getByRole('button', { name: 'Mods', exact: true }).click();
+    const background = path.join(base, 'portable-background.png');
+    execFileSync('python3', ['-c', 'from PIL import Image; import sys; Image.new("RGB",(16,12),"green").save(sys.argv[1])', background]);
+    const customize = page.getByRole('button', { name: 'Personalizar', exact: true });
+    await customize.click();
+    await pick(background);
+    await page.getByRole('button', { name: 'Escolher imagem de fundo' }).click();
+    await page.waitForFunction(() => document.querySelector('#shell-background').naturalWidth === 1200);
+    await fs.access(path.join(root, 'data', 'background.npy'));
+    await page.getByRole('button', { name: 'Remover imagem de fundo' }).click();
+    await page.locator('#shell-background').waitFor({ state: 'hidden' });
+    await fs.access(background);
+    await customize.click();
     await page.getByRole('button', { name: 'Jogar' }).click();
     await page.locator('#status').getByText('O jogo terminou com erro').waitFor({ timeout: 15000 });
     assert.match(await page.locator('#detail').textContent(), /code 71\): portable synthetic failure/);
@@ -138,7 +150,7 @@ async function main() {
     assert.ok(path.isAbsolute(await reopened.locator('#game-folder-proposal').textContent()));
     assert.equal(await reopened.getByRole('button', { name: 'Iniciar instalação' }).isEnabled(), true);
     assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), firstRun);
-    console.log('Packaged Linux Electron: published runtime, Saves, Mods, Play, crash offer and preview, marker recovery and first run passed');
+    console.log('Packaged Linux Electron: published runtime, Saves, Mods, appearance, Play, crash offer and preview, marker recovery and first run passed');
   } finally {
     if (app) await app.close().catch(() => {});
     await fs.rm(base, { recursive: true, force: true, maxRetries: 3 });

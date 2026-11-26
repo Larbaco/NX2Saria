@@ -19,7 +19,8 @@ export function parseAppearance(value: unknown) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid appearance');
   const view = value as Record<string, unknown>;
   if (typeof view.theme !== 'string' || !themes.includes(view.theme) || typeof view.sounds !== 'string' ||
-      !soundLevels.includes(view.sounds) || typeof view.animations !== 'boolean' ||
+      (!soundLevels.includes(view.sounds) || typeof view.sound_gain !== 'number' ||
+        !Number.isFinite(view.sound_gain) || view.sound_gain < 0 || view.sound_gain > 1) || typeof view.animations !== 'boolean' ||
       typeof view.background_dim !== 'number' || !dimming.includes(view.background_dim) ||
       typeof view.background !== 'string' || view.background.length > 255 || view.background.includes('\0') ||
       !view.colors || typeof view.colors !== 'object' || !view.palette || typeof view.palette !== 'object') {
@@ -32,7 +33,7 @@ export function parseAppearance(value: unknown) {
     if (!hex(color)) throw new Error('Invalid palette');
     return color;
   }
-  return { theme: view.theme, sounds: view.sounds, animations: view.animations, background_dim: view.background_dim,
+  return { theme: view.theme, sounds: view.sounds, sound_gain: view.sound_gain, animations: view.animations, background_dim: view.background_dim,
     background: view.background, colors: { background: swatch(colors, 'background'), panel: swatch(colors, 'panel'),
       buttons: swatch(colors, 'buttons') },
     palette: { background: swatch(palette, 'background'), panel: swatch(palette, 'panel'),
