@@ -338,6 +338,7 @@ static void respace(uint64_t s, uint64_t cats, int want) {
     for (int i = 0; i < PT_MOVED; i++) x[i] = rdf(p[i] + PANE_TRANS), y[i] = rdf(p[i] + PANE_TRANS + 4);
     int as = pt_spacing(x), ys = fabsf(y[3]) < 0.5f && fabsf(y[5] - 2.0f) < 0.5f;
     uint64_t now = plat_now_ms();
+    if ((as == PT_AS_OTHER || !ys) && !want) return;
     if (as == PT_AS_OTHER || !ys) {
         g_five_failed = 1;
         if (__atomic_load_n(&g_five, __ATOMIC_ACQUIRE)) place(p, PT_GAME_X);

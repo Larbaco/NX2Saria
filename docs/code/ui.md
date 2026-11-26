@@ -3010,7 +3010,8 @@ menu clears that bit), the four categories go to x -840, -420, 0 and 420 and the
 (`runtime/ui/pause_tab_core.h` `PT_FIVE_X`), so the tab gets the fifth place at 840; with the bit clear they go back to
 the game's -690, -230, 230, 690 and -990, 990 (`PT_GAME_X`). The panes are the header layout's 8 to 11, 13 and 14,
 checked by shape (`PT_OVERLAY_TREE`) and against the categories' own part panes, and written only when all six are
-where the game or this tab puts them (and the fourth's y is 0, R's 2). 150 ms after a move the fourth category's box
+where the game or this tab puts them (and the fourth's y is 0, R's 2); with the bit clear, other places (the Minus
+menu's own, if it had them) are left alone and turn nothing off. 150 ms after a move the fourth category's box
 must be centred within 3 units of 420; otherwise everything goes back, the line says what the pane holds from +0x58,
 and the tab keeps the place after the R icon for the session (`g_five_failed`). `g_five` is read by
 `runtime/ui/menu_mouse.c` for its clicks on the tab row.
