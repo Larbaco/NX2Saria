@@ -664,7 +664,8 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(dump['result']['file'], str(incoming))
         self.assertEqual([game_folder['result'], logs['result']], [{'status': 'ok'}, {'status': 'ok'}])
         self.assertEqual(wrong_folder['error']['code'], 'invalid_target')
-        self.assertEqual(opened.read_text().splitlines(), [str(game), str(self.root / 'data' / 'logs')])
+        self.assertEqual([Path(entry).resolve() for entry in opened.read_text(encoding='utf-8').splitlines()],
+                         [game.resolve(), (self.root / 'data' / 'logs').resolve()])
         self.assertEqual(json.loads(settings.read_text()), initial | {
             'channel': 'preview', 'auto_install': True, 'auto_check': True, 'keep_cache': False, 'dump': str(incoming)})
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
