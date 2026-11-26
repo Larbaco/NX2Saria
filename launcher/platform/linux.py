@@ -352,8 +352,7 @@ def write_watch_verdict(release, probe_err):
 
 
 def write_watch_probe(machine=None):
-    import platform
-    nr = _USERFAULTFD.get(machine or platform.machine())
+    nr = _USERFAULTFD.get(machine or os.uname().machine)
     if nr is None:
         return None
     try:
@@ -378,9 +377,8 @@ def write_watch_probe(machine=None):
 
 def write_watch_status(release=None, probe=write_watch_probe, env=None):
     import errno
-    import platform
     env = os.environ if env is None else env
-    release = platform.release() if release is None else release
+    release = os.uname().release if release is None else release
     forced = env.get('NX2SARIA_TEST_NO_UFFD', '')
     if forced and forced != '0':
         err = errno.ENOSYS if forced == '1' else errno.EINVAL
