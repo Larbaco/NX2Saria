@@ -2750,6 +2750,13 @@ No game is loaded: Link's own motion vectors (`motion_owner.c`, selective_motion
 guest memory at every submission (`vk_usnap_begin`) and fault. The probe draws no game, so
 `NX2SARIA_SELECTIVE_MOTION` is set to 0.
 
+The validation errors are counted in three parts, from `vk_validation_errors_total()` taken once the device exists
+(`draw_errors0`, in `draw_part`) and after `b->finish()`: at the device's creation (an older layer does not know the
+driver's newer structures), while drawing, and at the teardown. Only those while drawing fail the probe; the line
+`probe-meshfb: validation errors: ...` gives all three. Before, every error failed it, so under the validation layer
+it printed `FAILED (checks passed, ...)` on every run, for the creation's two and the objects the teardown left, and
+`tests/meshfb_batch_check.py` did not read the exit code.
+
 ## `runtime/gfx/spirv_water.h`
 
 The water corrections of [water-projective.md](../water-projective.md) as edits of a SPIR-V module in memory

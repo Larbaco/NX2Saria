@@ -3403,7 +3403,8 @@ without a pre-pass command buffer.
 `run()` reads the probe's output. The draws' checks: none failed, the last check of the draw part ran, and with
 batching on the batch line came. Validation errors while drawing count; those of the device's creation (extensions
 newer than the layer) and of its destruction (objects the probe's teardown leaves, such as the pre-pass command pool)
-are the probe's, not the batch's, and are only printed. The run must also end as a passing probe ends: the
+are the probe's, not the batch's, and are only printed (the probe counts them apart too, `runtime/gfx/mesh_fb_probe.c`
+`probe_meshfb()`). The run must also end as a passing probe ends: the
 `probe-meshfb: passed` line printed and exit code 0, and no `vk: teardown:` line (memory still allocated when the
 allocator was destroyed, `runtime/vk/vk_device.c` `vma_destroy_logged()`). Before, the test only printed the exit code:
 the probe aborted in its teardown under the validation layer (VMA's leak assert in `vmaDestroyAllocator`), after its

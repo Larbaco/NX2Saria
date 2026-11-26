@@ -519,11 +519,15 @@ const uint8_t *vk_usnap_bytes(uint64_t addr, uint64_t n) {
 }
 
 void vk_usnap_shutdown(void) {
+    vk_completion_drain();
     free(U.owners), U.owners = NULL;
     plat_mutex_lock(&free_lock);
-    for (Arena *a = free_arenas, *next; a; a = next) next = a->next, vmaDestroyBuffer(vk_ctx()->vma, a->buf, a->alloc), free(a->cpu), free(a);
+    uint32_t n = 0;
+    for (Arena *a = free_arenas, *next; a; a = next, n++)
+        next = a->next, vmaDestroyBuffer(vk_ctx()->vma, a->buf, a->alloc), free(a->cpu), free(a);
     free_arenas = NULL;
     plat_mutex_unlock(&free_lock);
+    if (n) rt_log("vk_usnap: teardown: %u arenas released", n);
 }
 
 void vk_usnap_sizes(PerfSizes *s) {

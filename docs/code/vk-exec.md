@@ -1744,7 +1744,15 @@ destruction, `vmaCalculateStatistics` gives the count and bytes of the allocatio
 `vk_vma_leak_line()`, at most `VMA_LEAK_LINES` (16) lines, and reports each memory block or dedicated list that is not
 empty through `vk_vma_leak_found()`, counted in a last line. `runtime/vk/vk_vma.cpp` routes VMA's
 `VMA_LEAK_LOG_FORMAT` and `VMA_ASSERT_LEAK` to these two; VMA's other asserts are unchanged. The runtime builds VMA
-without `NDEBUG`, so its leak assert used to call `abort()`; VMA frees the blocks' device memory either way.
+without `NDEBUG`, so its leak assert used to call `abort()`. VMA frees the device memory of its blocks either way; a
+dedicated allocation still alive keeps its memory, which the layer then reports at `vkDestroyDevice`.
+
+`VMA_ASSERT_LEAK` also guards checks that run during play: an allocation freed while still mapped, a block freed with
+allocations in it. Outside the teardown `vk_vma_leak_found()` writes one line (`vk: VMA's leak check failed during the
+run ...`), syncs the log and calls `abort()`, as the assert did. The teardown is from `vk_vma_teardown_begin()`
+(`runtime/vk/vk_backend.c` `vk_backend_shutdown()`, or here for the probes that call `vk_shutdown` alone) to the end of
+this function; `vk_init` clears it for a device made again. The counts start with the teardown, so the lines of the
+staging pool's destruction (`runtime/vk/vk_memory.c` `vk_mem_shutdown()`) count too.
 
 Only the probes (`--probe-meshfb` and the others) and a device that failed to start reach the teardown: a game run
 ends without `vk_shutdown`.
@@ -3325,9 +3333,18 @@ every other one falls back to (`tex_info_full()`, `pool_sync_entries()`): withou
 ### `vk_exec_draw_shutdown()`
 
 Releases the stand-ins and the depth twins. The device must be idle; the game path leaves them to process exit like the
-pipelines. The mesh ring and the pool marks go first, before the test for the stand-ins, because they are made without
-the stand-ins too. `dc_main`'s `rs_last` is cleared with `rs_lists`: it is the replay's context, and no other records
-now.
+pipelines. `vk_completion_drain()` runs first, so the callbacks of finished submissions (the uniform snapshot arenas'
+`arena_done`, the descriptor pools given back) have run. The mesh ring, the pool marks and the texture pool's set
+(`pool_set_release()`) go next, before the test for the stand-ins, because they are made without the stand-ins too.
+`dc_main`'s `rs_last` is cleared with `rs_lists`: it is the replay's context, and no other records now.
+
+### `pool_set_release()`
+
+`vk_exec_draw_shutdown` destroys the texture pool's set: its descriptor pool (with the `POOL_SETS` sets), its layout
+and the empty layout (`vk_empty_set_layout`), which lived past the device before; under the validation layer that
+was eleven "has not been destroyed" errors at each probe's `vkDestroyDevice`. The handles and `PL.ready` go back to
+zero. A device made again would make them again (`pool_layout_make`), and with them the set's host arrays (`PL.log`,
+`PL.last`, `PL.tok` and the others) without freeing the old ones; nothing makes a second device after this teardown.
 
 ### Resource types
 
@@ -6860,7 +6877,9 @@ or a device call.
 
 ### `completion_main()`
 
-The completion thread's loop. It sleeps while nothing is issued beyond `done` and no queued callback is due. Then:
+The completion thread's loop. It sleeps while nothing is issued beyond `done` and no queued callback is due. Each
+callback it runs counts in `cb_running` from its removal from the queue until it returns, under `st_lock`, for
+`vk_completion_drain()`. Then:
 
 1. Held submissions that have waited long enough go to the queue (`hold_release()`); while some are held, the wait
    that follows is short (`HOLD_NS`) so their age is checked again (submit batching). Otherwise the wait for the next
@@ -7069,7 +7088,8 @@ effects of the values reached, and a wait after a submit runs it itself (`vk_syn
 ### `results_run()`
 
 Runs the results queued for the values up to upto, which the GPU has passed: on the completion thread for each value it
-reaches, and on a guest thread whose wait on `exec_tl` has just returned. `st_lock` not held.
+reaches, and on a guest thread whose wait on `exec_tl` has just returned. `st_lock` not held. Each callback counts in
+`cb_running` while it runs (`vk_completion_drain()`).
 
 ### `vk_sync_recorded_wait()`
 
@@ -7128,9 +7148,25 @@ The game's own wait for a fence (`runtime/nvn/nvn_api_core.c` `nvnSyncWait`): th
 the wait for the results of the submission the value's GPU work belongs to (`vk_sync_exec_wait`), when that one's tail
 is all the GPU still has of it: the tail reads nothing the game can change and hands it nothing.
 
+### `vk_completion_drain()`
+
+Waits until no callback is owed for a value the GPU has already passed: none at the head of the three queues with a
+value at or below `done` (what `completion_main()` runs next), and none running (`cb_running`, counted under `st_lock`
+around each callback). `vk_sync_finish()` alone does not give that: it waits for `done`, and a callback queued for a
+value already reached (`vk_completion_add` after the submission finished) runs later on the completion thread. The
+probes' teardown met it: `vk_usnap_end` queues `arena_done` for the submission's value, `vk_usnap_shutdown` freed the
+free list before `arena_done` ran, and the 4 MiB arena came back to a list nobody emptied; VMA's leak assert then ended
+`--probe-meshfb` in `vmaDestroyAllocator` (every run with the mesh fallback's batch off under the validation layer on
+the bench, five of five). It wakes the completion thread and waits in steps of 1 ms, at most 10 s, and stops when the
+device is lost; on the completion thread itself, or before `vk_sync_start`, it returns at once. The return value is the
+number of waits; `vk_exec_draw_shutdown()` logs it when it is not 0 (`vk_exec: teardown: N waits ...`). A result
+callback that called it on a guest thread (`results_run()` there) would wait out the 10 s, its own callback counted;
+none does.
+
 ### `vk_sync_shutdown()`
 
-After the completion thread ended, what is left in the three queues is dropped: callbacks of values never submitted.
+`vk_completion_drain()` runs first, so the callbacks of finished submissions have run. After the completion thread
+ended, what is left in the three queues is dropped: callbacks of values never submitted.
 The pre-pass command buffers' pool (`vk_sync_pre`: the mesh emulation's and the mesh fallback's batches) is destroyed
 with the others; it stayed past the device's end, a leak each time the device was made again (the probes, a device made
 anew).
@@ -7559,7 +7595,9 @@ The host copy where there is one (DLSS), else the device copy.
 
 ### `vk_usnap_shutdown()`
 
-The arenas back on the free list (`vk_exec_draw_shutdown`: the device is idle, every completion ran).
+The arenas back on the free list are destroyed (`vk_exec_draw_shutdown`: the device is idle). `vk_completion_drain()`
+runs first, so an arena whose `arena_done` was still owed is on the list by then. One line says how many arenas went
+(`vk_usnap: teardown:`); only the probes reach it.
 
 ### `vk_usnap_sizes()`
 

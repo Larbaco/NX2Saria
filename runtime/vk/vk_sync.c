@@ -114,6 +114,7 @@ int vk_sync_effect_late(void) { return __atomic_load_n(&cb_late, __ATOMIC_RELAXE
 
 static volatile uint64_t cb_value;
 static volatile uint32_t cb_tid;
+static uint32_t cb_running;
 
 uint64_t vk_sync_cb_value(void) {
     return __atomic_load_n(&cb_tid, __ATOMIC_ACQUIRE) == plat_thread_id() ? __atomic_load_n(&cb_value, __ATOMIC_RELAXED) : 0;
@@ -830,9 +831,11 @@ static void completion_main(void *arg) {
         while (fqn && fqueue[fqhead].fence <= reached && !vk_device_is_lost()) {
             Pending p = fqueue[fqhead++];
             fqn--;
+            cb_running++;
             plat_mutex_unlock(&st_lock);
             p.fn(p.arg);
             plat_mutex_lock(&st_lock);
+            cb_running--;
         }
         plat_mutex_unlock(&st_lock);
         results_run(reached);
@@ -841,6 +844,7 @@ static void completion_main(void *arg) {
         while (qn && queue[qhead].fence <= reached) {
             Pending p = queue[qhead++];
             qn--;
+            cb_running++;
             plat_mutex_unlock(&st_lock);
             __atomic_store_n(&cb_late, p.fence <= __atomic_load_n(&exw_value, __ATOMIC_ACQUIRE), __ATOMIC_RELAXED);
             uint64_t c0 = (rt_trace & RT_TRACE_PERF) ? kern_now_ns() : 0;
@@ -850,6 +854,7 @@ static void completion_main(void *arg) {
             uint64_t c1 = c0 ? kern_now_ns() : 0;
             __atomic_store_n(&cb_late, 0, __ATOMIC_RELAXED);
             plat_mutex_lock(&st_lock);
+            cb_running--;
             if (c0) {
                 int k = 0;
                 while (k < cbt_n && cbt[k].fn != p.fn) k++;
@@ -1371,11 +1376,13 @@ static void results_run(uint64_t upto) {
     while (rqn && rqueue[rqhead].fence <= upto && !vk_device_is_lost()) {
         Pending p = rqueue[rqhead++];
         rqn--;
+        cb_running++;
         plat_mutex_unlock(&st_lock);
         __atomic_store_n(&cb_late, p.fence <= __atomic_load_n(&exw_value, __ATOMIC_ACQUIRE), __ATOMIC_RELAXED);
         p.fn(p.arg);
         __atomic_store_n(&cb_late, 0, __ATOMIC_RELAXED);
         plat_mutex_lock(&st_lock);
+        cb_running--;
     }
     plat_mutex_unlock(&st_lock);
     plat_mutex_unlock(&res_lock);
@@ -1565,10 +1572,30 @@ void vk_sync_finish(void) {
     vk_upload_flush(1);
 }
 
+static int completion_owed_locked(void) {
+    return cb_running || (qn && queue[qhead].fence <= done) || (fqn && fqueue[fqhead].fence <= done) ||
+           (rqn && rqueue[rqhead].fence <= done);
+}
+
+uint32_t vk_completion_drain(void) {
+    if (!__atomic_load_n(&started, __ATOMIC_ACQUIRE) || plat_thread_id() == __atomic_load_n(&cb_tid, __ATOMIC_ACQUIRE))
+        return 0;
+    uint32_t polls = 0;
+    plat_mutex_lock(&st_lock);
+    while (completion_owed_locked() && !vk_device_is_lost() && polls < 10000) {
+        plat_cond_broadcast(&cv_work);
+        plat_cond_wait_ns(&cv_done, &st_lock, 1000000);
+        polls++;
+    }
+    plat_mutex_unlock(&st_lock);
+    return polls;
+}
+
 void vk_sync_shutdown(void) {
     plat_mutex_lock(&start_lock);
     if (started) {
         vk_sync_finish();
+        vk_completion_drain();
         plat_mutex_lock(&st_lock);
         stop = 1;
         plat_cond_broadcast(&cv_work);

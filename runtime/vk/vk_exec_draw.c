@@ -511,14 +511,19 @@ static void twins_release(VkCtx *c);
 
 static void mesh_ring_release(VkCtx *c);
 static void pool_marks_release(VkCtx *c);
+static void pool_set_release(VkCtx *c);
 
 static void pose_shutdown(void);
 static void skin_shutdown(void);
 void vk_exec_draw_shutdown(void) {
+    uint32_t waits = vk_completion_drain();
+    if (waits)
+        rt_log("vk_exec: teardown: %u waits of up to 1 ms for the callbacks of finished submissions (vk_completion_drain)",
+               waits);
     pose_shutdown();
     skin_shutdown();
     vk_meshfb_shutdown();
-    if (vk_ctx()) mesh_ring_release(vk_ctx()), pool_marks_release(vk_ctx());
+    if (vk_ctx()) mesh_ring_release(vk_ctx()), pool_marks_release(vk_ctx()), pool_set_release(vk_ctx());
     if (!Z.ready) return;
     VkCtx *c = vk_ctx();
     twins_release(c);
@@ -1887,6 +1892,17 @@ VkDescriptorSetLayout vk_empty_set_layout(void) {
     }
     plat_mutex_unlock(&pool_lock_);
     return PL.empty;
+}
+
+static void pool_set_release(VkCtx *c) {
+    plat_mutex_lock(&pool_lock_);
+    if (PL.dpool) vkDestroyDescriptorPool(c->device, PL.dpool, NULL);
+    if (PL.layout) vkDestroyDescriptorSetLayout(c->device, PL.layout, NULL);
+    if (PL.empty) vkDestroyDescriptorSetLayout(c->device, PL.empty, NULL);
+    PL.dpool = VK_NULL_HANDLE, PL.layout = PL.empty = VK_NULL_HANDLE, PL.set = VK_NULL_HANDLE;
+    memset(PL.sets, 0, sizeof PL.sets);
+    PL.nsets = 0, PL.ready = 0;
+    plat_mutex_unlock(&pool_lock_);
 }
 
 static uint16_t pool_kind_type(int k) {

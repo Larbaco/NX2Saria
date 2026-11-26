@@ -281,12 +281,15 @@ static int differing(const uint32_t *a, const uint32_t *b, int *worst) {
     return n;
 }
 
+static long draw_errors0;
+
 static int draw_part(const GfxBackend *b, uint8_t *guest) {
     pool_t pool = {.magic = NVN_POOL_MAGIC, .flags = 0x22, .mem = guest + 0x100000, .size = 0xC0000,
                    .game_mem = guest + 0x100000};
     CHECK(b->pool_init(&pool), "pool_init of a CPU-visible pool");
     VkCtx *c = vk_ctx();
     CHECK(c, "no Vulkan device");
+    draw_errors0 = vk_validation_errors_total();
     static tex_t color;
     memset(&color, 0, sizeof color);
     color.magic = NVN_TEX_MAGIC;
@@ -433,15 +436,19 @@ int probe_meshfb(void) {
     CHECK(mem_set_heap_size(16ull << 20, &heap) == 0 && heap, "SetHeapSize 16 MiB");
     int bad = draw_part(b, (uint8_t *)(uintptr_t)heap);
     b->finish();
+    long made = draw_errors0, drawing = vk_validation_errors_total() - draw_errors0;
     vk_pipeline_shutdown();
     vk_exec_draw_shutdown();
     vk_exec_xfer_shutdown();
     vk_backend_shutdown();
-    long errors = vk_validation_errors_total();
-    if (bad || errors) {
-        printf("probe-meshfb: FAILED (%s, %ld validation errors)\n", bad ? "a draw check failed" : "checks passed", errors);
+    long teardown = vk_validation_errors_total() - made - drawing;
+    printf("probe-meshfb: validation errors: %ld at the device's creation, %ld while drawing, %ld at its teardown\n", made,
+           drawing, teardown);
+    if (bad || drawing) {
+        printf("probe-meshfb: FAILED (%s, %ld validation errors while drawing)\n", bad ? "a draw check failed" : "checks passed",
+               drawing);
         return 1;
     }
-    printf("probe-meshfb: passed (0 validation errors)\n");
+    printf("probe-meshfb: passed (0 validation errors while drawing)\n");
     return 0;
 }

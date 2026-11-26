@@ -841,6 +841,12 @@ static long g_errors_total;
 
 enum { VMA_LEAK_LINES = 16 };
 static uint32_t vma_leak_lines, vma_leak_found;
+static volatile int32_t vma_teardown;
+
+void vk_vma_teardown_begin(void) {
+    if (__atomic_exchange_n(&vma_teardown, 1, __ATOMIC_ACQ_REL)) return;
+    vma_leak_lines = vma_leak_found = 0;
+}
 
 void vk_vma_leak_line(const char *fmt, ...) {
     if (++vma_leak_lines > VMA_LEAK_LINES) return;
@@ -852,9 +858,19 @@ void vk_vma_leak_line(const char *fmt, ...) {
     rt_log("vk: teardown: %s", line);
 }
 
-void vk_vma_leak_found(void) { vma_leak_found++; }
+void vk_vma_leak_found(void) {
+    if (__atomic_load_n(&vma_teardown, __ATOMIC_ACQUIRE)) {
+        vma_leak_found++;
+        return;
+    }
+    rt_log("vk: VMA's leak check failed during the run (an allocation freed while still mapped, or a memory block freed "
+           "with allocations in it): ending as VMA's assert does");
+    rt_log_sync();
+    abort();
+}
 
 static void vma_destroy_logged(VmaAllocator vma) {
+    vk_vma_teardown_begin();
     VmaTotalStatistics st;
     vmaCalculateStatistics(vma, &st);
     uint32_t n = st.total.statistics.allocationCount;
@@ -862,11 +878,11 @@ static void vma_destroy_logged(VmaAllocator vma) {
         rt_log("vk: teardown: %u allocations (%llu bytes) were still in use when the memory allocator was destroyed: their "
                "memory goes with it, and the first %d are listed below", n,
                (unsigned long long)st.total.statistics.allocationBytes, VMA_LEAK_LINES);
-    vma_leak_lines = vma_leak_found = 0;
     vmaDestroyAllocator(vma);
     if (n || vma_leak_found)
         rt_log("vk: teardown: the allocator found %u memory blocks or lists not empty and listed %u allocations", vma_leak_found,
                vma_leak_lines);
+    __atomic_store_n(&vma_teardown, 0, __ATOMIC_RELEASE);
 }
 
 static void destroy_all(void) {
@@ -899,6 +915,7 @@ long vk_validation_errors_total(void) { return g_errors_total + (g_ready ? g_vk.
 int vk_init(void) {
     plat_mutex_lock(&g_lock);
     if (!g_ready) {
+        __atomic_store_n(&vma_teardown, 0, __ATOMIC_RELEASE);
         memset(&g_vk, 0, sizeof g_vk);
         if (create_instance() && pick_device() && create_device())
             g_ready = 1, vk_headroom_start(), vk_dlaa_init(), mem_budget_vram(1);
