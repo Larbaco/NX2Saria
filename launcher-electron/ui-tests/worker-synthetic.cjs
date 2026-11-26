@@ -112,8 +112,9 @@ exit 2
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
     await app.evaluate(({ dialog }) => { dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] }); });
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
-    await page.getByText('Nenhuma instalação selecionada').waitFor({ timeout: 10000 });
-    assert.equal((await page.evaluate(() => window.launcher.play())).error, 'unavailable');
+    await page.waitForFunction(() => !document.querySelector('#select').disabled);
+    assert.equal(await page.locator('#status').textContent(), 'Instalação encontrada');
+    assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, root);
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
