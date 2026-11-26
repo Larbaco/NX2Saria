@@ -1,18 +1,18 @@
 *{box-sizing:border-box}body{margin:0;background:#121d17;color:#f5efdf;font:15px system-ui}header{height:72px;border-bottom:1px solid #a9b99a33;padding:22px 5%;font:21px Georgia;letter-spacing:.1em}small{font:11px system-ui;letter-spacing:.13em;color:#adbd9b}header small{float:right}main{display:flex;min-height:500px}aside{width:210px;border-right:1px solid #a9b99a33;padding:35px 25px;display:flex;flex-direction:column;gap:24px;color:#afbfac}aside strong{color:#f4efd9}article{padding:55px 7%;max-width:820px}.eyebrow{font-size:11px;letter-spacing:.15em;color:#bbc997}h1{font:48px Georgia;margin:16px 0}p{color:#b4c4b4;line-height:1.6}button{background:#e0bd7a;color:#17231a;border:0;border-radius:6px;padding:14px 20px;font-weight:700;cursor:pointer}button:focus-visible{outline:3px solid white;outline-offset:3px}section{margin-top:45px;padding:24px;border:1px solid #a6b79a44;border-radius:10px;background:#ffffff08}h2{font:26px Georgia}.note{font-size:12px}
 #first-run-requirements, #update-notes { white-space: pre-wrap; overflow-wrap: anywhere; color: #f1d69e; }
-#reports-dialog { max-width: min(92vw, 680px); max-height: 88vh; overflow: auto; color: #f5efdf; background: #17251d; border: 1px solid #a6b79a77; border-radius: 10px; padding: 24px; }
-#reports-dialog::backdrop { background: #0c160fb8; }
+:is(#reports-dialog, #uninstall-dialog) { max-width: min(92vw, 680px); max-height: 88vh; overflow: auto; color: #f5efdf; background: #17251d; border: 1px solid #a6b79a77; border-radius: 10px; padding: 24px; }
+:is(#reports-dialog, #uninstall-dialog)::backdrop { background: #0c160fb8; }
 #reports-preview-text, #reports-comment-text { background: #101913; border: 1px solid #a6b79a77; color: inherit; border-radius: 6px; padding: 12px; }
 #reports-preview-text { max-height: 44vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 #reports-comment-text { width: 100%; font: inherit; resize: vertical; }
-#reports-dialog button { margin-block: 4px; }
+:is(#reports-dialog, #uninstall-dialog) button { margin-block: 4px; }
 body { background-color: var(--shell-background, #121d17); color: var(--shell-text, #f5efdf); }
 section { background-color: color-mix(in srgb, var(--shell-panel, #ffffff) 32%, transparent); border-color: var(--shell-border, #a6b79a44); }
 header, aside { border-color: var(--shell-border, #a9b99a33); }
 p, aside { color: var(--shell-muted, #b4c4b4); }
 aside strong { color: var(--shell-text, #f4efd9); }
 button { background-color: var(--shell-button, #e0bd7a); color: var(--shell-button-text, #17231a); }
-#reports-dialog { background: var(--shell-panel, #17251d); color: var(--shell-text, #f5efdf); }
+:is(#reports-dialog, #uninstall-dialog) { background: var(--shell-panel, #17251d); color: var(--shell-text, #f5efdf); }
 :root[data-animations="on"] button { transition: background-color 140ms ease, color 140ms ease, transform 140ms ease; }
 :root[data-animations="on"] button:enabled:active { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) {

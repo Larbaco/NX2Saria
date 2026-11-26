@@ -5938,6 +5938,14 @@ controller. It checks focus order and restoration, selection changes, return,
 unfocused input suppression, scroll, and overflow at the minimum window size
 and at 140% zoom. Hardware Game Mode is a separate check.
 
+The uninstall worker tests schedule the real platform cleanup helper against
+two scratch roots, keep or remove the game, and preserve an original dump
+inside a candidate path and unrelated files. They exercise a Windows legacy
+entry point, verify Linux retains logs, and refuse a running-game simulation,
+an interrupted marker, an unsafe game path and a missing entry point. The
+Linux window test selects Remove, cancels with Escape, confirms with the
+default Keep, and checks the retained save and path-free outcome log.
+
 The locale worker test reads and writes the separate Electron preference,
 checks unknown fields and proves the Tk settings file stays byte-identical.
 The Node tests check system language fallback, unchanged interpolated player

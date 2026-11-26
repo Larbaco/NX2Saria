@@ -33,6 +33,8 @@ contextBridge.exposeInMainWorld('launcher', {
   appearanceBackground: (choose: boolean) => ipcRenderer.invoke('appearance-background', choose),
   steamInfo: () => ipcRenderer.invoke('steam-info'),
   steamAdd: () => ipcRenderer.invoke('steam-add'),
+  uninstall: (removeGame: boolean) => ipcRenderer.invoke('uninstall', removeGame),
+  uninstallCancelled: () => ipcRenderer.send('uninstall-cancelled'),
   settingsInfo: () => ipcRenderer.invoke('settings-info'),
   settingsPreference: (key: string, value: boolean | string) => ipcRenderer.invoke('settings-preference', key, value),
   settingsDump: () => ipcRenderer.invoke('settings-dump'),

@@ -373,7 +373,8 @@ def installed_settings(ctx):
     return {**{key: settings[key] for key in SETTINGS_FLAGS},
             'game_dir': settings['game_dir'], 'dump': settings['dump'],
             'channel': 'preview' if settings['channel'] == 'preview' else 'stable',
-            'warn_low_commit': settings['warn_low_commit'] if os.name == 'nt' else None}
+            'warn_low_commit': settings['warn_low_commit'] if os.name == 'nt' else None,
+            'uninstall_available': winsys.uninstall_available(ctx.layout)}
 
 
 def write_installed_setting(ctx, request):
@@ -580,7 +581,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         capabilities = ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates',
-                        'saves', 'mods', 'settings', 'reports', 'steam', 'language']
+                        'saves', 'mods', 'settings', 'reports', 'steam', 'language', 'uninstall']
         try:
             from . import worker_appearance
         except (ImportError, OSError):
@@ -1177,6 +1178,34 @@ def main(argv=None):
                         result = {'status': 'adding'}
                     action_log(ctx, counts, 'steam', f'add request={result["status"]}')
                 emit({'id': request['id'], 'result': result})
+            elif request.get('method') == 'uninstall':
+                remove = request.get('remove_game')
+                if type(remove) is not bool:
+                    error(request['id'], 'invalid_uninstall_request')
+                    continue
+                game = ctx.settings['game_dir']
+                if (lock_state != 'held' or run or job or pending or check or steam_work
+                        or (appearance_work and not appearance_work.done()) or (reports and reports.busy) or build_recovery.blocked(layout)
+                        or (game and saves.game_running(game))):
+                    status = 'busy'
+                elif not winsys.uninstall_available(layout) or ctx.settings.unreadable:
+                    status = 'unsupported'
+                elif remove and (not game or winsys.unsafe_uninstall_game(layout, game)
+                                 or (ctx.settings['dump'] and winsys.contains_path(game, ctx.settings['dump']))):
+                    status = 'unsafe_game'
+                else:
+                    keep = [ctx.settings['dump'], '' if remove else game]
+                    try:
+                        winsys.uninstall(layout, game if remove else '', ctx.log,
+                                         keep=keep, protect_windows_paths=True)
+                    except (OSError, ValueError):
+                        status = 'failed'
+                    else:
+                        status = 'scheduled'
+                action_log(ctx, counts, 'uninstall', f'remove_game={remove} result={status}')
+                emit({'id': request['id'], 'result': {'status': status}})
+                if status == 'scheduled':
+                    return 0
             elif request.get('method') in ('settings_info', 'settings_preference', 'settings_dump', 'settings_open'):
                 method = request['method']
                 if method == 'settings_info':

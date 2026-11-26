@@ -2803,7 +2803,29 @@ mapping. Its directions move among visible, enabled controls in the active
 screen; left and right change a selected dropdown, and the right stick scrolls.
 A activates the focused control. B returns from its panel or takes the active
 dialog's cancel route. Losing focus pauses controller input until it returns to
-neutral. The renderer logs first use without including a hardware identifier.
+neutral. The renderer logs first use without including a hardware identifier. Returning
+from a panel plays the back cue once, including when the key or controller invokes
+the same button that opens it.
+
+### Electron uninstall
+
+The Settings panel queries whether the selected installation has its platform
+entry point. The modal defaults to keeping the game. Mouse, Escape, and
+controller cancellation share one route. Confirmation supplies a boolean;
+the worker gets the actual game and dump paths from its locked installation.
+A game, current operation, or interrupted build marker blocks removal. When
+removal is scheduled, the worker exits and Electron closes its window.
+
+`launcher/winsys.py` `uninstall_available()` excludes development checkouts and
+unprovisioned roots. `unsafe_uninstall_game()` refuses a drive, parents of the
+install or home, and a directory with another launcher entry point. Containment
+checks consider both absolute and resolved paths. The worker also refuses to
+remove a game directory containing the original dump. The Windows uninstall
+helper gets the existing ownership plan with candidates holding the original
+dump or retained game excluded. Tk continues using its existing invocation.
+Linux follows its AppImage ownership plan and retains the logs. A log line
+records the choice and the scheduling result; the Linux helper records how
+many paths it removed once the worker closed.
 
 ### Electron interface language
 

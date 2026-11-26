@@ -888,6 +888,95 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(json.loads(preferences.read_text()), {'locale': 'zh-Hans', 'unrelated': {'mode': 3}})
         self.assertEqual(settings.read_bytes(), before)
 
+    def test_uninstall_keeps_or_removes_only_the_selected_game(self):
+        base = Path(self.tmp.name)
+        self.enterContext(patch.dict(os.environ, XDG_DATA_HOME=str(base), TEMP=str(base)))
+        for remove in (False, True):
+            with self.subTest(remove=remove):
+                self.root = base / ('remove' if remove else 'retain')
+                game, dump, save, entry = self.uninstall_fixture(legacy=remove)
+                worker, hello = self.start_worker('0.0.1')
+                self.assertIn('uninstall', hello['result']['capabilities'])
+                worker.stdin.write(json.dumps({'id': 2, 'method': 'uninstall', 'remove_game': remove}) + '\n')
+                worker.stdin.flush()
+                scheduled = json.loads(worker.stdout.readline())
+                self.assertEqual(scheduled, {'id': 2, 'result': {'status': 'scheduled'}})
+                self.assertEqual(worker.wait(timeout=10), 0)
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline and ((self.root / 'app').exists() or (remove and save.exists())):
+                    time.sleep(0.1)
+                self.assertFalse(entry.exists(), 'the platform uninstall helper did not run')
+                self.assertFalse((self.root / 'app').exists())
+                self.assertEqual(save.exists(), not remove)
+                self.assertEqual(dump.read_text(), 'original dump fixture')
+                self.assertEqual((self.root / 'unrelated').read_text(), 'unrelated file fixture')
+                if sys.platform.startswith('linux'):
+                    log = self.root / 'data' / 'logs' / 'launcher.log'
+                    self.assertTrue(log.is_file())
+                    self.assertIn(f'worker: uninstall remove_game={remove} result=scheduled', log.read_text())
+
+    def test_uninstall_refuses_unsafe_or_busy_requests(self):
+        base = Path(self.tmp.name)
+        game, dump, save, entry = self.uninstall_fixture()
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(base), 'dump': str(dump), 'telemetry': 'off'}))
+        worker, _ = self.start_worker('0.0.1')
+
+        def request(request_id, remove_game):
+            worker.stdin.write(json.dumps({'id': request_id, 'method': 'uninstall', 'remove_game': remove_game}) + '\n')
+            worker.stdin.flush()
+            return json.loads(worker.stdout.readline())
+
+        self.assertEqual(request(2, 'yes')['error']['code'], 'invalid_uninstall_request')
+        self.assertEqual(request(3, True)['result']['status'], 'unsafe_game')
+        marker = settings.with_name('job-running.json')
+        marker.write_text('{}')
+        self.assertEqual(request(4, False)['result']['status'], 'busy')
+        marker.unlink()
+        entry.unlink()
+        self.assertEqual(request(5, False)['result']['status'], 'unsupported')
+        self.assertEqual(save.read_text(), 'save fixture')
+        self.assertEqual(dump.read_text(), 'original dump fixture')
+
+    def test_uninstall_refuses_an_external_game(self):
+        game, dump, save, _ = self.uninstall_fixture()
+        script = ("import sys; from launcher import saves, worker; "
+                  "saves.game_running = lambda game: True; "
+                  "sys.exit(worker.main(sys.argv[1:]))")
+        requests = [{'id': 1, 'method': 'hello', 'protocol': 1},
+                    {'id': 2, 'method': 'uninstall', 'remove_game': False},
+                    {'id': 3, 'method': 'uninstall', 'remove_game': True}]
+        result = subprocess.run([sys.executable, '-c', script, '--root', str(self.root), '--app-version', '0.0.1'],
+                                cwd=ROOT, input=''.join(json.dumps(request) + '\n' for request in requests),
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, keep, remove = map(json.loads, result.stdout.splitlines())
+        self.assertEqual(keep['result']['status'], 'busy')
+        self.assertEqual(remove['result']['status'], 'busy')
+        self.assertEqual(save.read_text(), 'save fixture')
+        self.assertEqual(dump.read_text(), 'original dump fixture')
+
+    def uninstall_fixture(self, legacy=False):
+        app = self.root / 'app' / '0.0.1'
+        (app / 'tools').mkdir(parents=True)
+        (app / 'tools' / 'make_game.py').touch()
+        (app / 'VERSION').write_text('0.0.1')
+        (app.parent / 'current.txt').write_text('0.0.1')
+        data = self.root / 'data'
+        dump = data / 'downloads' / 'original.synthetic'
+        dump.parent.mkdir(parents=True)
+        dump.write_text('original dump fixture')
+        game = self.root / 'game'
+        game.mkdir()
+        save = game / 'progress.sav'
+        save.write_text('save fixture')
+        (data / 'launcher.json').write_text(json.dumps({'game_dir': str(game), 'dump': str(dump), 'telemetry': 'off'}))
+        marker = ('NX2navi.exe' if legacy else 'NX2Saria.exe') if os.name == 'nt' else 'nx2saria-launcher'
+        entry = self.root / marker
+        entry.touch()
+        (self.root / 'unrelated').write_text('unrelated file fixture')
+        return game, dump, save, entry
+
     def test_appearance_assets_reuse_the_installed_cache_and_fixed_names(self):
         import base64
         from launcher.ui import sound
@@ -1428,7 +1517,7 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('settings', hello['result']['capabilities'])
         self.assertEqual(view['result'], {key: initial[key] for key in (
             'game_dir', 'dump', 'channel', 'auto_check', 'auto_install', 'keep_cache')} |
-            {'warn_low_commit': True if os.name == 'nt' else None})
+            {'warn_low_commit': True if os.name == 'nt' else None, 'uninstall_available': False})
         self.assertEqual([frame['result']['key'] for frame in [channel, auto_install, auto_check, keep_cache]],
                          ['channel', 'auto_install', 'auto_check', 'keep_cache'])
         if os.name == 'nt':
@@ -3247,8 +3336,11 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['error']['code'], 'invalid_root')
         self.assertEqual(self.tree(), before)
 
-    def start_worker(self):
-        process = subprocess.Popen([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)],
+    def start_worker(self, installed_version=None):
+        args = [sys.executable, '-m', 'launcher.worker', '--root', str(self.root)]
+        if installed_version:
+            args += ['--app-version', installed_version]
+        process = subprocess.Popen(args,
                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                    text=True, cwd=ROOT)
         self.addCleanup(self.stop_worker, process)

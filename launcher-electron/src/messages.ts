@@ -283,6 +283,17 @@ const catalogue: ReadonlyArray<readonly [string, string, string, string]> = [
   ["Escolher arquivo do mod", "Choose mod archive", "Выбрать архив мода", "选择模组压缩包"],
   ["Imagens", "Images", "Изображения", "图片"],
   ["Não foi possível salvar o idioma.", "Could not save the language.", "Не удалось сохранить язык.", "无法保存语言。"],
+  ["Desinstalar NX2Saria", "Uninstall NX2Saria", "Удалить NX2Saria", "卸载 NX2Saria"],
+  ["A desinstalação remove o launcher, as ferramentas de compilação e seus atalhos. O dump original é preservado.", "Uninstall removes the launcher, the build tools, and their shortcuts. The original dump is kept.", "Будут удалены лаунчер, инструменты сборки и их ярлыки. Исходный дамп сохранится.", "卸载会移除启动器、构建工具及其快捷方式。原始转储会保留。"],
+  ["Os logs do launcher são preservados. Remova o atalho da Steam na própria Steam.", "Launcher logs are kept. Remove the Steam shortcut from Steam itself.", "Журналы лаунчера сохранятся. Ярлык Steam можно удалить в самом Steam.", "启动器日志会保留。请在 Steam 中移除其快捷方式。"],
+  ["Remover o jogo compilado", "Remove the built game", "Удалить собранную игру", "移除已构建的游戏"],
+  ["Desinstalar", "Uninstall", "Удалить", "卸载"],
+  ["A pasta do jogo será removida, incluindo saves e mods.", "The game folder will be removed, including saves and mods.", "Папка игры будет удалена вместе с сохранениями и модами.", "游戏文件夹及其中的存档和模组将被移除。"],
+  ["A pasta do jogo, os saves e os mods serão preservados.", "The game folder, saves, and mods will be kept.", "Папка игры, сохранения и моды сохранятся.", "游戏文件夹、存档和模组都会保留。"],
+  ["Preparando a desinstalação…", "Preparing to uninstall…", "Подготовка к удалению…", "正在准备卸载…"],
+  ["Feche o jogo ou aguarde a tarefa atual terminar.", "Close the game or wait for the current task to finish.", "Закройте игру или дождитесь завершения текущей задачи.", "请关闭游戏或等待当前任务结束。"],
+  ["A pasta selecionada não pode ser removida com segurança. Desinstale mantendo o jogo.", "The selected folder cannot be safely removed. Uninstall while keeping the game.", "Выбранную папку нельзя безопасно удалить. Удалите лаунчер, сохранив игру.", "无法安全移除所选文件夹。请卸载启动器并保留游戏。"],
+  ["Não foi possível desinstalar o NX2Saria.", "Could not uninstall NX2Saria.", "Не удалось удалить NX2Saria.", "无法卸载 NX2Saria。"],
 ];
 
 export const messageTables: Record<Locale, Messages> = {

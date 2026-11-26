@@ -35,6 +35,7 @@ app.whenReady().then(() => {
   let worker: WorkerClient | null = null;
   let state: Inspection | null = null;
   let playing = false;
+  let uninstalling = false;
   let buildAction: BuildAction | null = null;
   let gameSpawned = false;
   let hidden = false;
@@ -139,6 +140,7 @@ app.whenReady().then(() => {
       active.on('disconnect', () => {
         if (worker !== active) return;
         worker = null;
+        if (uninstalling) return;
         if (buildAction) {
           state = null;
           void finishBuild(active, 'worker_disconnected');
@@ -653,7 +655,31 @@ app.whenReady().then(() => {
     const active = settingsWorker(event);
     const result = parseInstalledSettings(await active.request('settings_info'));
     if (active !== worker) throw new Error('Settings unavailable');
-    return { ...result, dump: result.dump ? path.basename(result.dump) : '', writable: active.handshake.lock === 'held' };
+    return { ...result, dump: result.dump ? path.basename(result.dump) : '', writable: active.handshake.lock === 'held',
+      uninstall_available: result.uninstall_available && active.handshake.capabilities.includes('uninstall'),
+      system: process.platform };
+  });
+  ipcMain.handle('uninstall', async (event, removeGame) => {
+    if (uninstalling || typeof removeGame !== 'boolean') return 'busy';
+    const active = settingsWorker(event, true);
+    if (!active.handshake.capabilities.includes('uninstall')) return 'unsupported';
+    uninstalling = true;
+    let status = 'failed';
+    try {
+      const response = await active.request('uninstall', { remove_game: removeGame });
+      if (['scheduled', 'busy', 'unsafe_game', 'unsupported'].includes(response?.status)) status = response.status;
+    } catch {}
+    log?.write('uninstall', `remove_game=${removeGame} result=${status}`);
+    if (status === 'scheduled') {
+      await active.close();
+      if (!window.isDestroyed()) window.close();
+    } else {
+      uninstalling = false;
+    }
+    return status;
+  });
+  ipcMain.on('uninstall-cancelled', event => {
+    if (event.sender === window.webContents) log?.write('uninstall', 'result=cancelled');
   });
   ipcMain.handle('settings-preference', async (event, key, value) => {
     const active = settingsWorker(event, true);

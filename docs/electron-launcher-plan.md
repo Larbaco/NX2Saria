@@ -53,7 +53,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
 - [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages. The Linux window test exercises keyboard Tab, Enter and Escape, a standard synthetic controller, ignored input without focus, direction, activation, return, scrolling and layout at the minimum window size and 140% zoom. The locale test covers all four languages at the minimum window width and 120% zoom, system fallback, selection and persistence, rollback after a failed write and a translated native dialog title. The Node test checks the labels and formatting fields. Game Mode on a device and language review by the owner remain open.
 - [ ] CLI, locks and diagnostics: retain existing supported command-line use, concurrent-job rules, crash/interruption reporting and log privacy; explicitly evaluate how the new UI shares these resources.
-- [ ] Uninstall: existing choices for retaining or removing the built game and preservation of unrelated installations.
+- [ ] Uninstall: existing choices for retaining or removing the built game and preservation of unrelated installations. Settings now opens the confirmation with Remove off. Scratch worker tests cover both platform helpers, protected data and busy/unsafe refusals. The Linux window tests Escape, reset of the removal choice, the default Keep operation and the log. Record hosted evidence and verify cancellation in the private package. Provisioned shell removal stays with migration.
 
 ## Validation and known limits
 
@@ -607,8 +607,8 @@ worker keeps the window open and tells the player what to close or wait for.
 Use the current platform uninstall plan and deferred removal helper. Preserve
 the original dump, the game directory when selected to keep and unrelated
 installations, shortcuts and files. On Windows, exclude an owned deletion
-candidate if it encloses a protected path, and refuse unsafe game-folder
-removal targets. A confirmed request schedules the operation before Electron
+candidate if it encloses a protected path. Refuse a game-folder removal target
+that also contains the original dump, a system root, or another launcher. A confirmed request schedules the operation before Electron
 closes. Log the selection and result without paths in Electron. Keep the
 existing uninstall diagnostic in the worker log. Standalone private shells
 remain outside the install tree. Removal of the eventual provisioned shell

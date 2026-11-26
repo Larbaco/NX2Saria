@@ -526,10 +526,43 @@ def uninstall_script(gone, empty):
     return ' & '.join(steps)
 
 
-def uninstall(layout, remove_game='', log=print, keep=()):
+def contains_path(parent, path):
+    parent, path = Path(parent), Path(path)
+    try:
+        return (path.absolute().is_relative_to(parent.absolute())
+                or path.resolve().is_relative_to(parent.resolve()))
+    except (OSError, RuntimeError, ValueError):
+        return True
+
+
+def uninstall_available(layout):
+    if layout.dev:
+        return False
+    if os.name == 'nt':
+        return layout.stub.is_file()
+    from .platform import linux
+    return linux.appimage_install(layout.root)
+
+
+def unsafe_uninstall_game(layout, game):
+    path = Path(game)
+    try:
+        return (not path.is_absolute() or contains_path(path, layout.root) or contains_path(path, Path.home())
+                or path.resolve().is_mount()
+                or any((path / name).is_file() for name in ('NX2Saria.exe', 'NX2navi.exe', 'nx2saria-launcher')))
+    except (OSError, RuntimeError, ValueError):
+        return True
+
+
+def uninstall(layout, remove_game='', log=print, keep=(), *, protect_windows_paths=False):
     stub_run(layout, ['--shortcuts', 'off'])
     gone, empty = uninstall_plan(layout, remove_game)
     if os.name == 'nt':
+        if protect_windows_paths:
+            protected = [path for path in keep if path]
+            kept = [candidate for candidate in gone if any(contains_path(candidate, path) for path in protected)]
+            gone = [candidate for candidate in gone if candidate not in kept]
+            log(f'uninstall: kept {len(kept)} paths holding protected files')
         try:
             import winreg
             for key in (UNINSTALL_KEY, r'Software\Microsoft\Windows\CurrentVersion\Uninstall\NX2navi'):
