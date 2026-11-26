@@ -5954,7 +5954,12 @@ in every language. The locale window test checks the four languages at 720
 pixels and 120% zoom, reports a failed write without changing the selection,
 checks the native dialog title, and reopens the window with the saved choice.
 The same window cancels the installation picker and checks that the settings
-panel, selected root and worker all survive the cancellation.
+panel, selected root and worker all survive the cancellation. The reopened
+window passes an explicit root with the default location unused. The
+discovery tests check explicit and default precedence, stale candidates
+and a busy registry candidate. The Windows runner creates a unique
+scratch current-user registry key, runs the same read command with only
+that subkey substituted, checks a Unicode location and removes the key.
 
 The appearance test reads a nondefault theme and an old dimming value, compares
 the shared palette, changes the custom colors and verifies that invalid choices

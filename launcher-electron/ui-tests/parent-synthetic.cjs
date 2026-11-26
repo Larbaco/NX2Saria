@@ -120,7 +120,7 @@ async function main() {
     const electronLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
     const refusal = electronLog.match(/electron: window second_instance_refused instance=(\d+)/);
     assert.ok(refusal);
-    assert.ok(electronLog.includes(`electron: inspection result=worker_busy instance=${refusal[1]}`));
+    assert.ok(electronLog.includes(`electron: inspection result=worker_busy source=default instance=${refusal[1]}`));
     assert.ok(electronLog.includes(`electron: exit code=0 play_active=false instance=${refusal[1]}`));
     await fs.writeFile(path.join(game, 'finish-game'), '');
     await waitFor(async () => (await readLog()).includes('worker: game ended'), 'worker did not record game end');

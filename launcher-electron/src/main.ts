@@ -10,7 +10,7 @@ import { parseCrashOffer, parseReportsView, readReportPreview, readWorkerBytes }
 import { parseInspection, type Inspection } from './inspection';
 import { openWorker, WorkerRequestError, type WorkerClient } from './worker-client';
 import { parsePlayResult, type PlayResult } from './worker-protocol';
-import { defaultRoots, findDefaultRoot } from './discovery';
+import { defaultRoots, discoverRoot, explicitLauncherRoot, findDefaultRoot, registeredWindowsRoots, type DiscoverySource } from './discovery';
 import { InstallationRuntimeError, runtimePaths } from './runtime-paths';
 import { createDevelopmentLog, type DevelopmentLog } from './dev-log';
 
@@ -113,7 +113,7 @@ app.whenReady().then(() => {
     } catch { answer = { dialog_error: true }; }
     return parsePlayResult(await active.request('memory_response', { attempt: result.attempt, ...answer }));
   }
-  async function selectRoot(root: string, origin: 'default' | 'manual'): Promise<Inspection> {
+  async function selectRoot(root: string, origin: DiscoverySource | 'manual'): Promise<Inspection> {
     const previous = worker;
     worker = null;
     state = null;
@@ -129,7 +129,7 @@ app.whenReady().then(() => {
       const installedVersion = /^v?\d+(?:\.\d+)+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(version) && version.length <= 40
         ? version : 'unknown';
       log?.write('root', `picked origin=${origin} brand=${brand} installed_version=${installedVersion}`);
-      log?.write('inspection', outcome);
+      log?.write('inspection', `${outcome} source=${origin === 'manual' ? 'picked' : origin}`);
       return result;
     }
     try {
@@ -234,14 +234,26 @@ app.whenReady().then(() => {
   }
   ipcMain.handle('discover-installation', async event => {
     if (event.sender !== window.webContents || playing) throw new Error('Unavailable');
-    const root = findDefaultRoot(defaultRoots(process.platform, app.getPath('home'), process.env));
-    return root ? selectRoot(root, 'default') : null;
+    return discoverRoot({
+      explicitRoot: explicitLauncherRoot(process.argv.slice(app.isPackaged ? 1 : 2), process.platform),
+      defaultRoot: () => findDefaultRoot(defaultRoots(process.platform, app.getPath('home'), process.env)),
+      registryRoots: async () => {
+        if (process.platform !== 'win32' || !app.isPackaged) return [];
+        return (await registeredWindowsRoots(process.env.SystemRoot)).filter(root => {
+          try {
+            runtimePaths(true, process.resourcesPath, __dirname, process.env, process.platform, root);
+            return true;
+          } catch { return false; }
+        });
+      },
+      inspect: selectRoot,
+    });
   });
   ipcMain.handle('select-installation', async event => {
     if (event.sender !== window.webContents || playing) throw new Error('Unavailable');
     const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: tr("Selecionar pasta do launcher NX2Saria") });
     if (!chosen.canceled && chosen.filePaths[0]) return selectRoot(chosen.filePaths[0], 'manual');
-    log?.write('inspection', 'selection_cancelled');
+    log?.write('inspection', 'selection_cancelled source=picked');
     return null;
   });
   ipcMain.handle('install-destination', async (event, pick) => {

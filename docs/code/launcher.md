@@ -2833,6 +2833,13 @@ many paths it removed once the worker closed.
 clears its state only after confirming a new root. The renderer keeps its
 existing installation and panels while the native picker is open. Cancel
 writes a selection outcome to the existing log and keeps the worker and lock.
+`launcher-electron/src/discovery.ts` checks an explicit absolute root before
+either search. `discoverRoot()` checks the normal paths before the Windows
+registry fallback. `registeredWindowsRoots()` reads the Setup's two
+`InstallLocation` values through Windows PowerShell as UTF-8. The query is
+fixed, read-only and bounded. Before the worker opens a registry candidate,
+the Electron main process checks its active app and installed Python.
+The inspection log identifies the source without recording a path.
 
 ### Electron interface language
 

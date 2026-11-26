@@ -262,6 +262,10 @@ function updateControls() {
 function showResult(result: Result | null) {
   if (!result) { statusElement.textContent = tr("Nenhuma instalação selecionada"); detail.textContent = tr("Use o instalador atual do NX2Saria para uma primeira instalação ou selecione a pasta de uma instalação existente."); return; }
   statusElement.textContent = tr(messages[result.status] || "Estado desconhecido");
+  if (result.reason === 'invalid_root_argument') {
+    detail.textContent = tr('O argumento --launcher-root precisa indicar o caminho absoluto da instalação.');
+    return;
+  }
   if (result.reason === 'worker_busy') { detail.textContent = tr("Outra instância está usando a instalação. Se o jogo ainda estiver aberto, aguarde ele terminar."); return; }
   if (result.reason === 'installation_required') { detail.textContent = tr("Use o instalador atual do NX2Saria e selecione a pasta da instalação."); return; }
   if (result.reason === 'runtime_incompatible') { detail.textContent = tr("Atualize ou repare esta instalação pelo launcher atual do NX2Saria e tente novamente."); return; }

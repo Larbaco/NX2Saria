@@ -310,6 +310,7 @@ const catalogue: ReadonlyArray<readonly [string, string, string, string]> = [
   ["O acesso ao dispositivo ainda está bloqueado. Saia da sessão e entre novamente.", "Device access is still blocked. Sign out and sign back in.", "Доступ к устройству по-прежнему заблокирован. Выйдите из сеанса и войдите снова.", "设备访问仍受限制。请退出登录并重新登录。"],
   ["O limite do udmabuf ainda está abaixo de 1024 MB. Confira o log do launcher.", "The udmabuf limit is still below 1024 MB. Check the launcher log.", "Лимит udmabuf всё ещё ниже 1024 МБ. Проверьте журнал лаунчера.", "udmabuf 的上限仍低于 1024 MB。请查看启动器日志。"],
   ["Não foi possível alterar o udmabuf. Confira o log do launcher.", "Could not change udmabuf. Check the launcher log.", "Не удалось изменить udmabuf. Проверьте журнал лаунчера.", "无法更改 udmabuf。请查看启动器日志。"],
+  ["O argumento --launcher-root precisa indicar o caminho absoluto da instalação.", "The --launcher-root argument needs the absolute installation path.", "Для аргумента --launcher-root укажите абсолютный путь к установленному лаунчеру.", "--launcher-root 参数需要安装目录的绝对路径。"],
 ];
 
 export const messageTables: Record<Locale, Messages> = {

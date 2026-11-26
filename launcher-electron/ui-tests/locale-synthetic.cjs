@@ -21,8 +21,10 @@ async function main() {
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), '{"kit":"0.0.1","steps":{"compile":{}}}');
     await fs.writeFile(path.join(game, 'ocarina'), 'synthetic executable marker');
 
-    const launch = () => _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none',
+    const launch = (explicit = false) => _electron.launch({
+      args: ['--no-sandbox', '.', ...(explicit ? ['--launcher-root', root] : [])], cwd: path.resolve(__dirname, '..'),
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: explicit ? path.join(base, 'unused-default') : base,
+        NX2SARIA_TELEMETRY_URL: 'none',
         NX2SARIA_TEST_LOCALE: 'ru-RU', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', GSETTINGS_BACKEND: 'memory' } });
     app = await launch();
     const page = await app.firstWindow();
@@ -84,10 +86,12 @@ async function main() {
     assert.equal(await fs.readFile(settings, 'utf8'), initial);
     assert.equal(JSON.parse(await fs.readFile(preferences, 'utf8')).locale, 'pt-BR');
     await app.close();
-    app = await launch();
+    app = await launch(true);
     const reopened = await app.firstWindow();
     await reopened.locator('#status').getByText('Instalação encontrada', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await reopened.locator('html').getAttribute('lang'), 'pt-BR');
+    const electronLog = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
+    assert.match(electronLog, /inspection result=ready source=explicit/);
   } finally {
     if (app) await app.close().catch(() => {});
     await fs.rm(base, { recursive: true, force: true, maxRetries: 3 });
