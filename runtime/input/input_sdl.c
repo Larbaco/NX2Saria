@@ -2,12 +2,14 @@
 
 #include <SDL3/SDL.h>
 
+#include "cfg.h"
 #include "host.h"
 #include "input.h"
 #include "input_map.h"
 #include "input_sdl.h"
 #include "input_wsys.h"
 #include "platform/platform.h"
+#include "window_idle.h"
 
 static SDL_Window *win;
 static volatile uint8_t key_held[KEY_COUNT];
@@ -161,6 +163,29 @@ static void cursor_apply(void) {
     }
 }
 
+static CursorIdle cursor_idle;
+static int cursor_idle_hidden, cursor_idle_on;
+static unsigned cursor_idle_seen = ~0u;
+
+static void cursor_idle_apply(void) {
+    if (!win) return;
+    unsigned ver = cfg_version();
+    if (ver != cursor_idle_seen) cursor_idle_seen = ver, cursor_idle_on = cfg_bool("NX2SARIA_CURSOR_HIDE");
+    float x = 0, y = 0;
+    SDL_GetMouseState(&x, &y);
+    int hide = cursor_idle_step(&cursor_idle, cursor_idle_on, !captured && ptr_inside, x, y, plat_now_ns());
+    if (hide == cursor_idle_hidden) return;
+    if (!(hide ? SDL_HideCursor() : SDL_ShowCursor())) {
+        static int lines;
+        if (lines++ < 4) rt_log("input: cursor_hide: %s the cursor failed (%s)", hide ? "hiding" : "showing", SDL_GetError());
+        return;
+    }
+    cursor_idle_hidden = hide;
+    if (hide && cursor_idle.hides == 1)
+        rt_log("input: cursor_hide: the cursor hid after %.0f s still over the window (the first time this session; a "
+               "move shows it again)", CURSOR_IDLE_NS / 1e9);
+}
+
 void ikb_cursor_update(void) {
     plat_xchg32(&cur_pending, 1);
     if (wake_event) {
@@ -191,6 +216,7 @@ void input_sdl_window(SDL_Window *w) {
 
 void input_sdl_idle(void) {
     if (cur_pending) cursor_apply();
+    cursor_idle_apply();
 }
 
 void input_sdl_event(const SDL_Event *e) {
@@ -260,6 +286,7 @@ void input_sdl_event(const SDL_Event *e) {
         break;
     }
     cursor_apply();
+    cursor_idle_apply();
 }
 
 int ikb_foreground(void) { return focused != 0; }

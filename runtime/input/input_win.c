@@ -13,6 +13,8 @@
 #include "nvn_api.h"
 #include "ui/menu.h"
 #include "vk.h"
+#include "platform/platform.h"
+#include "window_idle.h"
 
 static int key_vk(int key) {
     if (key >= KEY_A && key <= KEY_Z) return 'A' + (key - KEY_A);
@@ -121,6 +123,29 @@ static void cursor_update(HWND h) {
 
 int input_cursor_released(void) { return (cur_rel & CUR_REL) != 0; }
 
+enum { CURSOR_IDLE_TIMER = 0x4e32, CURSOR_IDLE_TICK_MS = 200 };
+static CursorIdle cursor_idle;
+static int cursor_idle_hidden, cursor_idle_on;
+static unsigned cursor_idle_seen = ~0u;
+
+static void cursor_idle_check(HWND h) {
+    unsigned ver = cfg_version();
+    if (ver != cursor_idle_seen) cursor_idle_seen = ver, cursor_idle_on = cfg_bool("NX2SARIA_CURSOR_HIDE");
+    POINT p = {0, 0};
+    RECT r;
+    int over = 0;
+    if (!cur_captured && GetCursorPos(&p) && WindowFromPoint(p) == h && ScreenToClient(h, &p) && GetClientRect(h, &r))
+        over = p.x >= r.left && p.y >= r.top && p.x < r.right && p.y < r.bottom;
+    int hide = cursor_idle_step(&cursor_idle, cursor_idle_on, over, (float)p.x, (float)p.y, plat_now_ns());
+    if (hide == cursor_idle_hidden) return;
+    cursor_idle_hidden = hide;
+    if (!hide) return;
+    SetCursor(NULL);
+    if (cursor_idle.hides == 1)
+        rt_log("input: cursor_hide: the cursor hid after %.0f s still over the window (the first time this session; a "
+               "move shows it again)", CURSOR_IDLE_NS / 1e9);
+}
+
 void input_cursor_suspend(int on) {
     InterlockedExchange(&cur_suspend, on != 0);
     cursor_update(gfx_window_handle());
@@ -131,6 +156,8 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
     case WM_CREATE: {
         RAWINPUTDEVICE rid = {.usUsagePage = 1, .usUsage = 2, .dwFlags = 0, .hwndTarget = h};
         if (!RegisterRawInputDevices(&rid, 1, sizeof rid)) rt_log("input: raw mouse registration failed (%lu)", GetLastError());
+        if (!SetTimer(h, CURSOR_IDLE_TIMER, CURSOR_IDLE_TICK_MS, NULL))
+            rt_log("input: cursor_hide: no timer (%lu), the cursor stays shown", GetLastError());
         break;
     }
     case WM_INPUT: {
@@ -148,8 +175,14 @@ int input_window_msg(HWND h, UINT m, WPARAM w, LPARAM l, LRESULT *res) {
         break;
     }
     case WM_SETCURSOR:
-        if (cur_captured && LOWORD(l) == HTCLIENT) { SetCursor(NULL); *res = TRUE; return 1; }
+        if (HIWORD(l) == WM_MOUSEMOVE) cursor_idle_check(h);
+        if ((cur_captured || cursor_idle_hidden) && LOWORD(l) == HTCLIENT) { SetCursor(NULL); *res = TRUE; return 1; }
         break;
+    case WM_TIMER:
+        if (w != CURSOR_IDLE_TIMER) break;
+        cursor_idle_check(h);
+        *res = 0;
+        return 1;
     case WM_MOUSEWHEEL:
         InterlockedAdd(&wheel_delta, GET_WHEEL_DELTA_WPARAM(w));
         break;

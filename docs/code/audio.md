@@ -76,6 +76,15 @@ Types:
 `NX2SARIA_VOLUME`: the player's volume in percent (0 to 100) on top of the game's own; a live setting (the menu),
 parsed again when `cfg_version` changes. Render thread only.
 
+### `background_gain()`, `audio_window_focus()`
+
+`background_mute` (`NX2SARIA_BACKGROUND_MUTE`, off by default): the game's mix at the device sink is multiplied by 0
+while the window does not have the focus (`runtime/input/window_idle.c` `focus_mute_step()`), and by 1 when it has it.
+`runtime/gfx/gfx_present.c` `gfx_window_focus_changed()` tells `audio_window_focus()` of each change, on both platforms;
+the render thread reads it at each pass, so the sound stops within one pass and comes back the same way. The state is
+per render thread (`_Thread_local`), the line `audio: background_mute: the window lost the focus ...` once per session.
+The menu's own sounds are not muted: they play when the menu, which needs the focus, is used.
+
 ### `guest_range_ok()`
 
 A guest range that `runtime/hle/ipc.c` `ipc_guest()` takes (it ends the process on any other): not 0, not wrapping,

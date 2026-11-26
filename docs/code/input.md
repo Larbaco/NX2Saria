@@ -287,6 +287,11 @@ The default scale is 0.51 rather than 0.5: a keyboard sample is 32767, and 32767
 `stick_bits()`' `STICK_DIR` (16384), which would leave the game's stick-direction bits clear while the walk key is held.
 The value in the settings table carries that default; this code only rejects what the table's range does not allow.
 
+### `window_idle_log()`
+
+From the poll, whether the window has focus or not: one line `input: cursor_hide = 1 (...), background_mute = 0 (...)`
+at start, and again when either changes.
+
 ### `input_mouse_turned()`, `mouse_turn_log()`
 
 `input_mouse_turned()`: the mouse's counts with `NX2SARIA_MOUSE_INVERT_X`, `NX2SARIA_MOUSE_INVERT_Y` and
@@ -296,7 +301,8 @@ selectors (the wheel and the quick lists) and the menus' pointer take the counts
 a wheel the wrong way round. An input recording (`input_record`) keeps the counts as they are too, and a replay goes
 through the same settings.
 
-`mouse_turn_log()`: from the poll, one line `input: mouse camera: mouse_invert_x = ..., mouse_invert_y = ...,
+`mouse_turn_log()`: from the poll (with `window_idle_log()`, before the keyboard's part, so also without the focus), one
+line `input: mouse camera: mouse_invert_x = ..., mouse_invert_y = ...,
 mouse_sens_y = ...` when the three differ from the defaults at start, and again when they change while the game runs.
 With the defaults nothing is said.
 
@@ -758,6 +764,18 @@ is fully handled.
 - `WM_SYSCOMMAND`: Alt pressed alone would enter the window menu loop, which stalls the game: Alt is a game key.
 - `WM_KEYDOWN`: Esc is unbound in the game layout: it releases the cursor and opens the menu (`menu_window_msg()`).
 - `WM_LBUTTONDOWN` and the others: client area only; `poll_merged()` drops the click that captures.
+- `WM_CREATE` also starts `CURSOR_IDLE_TIMER`, every `CURSOR_IDLE_TICK_MS` (200 ms), whose `WM_TIMER` runs
+  `cursor_idle_check()`. `WM_SETCURSOR` for a mouse move runs it first, so a move shows the cursor in that message;
+  over the client area the cursor is `NULL` while captured or while the idle check hid it, and the class cursor
+  (`DefWindowProc`) otherwise.
+
+### `cursor_idle_check()`
+
+`cursor_hide` (`NX2SARIA_CURSOR_HIDE`, read again when `cfg_version` changes) on Windows: the cursor over the client
+area, not captured, still for `CURSOR_IDLE_NS` (`runtime/input/window_idle.c` `cursor_idle_step()`) is hidden with
+`SetCursor(NULL)`. Windows sends `WM_SETCURSOR` only when the mouse moves, so the timer looks at it while it is still.
+Over the window means `WindowFromPoint()` is this window and the point is inside the client rectangle: a window on top or
+the title bar keeps the cursor. The first hide of the session is logged.
 - `WM_MOUSEACTIVATE` comes before `WM_ACTIVATEAPP`: a title bar or border click must not capture.
 - `WM_ACTIVATEAPP`: Alt+Tab back in captures again.
 
@@ -820,6 +838,15 @@ use, 0 for none.
 ### `input_key_char()`
 
 A keycode with the `SDLK_SCANCODE_MASK` bit names no character.
+
+### `cursor_idle_apply()`
+
+`cursor_hide` on SDL, on the window thread after every event and every idle wake of the window loop (100 ms without an
+event, `runtime/gfx/gfx_window_sdl.c` `window_main()`): the pointer outside relative mode, over the window
+(`ptr_inside`) and at the same place (`SDL_GetMouseState()`) for `CURSOR_IDLE_NS` hides with `SDL_HideCursor()`, and a
+move shows it with `SDL_ShowCursor()`. The relative mode hides the cursor itself: while captured the step says shown,
+so the cursor SDL brings back at the release is not left hidden. A failed call is logged (4 times at most) and tried at
+the next event; the first hide of the session is logged.
 
 ### `pointer_at()`, `pointer_read()`, `cursor_apply()`
 
@@ -1524,6 +1551,30 @@ ambiguity.
 ### `motion_owner_present()`
 
 On by default, so the summary line comes every 7200 presents: every minute or two, not every two seconds.
+
+## `runtime/input/window_idle.c`
+
+The two window settings that act on their own, as functions of the state and the time given to them, so
+`tests/window_idle_check.c` drives them with made-up times. The callers read the settings, the pointer and the clock.
+
+### `cursor_idle_step()`
+
+`cursor_hide`: 1 when the cursor should be hidden. It hides once the pointer has been over the window, not captured
+(`over`), at the same place for `CURSOR_IDLE_NS` (3 s), and shows at once when it moves, leaves the window, is captured
+or the setting is off; coming back over the window starts the 3 s again. `hides` counts the hides, for the first-time
+log line. The callers: `runtime/input/input_sdl.c` `cursor_idle_apply()`, `runtime/input/input_win.c`
+`cursor_idle_check()`.
+
+On by default: the cursor shows only while it is released (Esc, the settings menu, the game's menus with the mouse in
+use, the focus elsewhere), and in each of these a still pointer has nothing to show. Hiding it changes neither where it
+is nor what it clicks: the game's menus read the position (`ikb_pointer()`) and keep the button under it selected, and
+the settings menu takes clicks where the hidden pointer is. A move shows it before anything else reads it, and while
+the mouse camera has it (captured) the capture's own hiding applies, so the two never fight.
+
+### `focus_mute_step()`
+
+`background_mute`: 1 (silent) while the setting is on and the window does not have the focus; `mutes` counts the times
+it went silent. Called by `runtime/audio/audio_mixer.c` `background_gain()`.
 
 ## `runtime/input/mouse_direct.c`
 

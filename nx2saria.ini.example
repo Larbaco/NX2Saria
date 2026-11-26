@@ -1059,6 +1059,9 @@
 # audio_strict = 0
 # Volume in percent (0 to 100), on top of the game's own. Changes while the game runs take effect at once.
 # volume = 100
+# 1: the game is silent while its window does not have the focus (another program in front), and the sound comes back
+# with the focus. Default 0. No menu row; changes while the game runs take effect at once.
+# background_mute = 0
 # Speakers: stereo, 5.1 or auto (5.1 when the Windows speaker setup has six or more channels, stereo otherwise). The
 # game is told the same channel count and mixes for it. A change while the game runs takes effect at once: the game is
 # told its output device changed, as on a console, and mixes for the new count.
@@ -1159,6 +1162,10 @@
 # right click is B, the wheel scrolls. Only while the mouse or a key was used last; a gamepad sees the menus unchanged.
 # 0 turns it off. The Controls tab changes this while the game runs.
 # menu_cursor = 1
+# 1 (default): while the cursor shows over the window (released, in the game's menus or the settings menu), it hides
+# after 3 seconds without moving and shows again on the next move. A hidden cursor still clicks where it is. 0 keeps it
+# shown. No menu row; changes while the game runs take effect at once.
+# cursor_hide = 1
 # The keyboard's sticks are all or nothing, so the game only sees a full tilt from them; while this key is held the
 # keyboard-driven stick values shrink and the keyboard can walk instead of run. Key names as in the bind_ lines below,
 # none turns it off. 0.2 to 0.9, the default holds for anything else. Only the keyboard is scaled: the mouse camera and

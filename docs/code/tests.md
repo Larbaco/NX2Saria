@@ -201,6 +201,8 @@ Builds and runs `tests/audio_mixer_check.c`: `runtime/audio/audio_mixer.c` with 
 game files and no audio device: the mixer runs as with `NX2SARIA_AUDIO=none`, the device's requests are made by hand,
 and SDL3 is only linked. It is compiled for the default build's target (x86-64-v3: AVX2 and FMA), so the mixing loops
 are compiled as they ship.
+`runtime/input/window_idle.c` is built in with it (`background_gain()` calls it); `background_mute` reads 0 there, as
+in `tests/audio_params_check.c`.
 
 The renderer of the test has the final mix (4 buffers, the mixer's buffers 0-3), one submix (2 buffers, 4-5) that goes
 nowhere, three voices and one splitter with one destination. Each voice plays a wave buffer of one constant sample
@@ -5894,6 +5896,15 @@ kept. A zstd dictionary is made with a given id, its content and samples taken f
 ## `tests/widescreen_math_check.py`
 
 Compiles and runs the aspect, scene, heap and Vert+ formulas without game data.
+
+## `tests/window_idle_check.c`
+
+`runtime/input/window_idle.c` on made-up times, built and run by `tests/window_idle_check.py`. The cursor: shown at the
+first look, still shown at 2.999 s, hidden at 3 s and counted once however long it stays; a move shows it at once and
+the 3 s start from the move. Off the window it never hides, and coming back starts the 3 s again; captured or gone it
+shows; `cursor_hide = 0` never hides, and switching it off while hidden shows it at once. The sound: muted when the
+focus goes, once per loss, back with the focus; `background_mute = 0` never mutes, and switching it off while unfocused
+gives the sound back.
 
 ## `tests/worktree_test.py`
 

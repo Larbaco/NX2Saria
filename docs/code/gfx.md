@@ -1315,7 +1315,8 @@ window starts the game again. `g_start_lock` guards `gfx_window_start()` and the
 
 ### `gfx_window_focus_changed()`
 
-The window gained or lost the focus: the game hears it as `nn::oe`'s focus state and a notification message
+The window gained or lost the focus: the mixer hears it (`runtime/audio/audio_mixer.c` `audio_window_focus()`, for
+`background_mute`), and the game hears it as `nn::oe`'s focus state and a notification message
 (`oe_set_focus` is pinned to 1 by `NX2SARIA_ASSUME_FOCUS` inside). The line carries the local wall time with its date,
 the first in the log: when a GPU hang takes the whole system down, the log ends without an error, and this time set
 against the driver's entry in the Windows event log (nvlddmkm 153, Display 4101) tells whether an alt-tab or an overlay

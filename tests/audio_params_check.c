@@ -1,5 +1,6 @@
 #include "../runtime/hle/audren.c"
 #include "../runtime/audio/audio_mixer.c"
+#include "../runtime/input/window_idle.c"
 
 #include <stdarg.h>
 
@@ -74,6 +75,7 @@ const char *cfg_value(const char *name) { return !strcmp(setting(name), "AUDIO_C
 int cfg_bool(const char *name) {
     if (!strcmp(setting(name), "AUDIO_RAMP") || !strcmp(setting(name), "AUDIO_CATCHUP")) return 1;
     if (!strcmp(setting(name), "AUDIO_STRICT")) return strict_setting;
+    if (!strcmp(setting(name), "BACKGROUND_MUTE")) return 0;
     printf("unexpected setting %s\n", name);
     exit(3);
 }

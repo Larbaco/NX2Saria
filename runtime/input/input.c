@@ -332,6 +332,21 @@ static void mouse_turn_log(void) {
            "%.2f times the horizontal; the default is 0, 0, 1)", ix, iy, one[1], one[1]);
 }
 
+static unsigned window_idle_seen = ~0u;
+static int window_idle_logged[2] = {-1, -1};
+
+static void window_idle_log(void) {
+    unsigned ver = cfg_version();
+    if (ver == window_idle_seen) return;
+    window_idle_seen = ver;
+    int hide = cfg_bool("NX2SARIA_CURSOR_HIDE"), mute = cfg_bool("NX2SARIA_BACKGROUND_MUTE");
+    if (hide == window_idle_logged[0] && mute == window_idle_logged[1]) return;
+    window_idle_logged[0] = hide, window_idle_logged[1] = mute;
+    rt_log("input: cursor_hide = %d (%s), background_mute = %d (%s)", hide,
+           hide ? "the cursor hides after 3 s still over the window" : "the cursor stays shown", mute,
+           mute ? "the game is silent while the window has no focus" : "the sound plays without the focus");
+}
+
 static int walk_key = KEY_NONE;
 static float walk_scale = 0.51f;
 static unsigned walk_seen = ~0u;
@@ -1238,6 +1253,8 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
     if (!state) start();
     if (state > 0) {
         binds_refresh();
+        mouse_turn_log();
+        window_idle_log();
         if (state == 1) pad_read(&b, sl, sr);
         int pad_used = b || abs(sl[0]) > PAD_USED || abs(sl[1]) > PAD_USED || abs(sr[0]) > PAD_USED ||
                        abs(sr[1]) > PAD_USED, kbm_used = 0;
@@ -1265,7 +1282,6 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
             b |= input_map_buttons(down);
             int32_t k[2];
             walk_get();
-            mouse_turn_log();
             int walk = walk_key != KEY_NONE && down[walk_key];
             input_map_stick(down, 0, k);
             if (walk) k[0] = (int32_t)(k[0] * walk_scale), k[1] = (int32_t)(k[1] * walk_scale);
