@@ -224,8 +224,14 @@ app.whenReady().then(() => {
     if (worker !== active || playing) throw new Error('Unavailable');
     const result = await active.request('install_destination', options);
     if (worker !== active || typeof result?.folder !== 'string' || !path.isAbsolute(result.folder) ||
-        !['default', 'saved', 'selected'].includes(result.source)) throw new Error('Unavailable');
-    return result.folder;
+        !['default', 'saved', 'selected'].includes(result.source) ||
+        !Number.isSafeInteger(result.available_gb) || result.available_gb < 0 ||
+        !Number.isSafeInteger(result.required_gb) || result.required_gb <= 0 ||
+        typeof result.complete_image !== 'boolean' || typeof result.path_too_long !== 'boolean') {
+      throw new Error('Unavailable');
+    }
+    return { folder: result.folder, available: result.available_gb, required: result.required_gb,
+      completeImage: result.complete_image, pathTooLong: result.path_too_long };
   });
   ipcMain.handle('install-dump', async (event, pick) => {
     if (event.sender !== window.webContents || !worker || playing || typeof pick !== 'boolean' ||

@@ -77,6 +77,7 @@ async function main() {
     await pick.waitFor({ timeout: 10000 });
     await location.getByText(path.join(root, 'game'), { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await install.isDisabled({ timeout: 5000 }), true);
+    await page.getByText('100 GB disponíveis. A instalação precisa de cerca de 34 GB.', { exact: true }).waitFor();
     await page.getByText('Procurando o dump do jogo…').waitFor({ timeout: 5000 });
 
     await app.evaluate(({ dialog }, selected) => {

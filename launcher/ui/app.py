@@ -19,7 +19,7 @@ from ..context import Context, shorten
 from ..game_session import (ASKED_SIGNALS, EXIT_CODES, FATAL_CODES, FATAL_SHOWN, GameEnd, GameRun, LOG_CUT_LINE,
                             LOG_WHERE, OWN_EXIT_LINES, exit_code_text, game_end, log_has_own_exit, log_is_new, note_exit_in_log,
                             shown_fatal, shown_path)
-from ..paths import drop_partial_image, free_gb, install_folder, long_path_problem, partial_image_gb
+from ..paths import INSTALL_SPACE_GB, drop_partial_image, free_gb, install_folder, long_path_problem, partial_image_gb
 from ..platform import game_executable
 from . import art, picture, sound
 
@@ -869,7 +869,7 @@ class App:
                          + (', nor on the drives mounted under /mnt and /media' if sys.platform.startswith('linux')
                             else '') + '.',)
         gd = self.game_dir()
-        need = 34
+        need = INSTALL_SPACE_GB
         free = free_gb(gd) + partial_image_gb(gd)
         folder_desc = (f'The game is built into this folder. {free:.0f} GB free on {drive_of(gd)}; the game needs '
                        f'about {need} GB. Select this row to choose another folder.',)
@@ -977,8 +977,8 @@ class App:
             self.render()
             return
         drop_partial_image(gd)
-        if free_gb(gd) < 34 and not (Path(gd) / 'romfs' / 'romfs.bin').is_file():
-            self.message = f'{drive_of(gd)} has {free_gb(gd):.0f} GB free; the game needs about 34 GB.'
+        if free_gb(gd) < INSTALL_SPACE_GB and not (Path(gd) / 'romfs' / 'romfs.bin').is_file():
+            self.message = f'{drive_of(gd)} has {free_gb(gd):.0f} GB free; the game needs about {INSTALL_SPACE_GB} GB.'
             self.render()
             return
         self.settings['game_dir'] = gd

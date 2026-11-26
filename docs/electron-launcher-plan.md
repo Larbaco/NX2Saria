@@ -104,6 +104,14 @@ search. A manual choice made before the search finishes takes precedence. Search
 do not save settings until Begin Installation. The worker logs one end state with counts and time,
 without file names. The worker test uses isolated search directories and verifies newest-first order, responsive inspection, manual precedence and an unchanged settings file. The Linux window test shows that the search continues while the folder picker is in use and that the result becomes a proposal.
 
+The first-run screen shows free disk space next to the proposed folder and explains the space requirement
+before confirmation. Use the same measurement as the worker's confirmation, including resumable
+partial ROMFS space and the exception for an already complete image. Warn about the current
+Windows path limit before a build. Folder inspection only reads; the confirmation still rechecks
+disk space and the path. The worker logs numbers and flags without the path. The Linux window test
+checks the displayed space and requirement. The worker fixture covers a complete image and exercises
+the long-path distinction on Windows.
+
 Provisioning Python plus the active app on a machine without a launcher remains a later slice.
 
 ## Provisioning and handover design

@@ -22,6 +22,7 @@ def ansi_safe(path):
 
 WINDOWS_PATH_MAX = 259
 LONGEST_IN_GAME = 128
+INSTALL_SPACE_GB = 34
 
 
 def long_path_problem(game_dir):

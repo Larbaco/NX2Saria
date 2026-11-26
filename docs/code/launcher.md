@@ -1508,7 +1508,7 @@ Measures space on the nearest existing parent for game folders yet to be created
 so that space is the install's to use: the first-run screen counts it as free. `drop_partial_image()` removes that
 file, so that it does not count against the free space an install asks for.
 
-The Tk launcher and the worker share these helpers.
+The Tk launcher and the worker share these helpers and the `INSTALL_SPACE_GB` threshold.
 
 ## `launcher/platform/__init__.py`
 
@@ -3598,7 +3598,9 @@ and requires a held lock. It acknowledges the change after the settings write su
 `install_destination()` offers a proposed game folder for an unconfigured or unavailable game. The worker
 uses the saved path if present and otherwise asks `Layout.default_game_dir()`. A picker result must be an
 absolute existing directory and uses the shared `install_folder()` policy. The worker refuses the proposal
-during a Play, memory decision or job, and reports only the proposal's source or rejection in the log.
+during a Play, memory decision or job. The log records the source or rejection, without the folder path.
+`install_space()` supplies free space including the partial image, the 34 GB threshold, and flags for
+a complete image and the Windows path limit. The same values are exposed to the first-run screen.
 
 `install_dump()` checks a picker result or saved choice with `launcher/gamefiles.py` `is_game_nup()`.
 The check recognizes the game's title in the container metadata. The build still validates the

@@ -129,16 +129,23 @@ def action_log(ctx, counts, action, detail):
         ctx.log(f'worker: {action} further events suppressed')
 
 
+def install_space(folder):
+    complete = (Path(folder) / 'romfs' / 'romfs.bin').is_file()
+    available = paths.free_gb(folder) + paths.partial_image_gb(folder)
+    return {'available_gb': int(available), 'required_gb': paths.INSTALL_SPACE_GB,
+            'complete_image': complete, 'path_too_long': bool(paths.long_path_problem(folder))}
+
+
 def install_destination(ctx, request):
-    if 'folder' not in request:
+    if 'folder' in request:
+        folder = request['folder']
+        if not isinstance(folder, str) or '\0' in folder or not Path(folder).is_absolute() or not Path(folder).is_dir():
+            return None
+        folder, source = str(install_folder(folder)), 'selected'
+    else:
         saved = ctx.settings.get('game_dir')
-        if saved:
-            return {'folder': saved, 'source': 'saved'}
-        return {'folder': str(ctx.layout.default_game_dir()), 'source': 'default'}
-    folder = request['folder']
-    if not isinstance(folder, str) or '\0' in folder or not Path(folder).is_absolute() or not Path(folder).is_dir():
-        return None
-    return {'folder': str(install_folder(folder)), 'source': 'selected'}
+        folder, source = (saved, 'saved') if saved else (str(ctx.layout.default_game_dir()), 'default')
+    return {'folder': folder, 'source': source, **install_space(folder)}
 
 
 def install_dump(ctx, request):
@@ -177,18 +184,19 @@ def prepare_install(ctx, choices):
     destination = Path(folder)
     if not destination.is_absolute() or (destination.exists() and not destination.is_dir()):
         return 'invalid_destination'
-    if paths.long_path_problem(folder):
+    space = install_space(folder)
+    if space['path_too_long']:
         return 'path_too_long'
     saved = ctx.settings.get('game_dir')
     if build.installed(folder) or (saved and saved != folder and build.installed(saved)):
         return 'already_installed'
     if saves.game_running(folder) or (saved and saved != folder and saves.game_running(saved)):
         return 'game_running'
-    complete_image = (destination / 'romfs' / 'romfs.bin').is_file()
-    if not complete_image and paths.free_gb(folder) + paths.partial_image_gb(folder) < 34:
+    complete_image = space['complete_image']
+    if not complete_image and space['available_gb'] < paths.INSTALL_SPACE_GB:
         return 'need_space'
     paths.drop_partial_image(folder)
-    if not complete_image and paths.free_gb(folder) < 34:
+    if not complete_image and paths.free_gb(folder) < paths.INSTALL_SPACE_GB:
         return 'need_space'
     return 'ready'
 
@@ -540,7 +548,11 @@ def main(argv=None):
                     proposal = None
                 if proposal:
                     install_choices[subject] = proposal['file' if choosing_dump else 'folder']
-                    action_log(ctx, counts, 'install', f'{subject} {proposal["source"]}')
+                    detail = f'{subject} {proposal["source"]}'
+                    if not choosing_dump:
+                        detail += (f' available_gb={proposal["available_gb"]} required_gb={proposal["required_gb"]}'
+                                   f' complete_image={proposal["complete_image"]} path_too_long={proposal["path_too_long"]}')
+                    action_log(ctx, counts, 'install', detail)
                     emit({'id': request['id'], 'result': proposal})
                 else:
                     action_log(ctx, counts, 'install', f'{subject} rejected')

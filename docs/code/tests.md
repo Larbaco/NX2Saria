@@ -5885,7 +5885,8 @@ lock, emits no intermediate end and reports the second copy's exit code under th
 Linux compiles only this stand-in. Windows accepts the compiled fixture through `NX2_TEST_RESTART_GAME`.
 
 The first-run destination test checks the default, normalizes a selected nonempty folder and refuses a
-relative path without modifying settings or the chosen directory. `launcher-electron/ui-tests/first-run-synthetic.cjs`
+relative path without modifying settings or the chosen directory. It also checks the disk-space metadata,
+recognizes a completed image and exercises the Windows path-length distinction. `launcher-electron/ui-tests/first-run-synthetic.cjs`
 also checks the native dialog boundary, the displayed proposal and cancellation.
 The dump test uses `tests/fixtures/worker_install_dump.py` to generate valid header and table metadata
 without any game files. The worker distinguishes the expected title from another title. The window

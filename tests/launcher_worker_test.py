@@ -177,23 +177,37 @@ class WorkerTest(unittest.TestCase):
         selected = Path(self.tmp.name) / 'games'
         selected.mkdir()
         (selected / 'unrelated.txt').write_text('keep')
+        long = selected / ('g' * 140) / 'NX2Saria'
+        image = long / 'romfs' / 'romfs.bin'
+        image.parent.mkdir(parents=True)
+        image.write_text('complete stand-in image')
         frames = [
             {'id': 1, 'method': 'hello', 'protocol': 1},
             {'id': 2, 'method': 'install_destination'},
             {'id': 3, 'method': 'install_destination', 'folder': str(selected)},
             {'id': 4, 'method': 'install_destination', 'folder': 'relative'},
+            {'id': 5, 'method': 'install_destination', 'folder': str(long)},
         ]
         result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)],
                                 input=''.join(json.dumps(frame) + '\n' for frame in frames),
                                 text=True, capture_output=True, cwd=ROOT, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
-        _, default, proposed, invalid = map(json.loads, result.stdout.splitlines())
-        self.assertEqual(default, {'id': 2, 'result': {
-            'folder': str(Layout(root=self.root.resolve()).default_game_dir()), 'source': 'default'}})
-        self.assertEqual(proposed, {'id': 3, 'result': {'folder': str(selected / 'NX2Saria'), 'source': 'selected'}})
+        _, default, proposed, invalid, existing = map(json.loads, result.stdout.splitlines())
+        self.assertEqual(default['result']['folder'], str(Layout(root=self.root.resolve()).default_game_dir()))
+        self.assertEqual(default['result']['source'], 'default')
+        self.assertEqual(proposed['result']['folder'], str(selected / 'NX2Saria'))
+        self.assertEqual(proposed['result']['source'], 'selected')
+        self.assertGreaterEqual(proposed['result']['available_gb'], 0)
+        self.assertEqual(proposed['result']['required_gb'], 34)
+        self.assertFalse(proposed['result']['complete_image'])
+        self.assertIs(type(proposed['result']['path_too_long']), bool)
         self.assertEqual(invalid, {'id': 4, 'error': {'code': 'invalid_destination'}})
-        self.assertEqual({entry.name for entry in selected.iterdir()}, {'unrelated.txt'})
+        self.assertEqual({entry.name for entry in selected.iterdir()}, {'unrelated.txt', long.parent.name})
         self.assertEqual((selected / 'unrelated.txt').read_text(), 'keep')
+        self.assertEqual(existing['result']['folder'], str(long))
+        self.assertTrue(existing['result']['complete_image'])
+        self.assertEqual(existing['result']['path_too_long'], os.name == 'nt')
+        self.assertEqual(image.read_text(), 'complete stand-in image')
         self.assertEqual((self.root / 'data' / 'launcher.json').read_text(), '{}')
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: install destination default', log)

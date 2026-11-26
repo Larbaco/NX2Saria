@@ -1,7 +1,8 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
 type InstallFeedback = { outcome: string; state: Result | null };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<string | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; onInstallEnded(callback: (result: InstallFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: 'install' | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; onInstallEnded(callback: (result: InstallFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: 'install' | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -11,6 +12,7 @@ const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-p
 const settingError = document.querySelector<HTMLElement>('#setting-error')!;
 const installButton = document.querySelector<HTMLButtonElement>('#begin-install')!;
 const firstRun = document.querySelector<HTMLElement>('#first-run')!;
+const gameFolderSpace = document.querySelector<HTMLElement>('#game-folder-space')!;
 const gameFolderProposal = document.querySelector<HTMLElement>('#game-folder-proposal')!;
 const pickGameFolder = document.querySelector<HTMLButtonElement>('#pick-game-folder')!;
 const gameFolderError = document.querySelector<HTMLElement>('#game-folder-error')!;
@@ -24,7 +26,7 @@ let playing = false;
 let savingPreference = false;
 let playFailed = false;
 let choosingSource = false;
-let proposedFolder: string | null = null;
+let proposedFolder: InstallDestination | null = null;
 let proposedDump: string | null = null;
 
 function updateControls() {
@@ -34,7 +36,7 @@ function updateControls() {
     installation.job_marker_present === true || installation.game_running === true;
   hideWhilePlaying.disabled = busy || typeof installation?.hide_while_playing !== 'boolean';
   pickGameFolder.disabled = pickGameDump.disabled = busy || firstRun.hidden;
-  installButton.disabled = busy || firstRun.hidden || !proposedFolder || !proposedDump ||
+  installButton.disabled = busy || firstRun.hidden || !proposedFolder || !proposedDump || proposedFolder.pathTooLong ||
     installation?.job_marker_present === true || installation?.game_running === true;
   if (!savingPreference) hideWhilePlaying.checked = installation?.hide_while_playing === true;
 }
@@ -52,11 +54,19 @@ async function showInstallDestination(pick: boolean) {
   updateControls();
   gameFolderError.textContent = '';
   try {
-    const folder = await window.launcher.installDestination(pick);
-    if (folder) gameFolderProposal.textContent = proposedFolder = folder;
+    const proposal = await window.launcher.installDestination(pick);
+    if (proposal) {
+      proposedFolder = proposal;
+      gameFolderProposal.textContent = proposal.folder;
+      const note = proposal.completeImage ? 'A imagem do jogo já está pronta.' : `A instalação precisa de cerca de ${proposal.required} GB.`;
+      gameFolderSpace.textContent = `${proposal.available} GB disponíveis. ${note}`;
+    }
   } catch {
     gameFolderError.textContent = 'Não foi possível verificar a pasta do jogo.';
   } finally {
+    if (proposedFolder?.pathTooLong && !gameFolderError.textContent) {
+      gameFolderError.textContent = 'O caminho é longo demais para as ferramentas do Windows. Escolha uma pasta com um caminho mais curto.';
+    }
     choosingSource = false;
     updateControls();
   }
@@ -108,7 +118,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   playFailed = false;
   settingError.textContent = '';
   proposedFolder = proposedDump = null;
-  gameFolderProposal.textContent = '';
+  gameFolderProposal.textContent = gameFolderSpace.textContent = '';
   gameDumpProposal.textContent = '';
   firstRun.hidden = true;
   updateControls();
