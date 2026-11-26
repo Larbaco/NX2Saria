@@ -21,7 +21,8 @@ they are. The implementation notes: [code/ui.md](code/ui.md), `runtime/ui/pause_
 - L, B or Plus closes it. With changes in the draft the box "Apply your changes?" asks first, as the settings menu
   does when it is left. The System tab's page comes back.
 - The rows are the settings menu's own, in groups: Picture (the frame limit, VSync, the upscaler, frame generation,
-  sharpening, anisotropic filtering) and Sound (the volume, the menu sounds' volume, the channels). A row whose setting takes a restart says so, as in the settings menu.
+  sharpening, anisotropic filtering) Sound (the volume, the menu sounds' volume, the channels) and Controls (the mouse, the gamepad's layout and prompts, sprint,
+  vibration, the gyro, the sticks; the button bindings stay in the settings menu). A row whose setting takes a restart says so, as in the settings menu.
 
 ## What the game has (1.1.1)
 

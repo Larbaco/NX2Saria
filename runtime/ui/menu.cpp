@@ -2133,8 +2133,7 @@ static void rows_gyro(void) {
     opt_toggle("NX2SARIA_GYRO_TILT_INVERT", UI_MENU_GYRO_TILT_INVERT, UI_MENU_GYRO_TILT_INVERT_DESC);
 }
 
-static void tab_controls(float scale) {
-    opt_begin("##controls", scale);
+static void rows_controls(void) {
     if (input_direct_mouse_available()) {
         static const UiTextId mouse_mode[] = {UI_MENU_MOUSE_STICK, UI_MENU_MOUSE_DIRECT};
         opt_choice("NX2SARIA_MOUSE_MODE", UI_MENU_MOUSE_MODE, mouse_mode, 2, UI_MENU_MOUSE_MODE_DESC);
@@ -2174,6 +2173,11 @@ static void tab_controls(float scale) {
     opt_slider("NX2SARIA_STICK_SENS", UI_MENU_STICK_SENS, 0.1f, 3, UI_MENU_STICK_SENS_DESC, 0.05f, "%.2f");
     row_walk_key();
     opt_slider("NX2SARIA_WALK_SCALE", UI_MENU_WALK_SCALE, 0.2f, 0.9f, UI_MENU_WALK_SCALE_DESC, 0.01f, "%.2f");
+}
+
+static void tab_controls(float scale) {
+    opt_begin("##controls", scale);
+    rows_controls();
     binds_rows(scale);
     opt_end();
     binds_after_page();
@@ -2230,6 +2234,8 @@ static void pause_tab_rows(void) {
     opt_choice_list("NX2SARIA_ANISO", UI_MENU_ANISO, aniso, aniso_names, 5, UI_MENU_ANISO_DESC);
     opt_group(UI_MENU_TAB_SOUND);
     rows_sound();
+    opt_group(UI_MENU_TAB_CONTROLS);
+    rows_controls();
 }
 
 static const char *pause_tab_label(void) {
