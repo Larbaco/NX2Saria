@@ -5953,6 +5953,8 @@ data, static and dynamic message references, and the same formatting fields
 in every language. The locale window test checks the four languages at 720
 pixels and 120% zoom, reports a failed write without changing the selection,
 checks the native dialog title, and reopens the window with the saved choice.
+The same window cancels the installation picker and checks that the settings
+panel, selected root and worker all survive the cancellation.
 
 The appearance test reads a nondefault theme and an old dimming value, compares
 the shared palette, changes the custom colors and verifies that invalid choices

@@ -388,7 +388,19 @@ async function loadSelection(action: () => Promise<Result | null>) {
   catch { statusElement.textContent = tr("Não foi possível verificar"); detail.textContent = tr("Tente novamente."); }
   finally { selecting = false; updateControls(); }
 }
-button.onclick = () => { void loadSelection(() => window.launcher.selectInstallation()); };
+button.onclick = async () => {
+  selecting = true;
+  updateControls();
+  try {
+    const selected = await window.launcher.selectInstallation();
+    if (selected) await loadSelection(async () => selected);
+  } catch {
+    detail.textContent = tr('Não foi possível verificar');
+  } finally {
+    selecting = false;
+    updateControls();
+  }
+};
 void (async () => {
   await loadLanguage();
   document.documentElement.classList.remove('language-loading');

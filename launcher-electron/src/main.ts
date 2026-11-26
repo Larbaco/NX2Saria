@@ -116,6 +116,7 @@ app.whenReady().then(() => {
   async function selectRoot(root: string, origin: 'default' | 'manual'): Promise<Inspection> {
     const previous = worker;
     worker = null;
+    state = null;
     pendingPlayMessage = null;
     if (previous) await previous.close();
     attachLog(root);
@@ -238,10 +239,6 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('select-installation', async event => {
     if (event.sender !== window.webContents || playing) throw new Error('Unavailable');
-    const previous = worker;
-    worker = null;
-    state = null;
-    if (previous) await previous.close();
     const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: tr("Selecionar pasta do launcher NX2Saria") });
     if (!chosen.canceled && chosen.filePaths[0]) return selectRoot(chosen.filePaths[0], 'manual');
     log?.write('inspection', 'selection_cancelled');

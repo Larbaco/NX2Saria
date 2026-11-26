@@ -2827,6 +2827,13 @@ Linux follows its AppImage ownership plan and retains the logs. A log line
 records the choice and the scheduling result; the Linux helper records how
 many paths it removed once the worker closed.
 
+### Selecting the Electron installation
+
+`launcher-electron/src/main.ts` `selectRoot()` releases the old worker and
+clears its state only after confirming a new root. The renderer keeps its
+existing installation and panels while the native picker is open. Cancel
+writes a selection outcome to the existing log and keeps the worker and lock.
+
 ### Electron interface language
 
 The Electron main process resolves the first supported system locale, or

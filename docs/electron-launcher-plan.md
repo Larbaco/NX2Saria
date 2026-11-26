@@ -1,6 +1,6 @@
 # Electron launcher replacement plan
 
-Status: the owner approved the overall plan. The Play and first-run operations are being validated in the Electron branch. The provisioning design is awaiting authorization for implementation after review of the download and disk costs.
+Status: the owner approved the overall plan. The Electron branch has synthetic coverage for Play, first-run operations and installed-game settings on both platforms. The provisioning design is awaiting authorization for implementation after review of the download and disk costs.
 
 Maintain `docs/electron-launcher-plan-visual.html` alongside this plan: update the visual page whenever this plan changes, preserving decisions, open questions and validation limits.
 
@@ -37,7 +37,7 @@ Milestones may overlap where dependencies allow; they do not authorize publishin
 
 Each entry stays open until implementation and the required verification are complete. Track automated results on Windows and Linux, owner-observed evidence where applicable, and remaining gaps. `docs/launcher.md` describes the existing behavior.
 
-- [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery.
+- [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery. Node tests cover current and legacy default paths, and owner sessions confirmed automatic detection on both platforms. A setup-installed Windows root outside the usual Programs directory still needs automatic discovery. In the manual picker, cancelling keeps the existing selection, its lock and any open settings panel. Only a confirmed folder choice can replace the current worker. The Linux locale window fixture checks this with an active installation.
 - [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The Windows and Linux worker tests exercise the install request with a stand-in task. The Linux Electron window test covers progress, cancel, retry and a return to a playable screen. Background dump search proposes the newest valid result and preserves a manual choice. Worker tests use an isolated search directory, and the Linux window test displays the discovered file. The first-run preferences use the existing update settings and Windows shortcut. The first-run requirements check reports missing runtime support or Linux build tools. First installation without the app/runtime and owner validation remain open.
 - [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Manual Rebuild uses the existing RebuildJob. A synthetic worker case proves refusal while the old marker exists, completion after cleanup, honoring the cache setting and leaving the last executable untouched. The Linux window visits the ready screen after an explicit Rebuild without automatically starting Play. The interrupted-build cases below prove wait, stop, stale and reused process identities, unreadable markers and recovery by Tk. A complete build of the real game remains owner validation.
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
@@ -54,6 +54,33 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages. The Linux window test exercises keyboard Tab, Enter and Escape, a standard synthetic controller, ignored input without focus, direction, activation, return, scrolling and layout at the minimum window size and 140% zoom. The locale test covers all four languages at the minimum window width and 120% zoom, system fallback, selection and persistence, rollback after a failed write and a translated native dialog title. The Node test checks the labels and formatting fields. The Node, worker and Linux window checks passed in run `45802434603`. Game Mode on a device and language review by the owner remain open.
 - [ ] CLI, locks and diagnostics: retain existing supported command-line use, concurrent-job rules, crash/interruption reporting and log privacy; explicitly evaluate how the new UI shares these resources.
 - [x] Uninstall: existing choices for retaining or removing the built game and preservation of unrelated installations. Settings now opens the confirmation with Remove off. Scratch worker tests cover both platform helpers, protected data and busy/unsafe refusals. The Linux window tests Escape, reset of the removal choice, the default Keep operation and the log. The native Linux and Windows worker jobs and the Linux window passed in run `45802434603`. The extracted Linux package `4e1c4e31` exercised cancellation and keeping the game with the published app/runtime. Provisioned shell removal stays with migration.
+
+## Replacement gate
+
+Status is open. A test package is a portable client for a provisioned
+installation. Replacement also needs an independently installable launcher
+and a verified transition from existing Tk installations.
+
+- **Automatic checks.** The settings and Linux device-control slice
+  `34fd2660` passed Electron launcher tests on Ubuntu and Windows in run
+  `45804170737`, Tests in `45804172241`, and Content guard in `45804170774`.
+  The Linux tests substituted the device and PolicyKit.
+- **Owner evidence.** Two normal Play sessions on Windows are recorded
+  below. Linux package `b62829a5` verified automatic detection, hide and
+  restore, consecutive sessions, a busy second window and closing the
+  launcher with a game still running. The newer package `4e1c4e31` is
+  available for Windows interaction, hardware controller checks and
+  observing the current language controls. Game Mode and real rebuild
+  remain pending.
+- **Migration and rollback.** Still requires the owner and releases
+  decision on the measured shell download and disk cost. The current
+  updater, staged files, app activation and rollback remain with Tk.
+  Prove the current and legacy transition and interrupted rollback with a
+  scratch install and local feed on Linux and Windows before requesting
+  replacement review.
+- **Replacement review.** Send the branch head and evidence to releases
+  once the inventory and migration checks are complete. The branch work
+  ends at that hand-off.
 
 ## Validation and known limits
 

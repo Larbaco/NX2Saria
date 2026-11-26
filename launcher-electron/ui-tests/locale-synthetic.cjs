@@ -43,6 +43,17 @@ async function main() {
     });
     await layout('ru', 'Установка найдена', 'Настройки');
     assert.equal(await language.inputValue(), 'automatic');
+    const beforeCancel = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
+    await app.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+    });
+    await page.locator('#select').click();
+    await page.waitForFunction(() => !document.querySelector('#select').disabled);
+    assert.equal(await language.isVisible(), true);
+    assert.equal(await status.textContent(), 'Установка найдена');
+    const afterCancel = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
+    assert.equal((afterCancel.match(/worker: started/g) || []).length, (beforeCancel.match(/worker: started/g) || []).length);
+    assert.doesNotMatch(afterCancel, /worker: eof idle/);
     await fs.mkdir(preferences);
     await language.selectOption('en-US');
     await page.getByText('Не удалось сохранить язык.', { exact: true }).waitFor();
