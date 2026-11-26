@@ -702,8 +702,60 @@ void input_rumble_hd_stop(void) {
 
 enum { MAX_PADS = 8 };
 static SDL_Gamepad *pads[MAX_PADS];
-static uint8_t pad_rest[MAX_PADS];
 static int npads;
+enum { AXIS_REST = 8192, TRIGGER_LOGS = 16 };
+static const uint64_t TRIGGER_REST_NS = 1000000000u, TRIGGER_STUCK_NS = 10000000000u;
+static struct pad_state {
+    uint64_t opened, rest_since[2];
+    uint8_t rest, timing;
+} pad_st[MAX_PADS];
+static int trigger_logs, trigger_stuck_logged;
+
+static void pad_state_open(int i) {
+    pad_st[i] = (struct pad_state){0};
+    pad_st[i].opened = plat_now_ns();
+}
+
+static int16_t pad_axis(SDL_Gamepad *p, SDL_GamepadAxis a) {
+    int16_t v = SDL_GetGamepadAxis(p, a);
+    for (int i = 0; i < npads; i++) {
+        if (pads[i] != p) continue;
+        struct pad_state *s = &pad_st[i];
+        if (s->rest >> a & 1) return v;
+        int at_rest = abs(v) < AXIS_REST;
+        if (a != SDL_GAMEPAD_AXIS_LEFT_TRIGGER && a != SDL_GAMEPAD_AXIS_RIGHT_TRIGGER) {
+            if (!at_rest) return 0;
+            s->rest |= (uint8_t)(1u << a);
+            return v;
+        }
+        int t = a == SDL_GAMEPAD_AXIS_RIGHT_TRIGGER;
+        const char *which = t ? "right" : "left", *name = SDL_GetGamepadName(p);
+        uint64_t now = plat_now_ns();
+        if (!at_rest) {
+            s->timing &= (uint8_t)~(1u << t);
+            if (!trigger_stuck_logged && now - s->opened >= TRIGGER_STUCK_NS) {
+                trigger_stuck_logged = 1;
+                rt_log("input: gamepad \"%s\": the %s trigger has not rested for 1 s in the %.0f s since the gamepad "
+                       "opened (it reads %d; at rest is below %d): it stays off until it does (logged once)",
+                       name ? name : "?", which, (now - s->opened) / 1e9, v, AXIS_REST);
+            }
+            return 0;
+        }
+        if (!(s->timing >> t & 1)) s->timing |= (uint8_t)(1u << t), s->rest_since[t] = now;
+        if (now - s->rest_since[t] < TRIGGER_REST_NS) return 0;
+        s->rest |= (uint8_t)(1u << a);
+        if (trigger_logs < TRIGGER_LOGS) {
+            trigger_logs++;
+            rt_log("input: gamepad \"%s\": the %s trigger counts from now on, after %.2f s at rest (%.2f s after the "
+                   "gamepad opened)%s",
+                   name ? name : "?", which, (now - s->rest_since[t]) / 1e9, (now - s->opened) / 1e9,
+                   trigger_logs == TRIGGER_LOGS ? "; no more of these lines this session" : "");
+        }
+        return v;
+    }
+    return v;
+}
+
 static int pad_pressed_logged;
 
 static const struct { SDL_SensorType gyro, acc; const char *which; } sensor_pairs[] = {
@@ -800,7 +852,7 @@ static void scan_pads(void) {
         }
         SDL_CloseGamepad(pads[i]);
         --npads;
-        pads[i] = pads[npads], pad_rest[i] = pad_rest[npads];
+        pads[i] = pads[npads], pad_st[i] = pad_st[npads];
     }
     int n = 0;
     SDL_JoystickID *ids = SDL_GetGamepads(&n);
@@ -810,7 +862,7 @@ static void scan_pads(void) {
         if (open) continue;
         SDL_Gamepad *p = SDL_OpenGamepad(ids[i]);
         if (!p) { rt_log("input: gamepad %u could not be opened (%s)", (unsigned)ids[i], SDL_GetError()); continue; }
-        pad_rest[npads] = 0;
+        pad_state_open(npads);
         pads[npads++] = p;
         if (pad) rt_log("input: gamepad \"%s\" connected (the game switches to it at its first press)", SDL_GetGamepadName(p));
     }
@@ -820,19 +872,6 @@ static void scan_pads(void) {
         rt_log("input: the gamepad in use went away and no other is connected: the menu opens");
         menu_toggle();
     }
-}
-
-enum { AXIS_REST = 8192 };
-static int16_t pad_axis(SDL_Gamepad *p, SDL_GamepadAxis a) {
-    int16_t v = SDL_GetGamepadAxis(p, a);
-    for (int i = 0; i < npads; i++) {
-        if (pads[i] != p) continue;
-        if (pad_rest[i] >> a & 1) return v;
-        if (abs(v) >= AXIS_REST) return 0;
-        pad_rest[i] |= (uint8_t)(1u << a);
-        return v;
-    }
-    return v;
 }
 
 static void stick(SDL_GamepadAxis ax, SDL_GamepadAxis ay, float dead, int32_t out[2]) {

@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=babe27d98602764cbc9c05e515afe69e4a719db6 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=7b7f8e1c71bc9a3a9d757d470c6dd0a27d6ff377 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -18,6 +18,8 @@
 - `auto`：对于 SDL 报告其右侧按键标为 A 的手柄（Switch Pro Controller、Nintendo 布局的手柄）使用 `nintendo`，其他手柄使用 `xbox`。
 
 日志会写出当前生效的布局（`input: gamepad layout ...`）以及每个手柄的第一次按键（`input: gamepad "...": first press`）；菜单会在*自动*下方显示该布局。除非*按键提示*另有设置（见下文），游戏的按键提示显示 Switch 的字母。
+
+ZL 和 ZR 要等控制器连续一整秒报告扳机处于静止后才开始生效，因此控制器连接后的第一秒内扳机视为松开。否则，一个从一开始就报告扳机被按住的无线接收器或虚拟手柄会让 ZL 或 ZR 在整个游戏过程中一直按下。日志会在每个扳机开始生效时写出它（`input: gamepad "...": the left trigger counts from now on, after 1.00 s at rest ...`），并且每次运行只写一次：控制器连接十秒后仍未静止的扳机，以及读到的值（`input: gamepad "...": the right trigger has not rested for 1 s ...`）。
 
 动作提示（右上角）以菱形显示四个正面按键。游戏按 Switch 的位置绘制它（A 在右、B 在下、X 在上、Y 在左），`nintendo` 保持这种位置。在 `xbox`、`playstation` 和 `auto` 下，无论*按键提示*如何设置，菱形都会改为按这类手柄排列（A 在下、B 在右、X 在左、Y 在上）。
 
