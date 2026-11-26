@@ -3625,6 +3625,13 @@ job marker. It saves the two choices, honors the existing desktop shortcut setti
 outcome refreshes the Electron installation screen. It never resumes Play after installation.
 
 
+The rebuild request requires a playable saved game and asks for `launcher/jobs.py` `RebuildJob`
+with the saved source and destination. As with installation, a job marker, an active game or
+job, or an unavailable lock prevents starting it. Explicit installs and rebuilds report
+`complete` on success, honor the existing build-cache preference and return to the inspected
+screen. After a successful mod rebuild, the worker resumes Play instead.
+
+
 For Play, a memory decision has an attempt number. The worker rejects a stale answer and checks for another
 game before resuming. Mod rebuilds use the shared completion policy and wait for `finished` before resuming
 Play or reporting the result. Sequenced game events identify the session. They mark confirmed spawn, window

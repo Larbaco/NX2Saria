@@ -299,7 +299,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
@@ -308,6 +308,7 @@ def main(argv=None):
         window_log = None
         job = None
         job_revision = -1
+        job_action = None
         failed_mods = []
         install_choices = {}
         dump_search = 'idle'
@@ -335,10 +336,17 @@ def main(argv=None):
                       'fraction': fraction, 'step': step})
             if job and job.finished is not None:
                 winsys.keep_awake(False, ctx.log)
-                if job.kind == 'install':
-                    outcome = 'complete' if job.result == 'ok' else job.result
-                else:
+                if job_action == 'play':
                     outcome, failed_mods = mods_job.finish_mods_job(ctx, job, failed_mods, require_finished=True)
+                else:
+                    outcome = 'complete' if job.result == 'ok' else job.result
+                    if outcome == 'complete':
+                        failed_mods = []
+                        if not ctx.settings.get('keep_cache'):
+                            try:
+                                mods_job.drop_build_cache(ctx)
+                            except OSError:
+                                action_log(ctx, counts, 'job', 'cache_cleanup_failed')
                 ctx.log(f'job {job.kind}: {job.result} {job.error}')
                 action_log(ctx, counts, 'job', f'result={job.result}')
                 result = job.result
@@ -478,6 +486,7 @@ def main(argv=None):
                     action_log(ctx, counts, 'play', f'status={prepared.status}')
                     if prepared.status == 'rebuild':
                         job = jobs.ModsRebuildJob(ctx, game_dir)
+                        job_action = 'play'
                         job_revision = -1
                         job.waiting = prepared.waiting
                         winsys.keep_awake(True, ctx.log)
@@ -571,29 +580,42 @@ def main(argv=None):
                     threading.Thread(target=search_install_dump, args=(ctx.layout, requests), daemon=True).start()
                 emit({'id': request['id'], 'result': {'status': dump_search, 'file': install_choices.get('dump')
                                                       if dump_search == 'complete' else None}})
-            elif request.get('method') == 'install':
+            elif request.get('method') in ('install', 'rebuild'):
+                action = request['method']
+                selected_job = None
                 status = 'unavailable'
                 try:
                     if lock_state == 'held' and not (run or job or pending or (layout.data / jobs.MARKER).exists()):
-                        status = prepare_install(ctx, install_choices)
-                    if status == 'ready':
-                        dump, folder = install_choices['dump'], install_choices['destination']
-                        installation = jobs.InstallJob(ctx, dump, folder)
-                        ctx.settings.save_install_choices(dump, folder)
-                        if ctx.settings.get('desktop_shortcut'):
-                            winsys.desktop_shortcut(layout, True)
+                        if action == 'install':
+                            status = prepare_install(ctx, install_choices)
+                            if status == 'ready':
+                                dump, folder = install_choices['dump'], install_choices['destination']
+                                selected_job = jobs.InstallJob(ctx, dump, folder)
+                                ctx.settings.save_install_choices(dump, folder)
+                                if ctx.settings.get('desktop_shortcut'):
+                                    winsys.desktop_shortcut(layout, True)
+                        else:
+                            folder = ctx.settings.get('game_dir')
+                            if not build.installed(folder):
+                                status = 'not_built'
+                            elif saves.game_running(folder):
+                                status = 'game_running'
+                            else:
+                                selected_job = jobs.RebuildJob(ctx, folder, ctx.settings.get('dump'))
+                                status = 'ready'
                 except (OSError, ValueError, RuntimeError, TypeError, AttributeError):
                     status = 'unavailable'
                 if status != 'ready':
-                    action_log(ctx, counts, 'install', f'refused status={status}')
+                    action_log(ctx, counts, action, f'refused status={status}')
                     emit({'id': request['id'], 'result': {'status': status}})
                     continue
-                job = installation
+                job = selected_job
+                job_action = action
                 job_revision = -1
                 winsys.keep_awake(True, ctx.log)
                 job.start()
                 session += 1
-                action_log(ctx, counts, 'install', 'started')
+                action_log(ctx, counts, action, 'started')
                 emit({'id': request['id'], 'result': {'status': 'building'}})
                 sequence += 1
                 emit({'event': 'job_started', 'sequence': sequence, 'session': session})

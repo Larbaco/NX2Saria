@@ -400,6 +400,70 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('job install: ok', log)
         self.assertNotIn('worker: spawn started', log)
 
+    def test_manual_rebuild_protects_the_current_game_and_never_starts_play(self):
+        from launcher.platform import game_executable
+
+        folder = Path(self.tmp.name) / 'game'
+        cache = folder / 'build-cache'
+        (cache / 'obj').mkdir(parents=True)
+        (cache / 'obj' / 'stand-in').touch()
+        (cache / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        executable = game_executable(folder)
+        executable.write_text('last finished version')
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(folder), 'dump': 'retained-source', 'keep_cache': False}))
+        marker = self.root / 'data' / 'job-running.json'
+        marker.write_text('existing marker')
+        script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,winsys\n"
+                  "def rebuild(job):\n"
+                  " assert job.dump=='retained-source'\n"
+                  " job.begin('compile_changed')\n"
+                  " Path(job.game_dir,'build-finished').touch()\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(jobs.RebuildJob,'run',rebuild), mock.patch.object(winsys,'keep_awake'):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+
+        def request(request_id, method, **fields):
+            worker.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+            worker.stdin.flush()
+            response = frames.get(timeout=10)
+            self.assertEqual(response['id'], request_id)
+            return response['result']
+
+        self.assertEqual(request(1, 'hello', protocol=1)['lock'], 'held')
+        self.assertEqual(request(2, 'rebuild')['status'], 'unavailable')
+        self.assertEqual(marker.read_text(), 'existing marker')
+        marker.unlink()
+        self.assertEqual(request(3, 'rebuild')['status'], 'building')
+        self.assertEqual(frames.get(timeout=10)['event'], 'job_started')
+        event = frames.get(timeout=10)
+        while event['event'] == 'job_progress':
+            event = frames.get(timeout=10)
+        self.assertEqual((event['event'], event['outcome']), ('job_ended', 'complete'))
+        self.assertFalse(marker.exists())
+        self.assertTrue((folder / 'build-finished').is_file())
+        self.assertFalse((cache / 'obj').exists())
+        self.assertEqual(executable.read_text(), 'last finished version')
+        self.assertEqual(request(4, 'inspect')['status'], 'ready')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: rebuild started', log)
+        self.assertNotIn('worker: spawn started', log)
+
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()

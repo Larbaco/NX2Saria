@@ -1,2 +1,19 @@
 import { contextBridge, ipcRenderer } from 'electron';
-contextBridge.exposeInMainWorld('launcher', { discoverInstallation: () => ipcRenderer.invoke('discover-installation'), selectInstallation: () => ipcRenderer.invoke('select-installation'), installDestination: (pick: boolean) => ipcRenderer.invoke('install-destination', pick), installDump: (pick: boolean) => ipcRenderer.invoke('install-dump', pick), searchInstallDump: () => ipcRenderer.invoke('search-install-dump'), install: () => ipcRenderer.invoke('install'), onInstallEnded: (callback: (result: unknown) => void) => ipcRenderer.on('install-ended', (_event, result) => callback(result)), setHideWhilePlaying: (value: boolean) => ipcRenderer.invoke('set-hide-while-playing', value), play: () => ipcRenderer.invoke('play'), cancelJob: () => ipcRenderer.invoke('cancel-job'), onJobStatus: (callback: (result: unknown) => void) => ipcRenderer.on('job-status', (_event, result) => callback(result)), onGameWindowReady: (callback: () => void) => ipcRenderer.on('game-window-ready', () => callback()), onPlayEnded: (callback: (result: unknown) => void) => ipcRenderer.on('play-ended', (_event, result) => callback(result)), playMessageShown: (id: number, kind: string) => ipcRenderer.send('play-message-shown', id, kind) });
+
+contextBridge.exposeInMainWorld('launcher', {
+  discoverInstallation: () => ipcRenderer.invoke('discover-installation'),
+  selectInstallation: () => ipcRenderer.invoke('select-installation'),
+  installDestination: (pick: boolean) => ipcRenderer.invoke('install-destination', pick),
+  installDump: (pick: boolean) => ipcRenderer.invoke('install-dump', pick),
+  searchInstallDump: () => ipcRenderer.invoke('search-install-dump'),
+  install: () => ipcRenderer.invoke('install'),
+  rebuild: () => ipcRenderer.invoke('rebuild'),
+  setHideWhilePlaying: (value: boolean) => ipcRenderer.invoke('set-hide-while-playing', value),
+  play: () => ipcRenderer.invoke('play'),
+  cancelJob: () => ipcRenderer.invoke('cancel-job'),
+  onBuildEnded: (callback: (result: unknown) => void) => ipcRenderer.on('build-ended', (_event, result) => callback(result)),
+  onJobStatus: (callback: (result: unknown) => void) => ipcRenderer.on('job-status', (_event, result) => callback(result)),
+  onGameWindowReady: (callback: () => void) => ipcRenderer.on('game-window-ready', () => callback()),
+  onPlayEnded: (callback: (result: unknown) => void) => ipcRenderer.on('play-ended', (_event, result) => callback(result)),
+  playMessageShown: (id: number, kind: string) => ipcRenderer.send('play-message-shown', id, kind),
+});

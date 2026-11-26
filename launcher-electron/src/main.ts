@@ -8,6 +8,9 @@ import { defaultRoots, findDefaultRoot } from './discovery';
 import { InstallationRuntimeError, runtimePaths } from './runtime-paths';
 import { createDevelopmentLog, type DevelopmentLog } from './dev-log';
 
+const buildActions = ['install', 'rebuild'] as const;
+type BuildAction = typeof buildActions[number];
+
 const startedAt = new Date();
 let build = 'unknown';
 try { build = readFileSync(path.join(__dirname, 'build-id.txt'), 'utf8').trim(); } catch {}
@@ -16,7 +19,7 @@ app.whenReady().then(() => {
   let worker: WorkerClient | null = null;
   let state: Inspection | null = null;
   let playing = false;
-  let installing = false;
+  let buildAction: BuildAction | null = null;
   let gameSpawned = false;
   let hidden = false;
   let shown = window.isVisible();
@@ -53,17 +56,19 @@ app.whenReady().then(() => {
   function notifyPlayEnded(result: object) {
     if (!window.isDestroyed()) window.webContents.send('play-ended', { ...result, messageId: expectPlayMessage() });
   }
-  async function finishInstall(active: WorkerClient, outcome: string) {
+  async function finishBuild(active: WorkerClient, outcome: string) {
+    const action = buildAction;
+    if (!action) return;
     if (worker === active) {
       let refreshed: Inspection | null = null;
       try { refreshed = parseInspection(await active.request('inspect')); } catch {}
       if (worker !== active) return;
       state = refreshed;
     }
-    log?.write('install', `ended outcome=${outcome}`);
-    installing = false;
+    log?.write(action, `ended outcome=${outcome}`);
+    buildAction = null;
     playing = false;
-    if (!window.isDestroyed()) window.webContents.send('install-ended', { outcome, state: settingsView(state) });
+    if (!window.isDestroyed()) window.webContents.send('build-ended', { action, outcome, state: settingsView(state) });
   }
   function firstRunAvailable(selected: Inspection | null) {
     return selected?.status === 'not_configured' || selected?.status === 'not_ready';
@@ -112,9 +117,9 @@ app.whenReady().then(() => {
       active.on('disconnect', () => {
         if (worker !== active) return;
         worker = null;
-        if (installing) {
+        if (buildAction) {
           state = null;
-          void finishInstall(active, 'worker_disconnected');
+          void finishBuild(active, 'worker_disconnected');
           return;
         }
         playing = false;
@@ -126,12 +131,12 @@ app.whenReady().then(() => {
       active.on('event', async frame => {
         if (worker !== active) return;
         if (frame.event === 'job_started') {
-          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: installing ? 'install' : 'mods' });
+          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: buildAction ?? 'mods' });
         } else if (frame.event === 'job_progress') {
-          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: installing ? 'install' : 'mods', fraction: frame.fraction });
+          if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: buildAction ?? 'mods', fraction: frame.fraction });
         } else if (frame.event === 'job_ended') {
-          if (installing) {
-            await finishInstall(active, frame.outcome);
+          if (buildAction) {
+            await finishBuild(active, frame.outcome);
             return;
           }
           log?.write('play', `job_ended outcome=${frame.outcome}`);
@@ -262,24 +267,28 @@ app.whenReady().then(() => {
     }
     return { status: result.status, file: result.file };
   });
-  ipcMain.handle('install', async event => {
+  for (const action of buildActions) ipcMain.handle(action, async event => {
     if (event.sender !== window.webContents) return 'unavailable';
-    log?.write('install', 'requested');
-    if (!worker?.handshake.capabilities.includes('install') || playing || state?.job_marker_present ||
-        !firstRunAvailable(state)) {
-      log?.write('install', 'result=unavailable');
+    log?.write(action, 'requested');
+    const eligible = action === 'install' ? firstRunAvailable(state) : state?.status === 'ready';
+    if (!worker?.handshake.capabilities.includes(action) || playing || state?.job_marker_present || !eligible) {
+      log?.write(action, 'result=unavailable');
       return 'unavailable';
     }
     const active = worker;
-    playing = installing = true;
+    playing = true;
+    buildAction = action;
     let status = 'unavailable';
     try {
-      const response = await active.request('install');
+      const response = await active.request(action);
       if (['building', 'choose_source', 'invalid_dump', 'invalid_destination', 'path_too_long',
-        'already_installed', 'game_running', 'need_space'].includes(response?.status)) status = response.status;
+        'already_installed', 'not_built', 'game_running', 'need_space'].includes(response?.status)) status = response.status;
     } catch {}
-    if (status !== 'building') playing = installing = false;
-    log?.write('install', `result=${status}`);
+    if (status !== 'building') {
+      playing = false;
+      buildAction = null;
+    }
+    log?.write(action, `result=${status}`);
     return status;
   });
   ipcMain.handle('play', async event => {

@@ -28,6 +28,10 @@ def install(job):
     (cache / 'state.json').write_text('{"steps":{"compile":{}},"kit":"0.0.1"}')
     game_executable(job.game_dir).write_text('stand-in that cannot be run')
 
+def rebuild(job):
+    job.begin('compile_changed')
+    Path(job.game_dir, 'rebuilt').touch()
+
 sys.argv = sys.argv[2:]
 base = Path(sys.argv[-1]).parent
 def search_dirs(extra):
@@ -37,6 +41,7 @@ def search_dirs(extra):
     return [base / 'Downloads']
 
 with (mock.patch.object(jobs.InstallJob, 'run', install),
+      mock.patch.object(jobs.RebuildJob, 'run', rebuild),
       mock.patch.object(paths, 'free_gb', return_value=100),
       mock.patch.object(linux, 'mounted_drives', return_value=[]),
       mock.patch.object(gamefiles, 'candidate_dirs', search_dirs)):
@@ -134,6 +139,15 @@ async function main() {
     await page.getByText('Instalação concluída', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
     assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')), { desktop_shortcut: false, game_dir: path.join(folder, 'NX2Saria'), dump: valid });
+
+    await page.getByRole('button', { name: 'Recompilar o jogo' }).click({ timeout: 5000 });
+    await page.getByText('Recompilação concluída', { exact: true }).waitFor({ timeout: 10000 });
+    await fs.access(path.join(folder, 'NX2Saria', 'rebuilt'));
+    assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
+    const log = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
+    assert.match(log, /electron: rebuild requested/);
+    assert.match(log, /electron: rebuild ended outcome=complete/);
+    assert.doesNotMatch(log, /electron: play requested/);
   } finally {
     if (app) await app.close();
     await fs.rm(base, { recursive: true, force: true });

@@ -5964,6 +5964,11 @@ job marker and only the two confirmed settings changed. The first-run Electron w
 cancels the job while it waits, checks marker cleanup, retries, and gets back to a usable Play
 control without starting the synthetic game.
 
+The manual rebuild test uses a synthetic existing build. It verifies a job marker blocks
+starting, a clean request retains the saved dump, completion follows job cleanup and disabled
+cache retention drops the build objects. The first-run Electron test completes a stand-in
+rebuild and observes the ready screen and rebuild log without a Play request.
+
 
 ## `tests/launcher_mods_job_characterization_test.py`
 

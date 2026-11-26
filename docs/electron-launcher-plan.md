@@ -1,6 +1,6 @@
 # Electron launcher replacement plan
 
-Status: overall plan approved by the owner; the first-slice behavioral contract is a design proposal. No production implementation or migration mechanism has been approved by this document.
+Status: the owner approved the overall plan. The Play and first-run operations are being validated in the Electron branch. The provisioning design is awaiting authorization for implementation after review of the download and disk costs.
 
 Maintain `docs/electron-launcher-plan-visual.html` alongside this plan: update the visual page whenever this plan changes, preserving decisions, open questions and validation limits.
 
@@ -39,7 +39,7 @@ Each entry stays open until implementation and the required verification are com
 
 - [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery.
 - [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The Windows and Linux worker tests exercise the install request with a stand-in task. The Linux Electron window test covers progress, cancel, retry and a return to a playable screen. Background dump search proposes the newest valid result and preserves a manual choice. Worker tests use an isolated search directory, and the Linux window test displays the discovered file. The remaining first-run preferences and prerequisites, first installation without the app/runtime, and owner validation remain open.
-- [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Rebuild, interruption recovery and an end-to-end build remain open.
+- [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Manual Rebuild uses the existing RebuildJob. A synthetic worker case proves refusal while the old marker exists, completion after cleanup, honoring the cache setting and leaving the last executable untouched. The Linux window visits the ready screen after an explicit Rebuild without automatically starting Play. Interruption recovery and an end-to-end build remain open.
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. Electron still needs its own update flow and separately designed handover and rollback before parity.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
@@ -113,6 +113,91 @@ checks the displayed space and requirement. The worker fixture covers a complete
 the long-path distinction on Windows.
 
 Provisioning Python plus the active app on a machine without a launcher remains a later slice.
+
+## Rebuild and interrupted-job recovery contract
+
+On a ready, idle installation, Rebuild runs the same `RebuildJob` as Tk against the saved
+game folder and dump. Require the worker lock, an existing playable build, no active session
+or job, and no job marker from an earlier session. The worker rechecks external game activity
+and lets the existing job protect the last finished executable. As with first install, display
+progress and cancellation, wait for marker and claim cleanup before reporting a terminal
+outcome, and return to the inspected game without starting Play. On success, honor the same
+build-cache preference as Tk. On failure or cancellation, leave the last finished build usable.
+A synthetic worker test checks refusal with an existing marker, final cleanup and cache policy.
+The Linux window test confirms explicitly rebuilding returns to a playable screen. Mod rebuild
+retains its separate, tested resume behavior.
+
+An Electron worker can be killed while its build continues. Reacquiring the launcher lock after
+that interruption establishes a new lock owner. The build's status needs its own proof. Leave the marker
+in place and block Play and installation mutations until the build process group is confirmed
+gone. The worker reports four states: no marker, verified live, verified gone, and unverified.
+The Tk startup and its existing marker handling stay unchanged.
+
+### Record and verify ownership before the build can write
+
+Use a versioned marker extension and a launch handshake at the build process seam. Preserve the
+current task, game folder and start fields. Tk builds keep writing the current marker format.
+Test that the installed Tk startup can consume a worker marker and recover the same interrupted
+game or installation. A small Python supervisor shipped inside the existing app registers the
+group identity before the worker allows the build to start. It needs no new binary or dependency. Write the complete record atomically
+before sending the start acknowledgement. EOF before acknowledgement means the supervisor exits
+without starting a build. The supervisor holds the build process handle, the launch control channel until acknowledgement,
+and the files for build output and terminal status. The worker reads output independently so a
+broken UI or worker pipe cannot abort a useful compile. A normal worker close still cancels
+through the current path. Only the supervisor records the builder's terminal result after the
+verified group drains, then exits as soon as that record is written. Missing terminal status
+means the supervisor may have died and live group ownership must be checked.
+
+On Linux, put the supervisor and descendants in a dedicated session and process group. Record
+the leader's PID, boot identity and process start time from `/proc/<pid>/stat`. A matching,
+live leader keeps the build in the live state. Before declaring it gone, confirm the dedicated
+group is drained, including when descendants survive the leader. A tracked PID with a different
+start time is gone, and an unrelated group that reused the PID cannot be stopped. Ask the identity-verified supervisor to send SIGTERM to its own session's process group first.
+Allow 5 seconds for the compiler to stop. Then signal only verified remaining descendants by
+process descriptor with SIGKILL. Hold live process references so a reused identifier cannot
+redirect cancellation. If the supervisor is gone, signal only individually verified members.
+Treat insufficient visibility or ambiguous remaining members as unverified. See [Linux process
+identity](https://man7.org/linux/man-pages/man5/proc_pid_stat.5.html) and [process
+descriptors](https://man7.org/linux/man-pages/man2/pidfd_open.2.html).
+
+On Windows, create a fresh named job object before the supervisor starts the compiler. Construct the
+name from a digest of the normalized install root and a fresh random token stored in the marker.
+The name contains no path or account string. Record the name and generation and admit the supervisor and its descendants without breakaway or
+kill-on-close. A reopened object with active members proves the build is alive. A confirmed missing
+object or zero active members proves it is gone. An access error leaves it unverified. Stop uses a
+handle to that same job object and waits for zero active members. If creation or assignment
+is refused by an outer job or the running system, the build still runs. Mark its identity as
+PID plus verified process creation time. Keep the supervisor alive through the actual build,
+watch it by handle, and stop only proven members. When the fallback has no terminal status and
+cannot account for descendants, treat it as unverified. See [Microsoft job
+objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
+
+### Wait, stop or recover
+
+The window shows when the earlier build is still running. The player can wait while keeping the
+launcher open, or confirm Stop Build. Wait watches for the group to exit. Stop targets only the
+verified group and waits for it to drain. Play, install and rebuild stay blocked until then.
+Confirmed gone consumes the marker through the same recovery rules and messages as Tk. A
+playable build returns to the last finished game and offers rebuilding. An unfinished installation
+returns to Begin Installation, which resumes the completed steps. A reused PID must leave the
+unrelated process untouched.
+
+An unreadable or legacy marker with no verifiable identity stays blocked. Offer Wait and explicit
+recovery, without a Stop action. Record the boot identity when the worker first observes this
+marker. A later full restart, confirmed by a different boot identity, permits normal recovery.
+Before that, the recovery control requires an explicit acknowledgement, "I know no build is
+running". Record that as a player confirmation, distinct from platform proof. Never signal a PID
+parsed from an unverified record.
+
+Log the state and reason on first observation and on each change, plus a wait, stop or recovery
+request and its result. Use fixed tags and counts, with no path or raw marker contents. The
+Electron launcher tests workflow must kill the worker while a stand-in build stays alive and
+exercise wait and stop on Linux and Windows. Cover a descendant that outlives the leader,
+stale and reused identities, unreadable markers, failed access, the Tk fallback consuming a worker marker,
+and a worker death around the
+start acknowledgement. Check the on-disk marker, untouched unrelated process and usable
+installation after every recovery.
+
 
 ## Provisioning and handover design
 

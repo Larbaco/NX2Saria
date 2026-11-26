@@ -1,11 +1,13 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
-type InstallFeedback = { outcome: string; state: Result | null };
+type BuildAction = 'install' | 'rebuild';
+type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; onInstallEnded(callback: (result: InstallFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: 'install' | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; onBuildEnded(callback: (result: BuildFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
+const rebuildButton = document.querySelector<HTMLButtonElement>('#rebuild')!;
 const playButton = document.querySelector<HTMLButtonElement>('#play')!;
 const cancelJob = document.querySelector<HTMLButtonElement>('#cancel-job')!;
 const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-playing')!;
@@ -34,6 +36,9 @@ function updateControls() {
   button.disabled = busy;
   playButton.disabled = busy || playFailed || installation?.status !== 'ready' ||
     installation.job_marker_present === true || installation.game_running === true;
+  rebuildButton.hidden = installation?.status !== 'ready';
+  rebuildButton.disabled = busy || rebuildButton.hidden ||
+    installation?.job_marker_present === true || installation?.game_running === true;
   hideWhilePlaying.disabled = busy || typeof installation?.hide_while_playing !== 'boolean';
   pickGameFolder.disabled = pickGameDump.disabled = busy || firstRun.hidden;
   installButton.disabled = busy || firstRun.hidden || !proposedFolder || !proposedDump || proposedFolder.pathTooLong ||
@@ -212,34 +217,46 @@ const installMessages: Record<string, string> = {
   invalid_destination: 'A pasta escolhida está indisponível. Selecione outra pasta.',
   path_too_long: 'Escolha uma pasta com um caminho mais curto.',
   already_installed: 'Já existe um jogo pronto nesta instalação.',
+  not_built: 'Instale o jogo antes de recompilar.',
   game_running: 'Feche o jogo antes de instalar.',
   need_space: 'Libere cerca de 34 GB na unidade escolhida ou selecione outra pasta.',
 };
 
-installButton.onclick = async () => {
+const buildLabels = {
+  install: { active: 'Instalando o jogo…', done: 'Instalação concluída', cancelled: 'Instalação cancelada',
+    refused: 'Não foi possível iniciar a instalação', failed: 'Não foi possível concluir a instalação' },
+  rebuild: { active: 'Recompilando o jogo…', done: 'Recompilação concluída', cancelled: 'Recompilação cancelada',
+    refused: 'Não foi possível iniciar a recompilação', failed: 'Não foi possível concluir a recompilação' },
+};
+
+async function startBuild(action: BuildAction) {
   playing = true;
   updateControls();
-  statusElement.textContent = 'Instalando o jogo…';
-  detail.textContent = 'Preparando a instalação.';
+  const labels = buildLabels[action];
+  statusElement.textContent = labels.active;
+  detail.textContent = 'Preparando as ferramentas.';
   let result = 'unavailable';
-  try { result = await window.launcher.install(); } catch {}
+  try { result = await window.launcher[action](); } catch {}
   if (result === 'building') return;
   playing = false;
-  statusElement.textContent = 'Não foi possível iniciar a instalação';
+  statusElement.textContent = labels.refused;
   detail.textContent = installMessages[result] || 'Confira o estado da instalação e tente novamente.';
   updateControls();
-};
-window.launcher.onInstallEnded(({ outcome, state }) => {
+}
+installButton.onclick = () => { void startBuild('install'); };
+rebuildButton.onclick = () => { void startBuild('rebuild'); };
+window.launcher.onBuildEnded(({ action, outcome, state }) => {
   playing = false;
   cancelJob.hidden = true;
   installation = state;
   firstRun.hidden = state?.status !== 'not_configured' && state?.status !== 'not_ready';
+  const labels = buildLabels[action];
   if (outcome === 'complete' && state?.status === 'ready') {
     showResult(state);
-    statusElement.textContent = 'Instalação concluída';
+    statusElement.textContent = labels.done;
   } else {
-    statusElement.textContent = outcome === 'cancelled' ? 'Instalação cancelada' : 'Não foi possível concluir a instalação';
-    detail.textContent = outcome === 'cancelled' ? 'Você pode iniciar a instalação novamente.' : 'Confira o log do launcher e tente novamente.';
+    statusElement.textContent = outcome === 'cancelled' ? labels.cancelled : labels.failed;
+    detail.textContent = outcome === 'cancelled' ? 'Você pode tentar novamente.' : 'Confira o log do launcher e tente novamente.';
   }
   updateControls();
 });
@@ -249,7 +266,8 @@ window.launcher.onJobStatus(result => {
   cancelJob.hidden = result.status !== 'running';
   cancelJob.disabled = false;
   if (result.status === 'running') {
-    statusElement.textContent = result.task === 'install' ? 'Instalando o jogo…' : 'Preparando os mods para jogar…';
+    statusElement.textContent = result.task && result.task !== 'mods'
+      ? buildLabels[result.task].active : 'Preparando os mods para jogar…';
     detail.textContent = typeof result.fraction === 'number' ? `Progresso: ${Math.round(result.fraction * 100)}%.` : 'Aguarde a compilação ou cancele.';
   } else if (result.status === 'resuming') {
     showOpeningGame();
