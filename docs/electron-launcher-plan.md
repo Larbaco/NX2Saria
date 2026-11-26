@@ -37,7 +37,7 @@ Milestones may overlap where dependencies allow; they do not authorize publishin
 
 Each entry stays open until implementation and the required verification are complete. Track automated results on Windows and Linux, owner-observed evidence where applicable, and remaining gaps. `docs/launcher.md` describes the existing behavior.
 
-- [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery. Node tests cover current and legacy default paths, and owner sessions confirmed automatic detection on both platforms. The standalone Windows registry fallback and the explicit root argument are implemented. Electron launcher tests run `45844664530` passed the native Windows scratch-key test for Unicode and a stale value, and the Linux window tests for picker cancellation and explicit-root startup. A private package with these changes awaits validation. In the manual picker, cancelling keeps the existing selection, its lock and any open settings panel. Only a confirmed folder choice can replace the current worker. The Linux locale window fixture checks this with an active installation.
+- [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery. Node tests cover current and legacy default paths, and owner sessions confirmed automatic detection on both platforms. The standalone Windows registry fallback and the explicit root argument are implemented. Electron launcher tests run `45844664530` passed the native Windows scratch-key test for Unicode and a stale value, and the Linux window tests for picker cancellation and explicit-root startup. The extracted private Linux package `4bbd8059` passed default and explicit startup with the published 0.27.0-rc.4 runtime. The corresponding Windows ZIP passed archive checks and awaits the native notebook session. In the manual picker, cancelling keeps the existing selection, its lock and any open settings panel. Only a confirmed folder choice can replace the current worker. The Linux locale window fixture checks this with an active installation.
 - [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The Windows and Linux worker tests exercise the install request with a stand-in task. The Linux Electron window test covers progress, cancel, retry and a return to a playable screen. Background dump search proposes the newest valid result and preserves a manual choice. Worker tests use an isolated search directory, and the Linux window test displays the discovered file. The first-run preferences use the existing update settings and Windows shortcut. The first-run requirements check reports missing runtime support or Linux build tools. First installation without the app/runtime and owner validation remain open.
 - [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Manual Rebuild uses the existing RebuildJob. A synthetic worker case proves refusal while the old marker exists, completion after cleanup, honoring the cache setting and leaving the last executable untouched. The Linux window visits the ready screen after an explicit Rebuild without automatically starting Play. The interrupted-build cases below prove wait, stop, stale and reused process identities, unreadable markers and recovery by Tk. A complete build of the real game remains owner validation.
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
@@ -76,6 +76,26 @@ the result and source without the raw path. Test source precedence and
 failed queries, and round-trip a Unicode folder and stale value through
 a scratch current-user registry key on the Windows runner.
 
+### Private startup and settings packages
+
+Both artifacts were packaged at `4bbd8059`. The extracted Linux package
+used the published 0.27.0-rc.4 app and Python runtime under Xvfb. It verified
+default and explicit startup, cancellation without replacing the worker,
+the Discord activity setting and a clean exit. The Windows ZIP passed
+integrity, contents, build ID and notices checks. Its native notebook run
+is still open. The LEIA-ME covers the new settings and discovery behavior
+and gives the initial notebook test sequence.
+
+The same launcher code passed on both CI runners in `45844664530`.
+The general Tests workflow passed for the package commit in `45845176105`.
+The local package check exercised only the launcher and did not run or
+build the game. The local full suite remains on hold.
+
+- Linux `NX2Saria-Electron-Worker-Linux-x64-4bbd8059.tar.gz`, 122,373,433 bytes.
+  SHA-256 `2b5da4f0ceaba74f9d018bb6290a717b3e929c1578c8f274a79c407d9c3ca1b8`.
+- Windows `NX2Saria-Electron-Worker-Windows-x64-4bbd8059.zip`, 147,006,384 bytes.
+  SHA-256 `af50c215e2fcc819a981fd14eb8aa1ad2123710f2ed57d48466890544a92e197`.
+
 ## Replacement gate
 
 Status is open. A test package is a portable client for a provisioned
@@ -91,10 +111,9 @@ and a verified transition from existing Tk installations.
 - **Owner evidence.** Two normal Play sessions on Windows are recorded
   below. Linux package `b62829a5` verified automatic detection, hide and
   restore, consecutive sessions, a busy second window and closing the
-  launcher with a game still running. The newer package `4e1c4e31` is
-  available for Windows interaction, hardware controller checks and
-  observing the current language controls. Game Mode and real rebuild
-  remain pending.
+  launcher with a game still running. The current private package
+  `4bbd8059` is available for the native Windows startup and Play check.
+  Hardware controller use, Game Mode and real rebuild remain pending.
 - **Migration and rollback.** Still requires the owner and releases
   decision on the measured shell download and disk cost. The current
   updater, staged files, app activation and rollback remain with Tk.
