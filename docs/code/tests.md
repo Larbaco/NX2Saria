@@ -5919,6 +5919,13 @@ a complete backup. The Linux window test uses the native dialog seams for the ex
 and the generated backup folder. A Node check verifies that a save transaction can finish
 after the ordinary request timeout.
 
+The Mods worker test adds a folder and ZIP with overlapping synthetic files, checks the
+winner after changing the order, crosses a page boundary, and refuses toggles and moves
+while a game is detected. Enabling a synthetic code mod sends Play through the existing
+rebuild job. The stand-in records the build receipt, and the test checks job cleanup before
+Play resumes. The Linux window test uses native dialog seams to import, reorder and toggle
+the mods, then checks cancellation, the invalid archive message and path-free action logs.
+
 The manual update check test holds the loopback manifest response while requesting worker
 inspection and a duplicate check. It checks that the latter is coalesced and that only the
 manifest is fetched. It compares the selected app and staged file before and after. The Linux

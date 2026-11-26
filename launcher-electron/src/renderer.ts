@@ -4,12 +4,19 @@ type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost
 type SaveOptions = { destination: string; with_log: boolean; waiting: boolean; pending: boolean };
 type SaveImport = { status: string; files?: number; slot?: string | null; backup?: string | null; detail?: string };
 type SaveExport = { status: string; name?: string; files?: number; included_log?: boolean };
+type ModRow = {
+  name: string; enabled: boolean; usable: boolean; waiting: boolean; files: number;
+  patches: number; cheats: boolean; other_version: number; problem: string;
+  overlaps: { name: string; files: number; wins: boolean }[];
+};
+type ModPage = { page: number; pages: number; count: number; items: ModRow[] };
+type ModAction = { status: string; name?: string; problem?: string; detail?: string; page?: number };
 type UpdateView = { status: string; version?: string; notes?: string[] };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -29,6 +36,19 @@ const importSaveButton = document.querySelector<HTMLButtonElement>('#import-save
 const importSaveFolder = document.querySelector<HTMLButtonElement>('#import-save-folder')!;
 const openSavesDir = document.querySelector<HTMLButtonElement>('#open-saves-dir')!;
 const pendingSaveImport = document.querySelector<HTMLElement>('#pending-save-import')!;
+const modsControl = document.querySelector<HTMLElement>('#mods-control')!;
+const modsButton = document.querySelector<HTMLButtonElement>('#mods-button')!;
+const modsPanel = document.querySelector<HTMLElement>('#mods-panel')!;
+const modsList = document.querySelector<HTMLOListElement>('#mods-list')!;
+const modsEmpty = document.querySelector<HTMLElement>('#mods-empty')!;
+const openModsDir = document.querySelector<HTMLButtonElement>('#open-mods-dir')!;
+const addModFolder = document.querySelector<HTMLButtonElement>('#add-mod-folder')!;
+const addModArchive = document.querySelector<HTMLButtonElement>('#add-mod-archive')!;
+const modsPagination = document.querySelector<HTMLElement>('#mods-pagination')!;
+const previousModPage = document.querySelector<HTMLButtonElement>('#previous-mod-page')!;
+const nextModPage = document.querySelector<HTMLButtonElement>('#next-mod-page')!;
+const modsPageNumber = document.querySelector<HTMLElement>('#mods-page-number')!;
+const modsResult = document.querySelector<HTMLElement>('#mods-result')!;
 const updateControl = document.querySelector<HTMLElement>('#update-control')!;
 const checkUpdatesButton = document.querySelector<HTMLButtonElement>('#check-updates')!;
 const updateResult = document.querySelector<HTMLElement>('#update-result')!;
@@ -61,6 +81,8 @@ let playing = false;
 let gameWindowReady = false;
 let savesBusy = false;
 let saveOptions: SaveOptions | null = null;
+let modPage: ModPage | null = null;
+let modsBusy = false;
 let savingPreference = false;
 let playFailed = false;
 let choosingSource = false;
@@ -71,10 +93,10 @@ let proposedFolder: InstallDestination | null = null;
 let proposedDump: string | null = null;
 
 function updateControls() {
-  const busy = selecting || playing || savingPreference || choosingSource || savesBusy;
+  const busy = selecting || playing || savingPreference || choosingSource || savesBusy || modsBusy;
   button.disabled = busy || askingRecovery || savesBusy;
   savesControl.hidden = installation?.status !== 'ready';
-  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy ||
+  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy || modsBusy ||
     (playing && !gameWindowReady) || installation?.job_marker_present === true;
   savesButton.disabled = chooseSaveExport.disabled = includeSaveReport.disabled = exportSaveButton.disabled = savesDisabled;
   openSavesDir.disabled = savesDisabled;
@@ -86,6 +108,17 @@ function updateControls() {
     includeSaveReport.checked = saveOptions.with_log;
     pendingSaveImport.hidden = !saveOptions.pending;
     importSaveButton.textContent = saveOptions.waiting ? 'Importar save da pasta' : 'Importar save';
+  }
+  modsControl.hidden = installation?.status !== 'ready';
+  modsPanel.hidden = !modPage;
+  modsButton.setAttribute('aria-expanded', String(!modsPanel.hidden));
+  const modsDisabled = savesDisabled || modsControl.hidden;
+  modsButton.disabled = openModsDir.disabled = addModFolder.disabled = addModArchive.disabled = modsDisabled;
+  previousModPage.disabled = modsDisabled || !modPage || modPage.page === 0;
+  nextModPage.disabled = modsDisabled || !modPage || modPage.page + 1 === modPage.pages;
+  const orderDisabled = modsDisabled || playing || installation?.game_running === true;
+  for (const control of modsList.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button')) {
+    control.disabled = orderDisabled || control.hasAttribute('data-at-boundary');
   }
   updateControl.hidden = installation?.status !== 'ready';
   checkUpdatesButton.disabled = checkingUpdates || busy || installation?.job_marker_present === true;
@@ -221,6 +254,9 @@ async function loadSelection(action: () => Promise<Result | null>) {
   playFailed = false;
   saveOptions = null;
   saveResult.textContent = '';
+  modPage = null;
+  modsList.replaceChildren();
+  modsResult.textContent = '';
   checkingUpdates = false;
   updateResult.textContent = updateNotes.textContent = '';
   updateNotes.hidden = true;
@@ -390,6 +426,94 @@ openSavesDir.onclick = () => {
   }, 'Não foi possível abrir a pasta dos saves.');
 };
 
+function renderMods(page: ModPage) {
+  modPage = page;
+  modsEmpty.hidden = page.count !== 0;
+  modsPagination.hidden = page.pages < 2;
+  modsPageNumber.textContent = `Página ${page.page + 1} de ${page.pages}`;
+  modsList.start = page.page * 6 + 1;
+  modsList.replaceChildren();
+  page.items.forEach((mod, index) => {
+    const row = document.createElement('li');
+    const label = document.createElement('label');
+    if (mod.usable) {
+      const toggle = document.createElement('input');
+      toggle.type = 'checkbox';
+      toggle.checked = mod.enabled;
+      toggle.setAttribute('aria-label', mod.name);
+      toggle.onchange = () => {
+        const checked = toggle.checked;
+        toggle.checked = mod.enabled;
+        void runModAction(() => window.launcher.modEnabled(mod.name, checked));
+      };
+      label.append(toggle, ' ');
+    }
+    label.append(mod.name);
+    row.append(label);
+    for (const direction of [-1, 1] as const) {
+      const move = document.createElement('button');
+      move.textContent = direction === -1 ? 'Subir' : 'Descer';
+      move.setAttribute('aria-label', `${move.textContent} ${mod.name}`);
+      const position = page.page * 6 + index;
+      if (position + direction < 0 || position + direction >= page.count) move.setAttribute('data-at-boundary', '');
+      move.onclick = () => { void runModAction(() => window.launcher.modMove(mod.name, direction)); };
+      row.append(' ', move);
+    }
+    const details = [
+      `${mod.files} arquivo(s), ${mod.patches} patch(es)${mod.cheats ? ', códigos de trapaça' : ''}.`,
+      mod.other_version ? `${mod.other_version} patch(es) de outra versão.` : '',
+      mod.waiting ? 'Jogar recompila o jogo com este mod.' : '',
+      mod.problem,
+      ...mod.overlaps.map(conflict =>
+        `${conflict.files} arquivo(s) em conflito com ${conflict.name}. ${conflict.wins ? mod.name : conflict.name} vence.`),
+    ];
+    const info = document.createElement('p');
+    info.textContent = details.filter(Boolean).join(' ');
+    row.append(info);
+    modsList.append(row);
+  });
+}
+
+async function loadMods(page: number) {
+  modsBusy = true;
+  modsResult.textContent = '';
+  updateControls();
+  try { renderMods(await window.launcher.modsList(page)); }
+  catch { modsResult.textContent = 'Não foi possível listar os mods.'; }
+  finally { modsBusy = false; updateControls(); }
+}
+
+async function runModAction(action: () => Promise<ModAction | null>) {
+  modsBusy = true;
+  modsResult.textContent = '';
+  updateControls();
+  try {
+    const result = await action();
+    if (!result) return;
+    if (result.status === 'ok') {
+      renderMods(await window.launcher.modsList(result.page ?? modPage?.page ?? 0));
+      if (result.name) modsResult.textContent = `Mod adicionado: ${result.name}.${result.problem ? ' ' + result.problem : ''}`;
+    } else if (result.status === 'game_running') {
+      modsResult.textContent = 'Feche o jogo antes de alterar a ordem ou ativar um mod.';
+    } else {
+      modsResult.textContent = result.detail || 'Não foi possível alterar os mods. Confira o log do launcher.';
+    }
+  } catch { modsResult.textContent = 'Não foi possível atualizar os mods. Confira o log do launcher.'; }
+  finally { modsBusy = false; updateControls(); }
+}
+
+modsButton.onclick = () => {
+  if (!modPage) { void loadMods(0); return; }
+  modPage = null;
+  modsResult.textContent = '';
+  updateControls();
+};
+previousModPage.onclick = () => { if (modPage) void loadMods(modPage.page - 1); };
+nextModPage.onclick = () => { if (modPage) void loadMods(modPage.page + 1); };
+openModsDir.onclick = () => { void runModAction(() => window.launcher.openModsDir()); };
+addModFolder.onclick = () => { void runModAction(() => window.launcher.modAdd('folder')); };
+addModArchive.onclick = () => { void runModAction(() => window.launcher.modAdd('archive')); };
+
 const updateMessages: Record<string, string> = {
   up_to_date: 'O launcher está atualizado.',
   no_release: 'Nenhuma versão encontrada para este canal.',
@@ -473,6 +597,9 @@ window.launcher.onPlayEnded(result => {
   firstRun.hidden = true;
   updateControls();
   showPlayFeedback(result);
+  if (modPage && !modsBusy && installation?.status === 'ready' && !installation.job_marker_present) {
+    void loadMods(modPage.page);
+  }
 });
 
 const installMessages: Record<string, string> = {

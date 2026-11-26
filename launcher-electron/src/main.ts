@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { parseModAction, parseModsPage } from './mods-protocol';
 import { parseInspection, type Inspection } from './inspection';
 import { openWorker, WorkerRequestError, type WorkerClient } from './worker-client';
 import { parsePlayResult, type PlayResult } from './worker-protocol';
@@ -353,10 +354,10 @@ app.whenReady().then(() => {
     log?.write('recovery', `${action} result=${status}`);
     return status;
   });
-  function savesWorker(event: Electron.IpcMainInvokeEvent) {
-    if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('saves') ||
+  function gameWorker(event: Electron.IpcMainInvokeEvent, capability: 'saves' | 'mods') {
+    if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes(capability) ||
         worker.handshake.lock !== 'held' || state?.status !== 'ready' || state.job_marker_present ||
-        (playing && !gameSpawned)) throw new Error('Saves unavailable');
+        (playing && !gameSpawned)) throw new Error('Game action unavailable');
     return worker;
   }
   async function saveOptions(active: WorkerClient) {
@@ -366,15 +367,15 @@ app.whenReady().then(() => {
         typeof result.pending !== 'boolean') throw new Error('Saves unavailable');
     return { destination: result.destination, with_log: result.with_log, waiting: result.waiting, pending: result.pending };
   }
-  ipcMain.handle('saves-info', event => saveOptions(savesWorker(event)));
+  ipcMain.handle('saves-info', event => saveOptions(gameWorker(event, 'saves')));
   ipcMain.handle('choose-save-export', async event => {
-    const active = savesWorker(event);
+    const active = gameWorker(event, 'saves');
     const options = await saveOptions(active);
     const picked = await dialog.showOpenDialog(window, { title: 'Escolher pasta de exportação',
       properties: ['openDirectory'], defaultPath: options.destination });
     const destination = picked.filePaths[0];
     if (picked.canceled || !destination) return null;
-    if (savesWorker(event) !== active || !path.isAbsolute(destination)) throw new Error('Saves unavailable');
+    if (gameWorker(event, 'saves') !== active || !path.isAbsolute(destination)) throw new Error('Saves unavailable');
     const changed = await active.request('save_preference', { key: 'save_export_dir', value: destination });
     if (worker !== active || changed?.key !== 'save_export_dir' || changed?.value !== destination) {
       throw new Error('Save unsuccessful');
@@ -383,7 +384,7 @@ app.whenReady().then(() => {
     return destination;
   });
   ipcMain.handle('set-save-report', async (event, value) => {
-    const active = savesWorker(event);
+    const active = gameWorker(event, 'saves');
     if (typeof value !== 'boolean') throw new Error('Invalid preference');
     const changed = await active.request('save_preference', { key: 'export_with_log', value });
     if (worker !== active || changed?.key !== 'export_with_log' || changed?.value !== value) throw new Error('Save unsuccessful');
@@ -391,7 +392,7 @@ app.whenReady().then(() => {
     return value;
   });
   ipcMain.handle('export-save', async event => {
-    const active = savesWorker(event);
+    const active = gameWorker(event, 'saves');
     const result = await active.request('export_save', {}, null);
     if (worker !== active) throw new Error('Saves unavailable');
     if (result?.status === 'no_save' || result?.status === 'failed') {
@@ -407,7 +408,7 @@ app.whenReady().then(() => {
     return { status: 'ok', name: result.name, files: result.files, included_log: result.included_log };
   });
   ipcMain.handle('import-save', async (event, kind) => {
-    const active = savesWorker(event);
+    const active = gameWorker(event, 'saves');
     if (playing || state?.game_running || (kind !== 'archive' && kind !== 'folder')) throw new Error('Import unavailable');
     const options = await saveOptions(active);
     let choice: { source: string; path?: string } = { source: 'waiting' };
@@ -424,7 +425,7 @@ app.whenReady().then(() => {
       if (!path.isAbsolute(selected)) throw new Error('Import unavailable');
       choice = { source: kind, path: selected };
     }
-    if (savesWorker(event) !== active || playing) throw new Error('Import unavailable');
+    if (gameWorker(event, 'saves') !== active || playing) throw new Error('Import unavailable');
     const result = await active.request('import_save', choice, null);
     if (worker !== active) throw new Error('Import unavailable');
     if (['game_running', 'invalid_source', 'invalid_save', 'failed'].includes(result?.status) &&
@@ -441,11 +442,50 @@ app.whenReady().then(() => {
     return { status: 'ok', files: result.files, slot: result.slot, backup: result.backup };
   });
   ipcMain.handle('open-saves-dir', async event => {
-    const active = savesWorker(event);
+    const active = gameWorker(event, 'saves');
     const result = await active.request('open_saves_dir');
     if (worker !== active || result?.status !== 'ok') throw new Error('Could not open saves folder');
     log?.write('saves', 'folder opened');
   });
+  async function modAction(active: WorkerClient, method: string, args: Record<string, unknown>, timeout?: number | null) {
+    const result = parseModAction(await active.request(method, args, timeout));
+    if (worker !== active) throw new Error('Mods unavailable');
+    log?.write('mods', `${method} result=${result.status}`);
+    return result;
+  }
+  ipcMain.handle('mods-list', async (event, page) => {
+    const active = gameWorker(event, 'mods');
+    if (!Number.isSafeInteger(page) || page < 0) throw new Error('Invalid page');
+    const result = parseModsPage(await active.request('mods_list', { page }));
+    if (worker !== active) throw new Error('Mods unavailable');
+    return result;
+  });
+  ipcMain.handle('mod-add', async (event, kind) => {
+    const active = gameWorker(event, 'mods');
+    if (kind !== 'archive' && kind !== 'folder') throw new Error('Invalid mod source');
+    const picked = await dialog.showOpenDialog(window, {
+      title: kind === 'folder' ? 'Escolher pasta do mod' : 'Escolher arquivo do mod',
+      defaultPath: app.getPath('downloads'),
+      properties: kind === 'folder' ? ['openDirectory'] : ['openFile'],
+      ...(kind === 'archive' ? { filters: [{ name: 'Mods', extensions: ['zip', '7z', 'rar'] },
+        { name: 'Todos os arquivos', extensions: ['*'] }] } : {}),
+    });
+    const selected = picked.filePaths[0];
+    if (picked.canceled || !selected) return null;
+    if (gameWorker(event, 'mods') !== active || !path.isAbsolute(selected)) throw new Error('Mods unavailable');
+    return modAction(active, 'mod_add', { path: selected }, null);
+  });
+  ipcMain.handle('mod-enabled', (event, name, value) => {
+    if (typeof name !== 'string' || name.length > 255 || typeof value !== 'boolean') throw new Error('Invalid mod setting');
+    return modAction(gameWorker(event, 'mods'), 'mod_enabled', { name, value });
+  });
+  ipcMain.handle('mod-move', (event, name, direction) => {
+    if (typeof name !== 'string' || name.length > 255 || (direction !== -1 && direction !== 1)) {
+      throw new Error('Invalid load order');
+    }
+    return modAction(gameWorker(event, 'mods'), 'mod_move', { name, direction });
+  });
+  ipcMain.handle('open-mods-dir', event => modAction(gameWorker(event, 'mods'), 'open_mods_dir', {}));
   ipcMain.handle('check-updates', async event => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('check_updates') ||
         worker.handshake.lock !== 'held' || !state || state.job_marker_present) return 'unavailable';

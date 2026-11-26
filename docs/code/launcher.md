@@ -2761,6 +2761,21 @@ Add to Steam: the game in the Steam library, started from there without the laun
 exception of the work is caught and logged with its traceback: a Steam folder in a state nobody expected must say so
 instead of ending the launcher.
 
+### Electron Mods
+
+The worker reads the ordered list with `mods.scan()` and the same conflict winners as Tk.
+It sends six rows at a time and up to three conflicts per row. Listing leaves the filesystem
+alone. Opening the folder explicitly uses `ensure_mods_dir()` and the platform opener.
+Addition uses `mods.add()`. Changing a usable mod's enabled flag or moving a row checks
+for both an owned game session and an externally started game. The worker blocks mutations
+during a job or unresolved recovery. Move returns the selected row's new page so it remains
+visible across page boundaries.
+
+The Electron main process validates the response fields and accepts files and folders through
+its native picker. The renderer reads a fresh ordered page after each successful change.
+Code waiting to be built goes through the same Play job and receipt as Tk. The two launcher
+logs record the action and result. Python errors are shortened before being sent to the window.
+
 ### The Saves screen
 
 - `App.save_waiting()`: a save put into the game folder's saves folder (a shared zip, a save folder), waiting to be

@@ -11,7 +11,7 @@ import time
 from functools import partial
 from pathlib import Path
 
-from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
+from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods, mods_job, paths, play, saves, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
@@ -20,6 +20,7 @@ from .paths import Layout, install_folder
 PROTOCOL = 1
 MAX_FRAME = 65536
 MAX_ACTION_LOGS = 10
+MODS_PAGE_SIZE = 6
 _input_buffer = bytearray()
 _output = None
 _output_disconnected = False
@@ -193,6 +194,10 @@ def installation_view(ctx, recovery, counts):
     return result
 
 
+def bounded_text(text, units):
+    return text.encode('utf-16-le', 'replace')[:units * 2].decode('utf-16-le', 'ignore')
+
+
 def checked_update(ctx, check, counts, channel):
     if channel != ctx.settings.get('channel'):
         result = {'status': 'superseded'}
@@ -206,8 +211,7 @@ def checked_update(ctx, check, counts, channel):
                 if not version or len(version) > 64 or not version.isascii():
                     raise ValueError('invalid release version')
                 new = jobs.update_available(ctx, release)
-                notes = [line.encode('utf-16-le', 'replace')[:1024].decode('utf-16-le', 'ignore')
-                         for line in feed.plain_notes(release.notes, limit=20)]
+                notes = [bounded_text(line, 512) for line in feed.plain_notes(release.notes, limit=20)]
                 result = {'status': 'available' if new else 'up_to_date', 'version': version, 'notes': notes}
             else:
                 result = {'status': 'no_release'}
@@ -268,6 +272,69 @@ def import_save(ctx, game, run, counts, request):
     backup = imported['backup'].name if imported['backup'] else None
     action_log(ctx, counts, 'saves', f'import result=ok files={imported["files"]} backup={bool(backup)}')
     return {'status': 'ok', 'files': imported['files'], 'slot': imported['slot'], 'backup': backup}
+
+
+def mods_view(game, page):
+    entries = mods.scan(game)
+    pages = max(1, (len(entries) + MODS_PAGE_SIZE - 1) // MODS_PAGE_SIZE)
+    page = min(page, pages - 1)
+    start = page * MODS_PAGE_SIZE
+    conflicts = mods.overlaps(entries)
+    items = []
+    for mod in entries[start:start + MODS_PAGE_SIZE]:
+        items.append({'name': mod.name, 'enabled': mod.enabled, 'usable': mod.usable, 'waiting': mod.waiting,
+                      'files': len(mod.files), 'patches': mod.patches, 'cheats': bool(mod.cheat_file),
+                      'other_version': mod.other_version, 'problem': bounded_text(mod.problem, 256),
+                      'overlaps': [{'name': name, 'files': files, 'wins': wins}
+                                   for name, files, wins in conflicts.get(mod.name, [])[:3]]})
+    return {'page': page, 'pages': pages, 'count': len(entries), 'items': items}
+
+
+def change_mod(ctx, game, run, counts, request):
+    method = request['method']
+    action = method.removeprefix('mod_') if method != 'open_mods_dir' else 'open'
+    result = {'status': 'ok'}
+    try:
+        if method == 'open_mods_dir':
+            winsys.open_path(mods.ensure_mods_dir(game))
+        elif method == 'mod_add':
+            source = request.get('path')
+            if (not isinstance(source, str) or '\0' in source or not Path(source).is_absolute() or
+                    not (Path(source).is_file() or Path(source).is_dir())):
+                raise mods.ModError('Choose an existing mod file or folder.')
+            target = mods.add(game, source, log=ctx.log)
+            added = next((mod for mod in mods.scan(game) if mod.name == target.name), None)
+            result['name'] = target.name
+            result['problem'] = bounded_text(added.problem, 256) if added else ''
+        else:
+            if (run and run.alive()) or saves.game_running(game):
+                action_log(ctx, counts, 'mods', f'{action} result=game_running')
+                return {'status': 'game_running'}
+            name = request.get('name')
+            selection = next((mod for mod in mods.scan(game, details=method == 'mod_enabled') if mod.name == name), None)
+            if selection is None:
+                raise mods.ModError('The selected mod is no longer present.')
+            if method == 'mod_enabled':
+                value = request.get('value')
+                if type(value) is not bool:
+                    raise mods.ModError('Choose whether the mod is enabled.')
+                if not selection.usable:
+                    raise mods.ModError(selection.problem)
+                mods.set_enabled(game, selection.name, value)
+            else:
+                direction = request.get('direction')
+                if type(direction) is not int or direction not in (-1, 1):
+                    raise mods.ModError('Move the mod one place up or down.')
+                mods.move(game, selection.name, direction)
+                updated = [mod.name for mod in mods.scan(game, details=False)]
+                if selection.name in updated:
+                    result['page'] = updated.index(selection.name) // MODS_PAGE_SIZE
+    except (mods.ModError, OSError) as e:
+        ctx.log(f'mods: {action} refused: {e}')
+        result = {'status': 'invalid_mod' if isinstance(e, mods.ModError) else 'failed',
+                  'detail': bounded_text(shorten_always(str(e)), 256)}
+    action_log(ctx, counts, 'mods', f'{action} result={result["status"]}')
+    return result
 
 
 def install_space(folder):
@@ -440,7 +507,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
@@ -878,6 +945,30 @@ def main(argv=None):
                     else:
                         result = {'status': 'ok'}
                     action_log(ctx, counts, 'saves', f'open result={result["status"]}')
+                emit({'id': request['id'], 'result': result})
+            elif request.get('method') in ('mods_list', 'mod_add', 'mod_enabled', 'mod_move', 'open_mods_dir'):
+                method = request['method']
+                game = ctx.settings.get('game_dir')
+                if not game or not Path(game).is_dir():
+                    error(request['id'], 'mods_unavailable')
+                    continue
+                if method == 'mods_list':
+                    page = request.get('page', 0)
+                    if type(page) is not int or page < 0:
+                        error(request['id'], 'invalid_page')
+                        continue
+                    try:
+                        result = mods_view(game, page)
+                    except OSError:
+                        error(request['id'], 'mods_unavailable')
+                        continue
+                    action_log(ctx, counts, 'mods list', f'count={result["count"]} page={result["page"]}')
+                elif lock_state != 'held' or job or build_recovery.blocked(layout):
+                    action_log(ctx, counts, 'mods', 'request refused')
+                    error(request['id'], 'mods_unavailable')
+                    continue
+                else:
+                    result = change_mod(ctx, game, run, counts, request)
                 emit({'id': request['id'], 'result': result})
             elif request.get('method') == 'check_updates':
                 if lock_state != 'held' or build_recovery.blocked(layout):

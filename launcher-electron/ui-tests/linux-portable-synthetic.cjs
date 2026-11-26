@@ -44,6 +44,40 @@ async function main() {
     await hide.check();
     await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled);
     assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), settings);
+    const slot = path.join(game, 'profile', 'save', '01'.repeat(16), 'slot_00');
+    await fs.mkdir(slot, { recursive: true });
+    await fs.writeFile(path.join(game, 'profile', 'account.uid'), Buffer.alloc(16, 1));
+    const progress = path.join(slot, 'progress.sav');
+    await fs.writeFile(progress, 'portable synthetic save');
+    const exportsDir = path.join(base, 'exports');
+    await fs.mkdir(exportsDir);
+    const pick = selected => app.evaluate(({ dialog }, chosen) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [chosen] });
+    }, selected);
+    await page.getByRole('button', { name: 'Saves', exact: true }).click();
+    await pick(exportsDir);
+    await page.getByRole('button', { name: 'Escolher pasta de exportação' }).click();
+    await page.locator('#save-export-destination').getByText(exportsDir, { exact: true }).waitFor();
+    await page.getByRole('button', { name: 'Exportar save' }).click();
+    await page.getByText(/Save exportado em/).waitFor();
+    const [archive] = await fs.readdir(exportsDir);
+    await fs.writeFile(progress, 'portable newer save');
+    await pick(path.join(exportsDir, archive));
+    await page.getByRole('button', { name: 'Importar save', exact: true }).click();
+    await page.getByText(/Save importado/).waitFor();
+    assert.equal(await fs.readFile(progress, 'utf8'), 'portable synthetic save');
+    assert.equal((await fs.readdir(path.join(game, 'saves'))).some(name => name.startsWith('backup ')), true);
+    await page.getByRole('button', { name: 'Saves', exact: true }).click();
+    const mod = path.join(base, 'Portable Fixture');
+    await fs.mkdir(path.join(mod, 'romfs'), { recursive: true });
+    await fs.writeFile(path.join(mod, 'romfs', 'stand-in.txt'), 'portable synthetic mod');
+    await page.getByRole('button', { name: 'Mods', exact: true }).click();
+    await pick(mod);
+    await page.getByRole('button', { name: 'Adicionar pasta de mod' }).click();
+    await page.getByText('Mod adicionado: Portable Fixture.', { exact: true }).waitFor();
+    assert.equal(await fs.readFile(path.join(game, 'mods', 'Portable Fixture', 'romfs', 'stand-in.txt'), 'utf8'),
+      'portable synthetic mod');
+    await page.getByRole('button', { name: 'Mods', exact: true }).click();
     await page.getByRole('button', { name: 'Jogar' }).click();
     await page.locator('#status').getByText('O jogo terminou com erro').waitFor({ timeout: 15000 });
     assert.match(await page.locator('#detail').textContent(), /code 71\): portable synthetic failure/);
@@ -91,7 +125,7 @@ async function main() {
     assert.ok(path.isAbsolute(await reopened.locator('#game-folder-proposal').textContent()));
     assert.equal(await reopened.getByRole('button', { name: 'Iniciar instalação' }).isEnabled(), true);
     assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), firstRun);
-    console.log('Packaged Linux Electron: published runtime, Play, crash offer, marker recovery and first run passed');
+    console.log('Packaged Linux Electron: published runtime, Saves, Mods, Play, crash offer, marker recovery and first run passed');
   } finally {
     if (app) await app.close().catch(() => {});
     await fs.rm(base, { recursive: true, force: true });

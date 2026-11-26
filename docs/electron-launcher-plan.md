@@ -44,7 +44,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Staging, automatic checks and application, rebuild after update, handover and rollback remain open.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
 - [ ] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. Synthetic worker and Linux window tests exercise export, optional diagnostic attachments and the selected folder. Synthetic imports cover validation, ZIP and folder selection, a single-slot replacement, backup restoration, and rollback on a failed swap. This flow uses synthetic saves only.
-- [ ] Mods: add files/folders, enable/disable, ordering, rebuild and errors.
+- [ ] Mods: add files/folders, enable/disable, ordering, rebuild and errors. Linux worker and window tests cover folder and archive selection, ordering, conflict winners, toggling and invalid inputs. The synthetic worker also verifies resuming Play after the rebuild, mutation refusal with a game open and moving a mod across pages. Package and owner evidence follow below.
 - [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
 - [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads and changes the same Hide Launcher While Playing preference through the lock-owning worker. A synthetic Linux window test covers both values, persistence and preservation of the other settings. Verify the control separately on real Linux and Windows installations.
@@ -340,6 +340,27 @@ when a backup or copy exceeds the normal worker request timeout. Prove this with
 after the old folder moves and verify recovery returns it to the active path. Test archive and
 folder selection in the Linux window and exercise the worker on Linux and Windows. The Linux tests passed for archive and folder import,
 validation, backups and rollback after a simulated filesystem error.
+
+## Mods operations
+
+Reuse the configured mods folder and the Python scanner. Show each mod's enabled state,
+load order, file and patch counts, unsupported cases and the first three conflicts with
+their winners. Paginate the list so each response fits the worker protocol. Inspecting
+the list does not create or rewrite the mods folder. An explicit Open Mods Folder
+request uses the existing desktop action.
+
+Add archives or folders through native pickers. Cancellation leaves the installation
+unchanged. Reuse the existing safe extraction, naming and folder normalization. Toggle
+only a currently present usable mod and move a currently present mod one place through
+the existing load-order APIs. The worker checks for a running game before either change.
+Adding another mod remains available while the game is running, as it is in Tk. Mod names
+and paths stay out of the Electron log. Python retains its existing shortened diagnostics.
+
+The existing Play flow detects enabled code that needs a rebuild, tracks cancellation and
+resumes Play only when the build has finished and released its claims. Tests use synthetic
+files to prove import from an archive and folder, conflict resolution, game-running refusal,
+persistent ordering, and rebuild after enabling a code mod. The Electron window test uses
+scratch pickers and shows invalid inputs without changing the visible list.
 
 ## Provisioning and handover design
 

@@ -486,6 +486,115 @@ class WorkerTest(unittest.TestCase):
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: saves import result=ok files=1 backup=True', log)
 
+    def test_mod_management_orders_conflicts_and_uses_existing_play_rebuild(self):
+        from launcher.platform import game_executable
+        import zipfile
+
+        base = Path(self.tmp.name)
+        game = base / 'game'
+        (game / 'build-cache').mkdir(parents=True)
+        (game / 'exefs').mkdir()
+        (game / 'exefs' / 'main').write_bytes(b'NSO0' + bytes(0x44))
+        (game / 'build-cache' / 'state.json').write_text(
+            json.dumps({'version': 2, 'kit': '0.0.1', 'steps': {'compile': {}, 'exefs': {}, 'romfs': {}}}))
+        game_executable(game).write_text('not a real executable')
+        alpha = base / 'Alpha'
+        (alpha / 'romfs').mkdir(parents=True)
+        (alpha / 'romfs' / 'shared.txt').write_text('alpha')
+        (alpha / 'cheats').mkdir()
+        (alpha / 'cheats' / '0000000000000000.txt').write_text('[Synthetic]\n')
+        beta = base / 'Beta.zip'
+        with zipfile.ZipFile(beta, 'w') as archive:
+            archive.writestr('romfs/shared.txt', 'beta')
+        invalid = base / 'invalid.txt'
+        invalid.write_text('wrong type')
+        active = base / 'game-active'
+        (self.root / 'data' / 'launcher.json').write_text(
+            json.dumps({'game_dir': str(game), 'warn_low_commit': False, 'telemetry': 'off'}))
+        script = ("import hashlib,json,runpy,subprocess,sys\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import jobs,saves,winsys\n"
+                  "root,active=map(Path,sys.argv[1:])\n"
+                  "def rebuild(job):\n"
+                  " job.begin('compile_changed')\n"
+                  " game=Path(job.game_dir)\n"
+                  " key='Alpha/cheats/0000000000000000.txt'\n"
+                  " digest=hashlib.sha256((game/'mods'/key).read_bytes()).hexdigest()\n"
+                  " (game/'build-cache'/'mod-code.json').write_text(json.dumps({key:digest}))\n"
+                  "def spawn(_): return subprocess.Popen([sys.executable,'-c','pass'],"
+                  "stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)\n"
+                  "sys.argv=['launcher.worker','--root',str(root)]\n"
+                  "with (mock.patch.object(jobs.ModsRebuildJob,'run',rebuild), mock.patch.object(saves,'game_running',"
+                  "side_effect=lambda _: active.exists()), mock.patch.object(winsys,'start_game',spawn), "
+                  "mock.patch.object(winsys,'keep_awake'), mock.patch.object(winsys,'open_path')):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), str(active)], cwd=ROOT,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop_worker, worker)
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+
+        def request(request_id, method, **fields):
+            worker.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+            worker.stdin.flush()
+            frame = frames.get(timeout=10)
+            self.assertEqual(frame['id'], request_id)
+            return frame['result']
+
+        self.assertEqual(request(1, 'hello', protocol=1)['lock'], 'held')
+        self.assertEqual(request(2, 'mods_list', page=0)['items'], [])
+        self.assertFalse((game / 'mods').exists())
+        self.assertEqual(request(3, 'mod_add', path=str(invalid))['status'], 'invalid_mod')
+        self.assertEqual(request(4, 'mod_add', path=str(alpha))['status'], 'ok')
+        self.assertEqual(request(5, 'mod_add', path=str(beta))['status'], 'ok')
+        first = request(6, 'mods_list', page=0)['items']
+        self.assertEqual([mod['name'] for mod in first], ['Alpha', 'Beta'])
+        self.assertTrue(first[0]['waiting'])
+        self.assertEqual(first[0]['overlaps'], [{'name': 'Beta', 'files': 1, 'wins': True}])
+        active.touch()
+        self.assertEqual(request(7, 'mod_enabled', name='Alpha', value=False)['status'], 'game_running')
+        self.assertEqual(request(8, 'mod_move', name='Beta', direction=-1)['status'], 'game_running')
+        active.unlink()
+        self.assertEqual(request(9, 'mod_move', name='Beta', direction=-1)['status'], 'ok')
+        self.assertEqual(request(10, 'mod_enabled', name='Alpha', value=False)['status'], 'ok')
+        disabled = request(11, 'mods_list', page=0)['items']
+        self.assertEqual([mod['name'] for mod in disabled], ['Beta', 'Alpha'])
+        self.assertFalse(disabled[1]['enabled'])
+        self.assertFalse(disabled[1]['waiting'])
+        self.assertEqual(request(12, 'mod_enabled', name='Alpha', value=True)['status'], 'ok')
+        enabled = request(13, 'mods_list', page=0)['items']
+        self.assertTrue(enabled[1]['waiting'])
+        self.assertEqual(enabled[1]['overlaps'], [{'name': 'Beta', 'files': 1, 'wins': False}])
+        self.assertEqual(request(14, 'open_mods_dir')['status'], 'ok')
+        self.assertEqual(request(15, 'play')['status'], 'building')
+        observed = []
+        for _ in range(10):
+            frame = frames.get(timeout=10)
+            observed.append(frame['event'])
+            if frame['event'] == 'game_ended':
+                break
+        self.assertEqual([event for event in observed if event != 'job_progress'],
+                         ['job_started', 'job_ended', 'game_started', 'game_ended'])
+        self.assertFalse(request(16, 'mods_list', page=0)['items'][1]['waiting'])
+        for index in range(5):
+            folder = game / 'mods' / f'Extra-{index}' / 'romfs'
+            folder.mkdir(parents=True)
+            (folder / 'fixture.txt').write_text('synthetic asset')
+        tail = request(17, 'mods_list', page=1)
+        self.assertEqual((tail['page'], tail['pages'], tail['count'], len(tail['items'])), (1, 2, 7, 1))
+        self.assertEqual(request(18, 'mod_move', name=tail['items'][0]['name'], direction=-1)['page'], 0)
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=10), 0)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: mods move result=ok', log)
+        self.assertIn('worker: play status=rebuild', log)
+
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout
 
