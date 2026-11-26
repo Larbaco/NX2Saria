@@ -41,7 +41,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The Windows and Linux worker tests exercise the install request with a stand-in task. The Linux Electron window test covers progress, cancel, retry and a return to a playable screen. Background dump search proposes the newest valid result and preserves a manual choice. Worker tests use an isolated search directory, and the Linux window test displays the discovered file. The first-run preferences use the existing update settings and Windows shortcut. The first-run requirements check reports missing runtime support or Linux build tools. First installation without the app/runtime and owner validation remain open.
 - [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Manual Rebuild uses the existing RebuildJob. A synthetic worker case proves refusal while the old marker exists, completion after cleanup, honoring the cache setting and leaving the last executable untouched. The Linux window visits the ready screen after an explicit Rebuild without automatically starting Play. Interruption recovery and an end-to-end build remain open.
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
-- [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. Electron still needs its own update flow and separately designed handover and rollback before parity.
+- [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Staging, automatic checks and application, rebuild after update, handover and rollback remain open.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
 - [ ] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery.
 - [ ] Mods: add files/folders, enable/disable, ordering, rebuild and errors.
@@ -291,6 +291,22 @@ Both private packages use commit `c91e8cf4`. Verify the owner-run evidence separ
 - Windows `NX2Saria-Electron-Worker-Windows-x64-c91e8cf4.zip`, 146,991,939 bytes.
   SHA-256 `b754a593afdc67a4513acfd810e648bea9353f55fc0b00eaaeb902427a705a47`.
 
+
+## Update availability check
+
+The first step of the update flow is a manual release check. Use the existing `CheckJob` with
+the selected installation's feed and channel. A worker-owned check runs in the background
+so the window can still inspect the installation. Coalesce concurrent requests and keep the
+existing one-minute pause between forced checks. Treat failure as a visible status and log
+the outcome. On success, retain the existing last-check time and last-seen version while
+preserving unrelated settings.
+
+The worker sends a version, the availability status and bounded plain-text release notes.
+The feed token, asset URLs and download headers stay in Python. This slice reads release
+metadata. Staging, automatic scheduling and activation retain their separate contracts.
+Use a loopback feed and assert that a delayed metadata response leaves inspection responsive,
+only one manifest is requested, and the staged files and active app/runtime are unchanged. The Linux Electron window test
+opens the manual check and renders the release version and notes from a loopback feed.
 
 ## Provisioning and handover design
 
@@ -565,7 +581,7 @@ The coordinator approved the persistent-worker direction: line-delimited UTF-8 J
 ### Approved Play milestone boundaries
 
 - Begin the worker after the game-end extraction is merged: first handshake, exact protocol version, lock from `Layout` before `Context`, inspection and idle EOF; then the shared Play and game lifecycle; then the existing mod-rebuild job and Play resumption. Do not duplicate Tk decisions: propose a small characterized extraction if integration exposes a missing shared decision.
-- The worker does not check, download or install updates, and does not call `BackgroundUpdate` or `install_staged`. It detects and logs a waiting update in the handshake and again after the game; the interface tells the player to open the installed launcher to apply it. A synthetic test compares the waiting marker and staged tree before and after Play. Handover, installation and rollback remain a separate project.
+- During the initial Play milestone, the worker does not check, download or install updates, and does not call `BackgroundUpdate` or `install_staged`. It detects and logs a waiting update in the handshake and again after the game; the interface tells the player to open the installed launcher to apply it. A synthetic test compares the waiting marker and staged tree before and after Play. Handover, installation and rollback remain a separate project.
 - The new code does not create a `Reporter`, send reports or ask the consent question. A session summary stays on disk for the installed launcher to process under existing consent. `finish_game()` may synthesize a crash summary locally when reports are enabled. A synthetic session must leave the expected summary and produce no requests to a fake server. Full Electron consent and reporting behavior remains a parity gap.
 - A job is terminal only when `finished` is set after marker cleanup and release of claims and its nested lock; `result` alone is insufficient. A `FileLock` with `key is None` means the lock could not be opened: proceed as today, log it and report it in the handshake.
 - After a delayed memory decision, the worker rechecks the current attempt identity, its own game session and any external game before spawning. Stale answers are ignored; an occupied state receives the same refusal as the initial check. This additional recheck is for the asynchronous worker, not the modal Tk extraction. Include a synthetic race test.

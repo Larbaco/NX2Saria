@@ -9,6 +9,7 @@ from . import build, feed, gamefiles, locks, net, paths, toolchain, updater, ver
 from .context import shorten
 
 RECHECK = 3600
+FORCED_CHECK_PAUSE = 60
 
 PENDING, RUNNING, DONE, SKIPPED, FAILED = 'pending', 'running', 'done', 'skipped', 'failed'
 

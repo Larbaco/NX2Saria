@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
+const http = require('node:http');
 const path = require('node:path');
 const { execFileSync, spawn } = require('node:child_process');
 const { once } = require('node:events');
@@ -9,12 +10,13 @@ const readline = require('node:readline');
 const { _electron } = require('playwright-core');
 
 const standInInstall = `
+import os
 import runpy
 import sys
 import time
 from pathlib import Path
 from unittest import mock
-from launcher import gamefiles, jobs, net, paths
+from launcher import feed, gamefiles, jobs, net, paths
 from launcher.platform import linux
 from launcher.platform import game_executable
 
@@ -44,6 +46,7 @@ def search_dirs(extra):
     return [base / 'Downloads']
 
 with (mock.patch.object(jobs.InstallJob, 'run', install),
+      mock.patch.object(feed, 'load', return_value={'type': 'url', 'url': os.environ['NX2SARIA_TEST_FEED']}),
       mock.patch.object(jobs.RebuildJob, 'run', rebuild),
       mock.patch.object(paths, 'free_gb', return_value=100),
       mock.patch.object(linux, 'mounted_drives', return_value=[]),
@@ -59,7 +62,16 @@ async function main() {
   const folder = path.join(base, 'games');
   let app;
   const previousBuilds = [];
+  const feedRequests = [];
+  const server = http.createServer((request, response) => {
+    feedRequests.push(request.url);
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify({ format: 1, version: '999.0.0', app: { name: 'stand-in.zip' },
+      notes: '- A synthetic update note.' }));
+  });
   try {
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(root, 'data'));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), '0.0.1');
@@ -78,7 +90,8 @@ async function main() {
       args: ['--no-sandbox', '.'],
       cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_PYTHON: python,
-        NX2SARIA_TEST_PYTHON: process.env.NX2SARIA_PYTHON || 'python3', NX2SARIA_TEST_INSTALL: standInInstall }
+        NX2SARIA_TEST_PYTHON: process.env.NX2SARIA_PYTHON || 'python3', NX2SARIA_TEST_INSTALL: standInInstall,
+        NX2SARIA_TEST_FEED: `http://127.0.0.1:${server.address().port}/manifest.json` }
     });
     const page = await app.firstWindow();
     const location = page.locator('#game-folder-proposal');
@@ -240,8 +253,15 @@ async function main() {
     await page.getByText(/A compilação anterior não terminou/).waitFor({ timeout: 5000 });
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
     await assert.rejects(fs.access(oldMarker), { code: 'ENOENT' });
+
+    await page.getByRole('button', { name: 'Buscar atualizações' }).click({ timeout: 5000 });
+    await page.getByText('Versão 999.0.0 disponível', { exact: true }).waitFor({ timeout: 5000 });
+    await page.getByText('A synthetic update note.', { exact: true }).waitFor({ timeout: 5000 });
+    assert.deepEqual(feedRequests, ['/manifest.json']);
+    assert.equal((await fs.readFile(path.join(root, 'app', 'current.txt'), 'utf8')).trim(), '0.0.1');
   } finally {
     if (app) await app.close();
+    server.close();
     for (const previous of previousBuilds) {
       await fs.writeFile(previous.release, '');
       await previous.ended;

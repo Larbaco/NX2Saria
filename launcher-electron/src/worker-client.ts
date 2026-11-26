@@ -1,7 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { parseInspection } from './inspection';
-import { parseHandshake, PROTOCOL_VERSION, type WorkerHandshake } from './worker-protocol';
+import { parseHandshake, parseUpdateCheck, PROTOCOL_VERSION, type WorkerHandshake } from './worker-protocol';
 
 export class WorkerRequestError extends Error {
   constructor(readonly code: 'busy' | 'request_failed' | 'runtime_incompatible') { super('Worker request failed'); }
@@ -65,10 +65,13 @@ export class WorkerClient extends EventEmitter {
           else throw new Error();
         } else if (typeof frame.event === 'string') {
           const recovery = frame.event === 'recovery_changed';
-          if (!['game_started', 'game_window_ready', 'game_ended', 'job_started', 'job_progress', 'job_ended', 'memory_required', 'play_failed', 'recovery_changed'].includes(frame.event) ||
+          const update = frame.event === 'update_checked';
+          if (!['game_started', 'game_window_ready', 'game_ended', 'job_started', 'job_progress', 'job_ended', 'memory_required', 'play_failed', 'recovery_changed', 'update_checked'].includes(frame.event) ||
               !Number.isSafeInteger(frame.sequence) || frame.sequence !== this.lastSequence + 1 ||
-              !Number.isSafeInteger(frame.session) || (recovery ? frame.session !== 0 : frame.session < 1)) throw new Error();
-          if (recovery) {
+              !Number.isSafeInteger(frame.session) || ((recovery || update) ? frame.session !== 0 : frame.session < 1)) throw new Error();
+          if (update) {
+            frame.update = parseUpdateCheck(frame.update);
+          } else if (recovery) {
             if (this.activeJob !== null || this.activeSession !== null) throw new Error();
             frame.inspection = parseInspection(frame.inspection);
           } else if (frame.event === 'job_started') {

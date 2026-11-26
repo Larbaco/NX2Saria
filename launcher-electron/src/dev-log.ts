@@ -1,7 +1,7 @@
 import { appendFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-type Event = 'inspection' | 'install' | 'exit' | 'play' | 'rebuild' | 'recovery' | 'root' | 'settings' | 'window';
+type Event = 'inspection' | 'install' | 'exit' | 'play' | 'rebuild' | 'recovery' | 'root' | 'settings' | 'update' | 'window';
 export type DevelopmentLog = { write(event: Event, outcome: string): void };
 
 function timestamp(now: Date): string {

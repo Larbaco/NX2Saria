@@ -1,11 +1,12 @@
 type FirstRunPreferences = { channel: 'stable' | 'preview'; auto_check: boolean; desktop_shortcut: boolean | null };
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences; first_run_requirements?: { status: string; message?: string } };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
+type UpdateView = { status: string; version?: string; notes?: string[] };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -13,6 +14,10 @@ const rebuildButton = document.querySelector<HTMLButtonElement>('#rebuild')!;
 const playButton = document.querySelector<HTMLButtonElement>('#play')!;
 const cancelJob = document.querySelector<HTMLButtonElement>('#cancel-job')!;
 const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-playing')!;
+const updateControl = document.querySelector<HTMLElement>('#update-control')!;
+const checkUpdatesButton = document.querySelector<HTMLButtonElement>('#check-updates')!;
+const updateResult = document.querySelector<HTMLElement>('#update-result')!;
+const updateNotes = document.querySelector<HTMLElement>('#update-notes')!;
 const settingError = document.querySelector<HTMLElement>('#setting-error')!;
 const installButton = document.querySelector<HTMLButtonElement>('#begin-install')!;
 const recoveryControls = document.querySelector<HTMLElement>('#recovery-controls')!;
@@ -41,6 +46,7 @@ let playing = false;
 let savingPreference = false;
 let playFailed = false;
 let choosingSource = false;
+let checkingUpdates = false;
 let recoveryAction: 'wait' | 'stop' | null = null;
 let askingRecovery = false;
 let proposedFolder: InstallDestination | null = null;
@@ -49,6 +55,8 @@ let proposedDump: string | null = null;
 function updateControls() {
   const busy = selecting || playing || savingPreference || choosingSource;
   button.disabled = busy || askingRecovery;
+  updateControl.hidden = installation?.status !== 'ready';
+  checkUpdatesButton.disabled = checkingUpdates || busy || installation?.job_marker_present === true;
   const previousBuild = installation?.recovery?.state;
   recoveryControls.hidden = previousBuild !== 'alive' && previousBuild !== 'unverified';
   stopBuild.hidden = previousBuild !== 'alive';
@@ -179,6 +187,9 @@ async function loadSelection(action: () => Promise<Result | null>) {
   selecting = true;
   installation = null;
   playFailed = false;
+  checkingUpdates = false;
+  updateResult.textContent = updateNotes.textContent = '';
+  updateNotes.hidden = true;
   recoveryAction = null;
   settingError.textContent = firstRunSettingsError.textContent = '';
   proposedFolder = proposedDump = null;
@@ -270,6 +281,37 @@ async function saveFirstRunPreference(key: keyof FirstRunPreferences, value: str
 firstRunChannel.onchange = () => { void saveFirstRunPreference('channel', firstRunChannel.value); };
 firstRunAutoCheck.onchange = () => { void saveFirstRunPreference('auto_check', firstRunAutoCheck.checked); };
 firstRunDesktop.onchange = () => { void saveFirstRunPreference('desktop_shortcut', firstRunDesktop.checked); };
+
+const updateMessages: Record<string, string> = {
+  up_to_date: 'O launcher está atualizado.',
+  no_release: 'Nenhuma versão encontrada para este canal.',
+  failed: 'Não foi possível buscar atualizações. Confira o log do launcher.',
+  superseded: 'O canal mudou. Busque atualizações novamente.',
+  recent_check: 'O launcher já buscou atualizações há menos de um minuto.',
+  unavailable: 'A busca por atualizações está indisponível agora.',
+};
+
+checkUpdatesButton.onclick = async () => {
+  const selected = installation;
+  checkingUpdates = true;
+  updateResult.textContent = 'Buscando atualizações…';
+  updateNotes.hidden = true;
+  updateControls();
+  let status = 'unavailable';
+  try { status = await window.launcher.checkUpdates(); } catch {}
+  if (selected !== installation || status === 'checking') return;
+  checkingUpdates = false;
+  updateResult.textContent = updateMessages[status] || updateMessages.unavailable;
+  updateControls();
+};
+window.launcher.onUpdateChecked(update => {
+  checkingUpdates = false;
+  updateResult.textContent = update.status === 'available'
+    ? `Versão ${update.version} disponível` : updateMessages[update.status] || updateMessages.unavailable;
+  updateNotes.textContent = update.notes?.join('\n') ?? '';
+  updateNotes.hidden = !updateNotes.textContent;
+  updateControls();
+});
 
 function showPlayFeedback(result: PlayFeedback) {
   let kind = 'could_not_start';

@@ -45,3 +45,12 @@ test('validates play results and memory estimates without passing extra fields',
     {status:'memory',attempt:1,memory:{remaining:1,need:null,unbounded:false}},
     {status:'memory',attempt:1,memory:{remaining:NaN,need:2,unbounded:false}}]) assert.throws(() => parsePlayResult(bad));
 });
+
+test('accepts only the update summary fields exposed to the window', () => {
+  const { parseUpdateCheck } = require('../dist/worker-protocol.js');
+  assert.deepEqual(parseUpdateCheck({
+    status: 'available', version: '1.2.3-rc.1', notes: ['One change'], headers: { Authorization: 'unused' },
+  }), { status: 'available', version: '1.2.3-rc.1', notes: ['One change'] });
+  assert.throws(() => parseUpdateCheck({ status: 'available', version: '/outside', notes: [] }));
+  assert.throws(() => parseUpdateCheck({ status: 'up_to_date', version: '1', notes: ['x'.repeat(513)] }));
+});

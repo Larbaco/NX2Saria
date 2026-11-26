@@ -3708,6 +3708,13 @@ job, or an unavailable lock prevents starting it. Explicit installs and rebuilds
 screen. After a successful mod rebuild, the worker resumes Play instead.
 
 
+`checked_update()` completes the existing `launcher/jobs.py` `CheckJob` on the main worker loop.
+The worker accepts a single manual check at a time and uses the same one-minute start throttle
+as Tk. The job only reads the feed; the main loop records the existing settings metadata and
+exports the availability, version and bounded plain notes. A response from an earlier channel
+is discarded if the channel changes. The check event is independent of game and build sessions.
+
+
 For Play, a memory decision has an attempt number. The worker rejects a stale answer and checks for another
 game before resuming. Mod rebuilds use the shared completion policy and wait for `finished` before resuming
 Play or reporting the result. Sequenced game events identify the session. They mark confirmed spawn, window

@@ -40,3 +40,18 @@ export function parsePlayResult(input: unknown): PlayResult {
   return { status: 'memory', attempt: value.attempt as number,
     memory: { remaining: memory.remaining, need: memory.need as number | null, unbounded: memory.unbounded } };
 }
+
+export type UpdateCheck = { status: 'available' | 'up_to_date'; version: string; notes: string[] } |
+  { status: 'no_release' | 'failed' | 'superseded' };
+
+export function parseUpdateCheck(value: unknown): UpdateCheck {
+  if (!value || typeof value !== 'object') throw new Error('Invalid update result');
+  const result = value as Record<string, unknown>;
+  const status = result.status;
+  if (status === 'no_release' || status === 'failed' || status === 'superseded') return { status };
+  if ((status !== 'available' && status !== 'up_to_date') || typeof result.version !== 'string' ||
+      result.version.length > 64 || !/^v?[0-9]+(?:\.[0-9]+)*(?:-[0-9A-Za-z.-]+)?$/.test(result.version) ||
+      !Array.isArray(result.notes) || result.notes.length > 20 ||
+      !result.notes.every(line => typeof line === 'string' && line.length <= 512)) throw new Error('Invalid update result');
+  return { status, version: result.version, notes: result.notes };
+}

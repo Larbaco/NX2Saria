@@ -118,6 +118,16 @@ class Settings(dict):
                 self.log(f'setting: {key} {_shown(key, previous)} -> {_shown(key, value)}')
         self[key] = self.saved[key] = value
 
+    def record_update_check(self, checked_at, release=None):
+        data = self._read_for_write()
+        changes = {'last_check': checked_at}
+        if release:
+            changes['last_seen'] = release
+        data.update(changes)
+        self._write(data)
+        self.update(changes)
+        self.saved.update(changes)
+
     def save_hide_while_playing(self, value):
         self.save_preference('hide_while_playing', value)
 

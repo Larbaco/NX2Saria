@@ -11,7 +11,7 @@ import time
 from functools import partial
 from pathlib import Path
 
-from . import build, build_recovery, commit, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
+from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context
 from .inspect_installation import inspect_installation
@@ -193,6 +193,33 @@ def installation_view(ctx, recovery, counts):
     return result
 
 
+def checked_update(ctx, check, counts, channel):
+    if channel != ctx.settings.get('channel'):
+        result = {'status': 'superseded'}
+    elif check.result != 'ok':
+        result = {'status': 'failed'}
+    else:
+        release = check.release
+        try:
+            if release:
+                version = versions.display(release.version)
+                if not version or len(version) > 64:
+                    raise ValueError('invalid release version')
+                new = jobs.update_available(ctx, release)
+                notes = [line[:512] for line in feed.plain_notes(release.notes, limit=20)]
+                result = {'status': 'available' if new else 'up_to_date', 'version': version, 'notes': notes}
+            else:
+                result = {'status': 'no_release'}
+            ctx.settings.record_update_check(time.time(), release.version if release else None)
+        except (OSError, ValueError, TypeError):
+            result = {'status': 'failed'}
+    detail = f'result={result["status"]}'
+    if 'version' in result:
+        detail += f' version={result["version"]}'
+    action_log(ctx, counts, 'check', detail)
+    return result
+
+
 def install_space(folder):
     complete = (Path(folder) / 'romfs' / 'romfs.bin').is_file()
     available = paths.free_gb(folder) + paths.partial_image_gb(folder)
@@ -363,7 +390,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
@@ -385,6 +412,9 @@ def main(argv=None):
         recovery = None
         recovery_poll = None
         stopping = None
+        check = None
+        check_started = None
+        check_channel = None
         while True:
             if _output_disconnected:
                 disconnected = True
@@ -393,6 +423,11 @@ def main(argv=None):
                 if not run and not job:
                     ctx.log('worker: output disconnected idle')
                     return 0
+            if check and check.finished is not None and not disconnected:
+                update = checked_update(ctx, check, counts, check_channel)
+                check = None
+                sequence += 1
+                emit({'event': 'update_checked', 'sequence': sequence, 'session': 0, 'update': update})
             if recovery_poll is not None and time.monotonic() >= recovery_poll and not disconnected:
                 previous = recovery
                 recovery = inspect_recovery(ctx, counts, recovery)
@@ -504,7 +539,7 @@ def main(argv=None):
                 sequence += 1
                 emit({'event': 'game_window_ready', 'sequence': sequence, 'session': session})
             try:
-                timeout = 0.2 if parent and not disconnected else (0.5 if recovery_poll is not None else 1 if run or job else None)
+                timeout = 0.2 if parent and not disconnected else (0.5 if recovery_poll is not None or check else 1 if run or job else None)
                 kind, request = requests.get(timeout=timeout)
             except queue.Empty:
                 if disconnected or not parent or not parent.exited():
@@ -745,6 +780,20 @@ def main(argv=None):
                         error(request['id'], 'preference_save_failed')
                     else:
                         emit({'id': request['id'], 'result': {'hide_while_playing': value}})
+            elif request.get('method') == 'check_updates':
+                if lock_state != 'held' or build_recovery.blocked(layout):
+                    status = 'unavailable'
+                elif check:
+                    status = 'checking'
+                elif check_started is not None and time.monotonic() - check_started < jobs.FORCED_CHECK_PAUSE:
+                    status = 'recent_check'
+                else:
+                    check_started = time.monotonic()
+                    check_channel = ctx.settings.get('channel')
+                    check = jobs.CheckJob(ctx).start()
+                    status = 'checking'
+                    action_log(ctx, counts, 'check', 'started')
+                emit({'id': request['id'], 'result': {'status': status}})
             elif request.get('method') == 'recover_build':
                 action = request.get('action')
                 if lock_state != 'held' or run or job or pending or action not in ('wait', 'stop', 'confirm'):

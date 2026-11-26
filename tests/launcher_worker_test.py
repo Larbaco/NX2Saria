@@ -253,6 +253,87 @@ class WorkerTest(unittest.TestCase):
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: install requirements status=runtime_zstd_missing', log)
 
+    def test_manual_update_check_reads_only_the_manifest_and_leaves_inspection_responsive(self):
+        data = self.root / 'data'
+        settings = data / 'launcher.json'
+        settings.write_text('{"channel":"preview","telemetry":"off","future_option":"kept"}')
+        staged = self.root / 'app' / 'untouched'
+        staged.mkdir()
+        (staged / 'payload').write_text('keep')
+        manifest = {'format': 1, 'version': '999.0.0', 'app': {'name': 'synthetic-app.zip'},
+                    'notes': '## Release Notes\n- One synthetic change\n[Read more](https://example.test/)'}
+        requests = []
+        requested, release = threading.Event(), threading.Event()
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                requested.set()
+                release.wait(5)
+                body = json.dumps(manifest).encode()
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        with http.server.HTTPServer(('127.0.0.1', 0), Handler) as server:
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                url = f'http://127.0.0.1:{server.server_port}/manifest.json'
+                script = ("import runpy,sys\n"
+                          "from unittest import mock\n"
+                          "from launcher import feed\n"
+                          "root,url=sys.argv[1:]\n"
+                          "sys.argv=['launcher.worker','--root',root]\n"
+                          "with mock.patch.object(feed,'load',return_value={'type':'url','url':url}):\n"
+                          " runpy.run_module('launcher.worker',run_name='__main__')\n")
+                worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), url], cwd=ROOT,
+                                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          text=True)
+                self.addCleanup(self.stop_worker, worker)
+                frames = queue.Queue()
+
+                def collect():
+                    for line in worker.stdout:
+                        frames.put(json.loads(line))
+
+                threading.Thread(target=collect, daemon=True).start()
+
+                def request(request_id, method, **fields):
+                    worker.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+                    worker.stdin.flush()
+                    frame = frames.get(timeout=5)
+                    self.assertEqual(frame['id'], request_id)
+                    return frame['result']
+
+                self.assertEqual(request(1, 'hello', protocol=1)['lock'], 'held')
+                self.assertEqual(request(2, 'check_updates')['status'], 'checking')
+                self.assertTrue(requested.wait(2))
+                self.assertEqual(request(3, 'inspect')['status'], 'not_configured')
+                self.assertEqual(request(4, 'check_updates')['status'], 'checking')
+                self.assertFalse('last_check' in json.loads(settings.read_text()))
+                release.set()
+                event = frames.get(timeout=5)
+                self.assertEqual(event['event'], 'update_checked')
+                self.assertEqual(event['update'], {'status': 'available', 'version': '999.0.0',
+                                                  'notes': ['Release Notes', 'One synthetic change']})
+                self.assertEqual(request(5, 'check_updates')['status'], 'recent_check')
+                worker.stdin.close()
+                self.assertEqual(worker.wait(timeout=10), 0)
+            finally:
+                release.set()
+                server.shutdown()
+        self.assertEqual(requests, ['/manifest.json'])
+        self.assertEqual((staged / 'payload').read_text(), 'keep')
+        self.assertEqual((self.root / 'app' / 'current.txt').read_text(), '0.0.1')
+        active = json.loads(settings.read_text())
+        self.assertGreater(active.pop('last_check'), 0)
+        self.assertEqual(active, {'channel': 'preview', 'telemetry': 'off', 'future_option': 'kept',
+                                  'last_seen': '999.0.0'})
+
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout
 

@@ -133,7 +133,10 @@ app.whenReady().then(() => {
       });
       active.on('event', async frame => {
         if (worker !== active) return;
-        if (frame.event === 'recovery_changed') {
+        if (frame.event === 'update_checked') {
+          log?.write('update', `check result=${frame.update.status}`);
+          if (!window.isDestroyed()) window.webContents.send('update-checked', frame.update);
+        } else if (frame.event === 'recovery_changed') {
           state = frame.inspection;
           log?.write('recovery', `state=${state?.recovery?.state ?? 'none'}`);
           if (!window.isDestroyed()) window.webContents.send('recovery-changed', settingsView(state));
@@ -348,6 +351,20 @@ app.whenReady().then(() => {
       }
     } catch {}
     log?.write('recovery', `${action} result=${status}`);
+    return status;
+  });
+  ipcMain.handle('check-updates', async event => {
+    if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('check_updates') ||
+        worker.handshake.lock !== 'held' || !state || state.job_marker_present) return 'unavailable';
+    let status = 'unavailable';
+    try {
+      const active = worker;
+      const response = await active.request('check_updates');
+      if (worker === active && (response?.status === 'checking' || response?.status === 'recent_check')) {
+        status = response.status;
+      }
+    } catch {}
+    log?.write('update', `check request=${status}`);
     return status;
   });
   ipcMain.handle('play', async event => {

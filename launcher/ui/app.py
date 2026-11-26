@@ -107,7 +107,7 @@ def fit(font, text, width):
 REPORTS_ON_NOTICE = 'Session reports are on. You can change this in Settings > Session Reports.'
 
 
-FORCED_CHECK_PAUSE = 60
+FORCED_CHECK_PAUSE = jobs.FORCED_CHECK_PAUSE
 
 UPDATE_TAKES = ('That takes a few minutes when little changed, and half an hour or more when the game\'s code or '
                 'its shaders are built again.')
