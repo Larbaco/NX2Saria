@@ -4983,8 +4983,9 @@ checks in `/proc/locks` (`lock_holders()`) that the process holding the lock is 
 
 ### `Smoke.wait_for_disk()`
 
-A build takes about 33 GB of the bench's disk. Before each build it waits, up to `--disk-wait` seconds, for 36 GB free,
-and fails with the free space when it does not come.
+A build takes about 34 GB of the bench's disk, and its temporaries more while it runs. Before each build it waits, up
+to `--disk-wait` seconds, for 45 GB free, and fails with the free space when it does not come. 36 GB was not enough
+on a night when another build's folder grew beside it: the build stopped with a full disk.
 
 ### `Smoke.game_run()`
 
