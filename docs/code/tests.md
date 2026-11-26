@@ -5938,6 +5938,11 @@ controller. It checks focus order and restoration, selection changes, return,
 unfocused input suppression, scroll, and overflow at the minimum window size
 and at 140% zoom. Hardware Game Mode is a separate check.
 
+The worker's feed-order test serves a GitHub-style release list and only
+the newest manifest on loopback. It verifies the announced version, the
+single feed-order diagnostic in the installation log and the same active
+app after the check.
+
 The installed worker build-compatibility test pairs a newer fixture app
 with an earlier completed executable and substitutes an in-memory process.
 It verifies Play and the version log, refusal for a missing compile

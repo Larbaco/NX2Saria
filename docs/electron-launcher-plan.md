@@ -403,6 +403,11 @@ metadata. Staging, automatic scheduling and activation retain their separate con
 Use a loopback feed and assert that a delayed metadata response leaves inspection responsive,
 only one manifest is requested, and the staged files and active app/runtime are unchanged. The Linux Electron window test
 opens the manual check and renders the release version and notes from a loopback feed.
+The worker continues to use `CheckJob`. A GitHub-style loopback feed
+returns an older eligible entry before the newest release. The worker
+fetches only the newest manifest, exposes its version and records the
+feed-order diagnostic once in `launcher.log`.
+
 
 ## Saves operations
 

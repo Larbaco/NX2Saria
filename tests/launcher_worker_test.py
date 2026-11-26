@@ -331,6 +331,72 @@ class WorkerTest(unittest.TestCase):
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: install requirements status=runtime_zstd_missing', log)
 
+    def test_worker_update_check_offers_newest_release_and_logs_feed_order(self):
+        from launcher import feed
+
+        app = self.root / 'app' / '0.0.1'
+        (app / 'tools').mkdir(parents=True)
+        (app / 'tools' / 'make_game.py').touch()
+        (app / 'VERSION').write_text('0.0.1')
+        (self.root / 'data' / 'launcher.json').write_text('{"channel":"preview","telemetry":"off"}')
+        manifest_name = (feed.LINUX_MANIFEST if sys.platform.startswith('linux') else feed.MANIFEST)
+        requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                if self.path == '/repos/synthetic/project/releases?per_page=20':
+                    url = f'http://127.0.0.1:{self.server.server_port}'
+                    body = [{'tag_name': 'v0.25.0', 'assets': [
+                                {'name': manifest_name, 'browser_download_url': url + '/older.json'}]},
+                            {'tag_name': 'v0.27.0-rc.4', 'prerelease': True, 'assets': [
+                                {'name': manifest_name, 'browser_download_url': url + '/newest.json'}]}]
+                elif self.path == '/newest.json':
+                    body = {'format': 1, 'version': '0.27.0-rc.4', 'app': {'name': 'scratch.zip'}}
+                else:
+                    self.send_error(404)
+                    return
+                raw = json.dumps(body).encode()
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+            def log_message(self, *_args):
+                pass
+
+        with http.server.HTTPServer(('127.0.0.1', 0), Handler) as server:
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                (app / 'feed.json').write_text(json.dumps({'type': 'github', 'repo': 'synthetic/project',
+                                                           'api': f'http://127.0.0.1:{server.server_port}'}))
+                worker, hello = self.start_worker('0.0.1')
+                self.assertEqual(hello['result']['lock'], 'held')
+                frames = queue.Queue()
+
+                def collect():
+                    for line in worker.stdout:
+                        frames.put(json.loads(line))
+
+                threading.Thread(target=collect, daemon=True).start()
+                worker.stdin.write('{"id":2,"method":"check_updates"}\n')
+                worker.stdin.flush()
+                self.assertEqual(frames.get(timeout=5)['result']['status'], 'checking')
+                event = frames.get(timeout=5)
+                self.assertEqual(event['event'], 'update_checked')
+                self.assertEqual(event['update'], {'status': 'available', 'version': '0.27.0-rc.4', 'notes': []})
+                worker.stdin.close()
+                self.assertEqual(worker.wait(timeout=10), 0)
+            finally:
+                server.shutdown()
+                thread.join()
+        self.assertEqual(requests, ['/repos/synthetic/project/releases?per_page=20', '/newest.json'])
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        expected = 'update check: the feed lists v0.25.0 first; v0.27.0-rc.4 is the newest and is the one offered'
+        self.assertEqual(log.count(expected), 1)
+        self.assertEqual((app.parent / 'current.txt').read_text(), '0.0.1')
+
     def test_manual_update_check_reads_only_the_manifest_and_leaves_inspection_responsive(self):
         data = self.root / 'data'
         settings = data / 'launcher.json'
