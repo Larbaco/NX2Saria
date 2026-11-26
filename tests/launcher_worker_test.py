@@ -261,7 +261,8 @@ class WorkerTest(unittest.TestCase):
         staged.mkdir()
         (staged / 'payload').write_text('keep')
         manifest = {'format': 1, 'version': '999.0.0', 'app': {'name': 'synthetic-app.zip'},
-                    'notes': '## Release Notes\n- One synthetic change\n[Read more](https://example.test/)'}
+                    'notes': '## Release Notes\n- One synthetic change\n[Read more](https://example.test/)\n- Symbols '
+                             + '🚀' * 400}
         requests = []
         requested, release = threading.Event(), threading.Event()
 
@@ -319,7 +320,7 @@ class WorkerTest(unittest.TestCase):
                 event = frames.get(timeout=5)
                 self.assertEqual(event['event'], 'update_checked')
                 self.assertEqual(event['update'], {'status': 'available', 'version': '999.0.0',
-                                                  'notes': ['Release Notes', 'One synthetic change']})
+                                                  'notes': ['Release Notes', 'One synthetic change', 'Symbols ' + '🚀' * 252]})
                 self.assertEqual(request(5, 'check_updates')['status'], 'recent_check')
                 worker.stdin.close()
                 self.assertEqual(worker.wait(timeout=10), 0)
@@ -333,6 +334,8 @@ class WorkerTest(unittest.TestCase):
         self.assertGreater(active.pop('last_check'), 0)
         self.assertEqual(active, {'channel': 'preview', 'telemetry': 'off', 'future_option': 'kept',
                                   'last_seen': '999.0.0'})
+        log = (data / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: check result=available version=999.0.0 notes=3', log)
 
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout

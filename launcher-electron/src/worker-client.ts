@@ -3,6 +3,8 @@ import { EventEmitter } from 'node:events';
 import { parseInspection } from './inspection';
 import { parseHandshake, parseUpdateCheck, PROTOCOL_VERSION, type WorkerHandshake } from './worker-protocol';
 
+const MAX_FRAME_BYTES = 65536;
+
 export class WorkerRequestError extends Error {
   constructor(readonly code: 'busy' | 'request_failed' | 'runtime_incompatible') { super('Worker request failed'); }
 }
@@ -46,12 +48,12 @@ export class WorkerClient extends EventEmitter {
 
   private receive(data: string) {
     this.buffer += data;
-    if (Buffer.byteLength(this.buffer) > 65536) { this.fail(); this.child.stdin.end(); return; }
     let index;
     while ((index = this.buffer.indexOf('\n')) >= 0) {
       const line = this.buffer.slice(0, index);
       this.buffer = this.buffer.slice(index + 1);
       try {
+        if (Buffer.byteLength(line) + 1 > MAX_FRAME_BYTES) throw new Error();
         const frame = JSON.parse(line);
         if (!frame || typeof frame !== 'object' || Array.isArray(frame)) throw new Error();
         if (typeof frame.id === 'number' && this.pending.has(frame.id)) {
@@ -102,6 +104,10 @@ export class WorkerClient extends EventEmitter {
         }
         else throw new Error();
       } catch { this.fail(); this.child.stdin.end(); return; }
+    }
+    if (Buffer.byteLength(this.buffer) >= MAX_FRAME_BYTES) {
+      this.fail();
+      this.child.stdin.end();
     }
   }
 

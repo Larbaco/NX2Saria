@@ -3711,7 +3711,10 @@ screen. After a successful mod rebuild, the worker resumes Play instead.
 `checked_update()` completes the existing `launcher/jobs.py` `CheckJob` on the main worker loop.
 The worker accepts a single manual check at a time and uses the same one-minute start throttle
 as Tk. The job only reads the feed; the main loop records the existing settings metadata and
-exports the availability, version and bounded plain notes. A response from an earlier channel
+exports the availability, version and bounded plain notes. Each note line is limited in
+UTF-16 units, including characters outside the Basic Multilingual Plane, so the complete ASCII-
+escaped frame stays within the pipe limit. The Electron client applies that limit to individual
+frames even when the pipe delivers part of one frame and another frame together. A response from an earlier channel
 is discarded if the channel changes. The check event is independent of game and build sessions.
 
 

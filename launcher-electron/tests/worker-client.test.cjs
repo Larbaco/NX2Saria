@@ -99,3 +99,29 @@ test('accepts a sequenced recovery snapshot outside a game or job session', asyn
     assert.deepEqual(event.inspection.recovery, { state: 'interrupted', kind: 'rebuild' });
   } finally { await worker.close(); }
 });
+
+test('applies the frame limit to each message when pipes combine messages', async () => {
+  const { EventEmitter } = require('node:events');
+  const { PassThrough } = require('node:stream');
+  const { WorkerClient } = require('../dist/worker-client.js');
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+  });
+  const worker = new WorkerClient(child);
+  const seen = [];
+  worker.on('event', frame => seen.push(frame.sequence));
+  const update = {
+    status: 'available', version: '9.0.0',
+    notes: Array.from({ length: 20 }, () => '漢'.repeat(360)),
+  };
+  const frame = sequence => JSON.stringify({ event: 'update_checked', sequence, session: 0, update })
+    .replaceAll('漢', String.raw`\u6f22`) + '\n';
+  const first = frame(1);
+  const second = frame(2);
+  assert.ok(first.length < 65536 && second.length < 65536 && first.length + second.length > 65536);
+  child.stdout.write(first.slice(0, 20000));
+  child.stdout.write(first.slice(20000) + second);
+  child.emit('close', 0);
+  await worker.close();
+  assert.deepEqual(seen, [1, 2]);
+});

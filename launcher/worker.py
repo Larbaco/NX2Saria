@@ -203,10 +203,11 @@ def checked_update(ctx, check, counts, channel):
         try:
             if release:
                 version = versions.display(release.version)
-                if not version or len(version) > 64:
+                if not version or len(version) > 64 or not version.isascii():
                     raise ValueError('invalid release version')
                 new = jobs.update_available(ctx, release)
-                notes = [line[:512] for line in feed.plain_notes(release.notes, limit=20)]
+                notes = [line.encode('utf-16-le', 'replace')[:1024].decode('utf-16-le', 'ignore')
+                         for line in feed.plain_notes(release.notes, limit=20)]
                 result = {'status': 'available' if new else 'up_to_date', 'version': version, 'notes': notes}
             else:
                 result = {'status': 'no_release'}
@@ -215,7 +216,7 @@ def checked_update(ctx, check, counts, channel):
             result = {'status': 'failed'}
     detail = f'result={result["status"]}'
     if 'version' in result:
-        detail += f' version={result["version"]}'
+        detail += f' version={result["version"]} notes={len(result["notes"])}'
     action_log(ctx, counts, 'check', detail)
     return result
 

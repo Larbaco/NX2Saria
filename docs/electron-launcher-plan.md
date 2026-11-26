@@ -301,7 +301,9 @@ existing one-minute pause between forced checks. Treat failure as a visible stat
 the outcome. On success, retain the existing last-check time and last-seen version while
 preserving unrelated settings.
 
-The worker sends a version, the availability status and bounded plain-text release notes.
+The worker sends a version, the availability status and at most 20 plain-text note lines. Each line
+is capped at 512 UTF-16 units to fit the protocol frame even when JSON escapes the full text.
+The Electron client checks the byte limit per frame while the pipe can combine frames.
 The feed token, asset URLs and download headers stay in Python. This slice reads release
 metadata. Staging, automatic scheduling and activation retain their separate contracts.
 Use a loopback feed and assert that a delayed metadata response leaves inspection responsive,

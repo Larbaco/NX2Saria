@@ -5910,6 +5910,8 @@ The manual update check test holds the loopback manifest response while requesti
 inspection and a duplicate check. It checks that the latter is coalesced and that only the
 manifest is fetched. It compares the selected app and staged file before and after. The Linux
 window test drives the manual check and displays the release version and bounded plain notes.
+The worker bounds a note containing supplementary Unicode characters. The Node test delivers
+two individually valid frames in a combined pipe read larger than one frame.
 
 The first-run preference case switches the channel and update check, rejects an invalid
 channel and keeps existing fields including telemetry and an unrelated key. On Windows
