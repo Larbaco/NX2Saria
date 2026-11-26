@@ -420,8 +420,10 @@ void skin_header_tab(ImDrawList *dl, ImVec2 a, ImVec2 b, ImVec2 text_at, float s
     if (!font) font = ImGui::GetFont();
     const ImVec2 ts = font->CalcTextSizeA(font_px, FLT_MAX, 0, text);
     const ImVec2 at(floorf(text_at.x - ts.x * 0.5f), floorf(text_at.y - ts.y * 0.5f));
+    const float bold = fmaxf(0.6f, font_px / 36.0f);
     dl->AddText(font, font_px, ImVec2(at.x + 1.5f * s, at.y + 1.5f * s), rgba(0, 0, 0, 0.45f * alpha), text);
     dl->AddText(font, font_px, at, rgba(254, 252, 225, alpha), text);
+    dl->AddText(font, font_px, ImVec2(at.x + bold, at.y), rgba(254, 252, 225, alpha), text);
 }
 
 void skin_boot_panel(ImDrawList *dl, ImFont *head, float head_px, ImFont *body, float body_px, const char *title,

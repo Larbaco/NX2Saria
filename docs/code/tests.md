@@ -4071,6 +4071,11 @@ the panes the tab writes and the parents it relies on are as `PT_SYSTEM_TREE` an
 - The page is settled only in the middle and still.
 - The panes' shapes, a changed shape refused, too few panes refused.
 - The name setting: unset and `product`, `settings`, an unknown value.
+- The five places: the game's and the tab's told apart and a pane elsewhere refused, the categories 420 apart, the
+  fifth place between System and R, a click on each of the five, on L and R and off the row; with `--romfs` the header
+  panes moved are `Pa_Category_00` to `_03`, `T_BtnL_00` and `T_BtnR_00` at the game's x and y, with the parents the
+  tab checks.
+- The page box at 16:9 and at 21:9, with the wide menus spread and in the middle.
 
 ## `tests/quit_menu_check.c`
 

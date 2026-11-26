@@ -58,6 +58,39 @@ static void trees(void) {
           "too few panes read");
 }
 
+static void five(void) {
+    float game[PT_MOVED], five_x[PT_MOVED], odd[PT_MOVED];
+    memcpy(game, PT_GAME_X, sizeof game);
+    memcpy(five_x, PT_FIVE_X, sizeof five_x);
+    memcpy(odd, PT_GAME_X, sizeof odd);
+    odd[5] = 1040.0f;
+    CHECK(pt_spacing(game) == PT_AS_GAME, "the game's places");
+    CHECK(pt_spacing(five_x) == PT_AS_FIVE, "the five places");
+    CHECK(pt_spacing(odd) == PT_AS_OTHER, "one pane elsewhere: neither");
+    for (int i = 1; i < 4; i++)
+        CHECK(PT_FIVE_X[i] - PT_FIVE_X[i - 1] == 420.0f, "the categories 420 apart");
+    PtBox last = {230, 888, 630, 1112}, tab;
+    pt_five_box(&last, &tab);
+    CHECK(tab.x0 == 670 && tab.x1 == 1010 && tab.y0 == 888 && tab.y1 == 1112, "the fifth place: %.0f..%.0f",
+          (double)tab.x0, (double)tab.x1);
+    CHECK(tab.x0 > PT_FIVE_X[3] + 200 && tab.x1 < PT_FIVE_X[5] - 54, "the fifth place between System and the moved R");
+    CHECK(pt_five_tab_at(-840, 1000) == 0 && pt_five_tab_at(-420, 1000) == 1 && pt_five_tab_at(0, 1000) == 2 &&
+              pt_five_tab_at(420, 1000) == 3 && pt_five_tab_at(840, 1000) == PT_TAB_SETTINGS,
+          "a click on each of the five");
+    CHECK(pt_five_tab_at(-1100, 1000) == 4 && pt_five_tab_at(1100, 1000) == 5, "a click on L and R");
+    CHECK(pt_five_tab_at(0, 700) == -1 && pt_five_tab_at(1300, 1000) == -1, "off the row");
+}
+
+static void page(void) {
+    PtBox b;
+    pt_page_box(&b, 1920.0f, 1);
+    CHECK(b.x0 == -1560 && b.x1 == 1560 && b.y0 == -880 && b.y1 == 410, "the page at 16:9");
+    pt_page_box(&b, 2560.0f, 1);
+    CHECK(b.x0 == -2200 && b.x1 == 2200, "the page at 21:9 with the wide menus spread as the game's pages are");
+    pt_page_box(&b, 2560.0f, 0);
+    CHECK(b.x0 == -1560 && b.x1 == 1560, "the page at 21:9 with the menus in the middle");
+}
+
 static void names(void) {
     int known;
     CHECK(pt_name_kind(NULL, &known) == PT_NAME_PRODUCT && known, "unset: the product's name");
@@ -71,6 +104,8 @@ int main(void) {
     boxes();
     settled();
     trees();
+    five();
+    page();
     names();
     printf("pause_tab_check: %s\n", fails ? "FAILED" : "passed");
     return fails != 0;

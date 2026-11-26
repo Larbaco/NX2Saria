@@ -2242,11 +2242,11 @@ static void pause_tab_header(uint32_t w, uint32_t h, float scale, bool current) 
     ImFont *font = atlas->Fonts.Size ? atlas->Fonts[0] : ImGui::GetFont();
     const char *label = pause_tab_label();
     float px = bh * 0.28f;
-    const float wide = font->CalcTextSizeA(px, FLT_MAX, 0, label).x;
-    if (wide > bw * 0.92f) px *= bw * 0.92f / wide;
-    const float top = r[1] * h, bottom = cy + bh * 0.545f;
-    skin_header_tab(ImGui::GetBackgroundDrawList(), ImVec2(x0, top), ImVec2(x1, bottom), ImVec2(cx, cy), scale, current,
-                    label, font, px, v.alpha);
+    float wide = font->CalcTextSizeA(px, FLT_MAX, 0, label).x;
+    if (wide > bw * 0.94f) px *= bw * 0.94f / wide, wide = bw * 0.94f;
+    const float plate = fminf(bw, wide + bh * 0.5f), top = r[1] * h, bottom = cy + bh * 0.545f;
+    skin_header_tab(ImGui::GetBackgroundDrawList(), ImVec2(cx - plate * 0.5f, top), ImVec2(cx + plate * 0.5f, bottom),
+                    ImVec2(cx, cy), scale, current, label, font, px, v.alpha);
 }
 
 static void layout_pause_tab(uint32_t w, uint32_t h, float scale) {
