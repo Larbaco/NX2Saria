@@ -55,7 +55,17 @@ static uint8_t *module_perm[MOD_COUNT];
 
 static uint64_t align_up(uint64_t v, uint64_t a) { return (v + a - 1) & ~(a - 1); }
 
-static int reserve_at(uint64_t at, uint64_t size, int watch) { return plat_mem_reserve(at, size, watch); }
+static int write_watch_logged;
+
+static int reserve_at(uint64_t at, uint64_t size, int watch) {
+    int ok = plat_mem_reserve(at, size, watch);
+    char line[640];
+    if (watch && !write_watch_logged && plat_write_watch_note(line, sizeof line)) {
+        write_watch_logged = 1;
+        rt_log("%s", line);
+    }
+    return ok;
+}
 
 static void commit_failed(uint64_t a, uint64_t n, const char *what, uint32_t error) __attribute__((noreturn));
 static void commit_failed(uint64_t a, uint64_t n, const char *what, uint32_t error) {

@@ -210,7 +210,7 @@ stays set until reset. `plat_event_wait_ns()` returns 1 when the event was set, 
 Atomics: full barriers (`PLAT_SC`, sequentially consistent), explicit widths (Windows' `Interlocked*` operate on a
 32-bit `LONG`). The value returned: the new one for inc, dec and add, the previous one for xadd, xchg, cas and or.
 
-### `plat_mem_reserve()`, `plat_mem_alloc()`, `plat_mem_commit()`, `plat_mem_commit_error()`, `plat_mem_decommit()`, `plat_mem_protect()`, `plat_mem_state()`
+### `plat_mem_reserve()`, `plat_mem_alloc()`, `plat_mem_commit()`, `plat_mem_commit_error()`, `plat_write_watch_note()`, `plat_mem_decommit()`, `plat_mem_protect()`, `plat_mem_state()`
 
 Virtual memory: ranges reserved at fixed addresses below 2^39, their pages committed, decommitted and protected at
 4 KiB granularity (`PLAT_PROT_NONE`, `PLAT_PROT_READ`, `PLAT_PROT_RW`).
@@ -221,6 +221,9 @@ Virtual memory: ranges reserved at fixed addresses below 2^39, their pages commi
   (`plat_mem_protect()` may seal them); NULL on failure. Kept until exit.
 - `plat_mem_commit()`: read-write pages inside a reserved range. 1 on success; on failure it writes the native error
   when asked. `plat_mem_commit_error()` turns that error into its kind, number and name for the log.
+- `plat_write_watch_note()`: once the first watched range was reserved, 1 and the log line that says whether written
+  memory is tracked and, when it is not, why and what it costs (`runtime/platform/write_watch_note.h` `ww_note()`);
+  0 before that, and always on Windows, whose write watch the system gives.
 - `plat_mem_decommit()`: the contents are dropped; committed again, the pages read zero.
 - `plat_mem_protect()`: committed pages only; 1 on success.
 - `plat_mem_state()`: the page at `addr`: `PLAT_PROT_*` when committed, else `PLAT_MEM_RESERVED` (-1) or
@@ -696,6 +699,29 @@ The Win32 allocation errors that mean the system cannot promise more committed m
 decision, with the numbers written out, so the fatal wording can be checked without allocating real memory or needing
 Windows. The advice names the page file: 32 GB fixed on a 16 GB PC, 32768 MB.
 
+## `runtime/platform/write_watch_note.h`
+
+Whether written memory is tracked on Linux, as a pure decision over the kernel's version and the probe's result, so
+`tests/write_watch_check.py` checks it on made-up versions; the launcher makes the same decision
+(`launcher/platform/linux.py` `write_watch_verdict()`) and the test holds the two to the same cases.
+
+### `ww_read_number()`, `ww_kernel_old()`
+
+The major and minor of a kernel release string ("6.6.87.2-microsoft-standard-WSL2" is 6.6; a missing minor is 0). 1
+when it is older than `WW_MIN_MAJOR`.`WW_MIN_MINOR` (6.7, the release with asynchronous userfaultfd write
+protection), 0 when not, -1 when the string does not start with a number.
+
+### `ww_verdict()`
+
+`WW_ON` when the probe worked, whatever the version says (a backport, a version string that cannot be read). A failed
+probe is `WW_OLD_KERNEL` on a kernel older than 6.7 and `WW_REFUSED` otherwise: a kernel built without
+`CONFIG_USERFAULTFD`, or a sandbox (a container's or a Flatpak's seccomp profile) that blocks the call.
+
+### `ww_note()`
+
+The `mem: write watch` line for each verdict: on, with the kernel; off, with the kernel, the error, the cost (about
+1 fps where guest memory is copied to the GPU) and what to do.
+
 ## `runtime/platform/proc_pressure.h`
 
 Readers of the text Linux gives for memory and I/O pressure (`runtime/platform/linux.c` `plat_pressure()`): the lines
@@ -965,6 +991,18 @@ clears a page's protection on the first write without a round trip to us, and `P
 protection was cleared and protects them again. Without it (an older kernel), `plat_mem_written()` reports the ranges
 as untracked and the back end uploads them in full. `ww_fd` and `pm_fd` are the userfaultfd and `/proc/self/pagemap`;
 -1 when the write watch is unavailable.
+
+`ww_open()` runs at the first watched reservation, once (`ww_tried`; it used to run again at each watched reservation
+after a failure). It keeps the kernel's version (`uname`), the error and the verdict (`ww_release`, `ww_why`,
+`ww_result`, from `write_watch_note.h` `ww_verdict()`) for `plat_write_watch_note()`, which `runtime/memory.c`
+`reserve_at()` logs. Without the write watch every watched page counts as written. Where guest memory is copied to the
+GPU that is about 2.6 GiB a frame and 1 fps, as a player on an older kernel reported; with the dma-buf imports below
+the GPU reads guest memory in place, and a forced run on the bench (RX 6700, Hyrule Field) went from about 55 to 34 fps
+on average over the whole run, start included, and from about 18 to 4 fps at its slowest 1 %. The line used to go to
+stderr only, which the log file does not hold.
+`NX2SARIA_TEST_NO_UFFD`, read from the environment, skips the probe: `1` fails it as a kernel without the call would
+(ENOSYS) with the real version, a version string fails it as that kernel (EINVAL), so a run on a new kernel shows
+both lines.
 
 ### Guest memory as a memfd's
 

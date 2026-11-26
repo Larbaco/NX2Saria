@@ -25,6 +25,13 @@ The log names the layout in effect (`input: gamepad layout ...`) and each gamepa
 (`input: gamepad "...": first press`); the menu shows the layout under *Automatic*. The game's prompts show the Switch
 letters unless *Button prompts* says otherwise (below).
 
+ZL and ZR count once the controller has reported its trigger at rest for a whole second, so for at least the first
+second after a controller connects its triggers read released. A wireless receiver or a virtual pad that reports a trigger held
+from the start would otherwise hold ZL or ZR down for the whole session. The log names each trigger as it starts to
+count (`input: gamepad "...": the left trigger counts from now on, after 1.00 s at rest ...`) and, once a session, a
+trigger that has read held for ten seconds without resting, with the value it reads
+(`input: gamepad "...": the right trigger has read held for 10 s ...`).
+
 The action prompt (top right) shows the four face buttons as a diamond. The game draws it in the Switch places (A right,
 B bottom, X top, Y left), which `nintendo` keeps. Under `xbox`, `playstation` and `auto` the diamond follows such a
 pad instead (A bottom, B right, X left, Y top), whatever *Button prompts* is.

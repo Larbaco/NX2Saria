@@ -411,14 +411,17 @@ now. `hd_lock` not got means a fatal error or a crash on the thread that writes 
 `rt_rumble_stop_bounded()`). SDL writes the report on a thread of its own, so the stop waits 30 ms for it before the
 process ends; a pair gets 100 ms (`hd_pair_end()`).
 
-### `pad_primary()`, `sensor_pair_has()`, `map_joysticks()`, `scan_pads()`, `pad_axis()`, `pad_active()`, `pad_follow()`
+### `pad_state_open()`, `pad_primary()`, `sensor_pair_has()`, `map_joysticks()`, `scan_pads()`, `pad_axis()`, `pad_active()`, `pad_follow()`
 
 The gamepads. Every connected gamepad is kept open (`MAX_PADS` 8); `pad` is the one the game reads (and the one that rumbles and feeds
 motion): the first one found, then whichever one the player presses (`pad_follow()`). Taking only the first gamepad SDL
 lists left the game deaf when that one was a device nobody holds: a virtual pad of Steam Input or DS4Windows, a wheel, a
-receiver's idle second slot, listed before the controller in the player's hands. `pad_rest`: per open gamepad, bit `a`
-is set once axis `a` has been seen at rest (`pad_axis()`). `pad_pressed_logged`: the primary's first press was logged
-(once per primary).
+receiver's idle second slot, listed before the controller in the player's hands. `pad_st`, per open gamepad
+(`pad_state_open()` when it opens, moved with it when another closes): when it opened, bit `a` of `rest` set once axis
+`a` counts, and for each trigger whether it is at rest now (`timing`) and since when (`rest_since`), and whether it
+reads held now (`holding`) and since when (`held_since`). `trigger_logs`
+and `trigger_stuck_logged` limit the trigger lines of `pad_axis()` per session. `pad_pressed_logged`: the primary's
+first press was logged (once per primary).
 
 `sensor_pairs`: the gyro and accelerometer pairs a gamepad may have, in the order they are taken: the gamepad's own,
 then a Joy-Con half's. SDL gives a combined Joy-Con pair the right Joy-Con's sensors as the plain pair already; the
@@ -445,6 +448,18 @@ within a quarter of its range of the middle; a trigger's rest is 0). A device th
 virtual pad nobody holds, a trigger or pedal mapped onto a stick, a stick that rests far off its middle) would otherwise
 turn the camera on its own and, counted as pressed, take the gamepad role from the controller in the player's hands for
 good (`pad_follow()`). A stick the player holds at the start counts once it has been let go.
+
+A trigger (ZL, ZR) counts only after `TRIGGER_REST_NS` (1 s) at rest without a break; a reading past `AXIS_REST` starts
+the second again. One reading at rest was not enough: a 2.4 GHz receiver or a virtual pad (Switch2Connect, "Retro
+Controller") can report a trigger at rest for an instant, or report 0 before its first real report, and then held for
+good, and the game read ZL or ZR pressed for the whole session. The price is the first second after a gamepad opens, in
+which its triggers read 0. Each release is logged with its wait and the time since the gamepad opened (`TRIGGER_LOGS`
+16 lines a session); a trigger not released that has read held for `TRIGGER_STUCK_NS` (10 s) without a reading at
+rest is logged once a session with the value it reads (a receiver that rests near 16384 never counts). The 10 s run
+from the first held reading, not from when the gamepad opened: a second gamepad nobody read for a while and then pressed
+in its first second is not called stuck. Sticks keep the single reading. The
+time between two readings at rest counts as rest: a gamepad nobody reads (not the primary, and the game not polling) is not watched meanwhile.
+`tests/pad_rest_check.py` builds the function with stand-ins for SDL, the clock and the log.
 
 `pad_active()`, under `lock`: 1 when `p` has a button down, a trigger pulled or a stick past half way (a drifting stick
 does not count, nor an axis not yet seen at rest). `pad_follow()`, under `lock`: when the primary is idle and another

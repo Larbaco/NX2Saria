@@ -219,7 +219,8 @@ The system for the start line: the Windows version, or the Linux distribution an
 ### `Context`
 
 The settings get the context's log, so that each changed setting gets a line when it is saved
-(`launcher/settings.py` `Settings.save()`).
+(`launcher/settings.py` `Settings.save()`). On Linux it reads udmabuf's state and the write watch's
+(`write_watch`, `launcher/platform/linux.py` `write_watch_status()`) once, at start, and logs both.
 
 ### `Context.log()`
 
@@ -1603,6 +1604,23 @@ The `sh` command line that deletes `gone`, then the empty folders of `empty`, on
 - `udmabuf_log_line()` is one bounded diagnostic line for the launcher's log at start;
   `udmabuf_after_log_line()` describes the device right after an approved fix action.
 
+### `write_watch_verdict()`, `write_watch_probe()`, `write_watch_status()`, `write_watch_log_line()` and `write_watch_text()`
+
+Whether the game will track written memory on this kernel, said before Play: without it the game runs much slower
+([known-issues.md](../known-issues.md#linux-kernel)).
+
+- `write_watch_probe()` makes the game's own probe through `ctypes` (`runtime/platform/linux.c` `ww_open()`): the
+  userfaultfd call in user mode only, the API handshake asking for asynchronous write protection, and opening
+  `/proc/self/pagemap`; 0 when all worked,
+  the errno when not, `None` where it could not be made (another architecture, no `syscall` in the C library). The
+  numbers are the kernel's: the call is 323 on x86-64 and 282 on arm64, `UFFDIO_API` 0xC018AA3F, the features
+  `UFFD_FEATURE_WP_ASYNC` (1 << 15) and `UFFD_FEATURE_WP_UNPOPULATED` (1 << 13).
+- `write_watch_verdict()` is `runtime/platform/write_watch_note.h` `ww_verdict()` in Python ('on', 'old', 'refused');
+  a probe not made decides by the version alone. `tests/write_watch_check.py` holds the two to the same cases.
+- `write_watch_status()` reads the version and probes; `NX2SARIA_TEST_NO_UFFD` fails the probe as the game's does.
+- `write_watch_log_line()` is the launcher log's line at start; `write_watch_text()` the home screen's row value and
+  text, or `None` when tracked.
+
 ### `os_name()`
 
 The distribution as `/etc/os-release` names it (`PRETTY_NAME`, else `NAME` and `VERSION_ID`), or "Linux".
@@ -2680,6 +2698,10 @@ own menu switches it meanwhile.
 
 An update that stopped in the compile left no finished build on record, but the executable of the build before it: the
 Rebuild the Game row then says the rebuild is unfinished.
+
+On Linux, a kernel on which the game cannot track written memory (`Context.write_watch`,
+`launcher/platform/linux.py` `write_watch_text()`) puts a Linux Kernel row under Play and the warning first in Play's
+text, which shows on the screen the launcher opens on.
 
 ### `App.rows_customize()`
 

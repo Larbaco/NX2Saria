@@ -198,6 +198,7 @@ The lazy write-back (`memory.c` "Lazy write-back") is on where it has run: its f
 - `TEX_RELEASED_MAX`: the settings the low-end GPU mode had rows for up to 0.10.1 (lowend_set, below): each is read by itself now `vk_texture.c` released_max: "" by the video memory budget, else 1..16384
 - `SUBMIT_FINISH_KINDS`: `vk_sync.c` res_mask
 - `FOLIAGE`: `vk_exec_draw.c` foliage_skip
+- `FOLIAGE_DISTANCE`: `foliage_distance.c` foliage_distance_init: a factor on the foliage's draw distances, 1.1.1 only, read once before the game starts
 - `VRAM_HEAP_LIMIT`: `vk_device.c` vram_heap_limits: auto, 0 or MiB
 - `VRAM_RESERVE_MB`: `vk_vma_budget.c`: video memory kept free of VMA's allocations
 - `UPLOAD_BATCH_MB`: `vk_memory.c` vk_upload_end: MiB of staging before a batch goes early. 0: at 64 MiB, the staging pool's own limit (STG_FLUSH), which also holds for every value above it

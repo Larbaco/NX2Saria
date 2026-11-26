@@ -958,6 +958,11 @@ int plat_mem_commit(uint64_t addr, size_t n, uint32_t *error) {
     return 0;
 }
 
+int plat_write_watch_note(char *out, size_t cap) {
+    (void)out, (void)cap;
+    return 0;
+}
+
 void plat_mem_commit_error(uint32_t error, char *out, size_t cap) {
     const char *name;
     const char *advice = plat_commit_win_memory_advice(error);
