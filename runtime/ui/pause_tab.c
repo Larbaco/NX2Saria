@@ -363,7 +363,7 @@ static void respace(uint64_t s, uint64_t cats, int want) {
         PtBox b;
         g_five_pending = 0;
         float cx = pane_box(p[3], &b) ? (b.x0 + b.x1) * 0.5f : 1e9f;
-        if (fabsf(cx - PT_FIVE_X[3]) < 3.0f) {
+        if (fabsf(cx - PT_FIVE_X[3]) < 3.0f && !pause_tab_test("nofive")) {
             __atomic_store_n(&g_five, 1, __ATOMIC_RELEASE);
             rt_log("pause_tab: the header's new places took effect (the System category's centre at x %.1f)", (double)cx);
         } else {
@@ -371,9 +371,10 @@ static void respace(uint64_t s, uint64_t cats, int want) {
             g_five_failed = 1;
             float f[10];
             memcpy(f, (const void *)(uintptr_t)(p[3] + PANE_SIZE), sizeof f);
-            rt_log("pause_tab: the header's new places did not take effect (the System category's centre at x %.1f, "
+            rt_log("pause_tab: the header's new places did not take effect%s (the System category's centre at x %.1f, "
                    "not %.0f; its pane from +0x58: %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f %.1f): put back, and "
-                   "the tab stands after the R icon", (double)cx, (double)PT_FIVE_X[3], (double)f[0], (double)f[1],
+                   "the tab stands after the R icon", pause_tab_test("nofive") ? " (NX2SARIA_PAUSE_SETTINGS_TAB_TEST=nofive)" : "",
+                   (double)cx, (double)PT_FIVE_X[3], (double)f[0], (double)f[1],
                    (double)f[2], (double)f[3], (double)f[4], (double)f[5], (double)f[6], (double)f[7], (double)f[8],
                    (double)f[9]);
         }

@@ -100,6 +100,7 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
 
 `NX2SARIA_PAUSE_SETTINGS_TAB_TEST` takes words, for test runs only: `log` writes why R is or is not taken each time
 that changes (at most 120 lines); `screens` names each screen the screens' site runs for; `fail` makes the page fail to draw 30 frames after the tab opens, which closes it
-and gives the System page back. While the tab is open, `NX2SARIA_INPUT_SCRIPT` reaches its rows too.
+and gives the System page back. `nofive` takes the header's new places for not taken: they go back and the tab stands after
+the R icon, as when the game's panes do not move. While the tab is open, `NX2SARIA_INPUT_SCRIPT` reaches its rows too.
 `tests/pause_tab_check.py` checks the R press, the tab's place, the page's settling and the layouts' shape (with
 `--romfs`, against the game's own `PaSystemMenu_00`, `PaMenuCategory_00` and `MenuOverlay_00`).
