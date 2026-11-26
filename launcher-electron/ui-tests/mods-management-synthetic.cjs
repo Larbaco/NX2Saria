@@ -27,7 +27,7 @@ async function main() {
     await fs.writeFile(invalid, 'stand-in unsupported archive');
 
     app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base } });
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } });
     const page = await app.firstWindow();
     await page.getByRole('button', { name: 'Mods', exact: true }).click({ timeout: 6000 });
     await page.getByText('Nenhum mod instalado.', { exact: true }).waitFor();

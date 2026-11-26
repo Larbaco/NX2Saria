@@ -2761,6 +2761,29 @@ Add to Steam: the game in the Steam library, started from there without the laun
 exception of the work is caught and logged with its traceback: a Steam folder in a state nobody expected must say so
 instead of ending the launcher.
 
+### Electron Session Reports
+
+`Reports` in `launcher/worker_reports.py` uses the existing `Reporter` and
+`Tasks`. Its question is started when the renderer first presents a ready home
+screen. The worker owns the deadline, stops it on input and persists an answer
+through the same Python settings logic as Tk. Electron acknowledges a deliberate
+window close before closing the worker's input. Pipe loss alone leaves the
+question unanswered.
+
+The private build uses `NX2SARIA_ELECTRON_TEST_SEND_REPORTS` to gate all
+submission. With it unset, an enabled session report is left for Tk and the
+worker logs that decision once. With it set to `1`, prepared session requests
+retain their exact bytes. The worker compares the pending summary's file identity
+before acknowledging delivery, and leaves a newer pending summary available
+for its own request. A worker closing normally drains report tasks within its
+shutdown budget. No transport response changes the consent logic in `Reporter`.
+
+Preview returns an immutable byte snapshot in bounded base64 frames. The main
+process assembles the frames and decodes UTF-8 before the window writes them as
+text. Session reports use the pending summary or the existing example. A
+comment goes through `Reporter.prepare_feedback()` and `finish_feedback()`.
+Only the outcome, settings choice and attachment flag go to the Electron log.
+
 ### Electron settings for an installed game
 
 The Settings panel reads the configured game folder, dump, update channel, update

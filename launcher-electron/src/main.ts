@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseInstalledSettings, validSetting } from './installed-settings';
 import { parseModAction, parseModsPage } from './mods-protocol';
+import { parseReportsView, readReportPreview } from './reports-protocol';
 import { parseInspection, type Inspection } from './inspection';
 import { openWorker, WorkerRequestError, type WorkerClient } from './worker-client';
 import { parsePlayResult, type PlayResult } from './worker-protocol';
@@ -29,6 +30,8 @@ app.whenReady().then(() => {
   let logRoot: string | null = null;
   let messageSequence = 0;
   let pendingPlayMessage: number | null = null;
+  let questionOwner: WorkerClient | null = null;
+  let closingQuestion = false;
   window.once('show', () => {
     if (!shown) log?.write('window', 'shown');
     shown = true;
@@ -552,6 +555,67 @@ app.whenReady().then(() => {
       throw new Error('Open unsuccessful');
     }
   });
+  function reportsWorker(event: Electron.IpcMainInvokeEvent) {
+    if (event.sender !== window.webContents || state?.status !== 'ready' || playing ||
+        !worker?.handshake.capabilities.includes('reports') || worker.handshake.lock !== 'held') return null;
+    return worker;
+  }
+  async function reportState(active: WorkerClient, method: string, fields: Record<string, unknown> = {}) {
+    const state = parseReportsView(await active.request(method, fields));
+    if (active !== worker) throw new Error('Reports unavailable');
+    questionOwner = state.question ? active : null;
+    return state;
+  }
+  ipcMain.handle('reports-home', async (event, after) => {
+    const active = reportsWorker(event);
+    if (!active || (after !== '' && after !== 'installation' && after !== 'update')) return null;
+    const result = await reportState(active, 'reports_home', { after });
+    if (result.question) log?.write('reports', `question countdown=${result.seconds !== null}`);
+    return result;
+  });
+  ipcMain.handle('reports-status', event => {
+    const active = reportsWorker(event);
+    return active ? reportState(active, 'reports_status') : null;
+  });
+  ipcMain.handle('reports-touch', event => {
+    const active = reportsWorker(event);
+    return active ? reportState(active, 'reports_touch') : null;
+  });
+  ipcMain.handle('reports-answer', async (event, answer) => {
+    const active = reportsWorker(event);
+    if (!active || (answer !== 'send' && answer !== "don't send" && answer !== 'closed')) return null;
+    const result = await reportState(active, 'reports_answer', { answer });
+    log?.write('reports', `question answer=${answer === "don't send" ? 'declined' : answer}`);
+    return result;
+  });
+  ipcMain.handle('reports-consent', async (event, value) => {
+    const active = reportsWorker(event);
+    if (!active || typeof value !== 'boolean') return null;
+    const result = await reportState(active, 'reports_consent', { value });
+    log?.write('reports', `consent=${result.consent}`);
+    return result;
+  });
+  ipcMain.handle('reports-preview', async event => {
+    const active = reportsWorker(event);
+    if (!active) return null;
+    const result = await readReportPreview(offset => active.request('reports_preview', { offset }));
+    if (active !== worker) return null;
+    log?.write('reports', `preview example=${result.example}`);
+    return result;
+  });
+  ipcMain.handle('reports-comment', async (event, text, attach) => {
+    const active = reportsWorker(event);
+    if (!active || typeof text !== 'string' || text.length > 8000 || [...text].length > 4000 ||
+        typeof attach !== 'boolean') return { status: 'failed' };
+    let result = await active.request('reports_comment', { text, attach });
+    while (worker === active && result?.status === 'sending') {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      result = await active.request('reports_comment_status');
+    }
+    if (worker !== active || (result?.status !== 'ok' && result?.status !== 'failed')) return { status: 'failed' };
+    log?.write('reports', `comment result=${result.status} attachment=${attach}`);
+    return { status: result.status, reason: typeof result.reason === 'string' ? result.reason.slice(0, 240) : undefined };
+  });
   ipcMain.handle('check-updates', async event => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('check_updates') ||
         worker.handshake.lock !== 'held' || !state || state.job_marker_present) return 'unavailable';
@@ -612,6 +676,20 @@ app.whenReady().then(() => {
         !['could_not_start', 'ended_with_error', 'game_ended', 'monitor_lost'].includes(kind)) return;
     pendingPlayMessage = null;
     log?.write('window', `message_shown kind=${kind}`);
+  });
+  window.on('close', event => {
+    const active = questionOwner;
+    if (!active || active !== worker) return;
+    event.preventDefault();
+    if (closingQuestion) return;
+    closingQuestion = true;
+    void active.request('reports_close').then(() => {
+      log?.write('reports', 'question answer=closed');
+    }).catch(() => {}).finally(() => {
+      questionOwner = null;
+      closingQuestion = false;
+      if (!window.isDestroyed()) window.close();
+    });
   });
   window.on('closed', () => {
     log?.write('window', 'closed');

@@ -11,11 +11,12 @@ import time
 from functools import partial
 from pathlib import Path
 
-from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods, mods_job, paths, play, saves, updater, versions, winsys
+from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods, mods_job, paths, play, saves, telemetry, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
 from .paths import Layout, install_folder
+from .worker_reports import QUESTION_ANSWERS, Reports
 
 PROTOCOL = 1
 MAX_FRAME = 65536
@@ -533,7 +534,7 @@ def main(argv=None):
             parent.close()
         error(request['id'], 'busy')
         return 1
-    ctx = None
+    ctx = reports = run = None
     try:
         if args.app_version:
             try:
@@ -559,8 +560,9 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings', 'reports'], 'update_waiting': waiting}})
         counts = {}
+        reports = Reports(ctx) if lock_state == 'held' else None
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
         threading.Thread(target=read_requests, args=(requests, input_closed), daemon=True).start()
@@ -585,6 +587,10 @@ def main(argv=None):
         check_started = None
         check_channel = None
         while True:
+            if reports:
+                reports.poll(game_active=run is not None)
+                if not disconnected:
+                    reports.tick(ctx.settings.get('game_dir'))
             if _output_disconnected:
                 disconnected = True
                 if job and not job.cancelled():
@@ -689,6 +695,8 @@ def main(argv=None):
             if run and not running:
                 end = game_session.finish_game(run, ctx.log)
                 defer_crash_offer(ctx, run, end)
+                if reports:
+                    reports.send_session(run.game_dir)
                 code = run.code()
                 run = None
                 window_log = None
@@ -708,7 +716,9 @@ def main(argv=None):
                 sequence += 1
                 emit({'event': 'game_window_ready', 'sequence': sequence, 'session': session})
             try:
-                timeout = 0.2 if parent and not disconnected else (0.5 if recovery_poll is not None or check else 1 if run or job else None)
+                report_active = reports and (reports.busy or reports.deadline is not None)
+                timeout = (0.2 if parent and not disconnected or report_active else
+                           0.5 if recovery_poll is not None or check else 1 if run or job else None)
                 kind, request = requests.get(timeout=timeout)
             except queue.Empty:
                 if disconnected or not parent or not parent.exited():
@@ -1047,6 +1057,64 @@ def main(argv=None):
                     error(request['id'], refusal)
                 else:
                     emit({'id': request['id'], 'result': result})
+            elif request.get('method') in ('reports_home', 'reports_status', 'reports_touch', 'reports_answer',
+                                               'reports_close', 'reports_consent', 'reports_preview',
+                                               'reports_comment', 'reports_comment_status'):
+                method = request['method']
+                game = ctx.settings.get('game_dir')
+                if not reports or not game or not build.installed(game):
+                    error(request['id'], 'reports_unavailable')
+                    continue
+                try:
+                    if method == 'reports_status':
+                        result = reports.view()
+                    elif not reports.available:
+                        result = reports.view() if method == 'reports_home' else None
+                    elif job or run or pending or build_recovery.blocked(layout):
+                        result = None
+                    elif method == 'reports_home':
+                        after = request.get('after')
+                        if after not in ('', 'installation', 'update'):
+                            error(request['id'], 'invalid_report_request')
+                            continue
+                        reports.home(game, after)
+                        result = reports.view()
+                    elif method == 'reports_touch':
+                        reports.touch()
+                        result = reports.view()
+                    elif method in ('reports_answer', 'reports_close'):
+                        answer = 'closed' if method == 'reports_close' else request.get('answer')
+                        if answer not in QUESTION_ANSWERS:
+                            error(request['id'], 'invalid_report_request')
+                            continue
+                        reports.answer(game, answer)
+                        result = reports.view()
+                    elif method == 'reports_consent':
+                        value = request.get('value')
+                        if type(value) is not bool or reports.question:
+                            error(request['id'], 'invalid_report_request')
+                            continue
+                        reports.set_consent(game, value)
+                        result = reports.view()
+                    elif method == 'reports_preview':
+                        offset = request.get('offset')
+                        result = reports.preview(game, offset) if type(offset) is int and offset >= 0 else None
+                    elif method == 'reports_comment':
+                        text, attach = request.get('text'), request.get('attach')
+                        if not isinstance(text, str) or len(text) > telemetry.TEXT_LIMIT or type(attach) is not bool:
+                            error(request['id'], 'invalid_report_request')
+                            continue
+                        result = reports.comment(game, text, attach)
+                    else:
+                        result = reports.comment_status()
+                except (OSError, ValueError):
+                    ctx.log('telemetry: Electron reports request failed')
+                    error(request['id'], 'reports_unavailable')
+                    continue
+                if result is None:
+                    error(request['id'], 'reports_unavailable')
+                else:
+                    emit({'id': request['id'], 'result': result})
             elif request.get('method') == 'check_updates':
                 if lock_state != 'held' or build_recovery.blocked(layout):
                     status = 'unavailable'
@@ -1114,6 +1182,8 @@ def main(argv=None):
                 action_log(ctx, counts, 'unknown', 'method')
                 error(request['id'], 'unknown_method')
     finally:
+        if reports and not run:
+            reports.flush()
         if ctx and ctx._file:
             ctx._file.close()
         held.release()

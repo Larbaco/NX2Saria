@@ -47,7 +47,7 @@ async function main() {
   const compileGate = path.join(game, 'finish-build');
   const gameGate = path.join(game, 'finish-game');
   const readLog = () => fs.readFile(file('data', 'logs', 'launcher.log'), 'utf8').catch(() => '');
-  const options = { executablePath: process.env.NX2_TEST_PORTABLE, env: { ...process.env, LOCALAPPDATA: base } };
+  const options = { executablePath: process.env.NX2_TEST_PORTABLE, env: { ...process.env, LOCALAPPDATA: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } };
   let app;
   try {
     await fs.mkdir(path.join(root, 'app'), { recursive: true });

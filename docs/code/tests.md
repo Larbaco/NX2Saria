@@ -5919,6 +5919,17 @@ a complete backup. The Linux window test uses the native dialog seams for the ex
 and the generated backup folder. A Node check verifies that a save transaction can finish
 after the ordinary request timeout.
 
+The Reports tests use a loopback service. They exercise the first ready screen
+with a countdown, the no-countdown question after a job, timeout, deliberate close,
+explicit refusal and disconnection. The report preview matches the request bytes
+from the Tk reporting core. Both launchers recognize the same sent marker.
+The service holds one report while a second synthetic game finishes so the
+worker must preserve and then send the newer pending summary separately. A
+comment sent with Session Reports Off has no attached session summary, and HTTP
+410 records the current version as retired. Tests explicitly set the send switch
+off unless they exercise that loopback service. The Linux window tests the
+question and preview, consent, the disabled comment control and no service.
+
 The installed settings test changes the update channel, check and install flags,
 and cache preference while keeping unrelated keys. Windows also exercises the
 low-commit warning setting. An invalid dump leaves the stored choice unchanged;

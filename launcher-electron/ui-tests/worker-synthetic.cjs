@@ -35,7 +35,7 @@ for attempt in $(seq 1 100); do
 done
 exit 2
 `, { mode: 0o755 });
-    app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'), env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_LOG_SHORT_PATHS: '0' } });
+    app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'), env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', NX2SARIA_LOG_SHORT_PATHS: '0' } });
     await app.evaluate(({ dialog }, selected) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] }); }, root);
     await app.evaluate(({ dialog }) => { globalThis.workerWarnings = []; dialog.showMessageBox = async (_window, options) => { globalThis.workerWarnings.push(options.message); return { response: 0 }; }; });
     const page = await app.firstWindow();

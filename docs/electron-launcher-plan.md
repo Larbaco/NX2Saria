@@ -47,8 +47,8 @@ Each entry stays open until implementation and the required verification are com
 - [x] Mods: add files/folders, enable/disable, ordering, rebuild and errors. The Linux window verifies folder and archive selection, ordering, conflicts, toggling and invalid inputs. The worker tests passed on Linux and Windows in run `45759008861`, including resuming Play after the stand-in rebuild, refusing a mutation during Play and moving a mod across pages. The Linux portable package `f53b2481` verified folder addition with the published runtime. A real build still has its own acceptance item.
 - [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
-- [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads and changes the same Hide Launcher While Playing preference through the lock-owning worker. A synthetic Linux window test covers both values, persistence and preservation of the other settings. The installed-game panel exposes the current channel, update flags, cache preference, folders, registered dump and the Windows memory warning. Settings for reports, system features and uninstall remain open. Verify the hide control separately on real Linux and Windows installations.
-- [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. Electron still needs the existing question, choices, preview, comments, sending and recovery behavior before parity.
+- [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads and changes the same Hide Launcher While Playing preference through the lock-owning worker. A synthetic Linux window test covers both values, persistence and preservation of the other settings. The installed-game panel exposes the current channel, update flags, cache preference, folders, registered dump and the Windows memory warning. The settings worker tests passed on both runners in Electron launcher tests run `45760705928`. The Linux window test confirms picker cancellation, validation and preference persistence. Settings for reports, system features and uninstall remain open. Verify the hide control separately on real Linux and Windows installations.
+- [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. The Electron reports screen now uses the same question, choices, preview, comment and sending policy. Private packages require the test sending opt-in documented below. Loopback tests verify exact report bytes, the shared sent marker, the Off and disabled states, and a newer session finishing before a previous report is acknowledged. The combined reports package and crash-offer display remain open.
 - [ ] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. This remains outside the current worker milestone; no new sending or question is implemented here.
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
 - [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages.
@@ -402,6 +402,81 @@ view, typed writes, cancellation, invalid dump refusal, preservation of other ke
 and folder open on synthetic installations. Test the Linux window and exercise
 the worker on both CI runners. Report settings, platform administration and
 uninstall retain their own acceptance evidence.
+
+## Session Reports in the Electron launcher
+
+A private package starts with network submission disabled. Only
+`NX2SARIA_ELECTRON_TEST_SEND_REPORTS=1` enables submission for that invocation.
+The switch applies to the automatic session report, explicit comments and the
+crash-log offer. It does not change the persisted Session Reports choice or the
+existing service address. With the switch absent, a pending report remains on disk
+for the installed launcher and the worker records that submission was deferred.
+The LEIA-ME names the switch and explains this handover.
+
+When the first ready home screen is shown, run the existing startup checks once
+per worker. A normal start opens the existing 30-second question if due. The
+first home screen following install or update opens the question without a
+countdown. Actual input, including opening the exact preview, stops the countdown.
+The affirmative answer, timeout, deliberate window close and refusal go through
+`Reporter.answer_question()`, and move the waiting summary aside exactly as Tk does.
+An abrupt process exit does not synthesize an answer. The Settings toggle uses
+`Reporter.set_consent()`. On is eligible to send pending reports when the test
+switch is enabled. Off sends none. Show the same unavailable and retired-service
+states as Tk.
+
+Use `Reporter.prepare_session()`, `post()` and `finish_session()` with the existing
+payload and sent marker. At startup and after a confirmed game end, submit the
+current pending summary if eligible. A report in flight holds its prepared bytes.
+An earlier completion must never move a newer pending summary; if another session
+finishes in the meantime, prepare and send it using its own summary. If the window
+closed during the game, the worker can finish sending for an already enabled
+session and then release the lock. Failed sends follow the existing server
+response policy. The player sees progress and results for explicit comments.
+The worker applies the current text and optional log limits, privacy filtering
+and consent to attach the summary. A successful comment clears the draft and a
+failed one leaves it available to edit or retry.
+
+Use the current pending summary or the existing example for a read-only session
+preview, serialized by the same `payload()` and `body()` functions as Tk.
+Transport large preview text in bounded frames while preserving the exact
+UTF-8 bytes. Tests use loopback only. Compare the bytes from the worker with the
+ones sent by Tk for the same summary and confirm the preview matches. Exercise
+both directions of duplicate prevention using the shared sent marker, consent
+answers, startup and post-job timing, switch disabled, Off, comments and HTTP
+refusal. Validate the Linux window and run synthetic worker cases in both CI jobs.
+
+Crash-log offer display, preview and decisions form a separate change. Keep the
+existing order after the session-report question, the log identity, opt-out and
+input guard. Use the same worker switch and give the reason when Send is disabled.
+
+## Crash-log offer in Electron
+
+Use the active installation's crash-offer feature when present. Keep the existing
+eligibility and marker writer, and use the same pending-marker validation so a
+different log can never be offered for the ended game. The home screen looks for
+an offer after the session question, and after a game ends when the worker still
+has a window. A window closed before the game ends leaves its new marker for the
+next launcher. A game running outside this worker blocks the offer.
+
+Show the failure, counts and what would be included. Read the exact prepared
+request into the preview over the same bounded byte transport. Ask After a Crash
+uses the existing settings key. A one-second input guard protects the offer
+from queued game input. Preview can return to the same offer. The deliberate
+close and decline use the existing marker and logging policy. Write a Comment
+opens the existing comment flow with the attachment selected.
+
+The private-build switch gates Send the Log and all comments, even with reports
+already enabled. Keep the offer and preview visible when sending is disabled,
+with an explanation beside the disabled action. A send with the switch enabled
+uses the worker's prepared request, forgets the marker once and calls the same
+network finish policy as Tk. No automatic retry. Show the current-version retired
+state and stop offering once the server refuses a crash log in this run.
+
+Prove with scratch app and log fixtures, including a preview larger than one
+frame, exact bytes at a local service, rechecking a changed log, opt-out,
+guarded input, a declined or consumed marker seen by the other launcher, and a
+server refusal. The Electron window verifies the order, preview and disabled
+action. Use published Linux app/runtime for portable validation.
 
 ## Provisioning and handover design
 

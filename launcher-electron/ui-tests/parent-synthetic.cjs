@@ -40,8 +40,8 @@ async function main() {
   const logPath = path.join(root, 'data', 'logs', 'launcher.log');
   const readLog = () => fs.readFile(logPath, 'utf8').catch(() => '');
   const options = windows
-    ? { executablePath: process.env.NX2_TEST_PORTABLE, env: { ...process.env, LOCALAPPDATA: base } }
-    : { args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'), env: { ...process.env, XDG_DATA_HOME: base } };
+    ? { executablePath: process.env.NX2_TEST_PORTABLE, env: { ...process.env, LOCALAPPDATA: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } }
+    : { args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'), env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } };
   const apps = [];
   const launch = async () => {
     const app = await _electron.launch(options);

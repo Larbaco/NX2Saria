@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -17,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 
 class WorkerTest(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ, NX2SARIA_ELECTRON_TEST_SEND_REPORTS='0'))
         self.tmp = tempfile.TemporaryDirectory(prefix='nx2-worker-')
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / 'launcher'
@@ -594,6 +596,270 @@ class WorkerTest(unittest.TestCase):
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: mods move result=ok', log)
         self.assertIn('worker: play status=rebuild', log)
+
+    def test_reports_question_reuses_tk_answers_and_keeps_preview_exact(self):
+        import base64
+        from launcher import telemetry, versions
+        from launcher.platform import game_executable
+
+        game = Path(self.tmp.name) / 'game'
+        logs = game / 'logs'
+        logs.mkdir(parents=True)
+        cache = game / 'build-cache'
+        cache.mkdir()
+        (cache / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        game_executable(game).touch()
+        path = self.root / 'data' / 'launcher.json'
+        path.write_text(json.dumps({'game_dir': str(game)}))
+        summary = telemetry.example_summary()
+        (logs / telemetry.SUMMARY).write_text(json.dumps(summary))
+
+        def talk(requests, immediate_timeout=False):
+            env = dict(os.environ, NX2SARIA_TELEMETRY_URL='http://127.0.0.1:1',
+                       NX2SARIA_ELECTRON_TEST_SEND_REPORTS='0')
+            messages = [{'method': 'hello', 'protocol': 1}, *requests]
+            startup = ['-m', 'launcher.worker']
+            if immediate_timeout:
+                startup = ['-c', "import runpy; from launcher import telemetry; telemetry.QUESTION_SECONDS=0; "
+                                 "runpy.run_module('launcher.worker', run_name='__main__')"]
+            result = subprocess.run([sys.executable, *startup, '--root', str(self.root)], cwd=ROOT,
+                                    input=''.join(json.dumps({'id': i, **request}) + '\n'
+                                                  for i, request in enumerate(messages, 1)),
+                                    env=env, capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return [frame['result'] for frame in map(json.loads, result.stdout.splitlines())]
+
+        hello, opening, preview, touched, refused = talk([
+            {'method': 'reports_home', 'after': ''},
+            {'method': 'reports_preview', 'offset': 0},
+            {'method': 'reports_status'},
+            {'method': 'reports_answer', 'answer': "don't send"},
+        ])
+        ver = versions.display(hello['version'])
+        self.assertIn('reports', hello['capabilities'])
+        self.assertTrue(opening['question'])
+        self.assertIn(opening['seconds'], (29, 30))
+        self.assertFalse(opening['send_enabled'])
+        self.assertFalse(preview['example'])
+        self.assertEqual(base64.b64decode(preview['chunk']), telemetry.body(telemetry.payload(summary, ver)))
+        self.assertTrue(touched['question'])
+        self.assertIsNone(touched['seconds'])
+        self.assertFalse(refused['question'])
+        self.assertEqual(refused['consent'], 'off')
+        self.assertEqual(json.loads(path.read_text())['telemetry_asked'], ver)
+        self.assertFalse((logs / telemetry.SUMMARY).exists())
+        self.assertTrue((logs / telemetry.SENT).is_file())
+        _, already_asked = talk([{'method': 'reports_home', 'after': ''}])
+        self.assertFalse(already_asked['question'])
+
+        path.write_text(json.dumps({'game_dir': str(game)}))
+        _, after_job, closed = talk([{'method': 'reports_home', 'after': 'installation'}, {'method': 'reports_close'}])
+        self.assertTrue(after_job['question'])
+        self.assertIsNone(after_job['seconds'])
+        self.assertFalse(closed['question'])
+        self.assertEqual(closed['consent'], 'on')
+        self.assertEqual(json.loads(path.read_text())['telemetry_notice'], '1')
+
+        path.write_text(json.dumps({'game_dir': str(game)}))
+        _, unanswered = talk([{'method': 'reports_home', 'after': ''}])
+        self.assertTrue(unanswered['question'])
+        self.assertNotIn('telemetry_asked', json.loads(path.read_text()))
+        _, expired, notice = talk([{'method': 'reports_home', 'after': ''}, {'method': 'reports_status'}],
+                                  immediate_timeout=True)
+        self.assertEqual(expired['seconds'], 0)
+        self.assertFalse(notice['question'])
+        self.assertTrue(notice['notice'])
+        self.assertEqual(notice['consent'], 'on')
+        self.assertEqual(json.loads(path.read_text())['telemetry_notice'], '1')
+
+    def test_reports_use_exact_tk_bytes_and_shared_sent_marker(self):
+        import base64
+        from launcher import telemetry, versions
+        from launcher.platform import game_executable
+        from launcher.settings import Settings
+
+        game = Path(self.tmp.name) / 'game'
+        logs = game / 'logs'
+        logs.mkdir(parents=True)
+        cache = game / 'build-cache'
+        cache.mkdir()
+        (cache / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        game_executable(game).touch()
+        version = (ROOT / 'VERSION').read_text().strip()
+        summary = telemetry.example_summary()
+        pending = logs / telemetry.SUMMARY
+        sent = logs / telemetry.SENT
+        settings = self.root / 'data' / 'launcher.json'
+        requests = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                data = self.rfile.read(int(self.headers['Content-Length']))
+                requests.append((self.path, data))
+                self.send_response(201 if self.path == '/v1/session' else 410)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        url = f'http://127.0.0.1:{server.server_port}'
+
+        def enter(sending, state, retired=False, comment=None):
+            settings.write_text(json.dumps({'game_dir': str(game), 'telemetry': state,
+                                            'telemetry_asked': versions.display(version),
+                                            'telemetry_closed': versions.display(version) if retired else ''}))
+            env = dict(os.environ, NX2SARIA_TELEMETRY_URL=url,
+                       NX2SARIA_ELECTRON_TEST_SEND_REPORTS='1' if sending else '0')
+            wire = [{'id': 1, 'method': 'hello', 'protocol': 1},
+                    {'id': 2, 'method': 'reports_preview', 'offset': 0},
+                    {'id': 3, 'method': 'reports_home', 'after': ''}]
+            if comment:
+                wire.append({'id': 4, 'method': 'reports_comment', 'text': comment, 'attach': True})
+            result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)], cwd=ROOT,
+                                    input=''.join(json.dumps(request) + '\n' for request in wire),
+                                    env=env, text=True, capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return [frame['result'] for frame in map(json.loads, result.stdout.splitlines())]
+
+        pending.write_text(json.dumps(summary))
+        _, _, view = enter(False, 'on')
+        self.assertFalse(view['send_enabled'])
+        self.assertTrue(pending.exists())
+        self.assertEqual(requests, [])
+        self.assertIn('telemetry: Electron test sending is off; session summary left for the installed launcher',
+                      (self.root / 'data' / 'logs' / 'launcher.log').read_text())
+        _, _, view = enter(True, 'off')
+        self.assertEqual(view['consent'], 'off')
+        self.assertTrue(pending.exists())
+        self.assertEqual(requests, [])
+        _, _, view = enter(True, 'on', retired=True)
+        self.assertTrue(view['closed'])
+        self.assertTrue(pending.exists())
+        self.assertEqual(requests, [])
+
+        _, preview, view = enter(True, 'on')
+        self.assertTrue(view['send_enabled'])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0][0], '/v1/session')
+        self.assertEqual(base64.b64decode(preview['chunk']), requests[0][1])
+        self.assertFalse(pending.exists())
+        self.assertTrue(sent.exists())
+        reporter = telemetry.Reporter(Settings(settings), version, url=url)
+        self.assertEqual(reporter.prepare_session(game).reason, 'no session to report')
+        self.assertEqual(len(requests), 1)
+
+        pending.write_text(json.dumps(summary))
+        self.assertTrue(reporter.send_session(game).ok)
+        self.assertEqual(requests[0], requests[1])
+        enter(True, 'on')
+        self.assertEqual(len(requests), 2)
+        self.assertFalse(pending.exists())
+        self.assertTrue(sent.exists())
+        _, _, _, blocked = enter(False, 'on', comment='Synthetic feedback')
+        self.assertEqual(blocked, {'status': 'failed', 'reason': 'test_sending_disabled'})
+        self.assertEqual(len(requests), 2)
+        (logs / 'nx2saria.log').write_text('synthetic end line\n')
+        _, _, _, comment = enter(True, 'off', comment='  Synthetic feedback  ')
+        self.assertEqual(comment['status'], 'sending')
+        self.assertEqual(len(requests), 3)
+        self.assertEqual(requests[-1][0], '/v1/feedback')
+        sent_comment = json.loads(requests[-1][1])
+        self.assertEqual(sent_comment['text'], 'Synthetic feedback')
+        self.assertIsNone(sent_comment['summary'])
+        self.assertEqual(sent_comment['log_tail'], 'synthetic end line\n')
+        self.assertEqual(json.loads(settings.read_text())['telemetry_closed'], versions.display(version))
+
+    def test_reports_send_each_game_and_keep_a_newer_pending_summary(self):
+        from launcher import telemetry
+        from launcher.platform import game_executable
+
+        base = Path(self.tmp.name)
+        game = base / 'game'
+        game.mkdir()
+        game_executable(game).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game), 'telemetry': 'on'}))
+        started = threading.Event()
+        allow_first = threading.Event()
+        payloads = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                payloads.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+                if len(payloads) == 1:
+                    started.set()
+                    if not allow_first.wait(timeout=10):
+                        self.send_response(500)
+                        self.end_headers()
+                        return
+                self.send_response(201)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(allow_first.set)
+        script = ("import runpy,subprocess,sys,json\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import winsys,saves,mods,build,commit,telemetry\n"
+                  "count=0\n"
+                  "def spawn(exe):\n"
+                  " global count\n"
+                  " count+=1\n"
+                  " logs=Path(exe).parent/'logs'\n"
+                  " logs.mkdir(exist_ok=True)\n"
+                  " summary=telemetry.example_summary()\n"
+                  " summary['session']['frames']=count\n"
+                  " (logs/telemetry.SUMMARY).write_text(json.dumps(summary))\n"
+                  " return subprocess.Popen([sys.executable,'-c','pass'],stdin=subprocess.DEVNULL, "
+                  "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with (mock.patch.object(winsys,'start_game',spawn), mock.patch.object(winsys,'keep_awake'), "
+                  "mock.patch.object(saves,'game_running',return_value=False), "
+                  "mock.patch.object(mods,'prepare',return_value=[]), "
+                  "mock.patch.object(build,'can_rebuild',return_value=False), "
+                  "mock.patch.object(commit,'play_memory_request',return_value=None)):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        env = dict(os.environ, NX2SARIA_ELECTRON_TEST_SEND_REPORTS='1',
+                   NX2SARIA_TELEMETRY_URL=f'http://127.0.0.1:{server.server_port}')
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root)], cwd=ROOT, env=env,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop_worker, worker)
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+
+        def request(request_id, method, **fields):
+            worker.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+            worker.stdin.flush()
+            return frames.get(timeout=10)['result']
+
+        self.assertEqual(request(1, 'hello', protocol=1)['lock'], 'held')
+        for attempt in (2, 3):
+            self.assertEqual(request(attempt, 'play')['status'], 'started')
+            self.assertEqual(frames.get(timeout=10)['event'], 'game_started')
+            self.assertEqual(frames.get(timeout=10)['event'], 'game_ended')
+            if attempt == 2:
+                self.assertTrue(started.wait(timeout=10))
+        self.assertEqual(json.loads((game / 'logs' / telemetry.SUMMARY).read_text())['session']['frames'], 2)
+        allow_first.set()
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertEqual([data['summary']['session']['frames'] for data in payloads], [1, 2])
+        self.assertFalse((game / 'logs' / telemetry.SUMMARY).exists())
+        self.assertEqual(json.loads((game / 'logs' / telemetry.SENT).read_text())['session']['frames'], 2)
 
     def test_installed_settings_write_only_allowed_fields_and_open_known_folders(self):
         from fixtures.worker_install_dump import write_dump
@@ -2102,6 +2368,7 @@ class WorkerTest(unittest.TestCase):
         (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
         (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
         script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
                   "from types import SimpleNamespace\n"
                   "from unittest import mock\n"
                   "from launcher import jobs,mods,build,saves,commit,play,game_session,winsys\n"
@@ -2109,7 +2376,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): pass\n"
-                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False)\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False,game_dir=Path(sys.argv[1]).parent/'game')\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "
@@ -2186,6 +2453,7 @@ class WorkerTest(unittest.TestCase):
         (game / ('ocarina.exe' if sys.platform == 'win32' else 'ocarina')).touch()
         (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
         script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
                   "from types import SimpleNamespace\n"
                   "from unittest import mock\n"
                   "from launcher import jobs,mods,build,saves,commit,play,game_session,winsys\n"
@@ -2193,7 +2461,7 @@ class WorkerTest(unittest.TestCase):
                   " claims=('game',); kind='rebuild'\n"
                   " def __init__(self,ctx,game): super().__init__(ctx,[]); self.game_dir=game; self.after='play'\n"
                   " def run(self): raise OSError(\"synthetic failure\")\n"
-                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False)\n"
+                  "run=SimpleNamespace(running=lambda:False,code=lambda:0,kind='',restarted=False,game_dir=Path(sys.argv[1]).parent/'game')\n"
                   "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
                   "with mock.patch.object(jobs,'ModsRebuildJob',Fake), "
                   "mock.patch.object(saves,'game_running',return_value=False), "

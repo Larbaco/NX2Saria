@@ -24,7 +24,7 @@ async function main() {
     await fs.symlink(path.resolve(publishedRuntime), path.join(root, 'python'), 'dir');
     await fs.writeFile(path.join(root, 'app', 'current.txt'), version);
     const settingsFile = path.join(root, 'data', 'launcher.json');
-    const settings = { game_dir: game, hide_while_playing: true, telemetry: 'off' };
+    const settings = { game_dir: game, hide_while_playing: true, telemetry: 'off', telemetry_asked: version };
     await fs.writeFile(settingsFile, JSON.stringify(settings));
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: version, steps: { compile: {} } }));
     await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' '[host] gfx: window gained the focus at synthetic time' > logs/nx2saria.log\nsleep 2\nprintf '%s\\n' 'FATAL: portable synthetic failure' >> logs/nx2saria.log\nexit 71\n", { mode: 0o755 });
@@ -32,7 +32,8 @@ async function main() {
     const launch = () => _electron.launch({
       executablePath: path.resolve(executable),
       args: ['--user-data-dir=' + path.join(base, 'electron-profile')],
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, GSETTINGS_BACKEND: 'memory' },
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, GSETTINGS_BACKEND: 'memory',
+        NX2SARIA_TELEMETRY_URL: 'http://127.0.0.1:1', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' },
     });
     app = await launch();
     const page = await app.firstWindow();
