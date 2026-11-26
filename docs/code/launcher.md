@@ -2784,6 +2784,15 @@ text. Session reports use the pending summary or the existing example. A
 comment goes through `Reporter.prepare_feedback()` and `finish_feedback()`.
 Only the outcome, settings choice and attachment flag go to the Electron log.
 
+The crash-log offer uses the active installation's `crash_offer.py` when present.
+It loads the same pending marker and request, keeps the request for exact preview,
+and revalidates the marker before consuming it. The worker enforces the
+one-second guard for navigation and activation. Deliberate window close follows
+the existing close path. The test switch gates the send action, while declining
+consumes the marker and writing a comment selects the log attachment. The
+worker uses the existing HTTP finish policy, including stopping further offers
+after an HTTP 400 refusal. The Electron log records decisions without payloads.
+
 ### Electron settings for an installed game
 
 The Settings panel reads the configured game folder, dump, update channel, update

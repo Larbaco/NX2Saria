@@ -5930,6 +5930,15 @@ comment sent with Session Reports Off has no attached session summary, and HTTP
 off unless they exercise that loopback service. The Linux window tests the
 question and preview, consent, the disabled comment control and no service.
 
+The crash offer test installs the active app's existing offer module in a
+scratch root. It checks the report question's priority, the input guard, switch
+disabled, stale logs, a persistent opt-out, and one-time consumption. It
+assembles a preview larger than the worker frame limit, checks path shortening
+even when local paths are shown in full, and compares the exact request at a
+loopback service. HTTP 400 suppresses future offers in that worker. The Linux
+window reads the preview and declines, and the portable test repeats the flow
+with the extracted package and published app.
+
 The installed settings test changes the update channel, check and install flags,
 and cache preference while keeping unrelated keys. Windows also exercises the
 low-commit warning setting. An invalid dump leaves the stored choice unchanged;

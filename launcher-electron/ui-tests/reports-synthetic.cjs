@@ -28,15 +28,21 @@ async function main() {
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
     await fs.mkdir(logs);
     await fs.writeFile(path.join(root, 'app', 'current.txt'), '0.0.1');
+    const installed = path.join(root, 'app', '0.0.1', 'launcher');
+    await fs.mkdir(installed, { recursive: true });
+    await fs.copyFile(path.join(repo, 'launcher', 'crash_offer.py'), path.join(installed, 'crash_offer.py'));
     await fs.writeFile(settings, JSON.stringify({ game_dir: game }));
     await fs.writeFile(path.join(game, 'ocarina'), 'synthetic executable marker');
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), '{"kit":"0.0.1","steps":{"compile":{}}}');
     const fixture = execFileSync('python3', ['-c', `
 import json,sys
 from pathlib import Path
-from launcher import telemetry
+from launcher import crash_offer,telemetry
 game=Path(sys.argv[1])
 summary=telemetry.example_summary()
+(game/'logs'/'nx2saria.log').write_text('synthetic crash log entry\\n')
+(game/'logs'/'crash-offer.json').write_text(json.dumps({
+  'kind':'crash','message':'Synthetic crash', 'log':crash_offer.log_stamp(game),'at':10}))
 (game/'logs'/'session-summary.json').write_text(json.dumps(summary))
 sys.stdout.buffer.write(telemetry.body(telemetry.payload(summary,Path('VERSION').read_text().strip())))
 `, game], { cwd: repo, encoding: 'utf8' });
@@ -55,7 +61,17 @@ sys.stdout.buffer.write(telemetry.body(telemetry.payload(summary,Path('VERSION')
     await reports.getByRole('button', { name: 'Voltar' }).click();
     await reports.getByText(/ao escolher Enviar ou fechar esta janela/).waitFor();
     await reports.getByRole('button', { name: 'Não enviar', exact: true }).click();
+    await reports.getByText('Enviar o log deste erro?', { exact: true }).waitFor({ timeout: 6000 });
+    assert.equal(await reports.getByRole('button', { name: 'Enviar log', exact: true }).isDisabled(), true);
+    await reports.getByRole('button', { name: 'Ver o que é enviado' }).click();
+    await reports.locator('#reports-preview-text').waitFor();
+    const crashPreview = await reports.locator('#reports-preview-text').textContent();
+    assert.equal(JSON.parse(crashPreview).kind, 'crash');
+    assert.match(JSON.parse(crashPreview).log_tail, /synthetic crash log entry/);
+    await reports.getByRole('button', { name: 'Voltar' }).click();
+    await reports.getByRole('button', { name: 'Não enviar', exact: true }).click();
     await reports.waitFor({ state: 'hidden' });
+    await assert.rejects(fs.access(path.join(logs, 'crash-offer.json')), { code: 'ENOENT' });
     assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).telemetry, 'off');
     await fs.access(path.join(logs, 'session-summary.sent.json'));
     await assert.rejects(fs.access(path.join(logs, 'session-summary.json')), { code: 'ENOENT' });
@@ -67,6 +83,11 @@ sys.stdout.buffer.write(telemetry.body(telemetry.payload(summary,Path('VERSION')
     await consent.check();
     await page.waitForFunction(() => !document.querySelector('#reports-enabled').disabled);
     assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).telemetry, 'on');
+    const askAfterCrash = reports.getByRole('checkbox', { name: 'Perguntar depois de um erro no jogo' });
+    assert.equal(await askAfterCrash.isChecked(), true);
+    await askAfterCrash.uncheck();
+    await page.waitForFunction(() => !document.querySelector('#reports-crash-enabled').disabled);
+    assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).crash_log_offer, 'off');
     await reports.getByRole('button', { name: 'Escrever comentário' }).click();
     await reports.getByText(/envio .*desativado.*pacote de teste/i).waitFor();
     assert.equal(await reports.getByRole('button', { name: 'Enviar comentário' }).isDisabled(), true);

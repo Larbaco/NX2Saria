@@ -85,6 +85,18 @@ async function main() {
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible()), true);
     const marker = JSON.parse(await fs.readFile(path.join(game, 'logs', 'crash-offer.json'), 'utf8'));
     assert.equal(marker.kind, 'crash');
+    const offer = page.locator('#reports-dialog');
+    await offer.getByText('Enviar o log deste erro?', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await offer.getByRole('button', { name: 'Enviar log' }).isDisabled(), true);
+    await offer.getByRole('button', { name: 'Ver o que é enviado' }).click();
+    await offer.locator('#reports-preview-text').waitFor();
+    const prepared = JSON.parse(await offer.locator('#reports-preview-text').textContent());
+    assert.equal(prepared.kind, 'crash');
+    assert.match(prepared.log_tail, /FATAL: portable synthetic failure/);
+    await offer.getByRole('button', { name: 'Voltar' }).click();
+    await offer.getByRole('button', { name: 'Não enviar' }).click();
+    await offer.waitFor({ state: 'hidden' });
+    await assert.rejects(fs.access(path.join(game, 'logs', 'crash-offer.json')), { code: 'ENOENT' });
     const workerLog = await fs.readFile(path.join(logs, 'launcher.log'), 'utf8');
     assert.match(workerLog, /\(AppImage install, started by Electron\)/);
     assert.match(workerLog, /worker: runtime=.*python\/bin\/python3 python=3\.14\./);
@@ -126,7 +138,7 @@ async function main() {
     assert.ok(path.isAbsolute(await reopened.locator('#game-folder-proposal').textContent()));
     assert.equal(await reopened.getByRole('button', { name: 'Iniciar instalação' }).isEnabled(), true);
     assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), firstRun);
-    console.log('Packaged Linux Electron: published runtime, Saves, Mods, Play, crash offer, marker recovery and first run passed');
+    console.log('Packaged Linux Electron: published runtime, Saves, Mods, Play, crash offer and preview, marker recovery and first run passed');
   } finally {
     if (app) await app.close().catch(() => {});
     await fs.rm(base, { recursive: true, force: true, maxRetries: 3 });

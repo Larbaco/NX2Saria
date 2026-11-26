@@ -2,7 +2,6 @@ import argparse
 import json
 import os
 import queue
-import runpy
 import signal
 import subprocess
 import sys
@@ -16,7 +15,7 @@ from .build import game_log_path, game_log_paths
 from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
 from .paths import Layout, install_folder
-from .worker_reports import QUESTION_ANSWERS, Reports
+from .worker_reports import QUESTION_ANSWERS, Reports, installed_crash_offer
 
 PROTOCOL = 1
 MAX_FRAME = 65536
@@ -465,21 +464,12 @@ def prepare_install(ctx, choices):
 def defer_crash_offer(ctx, run, end):
     if not run.kind:
         return
-    layout = ctx.layout
-    try:
-        active = layout.app
-        if layout.dev:
-            version = updater.current(layout)
-            versions.parse(version)
-            active = (layout.apps / version).resolve()
-            if active.parent != layout.apps.resolve():
-                return
-        source = active / 'launcher' / 'crash_offer.py'
-        if source.is_file():
-            offer = runpy.run_path(str(source), run_name='launcher._installed_crash_offer')
-            offer['game_ended'](ctx.settings, run.game_dir, run.kind, run.asked, end.message, ctx.log)
-    except Exception:
-        ctx.log('worker: crash offer unavailable')
+    source = installed_crash_offer(ctx)
+    if source:
+        try:
+            source['game_ended'](ctx.settings, run.game_dir, run.kind, run.asked, end.message, ctx.log)
+        except Exception:
+            ctx.log('worker: crash offer unavailable')
 
 
 def main(argv=None):
@@ -1059,7 +1049,9 @@ def main(argv=None):
                     emit({'id': request['id'], 'result': result})
             elif request.get('method') in ('reports_home', 'reports_status', 'reports_touch', 'reports_answer',
                                                'reports_close', 'reports_consent', 'reports_preview',
-                                               'reports_comment', 'reports_comment_status'):
+                                               'reports_comment', 'reports_comment_status', 'reports_crash_open',
+                                               'reports_crash_preview', 'reports_crash_answer', 'reports_crash_status',
+                                               'reports_crash_preference'):
                 method = request['method']
                 game = ctx.settings.get('game_dir')
                 if not reports or not game or not build.installed(game):
@@ -1088,6 +1080,8 @@ def main(argv=None):
                             error(request['id'], 'invalid_report_request')
                             continue
                         reports.answer(game, answer)
+                        if method == 'reports_close':
+                            reports.crash.choose('closed', window_closed=True)
                         result = reports.view()
                     elif method == 'reports_consent':
                         value = request.get('value')
@@ -1099,6 +1093,25 @@ def main(argv=None):
                     elif method == 'reports_preview':
                         offset = request.get('offset')
                         result = reports.preview(game, offset) if type(offset) is int and offset >= 0 else None
+                    elif method == 'reports_crash_open':
+                        result = (reports.crash.show(game) if reports.started and not reports.question
+                                  and not saves.game_running(game) else {'status': 'none'})
+                    elif method == 'reports_crash_preview':
+                        offset = request.get('offset')
+                        result = reports.crash.preview(offset) if type(offset) is int and offset >= 0 else None
+                    elif method == 'reports_crash_answer':
+                        answer = request.get('answer')
+                        result = (reports.crash.choose(answer)
+                                  if answer in ('send', 'decline', 'comment', 'closed') else None)
+                    elif method == 'reports_crash_status':
+                        result = reports.crash.result
+                    elif method == 'reports_crash_preference':
+                        value = request.get('value')
+                        if type(value) is not bool or reports.crash.current or not reports.crash.source:
+                            error(request['id'], 'invalid_report_request')
+                            continue
+                        reports.crash.set_preference(value)
+                        result = reports.view()
                     elif method == 'reports_comment':
                         text, attach = request.get('text'), request.get('attach')
                         if not isinstance(text, str) or len(text) > telemetry.TEXT_LIMIT or type(attach) is not bool:

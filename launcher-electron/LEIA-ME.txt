@@ -8,22 +8,29 @@ Electron. Os dois usam o mesmo lock.
 
 O que testar nesta rodada
 
-1. Em Saves, escolha a pasta de exportação e confira o ZIP com e sem
-   a opção Incluir log e configurações. Com o jogo fechado e usando
-   uma cópia de teste do save, importe o ZIP ou uma pasta. Confira o
-   aviso com o nome do backup e a opção Abrir pasta dos saves.
-2. Em Mods, adicione um arquivo ou uma pasta de teste. Confira se o
-   mod aparece, alterne seu estado e mova-o na ordem de carregamento.
-   Quando dois mods substituírem o mesmo arquivo, confira qual vence.
-   Se um mod de código pedir recompilação, Jogar deve mostrar o job
-   e retomar a partida ao concluir.
+1. Em Configurações, confira o canal, as opções de atualização e
+   cache, o dump registrado e os botões para abrir as pastas do jogo
+   e dos logs. Abra o seletor do dump e cancele para conferir que a
+   escolha anterior continua lá. O launcher instalado aplica as
+   atualizações.
+2. Em Configurações > Relatórios de sessão, confira a preferência e
+   abra Ver o que é enviado. Se a pergunta de consentimento estiver
+   pendente, abra a prévia e confira que a contagem para. O pacote
+   permite abrir a tela de comentário.
+3. Se o jogo terminar com erro, confira a oferta de log e sua prévia.
+   Escolher Não enviar dispensa a oferta. A opção Perguntar depois
+   de um erro no jogo fica em Relatórios de sessão.
 
-O provisionamento do próprio launcher e as atualizações continuam no
-launcher instalado. Nesta rodada o Electron não envia relatórios.
-Com relatórios ligados, o resumo mais recente fica para o launcher
-instalado processar ao abrir. Após uma saída anormal, uma versão
-compatível pode mostrar a oferta de log enquanto ele for da mesma
-sessão.
+O modo privado mantém todos os envios suspensos por padrão. Se os
+relatórios estiverem ligados, o resumo fica para o launcher instalado.
+O log do worker registra essa decisão. A prévia funciona nesse modo.
+Quando você decidir testar o envio, abra o launcher com a variável
+NX2SARIA_ELECTRON_TEST_SEND_REPORTS=1 nesta execução. A preferência
+de Relatórios de sessão continua valendo, e comentários e oferta de
+log exigem confirmação própria.
+
+    $env:NX2SARIA_ELECTRON_TEST_SEND_REPORTS = '1'
+    .\NX2Saria-Electron-Teste.exe
 
 Depois do teste, copie para a pasta privada de logs de sempre:
 - Na pasta do launcher, data/logs/launcher-electron.log.

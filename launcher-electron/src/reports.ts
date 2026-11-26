@@ -1,8 +1,10 @@
 type ReportsState = {
   available: boolean; send_enabled: boolean; question: boolean; seconds: number | null;
-  consent: 'on' | 'off'; notice: boolean; closed: boolean; text_limit: number;
+  consent: 'on' | 'off'; notice: boolean; closed: boolean; text_limit: number; crash_ask: boolean | null;
 };
-type ReportsScreen = 'question' | 'options' | 'preview' | 'comment';
+type CrashOffer = { status: 'shown'; kind: string; message: string; head_lines: number; tail_lines: number;
+  bytes: number; summary: boolean; whole: boolean; guard_ms: number; can_send: boolean };
+type ReportsScreen = 'question' | 'options' | 'preview' | 'comment' | 'crash';
 
 const reportDialog = document.querySelector<HTMLDialogElement>('#reports-dialog')!;
 const reportTitle = document.querySelector<HTMLElement>('#reports-heading')!;
@@ -19,17 +21,28 @@ const reportCommentText = document.querySelector<HTMLTextAreaElement>('#reports-
 const reportCommentSize = document.querySelector<HTMLElement>('#reports-comment-size')!;
 const reportCommentAttach = document.querySelector<HTMLInputElement>('#reports-comment-attach')!;
 const reportCommentSend = document.querySelector<HTMLButtonElement>('#reports-comment-send')!;
+const reportCrashSetting = document.querySelector<HTMLInputElement>('#reports-crash-enabled')!;
+const reportCrashOption = document.querySelector<HTMLElement>('#reports-crash-option')!;
+const reportCrashError = document.querySelector<HTMLElement>('#reports-crash-error')!;
+const reportCrashDetails = document.querySelector<HTMLElement>('#reports-crash-details')!;
+const reportCrashSend = document.querySelector<HTMLButtonElement>('#reports-crash-send')!;
+const reportCrashDecline = document.querySelector<HTMLButtonElement>('#reports-crash-decline')!;
+const reportCrashPreview = document.querySelector<HTMLButtonElement>('#reports-crash-preview')!;
+const reportCrashComment = document.querySelector<HTMLButtonElement>('#reports-crash-comment')!;
 const reportPanels = {
   question: document.querySelector<HTMLElement>('#reports-consent-view')!,
   options: document.querySelector<HTMLElement>('#reports-options-view')!,
   preview: document.querySelector<HTMLElement>('#reports-preview-view')!,
   comment: document.querySelector<HTMLElement>('#reports-comment-view')!,
+  crash: document.querySelector<HTMLElement>('#reports-crash-view')!,
 };
 const reportTitles = { question: 'Ajudar a melhorar o NX2Saria?', options: 'Relatórios de sessão',
-  preview: 'O que é enviado', comment: 'Escrever comentário' };
+  preview: 'O que é enviado', comment: 'Escrever comentário', crash: 'Enviar o log deste erro?' };
 let reportState: ReportsState | null = null;
 let reportScreen: ReportsScreen | null = null;
-let reportPreviewBack: 'question' | 'options' = 'options';
+let reportPreviewBack: 'question' | 'options' | 'crash' = 'options';
+let reportOffer: CrashOffer | null = null;
+let crashGuardUntil = 0;
 let reportBusy = false;
 let reportRefresh = false;
 let reportGeneration = 0;
@@ -54,11 +67,18 @@ function updateReportScreen() {
   reportTimer.textContent = reportState?.seconds == null
     ? 'Os relatórios de sessão são ativados ao escolher Enviar ou fechar esta janela. Escolha Não enviar para mantê-los desligados.'
     : `Os relatórios de sessão serão ativados em ${reportState.seconds} s ou se você fechar esta janela. Escolha Não enviar para mantê-los desligados.`;
-  if (!reportBusy) reportConsent.checked = reportState?.consent === 'on';
+  if (!reportBusy) {
+    reportConsent.checked = reportState?.consent === 'on';
+    reportCrashSetting.checked = reportState?.crash_ask === true;
+  }
+  reportCrashOption.hidden = reportState?.crash_ask == null;
   reportServiceClosed.hidden = !reportState?.closed;
   reportSendDisabled.hidden = reportState?.send_enabled !== false;
   reportCommentSend.disabled = reportBusy || reportState?.send_enabled !== true || reportState.closed;
-  reportConsent.disabled = reportBusy;
+  reportConsent.disabled = reportCrashSetting.disabled = reportBusy;
+  const guard = reportBusy || performance.now() < crashGuardUntil;
+  reportCrashSend.disabled = guard || reportOffer?.can_send !== true;
+  reportCrashDecline.disabled = reportCrashPreview.disabled = reportCrashComment.disabled = guard;
 }
 
 function applyReportState(state: ReportsState | null) {
@@ -74,7 +94,8 @@ function applyReportState(state: ReportsState | null) {
 
 function resetReportScreen() {
   reportGeneration++;
-  reportState = null;
+  reportState = reportOffer = null;
+  crashGuardUntil = 0;
   reportCommentText.value = '';
   reportCommentAttach.checked = false;
   reportPreviewText.textContent = '';
@@ -86,7 +107,9 @@ async function loadReportsHome(after: '' | 'installation' | 'update') {
   const generation = reportGeneration;
   try {
     const state = await window.launcher.reportsHome(after);
-    if (generation === reportGeneration) applyReportState(state);
+    if (generation !== reportGeneration) return;
+    applyReportState(state);
+    if (state?.available && !state.question) await loadCrashOffer();
   } catch {}
 }
 
@@ -95,7 +118,10 @@ async function refreshReportState(touch = false) {
   reportRefresh = true;
   try {
     const state = await (touch ? window.launcher.reportsTouch() : window.launcher.reportsStatus());
-    if (!reportBusy) applyReportState(state);
+    if (!reportBusy) {
+      applyReportState(state);
+      if (state?.available && !state.question) await loadCrashOffer();
+    }
   } catch {}
   finally { reportRefresh = false; }
 }
@@ -118,16 +144,62 @@ function answerReports(answer: 'send' | "don't send" | 'closed') {
     const state = await window.launcher.reportsAnswer(answer);
     if (!state) throw new Error('Reports unavailable');
     applyReportState(state);
+    if (!state.question) await loadCrashOffer();
+  });
+}
+
+async function loadCrashOffer() {
+  if (!reportState?.available || reportState.crash_ask === null || reportState.question || reportScreen !== null) return;
+  const generation = reportGeneration;
+  try {
+    const offer = await window.launcher.reportsCrashOpen();
+    if (!offer || generation !== reportGeneration || reportScreen !== null) return;
+    reportOffer = offer;
+    crashGuardUntil = performance.now() + offer.guard_ms;
+    reportCrashError.textContent = offer.message || 'O jogo terminou com erro.';
+    const total = offer.head_lines + offer.tail_lines;
+    const lines = offer.whole ? `O log inteiro desta sessão (${total} linhas)` :
+      offer.head_lines ? `As primeiras ${offer.head_lines} e as últimas ${offer.tail_lines} linhas do log` :
+      `As últimas ${offer.tail_lines} linhas do log`;
+    const summary = offer.summary ? ' e o relatório desta sessão' : '';
+    reportCrashDetails.textContent = `${lines} (${Math.max(1, Math.round(offer.bytes / 1024))} KB)${summary}. O launcher encurta dados pessoais no log. Nada é enviado sem sua confirmação.`;
+    showReportScreen('crash');
+    window.setTimeout(updateReportScreen, offer.guard_ms + 20);
+  } catch {}
+}
+
+function chooseCrashOffer(answer: 'send' | 'decline' | 'comment' | 'closed') {
+  if (!reportOffer || performance.now() < crashGuardUntil) return;
+  void runReportAction(async () => {
+    if (answer === 'send') reportMessage.textContent = 'Enviando log…';
+    const result = await window.launcher.reportsCrashAnswer(answer);
+    if (result.status === 'guarded' || result.status === 'disabled') return;
+    reportOffer = null;
+    if (result.status === 'comment') {
+      reportCommentAttach.checked = true;
+      showReportScreen('comment');
+      updateReportCommentSize();
+      reportCommentText.focus();
+    } else if (answer === 'send') {
+      showReportScreen('options');
+      reportMessage.textContent = result.status === 'ok'
+        ? 'Log enviado. Obrigado.' : 'Não foi possível enviar o log.';
+      const state = await window.launcher.reportsStatus();
+      if (state) applyReportState(state);
+    } else {
+      showReportScreen(null);
+    }
   });
 }
 
 function openReportsPreview() {
-  const previous = reportScreen === 'question' ? 'question' : 'options';
+  const previous = reportScreen === 'question' || reportScreen === 'crash' ? reportScreen : 'options';
   void runReportAction(async () => {
-    const preview = await window.launcher.reportsPreview();
+    const preview = await (previous === 'crash' ? window.launcher.reportsCrashPreview() : window.launcher.reportsPreview());
     if (!preview) throw new Error('Preview unavailable');
     reportPreviewBack = previous;
-    reportPreviewLabel.textContent = preview.example ? 'Exemplo de um relatório.' : 'Relatório da sessão pendente.';
+    reportPreviewLabel.textContent = previous === 'crash' ? 'Conteúdo exato da oferta de log.' :
+      preview.example ? 'Exemplo de um relatório.' : 'Relatório da sessão pendente.';
     reportPreviewText.textContent = preview.text;
     if (previous === 'question') applyReportState(await window.launcher.reportsStatus());
     showReportScreen('preview');
@@ -138,6 +210,7 @@ function openReportsPreview() {
 function closeReportScreen() {
   if (reportBusy) return;
   if (reportScreen === 'question') answerReports('closed');
+  else if (reportScreen === 'crash') chooseCrashOffer('closed');
   else if (reportScreen === 'comment') showReportScreen('options');
   else if (reportScreen === 'preview') showReportScreen(reportPreviewBack);
   else showReportScreen(null);
@@ -149,6 +222,18 @@ reportSettingsButton.onclick = () => {
     if (!state?.available) return;
     applyReportState(state);
     if (!state.question) showReportScreen('options');
+  });
+};
+reportCrashSend.onclick = () => chooseCrashOffer('send');
+reportCrashDecline.onclick = () => chooseCrashOffer('decline');
+reportCrashComment.onclick = () => chooseCrashOffer('comment');
+reportCrashPreview.onclick = openReportsPreview;
+reportCrashSetting.onchange = () => {
+  const enabled = reportCrashSetting.checked;
+  void runReportAction(async () => {
+    const state = await window.launcher.reportsCrashPreference(enabled);
+    if (!state) throw new Error('Crash preference unavailable');
+    applyReportState(state);
   });
 };
 reportDialog.oncancel = event => { event.preventDefault(); closeReportScreen(); };

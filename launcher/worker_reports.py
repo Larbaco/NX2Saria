@@ -2,10 +2,11 @@ import base64
 import collections
 import math
 import os
+import runpy
 import time
 from pathlib import Path
 
-from . import telemetry
+from . import telemetry, updater, versions
 
 SEND_SWITCH = 'NX2SARIA_ELECTRON_TEST_SEND_REPORTS'
 PREVIEW_CHUNK = 16 * 1024
@@ -20,12 +21,131 @@ def summary_stamp(game):
     return stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns
 
 
+def preview_frame(data, offset, example=False):
+    if data is None or offset > len(data):
+        return None
+    return {'chunk': base64.b64encode(data[offset:offset + PREVIEW_CHUNK]).decode('ascii'),
+            'size': len(data), 'example': example}
+
+
+def installed_crash_offer(ctx):
+    layout = ctx.layout
+    try:
+        active = layout.app
+        if layout.dev:
+            version = updater.current(layout)
+            versions.parse(version)
+            active = (layout.apps / version).resolve()
+            if active.parent != layout.apps.resolve():
+                return None
+        source = active / 'launcher' / 'crash_offer.py'
+        return runpy.run_path(str(source), run_name='launcher._installed_crash_offer') if source.is_file() else None
+    except Exception:
+        ctx.log('worker: crash offer unavailable')
+        return None
+
+
+class CrashOffers:
+    def __init__(self, ctx, reporter, tasks, send_enabled):
+        self.ctx = ctx
+        self.reporter = reporter
+        self.tasks = tasks
+        self.send_enabled = send_enabled
+        self.source = installed_crash_offer(ctx)
+        self.offers = self.source['Offers']() if self.source else None
+        self.current = None
+        self.opened = None
+        self.result = {'status': 'idle'}
+
+    def preference(self):
+        return self.source['on'](self.ctx.settings) if self.source else None
+
+    def set_preference(self, value):
+        if not self.source:
+            return
+        self.ctx.settings.save_preference(self.source['SETTING'], 'on' if value else 'off')
+        self.source['log_state'](self.ctx.settings, self.ctx.log)
+
+    def guarded(self):
+        if self.opened is None:
+            return 0
+        left = self.source['GUARD_SECONDS'] - (time.monotonic() - self.opened)
+        return max(0, math.ceil(left * 1000))
+
+    def opened_view(self):
+        _, data, sending = self.current
+        return {'status': 'shown', 'kind': data['kind'][:48], 'message': data['message'][:900],
+                'head_lines': sending.head_lines, 'tail_lines': sending.tail_lines, 'bytes': sending.log_bytes,
+                'summary': sending.summary, 'whole': sending.whole, 'guard_ms': self.guarded(),
+                'can_send': self.send_enabled and not self.reporter.closed()}
+
+    def show(self, game):
+        if not self.source or self.result['status'] == 'sending':
+            return {'status': 'none'}
+        if self.current:
+            return self.opened_view()
+        log = self.ctx.log
+        data = self.source['pending'](game, self.ctx.settings, log)
+        if data is None:
+            return {'status': 'none'}
+        if self.offers.refused:
+            self.source['forget'](game)
+            log(f'telemetry: crash log offer: not shown: the server refused one in this run (end: {data["kind"]})')
+            return {'status': 'none'}
+        sending = self.source['prepare'](self.reporter, game)
+        if isinstance(sending, telemetry.Result):
+            self.source['forget'](game)
+            log(f'telemetry: crash log offer: not shown: {sending.reason} (end: {data["kind"]})')
+            return {'status': 'none'}
+        self.offers.shown += 1
+        log(f'telemetry: crash log offer: shown (end: {data["kind"]}; {sending.head_lines} + {sending.tail_lines} '
+            f'lines, {sending.log_bytes} bytes of log)')
+        self.current = (game, data, sending)
+        self.opened = time.monotonic()
+        return self.opened_view()
+
+    def preview(self, offset):
+        return preview_frame(self.current[2].request.data, offset) if self.current else None
+
+    def choose(self, action, window_closed=False):
+        if not self.current:
+            return {'status': 'none'}
+        if not window_closed and self.guarded():
+            return {'status': 'guarded'}
+        if action == 'send' and (not self.send_enabled or self.reporter.closed()):
+            return {'status': 'disabled'}
+        game, data, sending = self.current
+        self.current = self.opened = None
+        current = self.source['pending'](game, self.ctx.settings, self.ctx.log)
+        if not current or current['log'] != data['log']:
+            return {'status': 'none'}
+        self.source['forget'](game)
+        if action != 'send':
+            self.offers.declined += 1
+            how = "don't send" if action == 'decline' else action
+            self.ctx.log(f'telemetry: crash log offer: declined ({how}; end: {data["kind"]}; {self.offers.counts()})')
+            return {'status': 'comment' if action == 'comment' else 'declined'}
+
+        def done(answer):
+            try:
+                result = self.source['finish'](self.reporter, self.offers, sending, answer)
+            except (OSError, ValueError):
+                self.ctx.log('telemetry: Electron could not save the crash log result')
+                result = telemetry.Result(False, 'could not save the server status')
+            self.result = {'status': 'ok'} if result.ok else {'status': 'failed', 'reason': result.reason}
+
+        self.result = {'status': 'sending'}
+        self.tasks.start(lambda: self.reporter.post(sending.request), done)
+        return self.result
+
+
 class Reports:
     def __init__(self, ctx):
         self.log = ctx.log
         self.reporter = telemetry.Reporter(ctx.settings, ctx.version, self.log)
         self.send_enabled = os.environ.get(SEND_SWITCH) == '1'
         self.tasks = telemetry.Tasks()
+        self.crash = CrashOffers(ctx, self.reporter, self.tasks, self.send_enabled)
         self.started = False
         self.question = False
         self.deadline = None
@@ -50,12 +170,15 @@ class Reports:
         return {'available': self.available, 'send_enabled': self.send_enabled, 'question': self.question,
                 'seconds': max(0, math.ceil(self.deadline - time.monotonic())) if self.deadline is not None else None,
                 'consent': 'on' if self.reporter.settings.get('telemetry') == 'on' else 'off',
-                'notice': self.notice, 'closed': self.reporter.closed(), 'text_limit': telemetry.TEXT_LIMIT}
+                'notice': self.notice, 'closed': self.reporter.closed(), 'text_limit': telemetry.TEXT_LIMIT,
+                'crash_ask': self.crash.preference()}
 
     def home(self, game, after):
         if self.started or not self.available:
             return
         self.started = True
+        if self.crash.source:
+            self.crash.source['log_state'](self.reporter.settings, self.log)
         telemetry.synthesize_crash(game, self.log)
         self.send_session(game)
         self.notice = self._persist(self.reporter.take_notice)
@@ -112,11 +235,7 @@ class Reports:
             self.preview_example = summary is None
             self.preview_data = telemetry.body(telemetry.payload(summary or telemetry.example_summary(),
                                                                  self.reporter.version))
-        if self.preview_data is None or offset > len(self.preview_data):
-            return None
-        data = self.preview_data
-        return {'chunk': base64.b64encode(data[offset:offset + PREVIEW_CHUNK]).decode('ascii'),
-                'size': len(data), 'example': self.preview_example}
+        return preview_frame(self.preview_data, offset, example=self.preview_example)
 
     def send_session(self, game):
         if not self.available or self.reporter.settings.get('telemetry') != 'on' or not game:

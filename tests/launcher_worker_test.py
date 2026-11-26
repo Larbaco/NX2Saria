@@ -861,6 +861,160 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse((game / 'logs' / telemetry.SUMMARY).exists())
         self.assertEqual(json.loads((game / 'logs' / telemetry.SENT).read_text())['session']['frames'], 2)
 
+    def test_crash_offer_uses_existing_marker_guard_and_exact_payload(self):
+        import base64
+        from launcher import crash_offer, telemetry
+        from launcher.platform import game_executable
+
+        base = Path(self.tmp.name)
+        game = base / 'game'
+        logs = game / 'logs'
+        logs.mkdir(parents=True)
+        cache = game / 'build-cache'
+        cache.mkdir()
+        (cache / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        game_executable(game).touch()
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(game)}))
+        supporting = self.root / 'app' / '0.0.1' / 'launcher'
+        supporting.mkdir(parents=True)
+        shutil.copyfile(ROOT / 'launcher' / 'crash_offer.py', supporting / 'crash_offer.py')
+        log = logs / 'nx2saria.log'
+        log.write_text(''.join(f'log {n} '+ ('x' * 272) + '\n' for n in range(400)) +
+                       str(base / 'private' / 'synthetic-path') + '\n', encoding='utf-8')
+        marker = logs / crash_offer.OFFER
+        payloads = []
+        post_status = 201
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                payloads.append((self.path, self.rfile.read(int(self.headers['Content-Length']))))
+                self.send_response(post_status)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.addCleanup(server.server_close)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        url = f'http://127.0.0.1:{server.server_port}'
+
+        def make_offer():
+            marker.write_text(json.dumps({'kind': 'crash', 'message': 'Synthetic fatal error',
+                                          'log': crash_offer.log_stamp(game), 'at': 10}))
+
+        def start(send):
+            env = dict(os.environ, NX2SARIA_TELEMETRY_URL=url, NX2SARIA_LOG_SHORT_PATHS='0',
+                       HOME=str(base), USERPROFILE=str(base), NX2SARIA_ELECTRON_TEST_SEND_REPORTS=str(int(send)))
+            worker = subprocess.Popen([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)],
+                                      cwd=ROOT, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                      stderr=subprocess.PIPE, text=True)
+            self.addCleanup(self.stop_worker, worker)
+            frames = queue.Queue()
+            serial = 0
+
+            def collect():
+                for line in worker.stdout:
+                    frames.put(json.loads(line))
+
+            threading.Thread(target=collect, daemon=True).start()
+
+            def request(method, **fields):
+                nonlocal serial
+                serial += 1
+                worker.stdin.write(json.dumps({'id': serial, 'method': method, **fields}) + '\n')
+                worker.stdin.flush()
+                result = frames.get(timeout=10)
+                self.assertEqual(result['id'], serial)
+                self.assertIn('result', result)
+                return result['result']
+
+            request('hello', protocol=1)
+            return worker, request
+
+        def preview(request):
+            offset = 0
+            raw = bytearray()
+            while True:
+                frame = request('reports_crash_preview', offset=offset)
+                chunk = base64.b64decode(frame['chunk'])
+                self.assertTrue(chunk)
+                raw.extend(chunk)
+                offset += len(chunk)
+                if offset >= frame['size']:
+                    return bytes(raw)
+
+        def await_send(request):
+            until = time.monotonic() + 10
+            while time.monotonic() < until:
+                result = request('reports_crash_status')
+                if result['status'] != 'sending':
+                    return result
+                time.sleep(0.05)
+            self.fail('crash request did not finish')
+
+        make_offer()
+        worker, request = start(False)
+        self.assertTrue(request('reports_home', after='')['question'])
+        self.assertEqual(request('reports_crash_open')['status'], 'none')
+        self.assertTrue(marker.exists())
+        request('reports_answer', answer="don't send")
+        offer = request('reports_crash_open')
+        self.assertEqual(offer['status'], 'shown')
+        self.assertFalse(offer['can_send'])
+        self.assertEqual(request('reports_crash_answer', answer='decline')['status'], 'guarded')
+        raw = preview(request)
+        self.assertGreater(len(raw), 65536)
+        prepared = json.loads(raw)
+        self.assertEqual(prepared['kind'], 'crash')
+        self.assertIn('synthetic-path', prepared['log_tail'])
+        self.assertNotIn(str(base).casefold(), prepared['log_tail'].casefold())
+        time.sleep(1.05)
+        self.assertEqual(request('reports_crash_answer', answer='send')['status'], 'disabled')
+        self.assertEqual(payloads, [])
+        self.assertTrue(marker.exists())
+        self.assertEqual(request('reports_crash_answer', answer='decline')['status'], 'declined')
+        self.assertFalse(marker.exists())
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+
+        make_offer()
+        worker, request = start(True)
+        request('reports_home', after='')
+        self.assertTrue(request('reports_crash_open')['can_send'])
+        self.assertEqual(preview(request), raw)
+        time.sleep(1.05)
+        self.assertEqual(request('reports_crash_answer', answer='send')['status'], 'sending')
+        self.assertEqual(await_send(request)['status'], 'ok')
+        self.assertEqual(payloads, [('/v1/feedback', raw)])
+        self.assertFalse(marker.exists())
+        self.assertIsNone(crash_offer.pending(game, {}, lambda _: None))
+
+        make_offer()
+        with log.open('a', encoding='utf-8') as out:
+            out.write('a different log\n')
+        self.assertEqual(request('reports_crash_open')['status'], 'none')
+        self.assertFalse(marker.exists())
+        post_status = 400
+        make_offer()
+        self.assertEqual(request('reports_crash_open')['status'], 'shown')
+        time.sleep(1.05)
+        self.assertEqual(request('reports_crash_answer', answer='send')['status'], 'sending')
+        self.assertEqual(await_send(request)['status'], 'failed')
+        self.assertEqual(len(payloads), 2)
+        self.assertFalse(marker.exists())
+        make_offer()
+        self.assertEqual(request('reports_crash_open')['status'], 'none')
+        self.assertFalse(marker.exists())
+
+        self.assertFalse(request('reports_crash_preference', value=False)['crash_ask'])
+        self.assertEqual(json.loads(settings.read_text())[crash_offer.SETTING], 'off')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertEqual(len(payloads), 2)
+
     def test_installed_settings_write_only_allowed_fields_and_open_known_folders(self):
         from fixtures.worker_install_dump import write_dump
         from launcher.platform import game_executable

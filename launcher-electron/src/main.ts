@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseInstalledSettings, validSetting } from './installed-settings';
 import { parseModAction, parseModsPage } from './mods-protocol';
-import { parseReportsView, readReportPreview } from './reports-protocol';
+import { parseCrashOffer, parseReportsView, readReportPreview } from './reports-protocol';
 import { parseInspection, type Inspection } from './inspection';
 import { openWorker, WorkerRequestError, type WorkerClient } from './worker-client';
 import { parsePlayResult, type PlayResult } from './worker-protocol';
@@ -31,7 +31,8 @@ app.whenReady().then(() => {
   let messageSequence = 0;
   let pendingPlayMessage: number | null = null;
   let questionOwner: WorkerClient | null = null;
-  let closingQuestion = false;
+  let crashOwner: WorkerClient | null = null;
+  let closingReport = false;
   window.once('show', () => {
     if (!shown) log?.write('window', 'shown');
     shown = true;
@@ -603,17 +604,59 @@ app.whenReady().then(() => {
     log?.write('reports', `preview example=${result.example}`);
     return result;
   });
+  async function reportSubmission(active: WorkerClient, method: string, statusMethod: string,
+                                  args: Record<string, unknown>) {
+    let result = await active.request(method, args);
+    while (worker === active && result?.status === 'sending') {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      result = await active.request(statusMethod);
+    }
+    return worker === active ? result : null;
+  }
   ipcMain.handle('reports-comment', async (event, text, attach) => {
     const active = reportsWorker(event);
     if (!active || typeof text !== 'string' || text.length > 8000 || [...text].length > 4000 ||
         typeof attach !== 'boolean') return { status: 'failed' };
-    let result = await active.request('reports_comment', { text, attach });
-    while (worker === active && result?.status === 'sending') {
-      await new Promise(resolve => setTimeout(resolve, 200));
-      result = await active.request('reports_comment_status');
-    }
-    if (worker !== active || (result?.status !== 'ok' && result?.status !== 'failed')) return { status: 'failed' };
+    const result = await reportSubmission(active, 'reports_comment', 'reports_comment_status', { text, attach });
+    if (result?.status !== 'ok' && result?.status !== 'failed') return { status: 'failed' };
     log?.write('reports', `comment result=${result.status} attachment=${attach}`);
+    return { status: result.status, reason: typeof result.reason === 'string' ? result.reason.slice(0, 240) : undefined };
+  });
+  ipcMain.handle('reports-crash-open', async event => {
+    const active = reportsWorker(event);
+    if (!active) return null;
+    const offer = parseCrashOffer(await active.request('reports_crash_open'));
+    if (worker !== active) return null;
+    crashOwner = offer ? active : null;
+    if (offer) log?.write('reports', `crash offer=shown send_enabled=${offer.can_send}`);
+    return offer;
+  });
+  ipcMain.handle('reports-crash-preview', async event => {
+    const active = reportsWorker(event);
+    if (!active || active !== crashOwner) return null;
+    const result = await readReportPreview(offset => active.request('reports_crash_preview', { offset }));
+    if (worker !== active || crashOwner !== active) return null;
+    log?.write('reports', 'crash preview=shown');
+    return result;
+  });
+  ipcMain.handle('reports-crash-preference', async (event, value) => {
+    const active = reportsWorker(event);
+    if (!active || typeof value !== 'boolean') return null;
+    const result = await reportState(active, 'reports_crash_preference', { value });
+    log?.write('reports', `crash ask=${value ? 'on' : 'off'}`);
+    return result;
+  });
+  ipcMain.handle('reports-crash-answer', async (event, answer) => {
+    const active = reportsWorker(event);
+    if (!active || active !== crashOwner || !['send', 'decline', 'closed', 'comment'].includes(answer)) {
+      return { status: 'none' };
+    }
+    const result = await reportSubmission(active, 'reports_crash_answer', 'reports_crash_status', { answer });
+    if (!result || !['ok', 'failed', 'none', 'declined', 'comment', 'guarded', 'disabled'].includes(result.status)) {
+      return { status: 'none' };
+    }
+    if (result.status !== 'guarded' && result.status !== 'disabled') crashOwner = null;
+    log?.write('reports', `crash answer=${answer} result=${result.status}`);
     return { status: result.status, reason: typeof result.reason === 'string' ? result.reason.slice(0, 240) : undefined };
   });
   ipcMain.handle('check-updates', async event => {
@@ -678,16 +721,17 @@ app.whenReady().then(() => {
     log?.write('window', `message_shown kind=${kind}`);
   });
   window.on('close', event => {
-    const active = questionOwner;
+    const active = questionOwner ?? crashOwner;
     if (!active || active !== worker) return;
     event.preventDefault();
-    if (closingQuestion) return;
-    closingQuestion = true;
+    if (closingReport) return;
+    closingReport = true;
+    const action = questionOwner ? 'question' : 'crash';
     void active.request('reports_close').then(() => {
-      log?.write('reports', 'question answer=closed');
+      log?.write('reports', `${action} answer=closed`);
     }).catch(() => {}).finally(() => {
-      questionOwner = null;
-      closingQuestion = false;
+      questionOwner = crashOwner = null;
+      closingReport = false;
       if (!window.isDestroyed()) window.close();
     });
   });
