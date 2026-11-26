@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=41b3391d0c3fa7d386e8c6d22997683db556c37d reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=063e9e94e9b5fbe2e4b3651731bde58519ee3bb2 reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · **Português (Brasil)** · [Русский](../ru/known-issues.md) · [简体中文](../zh-Hans/known-issues.md)
 
@@ -12,9 +12,11 @@ Problemas que conhecemos na versão atual e o que os evita. Quando um deles é c
 
 ## Kernel do Linux
 
-- **No Linux, um kernel anterior ao 6.7 roda o jogo a cerca de 1 fps.** O jogo acompanha a memória que escreveu pela
-  proteção de escrita assíncrona do userfaultfd do kernel, que chegou no Linux 6.7; sem ela, o jogo envia toda a sua
-  memória a cada quadro. Um kernel mais novo compilado sem userfaultfd, ou um sandbox que o bloqueia, dá no mesmo. O
+- **No Linux, um kernel anterior ao 6.7 deixa o jogo muito mais lento.** O jogo acompanha a memória que escreveu pela
+  proteção de escrita assíncrona do userfaultfd do kernel, que chegou no Linux 6.7. Sem ela, o jogo roda a cerca de
+  1 fps onde copia a sua memória para a GPU; onde compartilha essa memória pelo udmabuf ([guia do
+  launcher](../launcher.md#linux-guest-memory), em inglês) ele ainda roda, mas mais lento e com travadas longas. Um
+  kernel mais novo compilado sem userfaultfd, ou um sandbox que o bloqueia, dá no mesmo. O
   launcher avisa na tela inicial (*Linux Kernel*), e o log do jogo nomeia o kernel numa linha
   `mem: write watch off: ...` (`mem: write watch on` quando funciona). Atualize o sistema para o Linux 6.7 ou posterior;
   o SteamOS 3.8 já tem.

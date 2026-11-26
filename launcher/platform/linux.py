@@ -365,9 +365,13 @@ def write_watch_probe(machine=None):
             api = (ctypes.c_uint64 * 3)(0xAA, _UFFD_FEATURES, 0)
             if libc.ioctl(ctypes.c_int(fd), ctypes.c_ulong(_UFFDIO_API), api) != 0:
                 return ctypes.get_errno() or None
-            return 0
         finally:
             os.close(fd)
+        try:
+            os.close(os.open('/proc/self/pagemap', os.O_RDONLY | os.O_CLOEXEC))
+        except OSError as error:
+            return error.errno or None
+        return 0
     except (OSError, AttributeError):
         return None
 
@@ -398,15 +402,16 @@ def write_watch_text(status):
     verdict, release = status['verdict'], status['release'] or 'unknown'
     need = f'{WRITE_WATCH_MIN[0]}.{WRITE_WATCH_MIN[1]}'
     if verdict == 'old':
-        return ('Kernel Too Old', f'Linux {release} is older than {need}: the game cannot track which memory it wrote, '
-                f'uploads all of it every frame and runs at about 1 fps. Update the system to Linux {need} or later '
-                'before you play.')
+        return ('Kernel Too Old', f'Linux {release} is older than {need}: the game cannot track which memory it wrote '
+                'and runs much slower, at about 1 fps where its memory is not shared with the GPU through udmabuf. '
+                f'Update the system to Linux {need} or later before you play.')
     if verdict == 'refused':
         err = status['error']
         why = f' ({os.strerror(err)})' if err else ''
         return ('Memory Tracking Off', f'Linux {release} refused the memory tracking the game needs{why}: it runs '
-                f'at about 1 fps. The game needs Linux {need} or later built with userfaultfd, and no sandbox that '
-                'blocks it (a Flatpak or container profile).')
+                'much slower, at about 1 fps where its memory is not shared with the GPU through udmabuf. The game '
+                f'needs Linux {need} or later built with userfaultfd, and no sandbox that blocks it (a Flatpak or '
+                'container profile).')
     return None
 
 

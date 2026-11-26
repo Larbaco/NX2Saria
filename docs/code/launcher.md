@@ -1606,11 +1606,12 @@ The `sh` command line that deletes `gone`, then the empty folders of `empty`, on
 
 ### `write_watch_verdict()`, `write_watch_probe()`, `write_watch_status()`, `write_watch_log_line()` and `write_watch_text()`
 
-Whether the game will track written memory on this kernel, said before Play: without it the game runs at about 1 fps
+Whether the game will track written memory on this kernel, said before Play: without it the game runs much slower
 ([known-issues.md](../known-issues.md#linux-kernel)).
 
 - `write_watch_probe()` makes the game's own probe through `ctypes` (`runtime/platform/linux.c` `ww_open()`): the
-  userfaultfd call in user mode only and the API handshake asking for asynchronous write protection; 0 when it worked,
+  userfaultfd call in user mode only, the API handshake asking for asynchronous write protection, and opening
+  `/proc/self/pagemap`; 0 when all worked,
   the errno when not, `None` where it could not be made (another architecture, no `syscall` in the C library). The
   numbers are the kernel's: the call is 323 on x86-64 and 282 on arm64, `UFFDIO_API` 0xC018AA3F, the features
   `UFFD_FEATURE_WP_ASYNC` (1 << 15) and `UFFD_FEATURE_WP_UNPOPULATED` (1 << 13).

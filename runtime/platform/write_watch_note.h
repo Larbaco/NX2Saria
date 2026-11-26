@@ -35,12 +35,13 @@ static inline void ww_note(int verdict, const char *release, const char *err, ch
                  "(kernel %s)", k);
     else if (verdict == WW_OLD_KERNEL)
         snprintf(out, cap, "mem: write watch off: kernel %s is older than %d.%d and has no asynchronous userfaultfd write "
-                 "protection: written memory is not tracked, the game uploads all of it every frame and runs at about "
-                 "1 fps; update to kernel %d.%d or later (%s)", k, WW_MIN_MAJOR, WW_MIN_MINOR, WW_MIN_MAJOR,
-                 WW_MIN_MINOR, err && *err ? err : "no error text");
+                 "protection: written memory is not tracked and the game runs much slower (about 1 fps where guest "
+                 "memory is copied to the GPU, not shared through /dev/udmabuf); update to kernel %d.%d or later (%s)",
+                 k, WW_MIN_MAJOR, WW_MIN_MINOR, WW_MIN_MAJOR, WW_MIN_MINOR, err && *err ? err : "no error text");
     else
         snprintf(out, cap, "mem: write watch off: kernel %s refused asynchronous userfaultfd write protection (%s): written "
-                 "memory is not tracked, the game uploads all of it every frame and runs at about 1 fps; it needs a "
-                 "kernel %d.%d or later built with userfaultfd, and no sandbox that blocks the userfaultfd call", k,
-                 err && *err ? err : "no error text", WW_MIN_MAJOR, WW_MIN_MINOR);
+                 "memory is not tracked and the game runs much slower (about 1 fps where guest memory is copied to the "
+                 "GPU, not shared through /dev/udmabuf); it needs a kernel %d.%d or later built with userfaultfd, and "
+                 "no sandbox that blocks the userfaultfd call", k, err && *err ? err : "no error text", WW_MIN_MAJOR,
+                 WW_MIN_MINOR);
 }

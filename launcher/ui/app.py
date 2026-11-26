@@ -1063,8 +1063,6 @@ class App:
                           f'Rebuild the Game finishes it and brings the game to {mine}; your dump is not needed.',)
         if staged and self.settings.get('auto_install'):
             play_desc += (f'NX2Saria {staged["version"]} is downloaded and installs after you quit the game.',)
-        if self.message:
-            play_desc = (self.message,) + play_desc
         kernel_row = []
         if sys.platform.startswith('linux') and getattr(self.ctx, 'write_watch', None):
             from ..platform import linux
@@ -1072,6 +1070,8 @@ class App:
             if warn:
                 play_desc = (warn[1],) + play_desc
                 kernel_row = [Row('value', 'Linux Kernel', warn[0], 'salmon', on=lambda: None, desc=(warn[1],))]
+        if self.message:
+            play_desc = (self.message,) + play_desc
         return [
             Row('value', 'Play', play_value, big=True, icon='play', on=self.play, desc=play_desc),
             *kernel_row,

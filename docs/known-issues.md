@@ -9,9 +9,11 @@ release notes say so. The [README](../README.md#status-and-known-issues) has the
 
 ## Linux kernel
 
-- **On Linux, a kernel older than 6.7 runs the game at about 1 fps.** The game tracks the memory it wrote with the
-  kernel's asynchronous userfaultfd write protection, which came in Linux 6.7; without it the game uploads all of its
-  memory every frame. A newer kernel built without userfaultfd, or a sandbox that blocks it, does the same. The
+- **On Linux, a kernel older than 6.7 makes the game much slower.** The game tracks the memory it wrote with the
+  kernel's asynchronous userfaultfd write protection, which came in Linux 6.7. Without it, the game runs at about 1 fps
+  where it copies its memory to the GPU; where it shares that memory through udmabuf ([launcher
+  guide](launcher.md#linux-guest-memory)) it still runs, but slower and with long stalls. A newer kernel built without
+  userfaultfd, or a sandbox that blocks it, does the same. The
   launcher says so on its home screen (*Linux Kernel*), and the game's log names the kernel in a
   `mem: write watch off: ...` line (`mem: write watch on` when it works). Update the system to Linux 6.7 or later;
   SteamOS 3.8 has it.

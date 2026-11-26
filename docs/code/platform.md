@@ -720,7 +720,7 @@ probe is `WW_OLD_KERNEL` on a kernel older than 6.7 and `WW_REFUSED` otherwise: 
 ### `ww_note()`
 
 The `mem: write watch` line for each verdict: on, with the kernel; off, with the kernel, the error, the cost (about
-1 fps) and what to do.
+1 fps where guest memory is copied to the GPU) and what to do.
 
 ## `runtime/platform/proc_pressure.h`
 
@@ -995,8 +995,11 @@ as untracked and the back end uploads them in full. `ww_fd` and `pm_fd` are the 
 `ww_open()` runs at the first watched reservation, once (`ww_tried`; it used to run again at each watched reservation
 after a failure). It keeps the kernel's version (`uname`), the error and the verdict (`ww_release`, `ww_why`,
 `ww_result`, from `write_watch_note.h` `ww_verdict()`) for `plat_write_watch_note()`, which `runtime/memory.c`
-`reserve_at()` logs. Without the write watch the game uploads its whole memory every frame: about 2.6 GiB a frame and
-1 fps, as a player on an older kernel reported. The line used to go to stderr only, which the log file does not hold.
+`reserve_at()` logs. Without the write watch every watched page counts as written. Where guest memory is copied to the
+GPU that is about 2.6 GiB a frame and 1 fps, as a player on an older kernel reported; with the dma-buf imports below
+the GPU reads guest memory in place, and a forced run on the bench (RX 6700, Hyrule Field) went from about 55 to 34 fps
+on average over the whole run, start included, and from about 18 to 4 fps at its slowest 1 %. The line used to go to
+stderr only, which the log file does not hold.
 `NX2SARIA_TEST_NO_UFFD`, read from the environment, skips the probe: `1` fails it as a kernel without the call would
 (ENOSYS) with the real version, a version string fails it as that kernel (EINVAL), so a run on a new kernel shows
 both lines.

@@ -38,7 +38,8 @@ without `pkexec` do not offer the change. The launcher records the detected acce
 ### Linux kernel
 
 The game needs Linux 6.7 or later: it tracks the memory it wrote with the kernel's asynchronous userfaultfd write
-protection, and without it uploads all of its memory every frame and runs at about 1 fps. At start the launcher makes
+protection, and without it runs much slower (about 1 fps where its memory is copied to the GPU rather than shared
+through udmabuf, above). At start the launcher makes
 the same check the game makes; when it fails, the home screen shows a *Linux Kernel* row under *Play* (*Kernel Too
 Old*, or *Memory Tracking Off* on a newer kernel built without userfaultfd or in a sandbox that blocks it) and Play's
 text says why before you start. `data/logs/launcher.log` has the result in a `write watch:` line, and the game's log
