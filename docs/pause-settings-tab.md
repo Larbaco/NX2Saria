@@ -43,7 +43,7 @@ hiding in the Minus menu's branch of the same function), a fifth page made with 
 more page animations, and new states in the AINB sequence, which this port can only edit in place today. That is
 the native tab; this one is the first step.
 
-So the tab changes no file of the game and patches no game code. It reads the header and the System page through
+So the tab changes no file of the game and patches no game code. It reads the pause menu and its System page through
 the screens' site (`main+0x2d13b0`, the sets `menu_mouse` and `quit_menu`), and writes two bits while it is open:
 the shown bit of the System page's `N_InOut_00` (the pane the game fades out with `InContent` when its Options
 opens; the game never sets that bit itself) and the one of the System category's plate, `N_Bg_00`. Both are set
@@ -74,6 +74,10 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
 
 - `pause_tab: on (NX2SARIA_PAUSE_SETTINGS_TAB): a fifth tab, "NX2Saria", after the pause menu's System tab; ...` at
   start, or `pause_tab: off ...` with the reason.
+- `pause_tab: the pause menu's header found at ...`, or after 10 s `pause_tab: the pause menu's header was not found:
+  the tab's place is the game's layout's, ...`: the header's update does not run through the screens' site, so the
+  tab looks for the header object; without it the tab stands where the game's layout puts the categories and the
+  System category keeps its plate.
 - `pause_tab: header: the System category at x 490..890, the tab at 1065..1465 (layout units); its plate found`: once,
   the first time the header shows.
 - `pause_tab: R on the System tab: the tab opens` (or `a click on the tab`), `pause_tab: the tab opened`,
@@ -85,7 +89,7 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
 ## Testing
 
 `NX2SARIA_PAUSE_SETTINGS_TAB_TEST` takes words, for test runs only: `log` writes why R is or is not taken each time
-that changes (at most 120 lines); `fail` makes the page fail to draw 30 frames after the tab opens, which closes it
+that changes (at most 120 lines); `screens` names each screen the screens' site runs for; `fail` makes the page fail to draw 30 frames after the tab opens, which closes it
 and gives the System page back. While the tab is open, `NX2SARIA_INPUT_SCRIPT` reaches its rows too.
 `tests/pause_tab_check.py` checks the R press, the tab's place, the page's settling and the layouts' shape (with
 `--romfs`, against the game's own `PaSystemMenu_00`, `PaMenuCategory_00` and `MenuOverlay_00`).

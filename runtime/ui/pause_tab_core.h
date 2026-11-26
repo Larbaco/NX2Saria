@@ -57,6 +57,11 @@ static inline int pt_name_kind(const char *v, int *known) {
     return PT_NAME_PRODUCT;
 }
 
+static inline void pt_header_boxes(PtBox *before, PtBox *last) {
+    *before = (PtBox){30.0f, 888.0f, 430.0f, 1112.0f};
+    *last = (PtBox){490.0f, 888.0f, 890.0f, 1112.0f};
+}
+
 static inline void pt_page_box(PtBox *out) { *out = (PtBox){-1560.0f, -780.0f, 1560.0f, 430.0f}; }
 
 #endif

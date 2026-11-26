@@ -2930,6 +2930,10 @@ parents of the panes the tab uses, against `runtime/ui/pause_tab_core.h` `PT_SYS
 A pane's box in layout units (`runtime/ui/menu_mouse_geom.h` `mm_pane_box()`), and a box turned into fractions of the
 picture with the screen's projection (`mm_units()`; 16:9 taken when it cannot be read).
 
+### `screens_seen()`
+
+The line of `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=screens`: each screen the site runs for, by its layout's name (48 at most).
+
 ### `trace()`
 
 The line of `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=log`: why R is or is not taken, when that changes.
@@ -2954,17 +2958,29 @@ layout found when arming is kept, checked against the pause menu's layout each u
 page it was taken from. The page box (`runtime/ui/pause_tab_core.h` `pt_page_box()`) goes to the picture with this
 screen's projection.
 
+### `static_header()`
+
+The tab's box without the header object: the layout's own categories (`pt_header_boxes()`) through the pause menu's
+projection, shown while the pause menu is open and not hidden. The header's update does not go through the screens'
+site (a run with `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=screens` lists the screens that do), and the categories sit where
+`MenuOverlay_00` puts them: measured on the bench, the System category's text at y 1000.
+
+### `header_like()`, `header_in()`, `find_header()`
+
+The header object (a game object with `MenuOverlay_00` as its layout and room for +0x330), looked for in the first
+0x400 bytes of the screen manager and the first 0x600 of the pause menu, one pointer deep into arrays of 64, twice a
+second for at most 20 tries. Where it was found is logged.
+
 ### `header_tick()`
 
-At the header's update. A header with other than four categories gets no tab (one line). The tab's box follows the
+Called from `plus_tick()` once the header is found (the pause menu's thread draws both). A header with other than four categories gets no tab (one line). The tab's box follows the
 third and fourth categories' part panes (`pt_tab_box()`) and shows only while the fourth is shown with all its parents:
 the Plus menu's header, faded in. While the tab is open the fourth category's plate `N_Bg_00` loses its shown bit (the
 category is drawn as not selected), and gets it back when it closes.
 
 ### `pause_tab_screen_host()`
 
-Called by `runtime/patches/patches.c` `screens_host()` for every interface screen's update; picks the pause menu and its
-header by their layouts' names.
+Called by `runtime/patches/patches.c` `screens_host()` for every interface screen's update; picks the pause menu by its layout's name.
 
 ### `pause_tab_view()`, `pause_tab_request_take()`, `pause_tab_set_open()`, `pause_tab_applied()`
 
@@ -2995,6 +3011,8 @@ The parts of the tab that need neither the game's memory nor the runtime, so `te
   under that) and `PaMenuCategory_00` (3 `N_Bg_00` under `N_BgIn_00`, with the two plates under it) have them;
   `PT_SYSTEM_INOUT` and `PT_CATEGORY_BG` are the panes written.
 - `pt_name_kind()`: `product` (and unset) or `settings`; anything else is the product's name, said in the start line.
+- `pt_header_boxes()`: the third and fourth categories of `MenuOverlay_00` in layout units (x 30..430 and 490..890,
+  y 888..1112), for the tab's place when the header object is not found.
 - `pt_page_box()`: the page's box in layout units, under the header's plate and over the footer: x -1560..1560,
   y -780..430 (the System page's buttons run from 428 down to -606).
 

@@ -28,6 +28,10 @@ static void boxes(void) {
     PtBox wide_items = {30 + 640, -112, 430 + 640, 112}, wide_system = {490 + 640, -112, 890 + 640, 112};
     CHECK(pt_tab_box(&wide_items, &wide_system, &tab) && (tab.x0 + tab.x1) * 0.5f > 890 + 640, "spread categories");
     CHECK(!pt_tab_box(&system, &items, &tab), "categories in the wrong order give no box");
+    PtBox before, last;
+    pt_header_boxes(&before, &last);
+    CHECK(pt_tab_box(&before, &last, &tab) && tab.x0 == 1065 && tab.x1 == 1465 && tab.y0 == 888 && tab.y1 == 1112,
+          "the tab from the layout's own categories: %.0f..%.0f", (double)tab.x0, (double)tab.x1);
     PtBox flat = {10, 0, 10, 0};
     CHECK(!pt_tab_box(&items, &flat, &tab), "an empty category gives no box");
 }

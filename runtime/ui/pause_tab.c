@@ -235,6 +235,25 @@ static void drop_system(void) {
     g_inout_hidden = 0, g_sys_lyt = 0;
 }
 
+static uint64_t g_hdr;
+static void header_tick(uint64_t s);
+static int header_like(uint64_t p);
+static uint64_t find_header(uint64_t plus_screen);
+
+static void static_header(uint64_t s) {
+    PtBox before, last, tab;
+    float out[4] = {0, 0, 0, 0};
+    int shown = rd8(s + SCR_STATE) == SCR_OPEN && (int8_t)rd8(s + SCR_HIDDEN) >= 0;
+    pt_header_boxes(&before, &last);
+    if (shown && pt_tab_box(&before, &last, &tab)) to_picture(&tab, s, out);
+    else shown = 0;
+    plat_mutex_lock(&g_lock);
+    memcpy(g_view.tab, out, sizeof out);
+    g_view.alpha = shown ? 1.0f : 0.0f;
+    g_header_ms = shown ? plat_now_ms() : g_header_ms;
+    plat_mutex_unlock(&g_lock);
+}
+
 static void plus_tick(uint64_t s) {
     uint64_t now = plat_now_ms(), plus = layout_of(s), e = focused_entry(), sys = 0;
     const char *why = NULL;
@@ -275,9 +294,52 @@ static void plus_tick(uint64_t s) {
     memcpy(g_view.page, out, sizeof out);
     g_page_ms = shape && host ? now : g_page_ms;
     plat_mutex_unlock(&g_lock);
+    if (g_hdr && !header_like(g_hdr)) g_hdr = 0;
+    if (!g_hdr) g_hdr = find_header(s);
+    if (g_hdr) header_tick(g_hdr);
+    else static_header(s);
 }
 
 static uint64_t g_bg_hidden;
+
+static int header_like(uint64_t p) { return game_object(p, HDR_CATS + 8) && layout_named(layout_of(p), "MenuOverlay_00"); }
+
+static uint64_t header_in(uint64_t base, uint64_t span, const char *what) {
+    for (uint64_t off = 0; off < span; off += 8) {
+        if (!ok_at(base + off, 8)) break;
+        uint64_t p = rd64(base + off);
+        if (header_like(p)) {
+            rt_log("pause_tab: the pause menu's header found at %s+%#llx", what, (unsigned long long)off);
+            return p;
+        }
+        if ((p & 7) || !ok_at(p, 64 * 8)) continue;
+        for (uint64_t j = 0; j < 64; j++) {
+            uint64_t q = rd64(p + j * 8);
+            if (header_like(q)) {
+                rt_log("pause_tab: the pause menu's header found at %s+%#llx, [%llu]", what, (unsigned long long)off,
+                       (unsigned long long)j);
+                return q;
+            }
+        }
+    }
+    return 0;
+}
+
+static uint64_t find_header(uint64_t plus_screen) {
+    static int tries;
+    static uint64_t last_ms;
+    uint64_t now = plat_now_ms();
+    if (tries >= 20 || now - last_ms < 500) return 0;
+    last_ms = now;
+    uint64_t sys = rd64(MOD_MAIN_BASE + UI_SYSTEM), mgr = 0, h = 0;
+    if (game_object(sys, UI_SCREENS + 8) && rd64(sys) == MOD_MAIN_BASE + UI_SYSTEM_VT) mgr = rd64(sys + UI_SCREENS);
+    if (game_object(mgr, 0x400)) h = header_in(mgr, 0x400, "the screen manager");
+    if (!h) h = header_in(plus_screen, 0x600, "the pause menu");
+    if (!h && ++tries == 20)
+        rt_log("pause_tab: the pause menu's header was not found: the tab's place is the game's layout's, and the System "
+               "category keeps its plate while the tab is open");
+    return h;
+}
 
 static void header_tick(uint64_t s) {
     static int reported;
@@ -327,13 +389,30 @@ static void header_tick(uint64_t s) {
 
 static int layout_is(uint64_t s, const char *want) { return layout_named(layout_of(s), want); }
 
+static void screens_seen(uint64_t s) {
+    static uint64_t seen[48];
+    static int n;
+    for (int i = 0; i < n; i++)
+        if (seen[i] == s) return;
+    if (n >= 48) return;
+    seen[n++] = s;
+    uint64_t lyt = layout_of(s), r = ok_at(lyt, LYT_NAME + 8) ? rd64(lyt + LYT_NAME) : 0,
+             name = ok_at(r, 0x20) ? rd64(r + 0x18) : 0;
+    char text[40] = "?";
+    if (ok_at(name, sizeof text)) {
+        memcpy(text, (const void *)(uintptr_t)name, sizeof text - 1);
+        text[sizeof text - 1] = 0;
+    }
+    rt_log("pause_tab: the screens' site runs for %s (%#llx)", text, (unsigned long long)s);
+}
+
 void pause_tab_screen_host(Cpu *c) {
     uint64_t s = c->x[19];
     if (!pause_tab_on()) return;
     if (!main_hi) main_lo = MOD_MAIN_BASE, main_hi = MOD_MAIN_BASE + MAIN_SIZE;
     if (!game_object(s, SCR_PROJ + 64)) return;
+    if (pause_tab_test("screens")) screens_seen(s);
     if (layout_is(s, "PlusMenu_00")) plus_tick(s);
-    else if (layout_is(s, "MenuOverlay_00")) header_tick(s);
 }
 
 int pause_tab_view(PauseTabView *v) {
