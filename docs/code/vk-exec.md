@@ -1736,6 +1736,19 @@ The DLSS features and NGX, FSR 3.1's own passes and contexts (where they were ma
 semaphore are released while the allocator and the device still live; then the fence of `vk_device_lost_poll()`.
 `g_errors_total` outlives the device, so the probe can print the validation errors after `vk_shutdown`.
 
+### `vma_destroy_logged()`
+
+The allocator is destroyed here, and memory still allocated then is logged instead of ending the process. Before the
+destruction, `vmaCalculateStatistics` gives the count and bytes of the allocations still in use, in one
+`vk: teardown:` line. During it VMA lists each one (offset, size, user data, name, buffer or image, usage flags) through
+`vk_vma_leak_line()`, at most `VMA_LEAK_LINES` (16) lines, and reports each memory block or dedicated list that is not
+empty through `vk_vma_leak_found()`, counted in a last line. `runtime/vk/vk_vma.cpp` routes VMA's
+`VMA_LEAK_LOG_FORMAT` and `VMA_ASSERT_LEAK` to these two; VMA's other asserts are unchanged. The runtime builds VMA
+without `NDEBUG`, so its leak assert used to call `abort()`; VMA frees the blocks' device memory either way.
+
+Only the probes (`--probe-meshfb` and the others) and a device that failed to start reach the teardown: a game run
+ends without `vk_shutdown`.
+
 ### `device_fault_report()`
 
 The report of a lost device: the breadcrumbs, the pass marks, the video memory and the driver's fault information. Once

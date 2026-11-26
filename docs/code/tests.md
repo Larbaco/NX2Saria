@@ -3403,8 +3403,15 @@ without a pre-pass command buffer.
 `run()` reads the probe's output. The draws' checks: none failed, the last check of the draw part ran, and with
 batching on the batch line came. Validation errors while drawing count; those of the device's creation (extensions
 newer than the layer) and of its destruction (objects the probe's teardown leaves, such as the pre-pass command pool)
-are the probe's, not the batch's, and are only printed. So is how the process ended after the checks. The usage text
-the test prints is its `USAGE` string.
+are the probe's, not the batch's, and are only printed. The run must also end as a passing probe ends: the
+`probe-meshfb: passed` line printed and exit code 0, and no `vk: teardown:` line (memory still allocated when the
+allocator was destroyed, `runtime/vk/vk_device.c` `vma_destroy_logged()`). Before, the test only printed the exit code:
+the probe aborted in its teardown under the validation layer (VMA's leak assert in `vmaDestroyAllocator`), after its
+checks had printed and before its `passed` line, and the test still passed. Each abort also wrote a core of the
+guest's shared memory (about 20 GB), which ran the bench out of memory; `no_core()` runs the probe with no core file
+and a core filter of 0 on Linux (`/proc/self/coredump_filter`: a `core_pattern` that pipes to systemd-coredump passes
+a fixed limit, so the core limit of 0 alone does not stop the dump). The usage text the test prints is its `USAGE`
+string.
 
 ## `tests/mfb_batch_check.py`
 

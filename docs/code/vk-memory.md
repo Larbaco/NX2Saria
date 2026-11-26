@@ -2383,7 +2383,11 @@ bookkeeping compares.
 
 The implementation of the Vulkan Memory Allocator (VMA), compiled from its header `vk_mem_alloc.h` with the Vulkan
 functions bound statically. VMA is C++ only, so its implementation is compiled here as C++; the rest of the runtime uses
-the header's C interface. The file's first line is its attribution and stays in the code.
+the header's C interface.
+
+Before the header, `VMA_LEAK_LOG_FORMAT` and `VMA_ASSERT_LEAK` are bound to `runtime/vk/vk_device.c`
+`vk_vma_leak_line()` and `vk_vma_leak_found()`: allocations still in use when the allocator is destroyed are logged
+(`vk: teardown:` lines, `vma_destroy_logged()` in [vk-exec.md](vk-exec.md)) instead of failing VMA's leak assert.
 
 ## `runtime/vk/vk_vma_budget.c`
 

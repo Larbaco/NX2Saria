@@ -839,6 +839,36 @@ static int create_device(void) {
 
 static long g_errors_total;
 
+enum { VMA_LEAK_LINES = 16 };
+static uint32_t vma_leak_lines, vma_leak_found;
+
+void vk_vma_leak_line(const char *fmt, ...) {
+    if (++vma_leak_lines > VMA_LEAK_LINES) return;
+    char line[400];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    rt_log("vk: teardown: %s", line);
+}
+
+void vk_vma_leak_found(void) { vma_leak_found++; }
+
+static void vma_destroy_logged(VmaAllocator vma) {
+    VmaTotalStatistics st;
+    vmaCalculateStatistics(vma, &st);
+    uint32_t n = st.total.statistics.allocationCount;
+    if (n)
+        rt_log("vk: teardown: %u allocations (%llu bytes) were still in use when the memory allocator was destroyed: their "
+               "memory goes with it, and the first %d are listed below", n,
+               (unsigned long long)st.total.statistics.allocationBytes, VMA_LEAK_LINES);
+    vma_leak_lines = vma_leak_found = 0;
+    vmaDestroyAllocator(vma);
+    if (n || vma_leak_found)
+        rt_log("vk: teardown: the allocator found %u memory blocks or lists not empty and listed %u allocations", vma_leak_found,
+               vma_leak_lines);
+}
+
 static void destroy_all(void) {
     gfx_window_release_vk();
     if (g_vk.device) vkDeviceWaitIdle(g_vk.device);
@@ -852,7 +882,7 @@ static void destroy_all(void) {
     lost_fence = VK_NULL_HANDLE;
     vk_headroom_stop();
     if (g_vk.vma) vk_mem_ballast_release(g_vk.vma);
-    if (g_vk.vma) vmaDestroyAllocator(g_vk.vma);
+    if (g_vk.vma) vma_destroy_logged(g_vk.vma);
     if (g_vk.device) vkDestroyDevice(g_vk.device, NULL);
     if (g_vk.messenger) {
         PFN_vkDestroyDebugUtilsMessengerEXT f =
