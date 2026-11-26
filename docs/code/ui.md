@@ -931,7 +931,12 @@ reason, so `runtime/ui/pause_tab.c` shows the System page again.
 ### `pause_tab_rows()`
 
 The tab's page: the Picture rows of `tab_screen()` that a player looks for in a pause menu, with the same row functions,
-so their notes ("after restart", the disabled sharpening) are the settings menu's.
+so their notes ("after restart", the disabled sharpening) are the settings menu's; then the Sound tab's rows
+(`rows_sound()`) under the tab's name as a group.
+
+### `rows_sound()`
+
+The Sound tab's rows, for the tab and for `tab_sound()`.
 
 ### `pause_tab_label()`
 

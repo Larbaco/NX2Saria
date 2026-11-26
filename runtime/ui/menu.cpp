@@ -1572,12 +1572,16 @@ static void tab_game(float scale) {
     opt_end();
 }
 
-static void tab_sound(float scale) {
-    opt_begin("##sound", scale);
+static void rows_sound(void) {
     opt_slider("NX2SARIA_VOLUME", UI_MENU_VOLUME, 0, 100, UI_MENU_VOLUME_DESC, 5, "%.0f %%");
     opt_slider("NX2SARIA_MENU_SOUND_VOLUME", UI_MENU_MENU_SOUNDS, 0, 100, UI_MENU_MENU_SOUNDS_DESC, 5, "%.0f %%");
     static const UiTextId channels[] = {UI_MENU_CHANNELS_AUTO, UI_MENU_CHANNELS_STEREO, UI_MENU_CHANNELS_51};
     opt_choice("NX2SARIA_AUDIO_CHANNELS", UI_MENU_AUDIO_CHANNELS, channels, 3, UI_MENU_AUDIO_CHANNELS_DESC);
+}
+
+static void tab_sound(float scale) {
+    opt_begin("##sound", scale);
+    rows_sound();
     opt_end();
 }
 
@@ -2224,6 +2228,8 @@ static void pause_tab_rows(void) {
     static const char *const aniso[] = {"game", "2", "4", "8", "16"};
     const char *aniso_names[] = {menu_text(UI_MENU_ANISO_GAME), "2x", "4x", "8x", "16x"};
     opt_choice_list("NX2SARIA_ANISO", UI_MENU_ANISO, aniso, aniso_names, 5, UI_MENU_ANISO_DESC);
+    opt_group(UI_MENU_TAB_SOUND);
+    rows_sound();
 }
 
 static const char *pause_tab_label(void) {
