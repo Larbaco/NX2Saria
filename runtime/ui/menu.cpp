@@ -127,6 +127,14 @@ static const char *g_pause_why = "closed";
 
 static int change_open(int want) {
     plat_mutex_lock(&open_lock);
+    if (want == 2) {
+        if (g_open.load()) {
+            plat_mutex_unlock(&open_lock);
+            return 0;
+        }
+        g_pause_tab.store(1);
+        want = 1;
+    }
     int open = want < 0 ? !g_open.load() : want;
     if (g_open.load() != open) {
         g_open.store(open);
@@ -269,13 +277,14 @@ static void pad_events(ImGuiIO &io, int reset) {
     if (stick_dir >= 0) b |= 1ull << stick_dir;
     if (reset) {
         pad_prev = b;
+        g_pad_plus = 0;
         return;
     }
     for (const auto &k : pad_keys) {
         uint64_t m = 1ull << k.bit;
         if ((b ^ pad_prev) & m) io.AddKeyEvent(k.key, (b & m) != 0);
     }
-    if (b & ~pad_prev & (1ull << B_PLUS)) g_pad_plus = 1;
+    if (g_pause_tab.load(std::memory_order_relaxed) && (b & ~pad_prev & (1ull << B_PLUS))) g_pad_plus = 1;
     pad_prev = b;
 }
 
@@ -2235,8 +2244,9 @@ static void pause_tab_header(uint32_t w, uint32_t h, float scale, bool current) 
 }
 
 static void layout_pause_tab(uint32_t w, uint32_t h, float scale) {
-    PauseTabView v;
+    PauseTabView v = {};
     float r[4];
+    g_modal = false;
     pause_tab_view(&v);
     g_pause_frames++;
     if (pause_tab_test("fail") && g_pause_frames > 30) {
@@ -2751,9 +2761,7 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
             g_picker.store(0);
             g_pause_frames = 0;
             g_pause_why = "closed";
-            g_pause_tab.store(1);
-            set_open(1);
-            open = true;
+            open = change_open(2) != 0;
         } else if (!g_perf_mode && !g_notice_until_ns && !capture_shows && !amiibo_note_shows() && !pause_tab_view(&g_pause_seen)) {
             return 0;
         }

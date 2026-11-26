@@ -31,7 +31,7 @@ enum { LYT_NAME = 0xf8, LYT_PANES = 0x100, LYT_HOST = 0x108, LYT_TREE = 0x110 };
 enum { HDR_COUNT = 0x328, HDR_CATS = 0x330, CAT_LAYOUT = 0x20, HDR_CATEGORIES = 4 };
 enum { TREE_READ = 16 };
 #define ARMED_MS 250
-#define SEEN_MS 400
+#define SEEN_MS 1500
 
 static uint64_t main_lo, main_hi;
 
@@ -64,7 +64,12 @@ static int wanted(void) {
     return v && *v && strcmp(v, "0") != 0;
 }
 
-int pause_tab_on(void) { return RT_V111 && wanted() && sites_on(); }
+int pause_tab_on(void) {
+    static volatile int32_t on = -1;
+    int v = __atomic_load_n(&on, __ATOMIC_ACQUIRE);
+    if (v < 0) v = RT_V111 && wanted() && sites_on(), __atomic_store_n(&on, v, __ATOMIC_RELEASE);
+    return v;
+}
 
 int pause_tab_name_kind(void) {
     int known;
@@ -218,6 +223,18 @@ static uint64_t system_layout_of(uint64_t entry, uint64_t plus) {
 static uint64_t g_sys_lyt, g_inout_hidden;
 static float g_last_x = 1e9f;
 
+static void drop_system(void) {
+    uint64_t p = g_inout_hidden;
+    if (p && ok_at(p, PANE_STRIDE) && rd64(p + PANE_LAYOUT) == g_sys_lyt && layout_named(g_sys_lyt, "PaSystemMenu_00") &&
+        pane_at(g_sys_lyt, PT_SYSTEM_INOUT) == p) {
+        uint32_t f = rd32(p + PANE_FLAGS);
+        wr32(p + PANE_FLAGS, f | PANE_SHOWN);
+        rt_log("pause_tab: the System tab's page shown again as the tab let go of it (N_InOut_00 flags %#x -> %#x)", f,
+               f | PANE_SHOWN);
+    }
+    g_inout_hidden = 0, g_sys_lyt = 0;
+}
+
 static void plus_tick(uint64_t s) {
     uint64_t now = plat_now_ms(), plus = layout_of(s), e = focused_entry(), sys = 0;
     const char *why = NULL;
@@ -226,9 +243,9 @@ static void plus_tick(uint64_t s) {
     else if (!screen_takes_input(s)) why = "the pause menu takes no input";
     else if (!(sys = system_layout_of(e, plus))) why = "the focus is not on the System tab";
     int open = __atomic_load_n(&g_open, __ATOMIC_ACQUIRE);
-    if (sys && sys != g_sys_lyt) g_sys_lyt = sys, g_inout_hidden = 0;
+    if (sys && sys != g_sys_lyt) drop_system(), g_sys_lyt = sys;
     uint64_t host = ok_at(g_sys_lyt, LYT_TREE + 8) ? rd64(g_sys_lyt + LYT_HOST) : 0;
-    if (host && (!ok_at(host, PANE_STRIDE) || rd64(host + PANE_LAYOUT) != plus)) g_sys_lyt = 0, host = 0;
+    if (host && (!ok_at(host, PANE_STRIDE) || rd64(host + PANE_LAYOUT) != plus)) drop_system(), host = 0;
     int shape = g_sys_lyt && tree_ok(g_sys_lyt, PT_SYSTEM_TREE, (int)(sizeof PT_SYSTEM_TREE / sizeof *PT_SYSTEM_TREE));
     if (!why && !shape) why = "the System tab's layout is not the one this tab knows";
     float x = host ? rdf(host + PANE_MTX + 0x24) : 1e9f;
@@ -265,6 +282,7 @@ static uint64_t g_bg_hidden;
 static void header_tick(uint64_t s) {
     static int reported;
     uint64_t now = plat_now_ms();
+    if (!ok_at(s, HDR_CATS + 8)) return;
     uint32_t n = rd32(s + HDR_COUNT);
     uint64_t cats = rd64(s + HDR_CATS);
     if (n != HDR_CATEGORIES || !ok_at(cats, HDR_CATEGORIES * 8)) {
@@ -292,6 +310,7 @@ static void header_tick(uint64_t s) {
         if (f & PANE_SHOWN) wr32(bg + PANE_FLAGS, f & ~(uint32_t)PANE_SHOWN), g_bg_hidden = bg;
     } else if (!open && g_bg_hidden) {
         if (g_bg_hidden == bg) wr32(bg + PANE_FLAGS, rd32(bg + PANE_FLAGS) | PANE_SHOWN);
+        else rt_log("pause_tab: the header changed while the tab was open: the System category's plate left as it is");
         g_bg_hidden = 0;
     }
     static int once;
@@ -333,6 +352,7 @@ int pause_tab_request_take(void) { return plat_xchg32(&g_req, 0); }
 void pause_tab_set_open(int open, const char *why) {
     static int lines;
     int was = plat_xchg32(&g_open, open);
+    if (!open) plat_xchg32(&g_req, 0);
     if (was == open) return;
     uint64_t now = plat_now_ms();
     if (open) g_open_ms = now;
@@ -359,11 +379,13 @@ void pause_tab_poll(uint64_t *buttons) {
     }
     uint64_t now = plat_now_ms(), armed_at = __atomic_load_n(&g_armed_ms, __ATOMIC_ACQUIRE);
     PauseTabView v;
-    int armed = armed_at && now - armed_at < ARMED_MS && !__atomic_load_n(&g_open, __ATOMIC_ACQUIRE) && pause_tab_view(&v);
+    int armed = armed_at && now - armed_at < ARMED_MS && !__atomic_load_n(&g_open, __ATOMIC_ACQUIRE) &&
+                !__atomic_load_n(&g_req, __ATOMIC_ACQUIRE) && pause_tab_view(&v);
     static uint32_t clicks_seen;
+    static uint64_t polled;
     uint32_t clicks = input_menu_mouse_presses(0);
-    int click = clicks != clicks_seen;
-    clicks_seen = clicks;
+    int click = clicks != clicks_seen && now - polled < 100;
+    clicks_seen = clicks, polled = now;
     float nx, ny, pic[4];
     if (click && armed && input_menu_pointer(&nx, &ny) && gfx_picture_rect(pic) && pic[2] > 0 && pic[3] > 0) {
         float px = (nx - pic[0]) / pic[2], py = (ny - pic[1]) / pic[3];
