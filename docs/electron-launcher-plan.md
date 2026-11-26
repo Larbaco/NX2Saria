@@ -267,12 +267,26 @@ installation after every recovery.
 
 Use the same branch commit for both artifacts. The packages contain compiled TypeScript,
 the Python 3.14 worker bytecode, and Electron with its upstream notices. They reuse the
-selected installation's Python and tools. Test the package against a synthetic scratch
-installation assembled from the published 0.27.0-rc.1 app and runtime. The owner can
+selected installation's Python and tools. The extracted Linux package passed under Xvfb against a scratch installation assembled from the
+published 0.27.0-rc.1 app and runtime. It inspected the root, persisted the hide setting, played
+a stand-in game, showed its fatal message, left the crash offer, recovered a corrupt marker
+after confirmation, and recognized a synthetic first-run dump without editing the settings.
+The Windows ZIP passed archive integrity and contents checks. Its packaged window has not
+been run in this checkpoint. The Windows and Linux jobs for commit `c91e8cf4` passed the
+Electron launcher tests workflow run `45730016151`; the Windows job tested the worker natively.
+No package includes the selected installation's runtime, toolchain or game. The owner can
 exercise first run on a provisioned launcher, explicit Rebuild and the previous Play checks.
 The Portuguese LEIA-ME in each artifact lists the exact entry point and the launcher and
 game logs. This checkpoint leaves standalone provisioning, the transition and update
 implementation pending.
+
+
+Both private packages use commit `c91e8cf4`. Verify the owner-run evidence separately.
+
+- Linux `NX2Saria-Electron-Worker-Linux-x64-c91e8cf4.tar.gz`, 122,371,108 bytes.
+  SHA-256 `b0aa5f2043a4fd75bc0c3cbaee29307b72236f84960e6ab8e5b1725c2bcc005b`.
+- Windows `NX2Saria-Electron-Worker-Windows-x64-c91e8cf4.zip`, 146,991,939 bytes.
+  SHA-256 `b754a593afdc67a4513acfd810e648bea9353f55fc0b00eaaeb902427a705a47`.
 
 
 ## Provisioning and handover design

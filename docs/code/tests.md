@@ -5901,6 +5901,11 @@ the test releases it. The native restart test checks that the worker records one
 lock, emits no intermediate end and reports the second copy's exit code under the original Play session.
 Linux compiles only this stand-in. Windows accepts the compiled fixture through `NX2_TEST_RESTART_GAME`.
 
+`launcher-electron/ui-tests/linux-portable-synthetic.cjs` opens the extracted Electron binary
+with a published app and runtime in a temporary installation. It exercises Play and the crash-log
+marker, then recovers an invalid job marker and opens first run with a generated metadata-only
+dump. The saved synthetic dump keeps the automatic finder away from the host's drives.
+
 The first-run preference case switches the channel and update check, rejects an invalid
 channel and keeps existing fields including telemetry and an unrelated key. On Windows
 the stand-in stub records the desktop request. The Linux window test applies the two

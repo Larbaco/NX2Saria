@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -28,11 +29,12 @@ async function main() {
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: version, steps: { compile: {} } }));
     await fs.writeFile(path.join(game, 'ocarina'), "#!/bin/sh\nprintf '%s\\n' '[host] gfx: window gained the focus at synthetic time' > logs/nx2saria.log\nsleep 2\nprintf '%s\\n' 'FATAL: portable synthetic failure' >> logs/nx2saria.log\nexit 71\n", { mode: 0o755 });
 
-    app = await _electron.launch({
+    const launch = () => _electron.launch({
       executablePath: path.resolve(executable),
       args: ['--user-data-dir=' + path.join(base, 'electron-profile')],
-      env: { ...process.env, XDG_DATA_HOME: base },
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base },
     });
+    app = await launch();
     const page = await app.firstWindow();
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 15000 });
     const hide = page.getByRole('checkbox', { name: 'Ocultar o launcher ao jogar' });
@@ -61,7 +63,35 @@ async function main() {
     assert.match(electronLog, /electron: window message_shown kind=ended_with_error/);
     assert.match(electronLog, /electron: exit code=0 play_active=false/);
     assert.doesNotMatch(electronLog, /portable synthetic failure|nx2-portable-linux-ui-|ocarina/);
-    console.log('Packaged Linux Electron: installation runtime, Play, error screen and crash-offer marker passed');
+    const oldMarker = path.join(root, 'data', 'job-running.json');
+    await fs.writeFile(oldMarker, '{broken published test marker');
+    app = await launch();
+    let reopened = await app.firstWindow();
+    await reopened.getByText('Não foi possível verificar a compilação anterior', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await reopened.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+    });
+    await reopened.getByRole('button', { name: 'Recuperar instalação' }).click();
+    await reopened.getByText(/A compilação anterior não terminou/).waitFor({ timeout: 10000 });
+    await assert.rejects(fs.access(oldMarker), { code: 'ENOENT' });
+    await app.close();
+    app = null;
+
+    const dump = path.join(base, 'valid-synthetic.nup');
+    const repository = path.resolve(__dirname, '../..');
+    execFileSync('python3', [path.join(repository, 'tests', 'fixtures', 'worker_install_dump.py'), dump],
+      { cwd: repository, env: { ...process.env, PYTHONPATH: repository } });
+    const firstRun = { telemetry: 'off', dump };
+    await fs.writeFile(settingsFile, JSON.stringify(firstRun));
+    app = await launch();
+    reopened = await app.firstWindow();
+    await reopened.locator('#game-dump-proposal').getByText(dump, { exact: true }).waitFor({ timeout: 15000 });
+    assert.equal(await reopened.getByLabel('Canal de atualizações').inputValue(), 'stable');
+    assert.ok(path.isAbsolute(await reopened.locator('#game-folder-proposal').textContent()));
+    assert.equal(await reopened.getByRole('button', { name: 'Iniciar instalação' }).isEnabled(), true);
+    assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), firstRun);
+    console.log('Packaged Linux Electron: published runtime, Play, crash offer, marker recovery and first run passed');
   } finally {
     if (app) await app.close().catch(() => {});
     await fs.rm(base, { recursive: true, force: true });
