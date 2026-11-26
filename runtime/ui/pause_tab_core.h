@@ -20,11 +20,12 @@ static inline int pt_press(PtPress *s, int armed, int down, int *opened) {
     return s->held;
 }
 
-#define PT_TAB_STEP 1.25f
+#define PT_TAB_STEP 1.075f
+#define PT_TAB_HALF 0.325f
 
 static inline int pt_tab_box(const PtBox *before, const PtBox *last, PtBox *out) {
     float c0 = (before->x0 + before->x1) * 0.5f, c1 = (last->x0 + last->x1) * 0.5f, step = c1 - c0;
-    float hw = (last->x1 - last->x0) * 0.5f;
+    float hw = (last->x1 - last->x0) * PT_TAB_HALF;
     if (!(step > 1.0f) || !(hw > 1.0f) || !isfinite(step) || !isfinite(hw)) return 0;
     float c = c1 + step * PT_TAB_STEP;
     *out = (PtBox){c - hw, last->y0, c + hw, last->y1};

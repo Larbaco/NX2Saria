@@ -408,23 +408,20 @@ bool skin_tab_item(const char *id, const char *text, int flags, float s, ImFont 
     return shown;
 }
 
-void skin_header_tab(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, bool current, const char *text, ImFont *font,
-                     float font_px, float alpha) {
+void skin_header_tab(ImDrawList *dl, ImVec2 a, ImVec2 b, ImVec2 text_at, float s, bool current, const char *text,
+                     ImFont *font, float font_px, float alpha) {
     alpha = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
     if (current) {
-        const float plate_h = (b.y - a.y) * 0.9f, cy = (a.y + b.y) * 0.5f;
-        ImVec2 pa(a.x, cy - plate_h * 0.5f), pb(b.x, cy + plate_h * 0.5f);
-        if (have_art({MENU_ART_TAB_SELECT}))
-            slice(dl, MENU_ART_TAB_SELECT, pa, pb, kTabL, kTabT, kTabR, kTabB, 30, (pb.y - pa.y) / (kTabB - kTabT),
-                  rgba(255, 236, 190, 0.95f * alpha));
-        else
-            skin_button(dl, pa, pb, s, 1.0f, false);
+        dl->AddRectFilledMultiColor(a, b, rgba(63, 34, 13, alpha), rgba(63, 34, 13, alpha), rgba(104, 76, 42, alpha),
+                                    rgba(104, 76, 42, alpha));
+        dl->AddLine(ImVec2(a.x, a.y), ImVec2(a.x, b.y), rgba(40, 24, 10, 0.6f * alpha), 1.5f * s);
+        dl->AddLine(ImVec2(b.x, a.y), ImVec2(b.x, b.y), rgba(40, 24, 10, 0.6f * alpha), 1.5f * s);
     }
     if (!font) font = ImGui::GetFont();
     const ImVec2 ts = font->CalcTextSizeA(font_px, FLT_MAX, 0, text);
-    const ImVec2 at(floorf((a.x + b.x - ts.x) * 0.5f), floorf((a.y + b.y - ts.y) * 0.5f));
-    dl->AddText(font, font_px, ImVec2(at.x + 2 * s, at.y + 2 * s), rgba(0, 0, 0, 0.55f * alpha), text);
-    dl->AddText(font, font_px, at, rgba(255, 252, 198, (current ? 1.0f : 0.78f) * alpha), text);
+    const ImVec2 at(floorf(text_at.x - ts.x * 0.5f), floorf(text_at.y - ts.y * 0.5f));
+    dl->AddText(font, font_px, ImVec2(at.x + 1.5f * s, at.y + 1.5f * s), rgba(0, 0, 0, 0.45f * alpha), text);
+    dl->AddText(font, font_px, at, rgba(254, 252, 225, alpha), text);
 }
 
 void skin_boot_panel(ImDrawList *dl, ImFont *head, float head_px, ImFont *body, float body_px, const char *title,

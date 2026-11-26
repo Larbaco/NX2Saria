@@ -2238,9 +2238,14 @@ static void pause_tab_header(uint32_t w, uint32_t h, float scale, bool current) 
     const float x1 = (r[0] + v.tab[2] * r[2]) * w, y1 = (r[1] + v.tab[3] * r[3]) * h;
     if (!(x1 > x0 && y1 > y0)) return;
     const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f, bw = x1 - x0, bh = y1 - y0;
-    skin_header_tab(ImGui::GetBackgroundDrawList(), ImVec2(cx - bw * 0.6f, cy - bh * 0.36f),
-                    ImVec2(cx + bw * 0.6f, cy + bh * 0.36f), scale, current, pause_tab_label(), g_title_font,
-                    bh * 0.25f, v.alpha);
+    ImFont *font = g_title_font ? g_title_font : ImGui::GetFont();
+    const char *label = pause_tab_label();
+    float px = bh * 0.25f;
+    const float wide = font->CalcTextSizeA(px, FLT_MAX, 0, label).x;
+    if (wide > bw * 0.92f) px *= bw * 0.92f / wide;
+    const float top = r[1] * h, bottom = cy + bh * 0.545f;
+    skin_header_tab(ImGui::GetBackgroundDrawList(), ImVec2(x0, top), ImVec2(x1, bottom), ImVec2(cx, cy), scale, current,
+                    label, font, px, v.alpha);
 }
 
 static void layout_pause_tab(uint32_t w, uint32_t h, float scale) {

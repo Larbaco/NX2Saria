@@ -25,8 +25,8 @@ void skin_boot_panel(ImDrawList *dl, ImFont *head, float head_px, ImFont *body, 
 bool skin_widget_button(const char *label, ImVec2 size, float s);
 
 bool skin_tab_item(const char *id, const char *text, int flags, float s, ImFont *font);
-void skin_header_tab(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, bool current, const char *text, ImFont *font,
-                     float font_px, float alpha);
+void skin_header_tab(ImDrawList *dl, ImVec2 a, ImVec2 b, ImVec2 text_at, float s, bool current, const char *text,
+                     ImFont *font, float font_px, float alpha);
 
 #define SKIN_TEXT IM_COL32(244, 236, 214, 255)
 #define SKIN_TEXT_DIM IM_COL32(206, 188, 150, 255)

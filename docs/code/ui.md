@@ -940,8 +940,10 @@ The tab's name: "NX2Saria", or `UI_MENU_PAUSE_TAB` with `pause_settings_tab_name
 ### `pause_tab_header()`
 
 The tab's name in the pause menu's header, on the background list, at the box `runtime/ui/pause_tab.c` `header_tick()`
-works out, in picture fractions turned into the window's pixels with `gfx_picture_rect()`. The plate is 1.2 times the
-category's width and 0.72 times its height, and the text a quarter of its height, the game's category text size.
+works out, in picture fractions turned into the window's pixels with `gfx_picture_rect()`. The plate runs from the
+picture's top down to 0.545 of the box's height below its centre (y 878 in layout units, where the game's plate ends),
+as wide as the box; the text is a quarter of the box's height, the game's category text size, and shrinks to fit
+0.92 of the box's width ("Configurações").
 
 ### `layout_pause_tab()`
 
@@ -1822,9 +1824,8 @@ label's font, NULL for the current one. True when selected: call `ImGui::EndTabI
 
 ### `skin_header_tab()`
 
-A tab's name in the game's pause menu header, drawn without a widget: the selected tab's plate behind it when
-`current`, the text centred with a soft shadow in the game's parchment colour (a little faded when not current), in
-`font` at `font_px`, all at `alpha`.
+A tab's name in the game's pause menu header, drawn without a widget: the selected category's plate (`a` to `b`)
+behind it when `current`, the text centred on `text_at` with a soft shadow, in `font` at `font_px`, all at `alpha`.
 
 ## `runtime/ui/menu_skin.cpp`
 
@@ -1970,8 +1971,9 @@ The bar is a sunken track with the frames' brown edge, filled in gold from the l
 
 ### `skin_header_tab()`
 
-The plate is the game's selected-tab texture (`MENU_ART_TAB_SELECT`), warmed a little; without the textures the rows'
-button stands in.
+The plate is the one the game draws behind its selected category, measured on a bench capture: a dark brown band from
+the top of the picture down past the header's edge, (63, 34, 13) at the top to (104, 76, 42) at the bottom, with a
+darker line at each side; the text is the categories' cream, (254, 252, 225).
 
 ## `runtime/ui/menu_art.h`
 
@@ -2999,9 +3001,10 @@ The parts of the tab that need neither the game's memory nor the runtime, so `te
 
 - `pt_press()`: the R that opens the tab. R held from before the arming goes to the game; a new R while armed is taken
   and stays taken until let go.
-- `pt_tab_box()`: the tab's box from the boxes of the last two categories: as wide and as high as the last, its centre
-  `PT_TAB_STEP` (1.25) of their spacing past it, which at 16:9 is 1065..1465, clear of the game's R icon
-  (`T_BtnR_00`, 936..1044).
+- `pt_tab_box()`: the tab's box from the boxes of the last two categories: as high as the last and `PT_TAB_HALF`
+  (0.325) of its width each side of a centre `PT_TAB_STEP` (1.075) of their spacing past it, which at 16:9 is
+  1054..1314: between the game's R icon (`T_BtnR_00`, 936..1044) and the rupee counter's icon (1324..1468). The game's
+  own plate is 450 wide; there is no room for that much there.
 - `pt_settled()`: the page's x in the middle and still.
 - `PT_SYSTEM_TREE`, `PT_CATEGORY_TREE`, `pt_tree_ok()`: the parents of the panes the tab relies on, as the game's
   `PaSystemMenu_00` (1 `N_All_00`, 2 `N_InOut_00` under it, the controller picture, the ornament and the buttons

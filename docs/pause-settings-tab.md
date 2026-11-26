@@ -7,7 +7,7 @@ they are. The implementation notes: [code/ui.md](code/ui.md), `runtime/ui/pause_
 
 ## What the player sees
 
-- The tab's name after the System tab's, past the game's R icon: "NX2Saria" (`pause_settings_tab_name = product`, the
+- The tab's name after the System tab's, between the game's R icon and the rupee counter: "NX2Saria" (`pause_settings_tab_name = product`, the
   default), or the menu language's "Settings" (`pause_settings_tab_name = settings`; English where the menu has no
   translation). It shows only while the pause menu's header shows its four categories, so never in the Minus menu.
 - R on the System tab opens it, and so does a click on its name while the System tab is shown. The System tab's page
@@ -76,7 +76,7 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
   start, or `pause_tab: off ...` with the reason.
 - `pause_tab: the header's category 3 has no box ...` (at most 4 lines): the header could not be read, and the tab
   stands where the game's layout puts the categories; the System category then keeps its plate while the tab is open.
-- `pause_tab: header: the System category at x 490..890, the tab at 1065..1465 (layout units); its plate found`: once,
+- `pause_tab: header: the System category at x 490..890, the tab at 1054..1314 (layout units); its plate found`: once,
   the first time the header shows.
 - `pause_tab: R on the System tab: the tab opens` (or `a click on the tab`), `pause_tab: the tab opened`,
   `pause_tab: the System tab's page hidden (N_InOut_00 flags ... -> ...)`.
