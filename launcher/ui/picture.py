@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 
 KEEP_W, KEEP_H = 1600, 928
+DIMS = (0, 20, 40, 60, 80)
 MAX_SIDE, MAX_PIXELS = 16384, 120_000_000
 try:
     from PIL import Image, ImageOps

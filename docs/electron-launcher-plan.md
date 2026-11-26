@@ -45,8 +45,8 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
 - [x] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. The synthetic worker passed in the Linux and Windows jobs of Electron launcher tests run `45759008861`. The Linux Electron window verifies picker cancellation, both source types and restoring the backup. The portable package `f53b2481` also passed export, import and backup creation with the published runtime. All automated scenarios use scratch saves.
 - [x] Mods: add files/folders, enable/disable, ordering, rebuild and errors. The Linux window verifies folder and archive selection, ordering, conflicts, toggling and invalid inputs. The worker tests passed on Linux and Windows in run `45759008861`, including resuming Play after the stand-in rebuild, refusing a mutation during Play and moving a mod across pages. The Linux portable package `f53b2481` verified folder addition with the published runtime. A real build still has its own acceptance item.
-- [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction. The worker and Linux window tests use the existing VDF writer with scratch roots. They cover updating an existing ID, preserving other entries, artifact generation, open-Steam refusal on Linux, a Flatpak-only installation and completing an accepted write after the window closes. Native Steam Deck and Game Mode remain open.
-- [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
+- [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction. The worker and Linux window tests use the existing VDF writer with scratch roots. They cover updating an existing ID, preserving other entries, artifact generation, open-Steam refusal on Linux, a Flatpak-only installation and completing an accepted write after the window closes. The Steam worker tests passed on both runners in `45763560387`. Native Steam Deck and Game Mode remain open.
+- [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game. Electron uses the existing theme palette, persists the same choices, and applies custom colors and reduced-motion preferences to the Sanctuary layout. The Linux window exercises theme, color reset, animation and sound settings. The background picker and game-derived assets follow.
 - [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads and changes the same Hide Launcher While Playing preference through the lock-owning worker. A synthetic Linux window test covers both values, persistence and preservation of the other settings. The installed-game panel exposes the current channel, update flags, cache preference, folders, registered dump and the Windows memory warning. The settings worker tests passed on both runners in Electron launcher tests run `45760705928`. The Linux window test confirms picker cancellation, validation and preference persistence. Settings for reports, system features and uninstall remain open. Verify the hide control separately on real Linux and Windows installations.
 - [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. The Electron reports screen now uses the same question, choices, preview, comment and sending policy. Private packages require the test sending opt-in documented below. Loopback tests verify exact report bytes, the shared sent marker, the Off and disabled states, and a newer session finishing before a previous report is acknowledged. The report tests passed on Linux and Windows in Electron launcher tests run `45761803115`. The installed update must pass its post-update startup reason through the future activation handoff. Private package evidence is recorded below.
 - [x] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. The Electron window now shows and previews these offers using the active installation’s existing implementation. The worker test checks guarded input, stale logs, opt-out, the disabled switch and exact loopback transmission. The Linux window confirms that the session question precedes the offer, previews the prepared request and verifies marker removal on decline. The opt-in still gates all sending. Both worker jobs passed in run `45762522567`. The extracted Linux package `335a0ab0` showed and previewed an offer after a stand-in fatal exit and consumed the marker after a refusal.
@@ -518,6 +518,36 @@ wrapper refusal, existing ID preservation, unaffected shortcuts, Linux
 open-Steam refusal, and the Windows restart path. The Linux window test
 uses synthetic Steam and a stand-in game. Native Steam Deck Game Mode
 remains a device check.
+
+## Personalizing the launcher
+
+Use the existing color schemes and three custom color slots. The worker reads
+and writes the same settings keys, uses the Tk color-palette helpers, and
+returns only validated colors, display options and the saved picture's name.
+Changes apply to the Sanctuary layout without replacing it. Keep the same
+five dimming choices, the animation toggle and four sound levels. A malformed
+preference displays the existing fallback. Saving one choice preserves other
+settings, and resetting a color clears its override.
+
+Choose a picture through the native picker and decode it through the existing
+Python picture limits. Store the normalized image in the same
+`data/background.npy` as the installed launcher. Cancellation, a bad image or
+a rejected settings write leaves the previous picture visible. Removing the
+background only removes the retained copy. The renderer receives a scaled PNG
+of that copy over bounded frames. It never opens the original path itself.
+If the saved image is unavailable, use the selected scheme's backdrop.
+
+Reuse the installation's cached game fonts and effects, and the existing
+extractors when they are absent. Read and extract only from the selected
+game or the saved dump. Missing assets leave the default fonts and a silent
+interface. Effect volume and selection/back cues use the existing levels.
+No game-derived media is in the package. Web accessibility preferences can
+suppress motion even when the launcher setting is enabled.
+
+Test with generated images and sound/font stand-ins, including the native
+pickers and renderer transitions on Linux and the shared settings and caches
+on both CI runners. Capture detection and writes in the existing logs
+without picture or game paths in the Electron log.
 
 ## Provisioning and handover design
 

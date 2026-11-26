@@ -861,6 +861,52 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse((game / 'logs' / telemetry.SUMMARY).exists())
         self.assertEqual(json.loads((game / 'logs' / telemetry.SENT).read_text())['session']['frames'], 2)
 
+    def test_appearance_view_reads_existing_settings_and_validates_changes(self):
+        from launcher.ui import art
+
+        settings = self.root / 'data' / 'launcher.json'
+        initial = {'theme': 'lake', 'custom_panel': '#123456', 'background_dim': 67,
+                   'animations': True, 'sounds': 'high', 'telemetry': 'off', 'future_option': 'kept'}
+        settings.write_text(json.dumps(initial))
+        actions = [
+            {'method': 'hello', 'protocol': 1},
+            {'method': 'appearance_info'},
+            {'method': 'appearance_preference', 'key': 'theme', 'value': 'custom'},
+            {'method': 'appearance_preference', 'key': 'custom_background', 'value': '#A1B2C3'},
+            {'method': 'appearance_preference', 'key': 'custom_panel', 'value': ''},
+            {'method': 'appearance_preference', 'key': 'background_dim', 'value': 40},
+            {'method': 'appearance_preference', 'key': 'sounds', 'value': 'off'},
+            {'method': 'appearance_preference', 'key': 'animations', 'value': False},
+            {'method': 'appearance_preference', 'key': 'theme', 'value': 'unknown'},
+            {'method': 'appearance_preference', 'key': 'background_dim', 'value': True},
+            {'method': 'appearance_preference', 'key': 'custom_panel', 'value': 'invalid color'},
+            {'method': 'appearance_preference', 'key': 'telemetry', 'value': 'on'},
+            {'method': 'appearance_info'},
+        ]
+        result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)], cwd=ROOT,
+                                input=''.join(json.dumps({'id': i, **action}) + '\n'
+                                              for i, action in enumerate(actions, 1)),
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        hello, before, *changes, after = map(json.loads, result.stdout.splitlines())
+        self.assertIn('appearance', hello['result']['capabilities'])
+        self.assertEqual(before['result']['theme'], 'lake')
+        self.assertEqual(before['result']['background_dim'], 60)
+        self.assertEqual(before['result']['palette']['background'], art.theme_palette('lake')['window'])
+        self.assertTrue(all('result' in change for change in changes[:6]))
+        self.assertTrue(all(change['error']['code'] == 'invalid_preference' for change in changes[6:]))
+        final = after['result']
+        self.assertEqual(final['theme'], 'custom')
+        self.assertEqual(final['colors']['background'], '#a1b2c3')
+        self.assertEqual(final['colors']['panel'], art.CUSTOM_DEFAULT['panel'])
+        self.assertFalse(final['animations'])
+        self.assertEqual((final['sounds'], final['background_dim']), ('off', 40))
+        self.assertEqual(json.loads(settings.read_text()), initial | {
+            'theme': 'custom', 'custom_background': '#a1b2c3', 'custom_panel': '',
+            'background_dim': 40, 'animations': False, 'sounds': 'off'})
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: appearance key=theme result=saved', log)
+
     def test_steam_update_uses_existing_shortcut_and_leaves_other_entries_intact(self):
         import struct
         from launcher import steam

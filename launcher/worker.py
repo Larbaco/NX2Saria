@@ -579,7 +579,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings', 'reports', 'steam'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings', 'reports', 'steam', 'appearance'], 'update_waiting': waiting}})
         counts = {}
         reports = Reports(ctx) if lock_state == 'held' else None
         requests = queue.Queue(maxsize=64)
@@ -1055,6 +1055,30 @@ def main(argv=None):
                     continue
                 else:
                     result = change_mod(ctx, game, run, counts, request)
+                emit({'id': request['id'], 'result': result})
+            elif request.get('method') in ('appearance_info', 'appearance_preference'):
+                method = request['method']
+                if method == 'appearance_preference' and (lock_state != 'held' or job or pending
+                                                          or build_recovery.blocked(layout)):
+                    error(request['id'], 'appearance_unavailable')
+                    continue
+                try:
+                    from . import worker_appearance
+                    if method == 'appearance_info':
+                        result = worker_appearance.view(ctx.settings)
+                        action_log(ctx, counts, 'appearance', f'theme={result["theme"]} read')
+                    else:
+                        key = request.get('key')
+                        result = worker_appearance.preference(ctx.settings, key, request.get('value'))
+                        action_log(ctx, counts, f'appearance key={key}', 'result=saved')
+                except ValueError:
+                    action_log(ctx, counts, 'appearance', 'invalid preference')
+                    error(request['id'], 'invalid_preference')
+                    continue
+                except (OSError, ImportError):
+                    action_log(ctx, counts, 'appearance', 'unavailable')
+                    error(request['id'], 'appearance_unavailable')
+                    continue
                 emit({'id': request['id'], 'result': result})
             elif request.get('method') in ('steam_info', 'steam_add', 'steam_result'):
                 method = request['method']

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { parseAppearance, validAppearancePreference } from './appearance-protocol';
 import { parseInstalledSettings, validSetting } from './installed-settings';
 import { parseModAction, parseModsPage } from './mods-protocol';
 import { parseCrashOffer, parseReportsView, readReportPreview } from './reports-protocol';
@@ -491,6 +492,35 @@ app.whenReady().then(() => {
     return modAction(gameWorker(event, 'mods'), 'mod_move', { name, direction });
   });
   ipcMain.handle('open-mods-dir', event => modAction(gameWorker(event, 'mods'), 'open_mods_dir', {}));
+  function appearanceWorker(event: Electron.IpcMainInvokeEvent, write = false) {
+    if (event.sender !== window.webContents || !state || state.status === 'inspection_error' ||
+        !worker?.handshake.capabilities.includes('appearance') ||
+        (write && (worker.handshake.lock !== 'held' || state.job_marker_present || (playing && !gameSpawned)))) {
+      return null;
+    }
+    return worker;
+  }
+  ipcMain.handle('appearance-info', async event => {
+    const active = appearanceWorker(event);
+    if (!active) return null;
+    const result = parseAppearance(await active.request('appearance_info'));
+    if (worker !== active) return null;
+    log?.write('appearance', `theme=${result.theme} read`);
+    return { ...result, writable: active.handshake.lock === 'held' };
+  });
+  ipcMain.handle('appearance-preference', async (event, key, value) => {
+    const active = appearanceWorker(event, true);
+    if (!active || !validAppearancePreference(key, value)) return null;
+    try {
+      const result = parseAppearance(await active.request('appearance_preference', { key, value }));
+      if (worker !== active) return null;
+      log?.write('appearance', `key=${key} result=saved`);
+      return { ...result, writable: true };
+    } catch {
+      log?.write('appearance', `key=${key} result=failed`);
+      return null;
+    }
+  });
   const steamStatuses = ['added', 'available', 'not_found', 'flatpak_unsupported', 'unavailable'];
   async function steamStatus(active: WorkerClient) {
     const result = await active.request('steam_info');

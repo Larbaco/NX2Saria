@@ -7,7 +7,7 @@
     "build": "node clean-build.cjs && tsc && node copy-assets.cjs",
     "start": "npm run build && electron .",
     "test": "npm run build && node --test tests/*.test.cjs",
-    "test:ui": "node ui-tests/worker-synthetic.cjs && node ui-tests/mods-synthetic.cjs && node ui-tests/parent-synthetic.cjs && node ui-tests/first-run-synthetic.cjs && node ui-tests/mods-management-synthetic.cjs && node ui-tests/reports-synthetic.cjs && node ui-tests/steam-synthetic.cjs"
+    "test:ui": "node ui-tests/worker-synthetic.cjs && node ui-tests/mods-synthetic.cjs && node ui-tests/parent-synthetic.cjs && node ui-tests/first-run-synthetic.cjs && node ui-tests/mods-management-synthetic.cjs && node ui-tests/reports-synthetic.cjs && node ui-tests/steam-synthetic.cjs && node ui-tests/appearance-synthetic.cjs"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -1,0 +1,92 @@
+type AppearanceState = {
+  theme: string; sounds: string; animations: boolean; background_dim: number; background: string; writable: boolean;
+  colors: { background: string; panel: string; buttons: string };
+  palette: { background: string; panel: string; text: string; muted: string; button: string; border: string; button_text: string };
+};
+
+const appearanceControl = document.querySelector<HTMLElement>('#appearance-control')!;
+const appearanceButton = document.querySelector<HTMLButtonElement>('#appearance-button')!;
+const appearancePanel = document.querySelector<HTMLElement>('#appearance-panel')!;
+const appearanceTheme = document.querySelector<HTMLSelectElement>('#appearance-theme')!;
+const appearanceColors = document.querySelector<HTMLElement>('#appearance-colors')!;
+const appearanceDim = document.querySelector<HTMLSelectElement>('#appearance-dim')!;
+const appearanceAnimations = document.querySelector<HTMLInputElement>('#appearance-animations')!;
+const appearanceSounds = document.querySelector<HTMLSelectElement>('#appearance-sounds')!;
+const appearanceResult = document.querySelector<HTMLElement>('#appearance-result')!;
+const appearanceSlots = ['background', 'panel', 'buttons'] as const;
+let appearanceState: AppearanceState | null = null;
+let appearanceBusy = false;
+let appearanceOpen = false;
+
+function applyAppearance(state: AppearanceState | null) {
+  appearanceState = state;
+  const root = document.documentElement;
+  for (const key of ['background', 'panel', 'text', 'muted', 'button', 'border', 'button_text'] as const) {
+    const property = '--shell-' + key.replace('_', '-');
+    if (state) root.style.setProperty(property, state.palette[key]);
+    else root.style.removeProperty(property);
+  }
+  root.dataset.animations = state?.animations ? 'on' : 'off';
+}
+
+function resetAppearance() {
+  applyAppearance(null);
+  appearanceOpen = false;
+  appearanceResult.textContent = '';
+}
+
+async function loadAppearance() {
+  try { applyAppearance(await window.launcher.appearanceInfo()); }
+  catch { applyAppearance(null); }
+}
+
+function updateAppearanceControls(disabled: boolean) {
+  appearanceControl.hidden = !appearanceState;
+  appearancePanel.hidden = !appearanceOpen;
+  appearanceButton.setAttribute('aria-expanded', String(appearanceOpen));
+  appearanceButton.disabled = disabled || appearanceBusy;
+  const readOnly = disabled || appearanceBusy || !appearanceState?.writable;
+  appearanceTheme.disabled = appearanceAnimations.disabled = appearanceSounds.disabled = readOnly;
+  appearanceDim.disabled = readOnly || !appearanceState?.background;
+  for (const button of appearanceColors.querySelectorAll<HTMLButtonElement>('button')) button.disabled = readOnly;
+  for (const input of appearanceColors.querySelectorAll<HTMLInputElement>('input')) input.disabled = readOnly;
+  if (!appearanceBusy && appearanceState) {
+    appearanceTheme.value = appearanceState.theme;
+    appearanceDim.value = String(appearanceState.background_dim);
+    appearanceSounds.value = appearanceState.sounds;
+    appearanceAnimations.checked = appearanceState.animations;
+    appearanceColors.hidden = appearanceState.theme !== 'custom';
+    for (const slot of appearanceSlots) {
+      document.querySelector<HTMLInputElement>('#appearance-color-' + slot)!.value = appearanceState.colors[slot];
+    }
+  }
+}
+
+async function writeAppearance(key: string, value: string | boolean | number) {
+  appearanceBusy = true;
+  appearanceResult.textContent = '';
+  updateControls();
+  try {
+    const saved = await window.launcher.appearancePreference(key, value);
+    if (!saved) throw new Error('Appearance unavailable');
+    applyAppearance(saved);
+  } catch {
+    appearanceResult.textContent = 'Não foi possível salvar a preferência de aparência.';
+  } finally {
+    appearanceBusy = false;
+    updateControls();
+  }
+}
+
+appearanceButton.onclick = () => { appearanceOpen = !appearanceOpen; updateControls(); };
+appearanceTheme.onchange = () => { void writeAppearance('theme', appearanceTheme.value); };
+appearanceDim.onchange = () => { void writeAppearance('background_dim', Number(appearanceDim.value)); };
+appearanceAnimations.onchange = () => { void writeAppearance('animations', appearanceAnimations.checked); };
+appearanceSounds.onchange = () => { void writeAppearance('sounds', appearanceSounds.value); };
+for (const slot of appearanceSlots) {
+  const color = document.querySelector<HTMLInputElement>('#appearance-color-' + slot)!;
+  color.onchange = () => { void writeAppearance('custom_' + slot, color.value); };
+  document.querySelector<HTMLButtonElement>('#appearance-reset-' + slot)!.onclick = () => {
+    void writeAppearance('custom_' + slot, '');
+  };
+}

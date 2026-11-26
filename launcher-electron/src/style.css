@@ -6,3 +6,16 @@
 #reports-preview-text { max-height: 44vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 #reports-comment-text { width: 100%; font: inherit; resize: vertical; }
 #reports-dialog button { margin-block: 4px; }
+body { background-color: var(--shell-background, #121d17); color: var(--shell-text, #f5efdf); }
+section { background-color: color-mix(in srgb, var(--shell-panel, #ffffff) 32%, transparent); border-color: var(--shell-border, #a6b79a44); }
+header, aside { border-color: var(--shell-border, #a9b99a33); }
+p, aside { color: var(--shell-muted, #b4c4b4); }
+aside strong { color: var(--shell-text, #f4efd9); }
+button { background-color: var(--shell-button, #e0bd7a); color: var(--shell-button-text, #17231a); }
+#reports-dialog { background: var(--shell-panel, #17251d); color: var(--shell-text, #f5efdf); }
+:root[data-animations="on"] button { transition: background-color 140ms ease, color 140ms ease, transform 140ms ease; }
+:root[data-animations="on"] button:enabled:active { transform: scale(.97); }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-animations="on"] button { transition: none; }
+  :root[data-animations="on"] button:enabled:active { transform: none; }
+}

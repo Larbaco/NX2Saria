@@ -2761,6 +2761,15 @@ Add to Steam: the game in the Steam library, started from there without the laun
 exception of the work is caught and logged with its traceback: a Steam folder in a state nobody expected must say so
 instead of ending the launcher.
 
+### Electron appearance preferences
+
+The appearance view uses the existing palette, custom slots, dimming steps and
+sound levels. The worker validates a choice and writes one key without
+rewriting unknown configuration fields. A reset clears only the relevant
+color override. The Electron main process validates every swatch before the
+window applies its theme variables. The animation preference controls the
+window transitions and the system reduced-motion preference takes precedence.
+
 ### Steam in Electron
 
 The worker uses the same Steam detection, binary VDF and art writer as Tk.

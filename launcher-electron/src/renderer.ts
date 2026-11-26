@@ -20,7 +20,7 @@ type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; steamInfo(): Promise<SteamView>; steamAdd(): Promise<{ status: string; detail?: string; view: SteamView }>; settingsInfo(): Promise<InstalledSettings>; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; appearanceInfo(): Promise<AppearanceState | null>; appearancePreference(key: string, value: string | number | boolean): Promise<AppearanceState | null>; steamInfo(): Promise<SteamView>; steamAdd(): Promise<{ status: string; detail?: string; view: SteamView }>; settingsInfo(): Promise<InstalledSettings>; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -134,10 +134,10 @@ let proposedFolder: InstallDestination | null = null;
 let proposedDump: string | null = null;
 
 function updateControls() {
-  const busy = selecting || playing || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy || settingsBusy;
+  const busy = selecting || playing || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy || appearanceBusy || settingsBusy;
   button.disabled = busy || askingRecovery || savesBusy;
   savesControl.hidden = installation?.status !== 'ready';
-  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy || modsBusy || steamBusy || settingsBusy ||
+  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy || modsBusy || steamBusy || appearanceBusy || settingsBusy ||
     (playing && !gameWindowReady) || installation?.job_marker_present === true;
   savesButton.disabled = chooseSaveExport.disabled = includeSaveReport.disabled = exportSaveButton.disabled = savesDisabled;
   openSavesDir.disabled = savesDisabled;
@@ -174,10 +174,12 @@ function updateControls() {
       ? (steamView.linux ? 'Feche a Steam para alterar o atalho. Você pode reabri-la ao terminar.' :
         'A Steam será reiniciada se estiver aberta.') : '';
   }
+  updateAppearanceControls(selecting || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy ||
+    settingsBusy || (playing && !gameWindowReady) || installation?.job_marker_present === true);
   settingsControl.hidden = installation?.status !== 'ready';
   settingsPanel.hidden = !launcherSettings;
   settingsButton.setAttribute('aria-expanded', String(!settingsPanel.hidden));
-  const settingsOpeningDisabled = selecting || settingsBusy || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy;
+  const settingsOpeningDisabled = selecting || settingsBusy || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy || appearanceBusy;
   settingsButton.disabled = settingsOpeningDisabled;
   settingsOpenLogs.disabled = settingsOpeningDisabled;
   settingsOpenGame.disabled = settingsOpeningDisabled || !launcherSettings?.game_dir;
@@ -333,6 +335,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   launcherSettings = null;
   settingsResult.textContent = '';
   resetReportScreen();
+  resetAppearance();
   checkingUpdates = false;
   updateResult.textContent = updateNotes.textContent = '';
   updateNotes.hidden = true;
@@ -346,6 +349,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   try {
     installation = await action();
     showResult(installation);
+    if (installation) await loadAppearance();
     if (installation?.status === 'ready' && !installation.job_marker_present) await loadReportsHome('');
     if (installation?.status === 'not_configured' || installation?.status === 'not_ready') {
       firstRun.hidden = false;

@@ -48,7 +48,7 @@ BAR = (667, 408, 897, 430)
 CUSTOM_LABELS = {'background': 'Background Color', 'panel': 'Panel Color', 'buttons': 'Button Color'}
 CUSTOM_DESC = {'background': 'The color behind the menus.', 'panel': 'The color of the panels and the top bar.',
                'buttons': 'The color of the buttons.'}
-DIMS = (0, 20, 40, 60, 80)
+DIMS = picture.DIMS
 SOUND_LEVELS = (('off', 'Off'), ('low', 'Low'), ('medium', 'Medium'), ('high', 'High'))
 REPORT_VALUES = {'': 'Not Asked Yet', 'on': 'On', 'off': 'Off'}
 SENT_BOX = (632, 200, 932, 520)

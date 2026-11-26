@@ -5919,6 +5919,11 @@ a complete backup. The Linux window test uses the native dialog seams for the ex
 and the generated backup folder. A Node check verifies that a save transaction can finish
 after the ordinary request timeout.
 
+The appearance test reads a nondefault theme and an old dimming value, compares
+the shared palette, changes the custom colors and verifies that invalid choices
+leave unrelated settings intact. The Linux window changes the theme, checks a
+custom color and its reset, disables animation and changes the sound preference.
+
 The Steam test uses a scratch account and the real VDF writer. It updates a
 legacy shortcut without changing its ID or an unrelated entry, checks image
 files and the backup, and substitutes running Steam and the Windows
