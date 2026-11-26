@@ -1,7 +1,11 @@
+import fcntl
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -44,7 +48,7 @@ class Pieces(unittest.TestCase):
         for p in sorted((ROOT / 'tools' / 'data' / 'rc-smoke').glob('*.txt')):
             got = rc_smoke.read_expect(p)
             self.assertTrue(got, p.name)
-            self.assertLessEqual(set(got), {'run', 'crash-launcher', 'update'}, p.name)
+            self.assertLessEqual(set(got), {'run', 'crash-launcher', 'update', 'window-update'}, p.name)
             self.assertTrue(rc_smoke.version_key(p.stem), p.name)
 
     def test_sent_lines(self):
@@ -113,7 +117,12 @@ class Pieces(unittest.TestCase):
         self.assertNotIn('update', rc_smoke.chosen(args(quick=True)))
         self.assertEqual(rc_smoke.chosen(args(only='crash,install')), ['install', 'crash'])
         self.assertEqual(rc_smoke.chosen(args(quick=True, skip='window')),
-                         ['install', 'build', 'run', 'crash', 'privacy'])
+                         ['install', 'cli', 'build', 'run', 'crash', 'privacy'])
+        self.assertIn('cli', rc_smoke.QUICK)
+        self.assertNotIn('window-update', rc_smoke.QUICK)
+        self.assertEqual(rc_smoke.chosen(args(only='privacy,window-update')), ['window-update', 'privacy'])
+        for stage in rc_smoke.STAGES:
+            self.assertTrue(callable(getattr(rc_smoke.Smoke, 'stage_' + stage.replace('-', '_'))), stage)
         with self.assertRaises(SystemExit):
             rc_smoke.chosen(args(only='nope'))
 
@@ -136,6 +145,166 @@ class Pieces(unittest.TestCase):
             self.assertEqual(env['NX2SARIA_TELEMETRY_URL'], 'none')
             self.assertEqual(s.root('clean'), Path(d) / 'clean' / 'home' / '.local' / 'share' / 'nx2saria')
             self.assertEqual(json.loads(json.dumps(s.expect)), {})
+
+
+def smoke(d, **kw):
+    base = {'tag': 'v9.9.9-rc.1', 'root': d, 'bench': d, 'games': os.path.join(d, 'g'), 'logs': d,
+            'expect_file': None, 'expect': [], 'pin_url': False, 'lock_held': False, 'ini': [], 'run_env': []}
+    base.update(kw)
+    s = rc_smoke.Smoke(type('A', (), base)())
+    s.runs.mkdir(parents=True, exist_ok=True)
+    return s
+
+
+class Options(unittest.TestCase):
+    def test_ancestors_and_locks_table(self):
+        self.assertEqual(rc_smoke.ancestors()[0], os.getpid())
+        self.assertIn(os.getppid(), rc_smoke.ancestors())
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / 'lock'
+            f.touch()
+            st = os.stat(f)
+            ident = f'{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}'
+            table = Path(d) / 'locks'
+            table.write_text(f'1: POSIX  ADVISORY  WRITE 11 {ident} 0 EOF\n'
+                             f'2: FLOCK  ADVISORY  WRITE 22 {ident} 0 EOF\n'
+                             f'2: -> FLOCK  ADVISORY  WRITE 33 {ident} 0 EOF\n'
+                             f'3: FLOCK  ADVISORY  WRITE 44 00:00:1 0 EOF\n', encoding='ascii')
+            self.assertEqual(rc_smoke.lock_holders(f, table), [22])
+
+    def test_ini_with(self):
+        text = '# kept\nfps_limit = 60\nfoliage_distance = 1\n  foliage_distance=3\n'
+        got = rc_smoke.ini_with(text, [('foliage_distance', '2'), ('pause_settings_tab', '1')])
+        self.assertEqual(got, '# kept\nfps_limit = 60\nfoliage_distance = 2\npause_settings_tab = 1\n')
+        self.assertEqual(rc_smoke.ini_with('', [('a', 'b')]), 'a = b\n')
+
+    def test_pairs(self):
+        self.assertEqual(rc_smoke.pairs(['A=1', ' b = two words '], '--ini'), [('A', '1'), ('b', 'two words')])
+        for bad in ('novalue', '=1', 'a b=1'):
+            with self.assertRaises(SystemExit):
+                rc_smoke.pairs([bad], '--ini')
+
+    def test_feed(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = smoke(d)
+            s._releases = [{'tag_name': 'v9.9.9-rc.2', 'assets': [{'name': rc_smoke.LINUX_MANIFEST}]},
+                           {'tag_name': 'v9.9.9-rc.1', 'assets': [{'name': rc_smoke.LINUX_MANIFEST}]}]
+            with self.assertRaises(rc_smoke.Failed) as e:
+                s.feed()
+            self.assertIn('v9.9.9-rc.2 is', str(e.exception))
+            s._releases.pop(0)
+            self.assertIn('real GitHub feed', s.feed())
+            s.a.pin_url = True
+            self.assertIn('pinned URL', s.feed())
+
+    def test_lock_held(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = smoke(d, lock_held=True)
+            self.assertFalse(s.take_lock())
+            with open(s.lock_path, 'a') as held:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                self.assertEqual(rc_smoke.lock_holders(s.lock_path), [os.getpid()])
+                self.assertTrue(s.take_lock())
+            self.assertIsNone(s.lock)
+            s.release_lock()
+            other = subprocess.Popen([sys.executable, '-c', 'import fcntl, sys, time; f = open(sys.argv[1], "a"); '
+                                      'fcntl.flock(f, fcntl.LOCK_EX); print("held", flush=True); time.sleep(30)',
+                                      str(s.lock_path)], stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(other.stdout.readline().strip(), 'held')
+                self.assertEqual(rc_smoke.lock_holders(s.lock_path), [other.pid])
+                self.assertFalse(s.take_lock())
+            finally:
+                other.kill()
+                other.wait()
+            free = smoke(d)
+            self.assertTrue(free.take_lock())
+            free.release_lock()
+
+    def test_build_frees_the_other_game_folders(self):
+        for keep in (False, True):
+            with tempfile.TemporaryDirectory() as d:
+                s = smoke(d, keep_game=keep)
+                for which in rc_smoke.ROOTS:
+                    (s.game(which) / 'ocarina').parent.mkdir(parents=True)
+                    (s.game(which) / 'ocarina').write_text('x', encoding='utf-8')
+
+                def stop():
+                    raise rc_smoke.Failed('stop')
+                s.wait_for_disk = stop
+                with self.assertRaises(rc_smoke.Failed):
+                    s.build('winupd', 'b')
+                left = sorted(w for w in rc_smoke.ROOTS if s.game(w).exists())
+                self.assertEqual(left, ['clean', 'update'] if keep else [])
+
+    def test_watch_stops_the_whole_tree(self):
+        child = ('import subprocess, sys, time; '
+                 'g = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True); '
+                 'print("grandchild", g.pid, flush=True); time.sleep(60)')
+        old = rc_smoke.WATCH_EVERY
+        rc_smoke.WATCH_EVERY = 0.2
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                s = smoke(d)
+                calls = []
+
+                def watch():
+                    calls.append(1)
+                    return 'stopped the build: 1.0 GB left' if len(calls) >= 3 else ''
+                t0 = time.time()
+                code, out = s.run_logged('w', [sys.executable, '-c', child], dict(os.environ), watch=watch)
+                self.assertLess(time.time() - t0, 30)
+                self.assertEqual(code, 125)
+                self.assertEqual(s.stopped, 'stopped the build: 1.0 GB left')
+                grand = int(re.search(r'grandchild (\d+)', out).group(1))
+                self.assertFalse(Path(f'/proc/{grand}').exists() and
+                                 Path(f'/proc/{grand}/stat').read_text().split()[2] != 'Z')
+                code, out = s.run_logged('t', [sys.executable, '-c', 'import time; time.sleep(60)'], dict(os.environ),
+                                         timeout=0.5)
+                self.assertEqual(code, 124)
+                code, out = s.run_logged('ok', [sys.executable, '-c', 'print("fine")'], dict(os.environ),
+                                         watch=lambda: '')
+                self.assertEqual((code, s.stopped), (0, ''))
+                self.assertIn('fine', out)
+        finally:
+            rc_smoke.WATCH_EVERY = old
+
+    def test_root_deleted_only_after_a_pass(self):
+        for results, keep, kept in (([('a', True, '', 0)], False, False), ([('a', True, '', 0), ('b', False, '', 0)],
+                                    False, True), ([('a', True, '', 0)], True, True), ([], False, True)):
+            with tempfile.TemporaryDirectory() as d:
+                s = smoke(d, keep_root=keep, keep_game=False)
+                s.base = Path(d) / 'root'
+                (s.base / 'clean').mkdir(parents=True)
+                s.results = results
+                s.cleanup()
+                self.assertEqual(s.base.exists(), kept, (results, keep))
+                self.assertEqual(bool(s.notes), kept, (results, keep))
+
+    def fake_install(self, d, shadow):
+        s = smoke(d)
+        root = s.root('clean')
+        launcher = root / 'app' / '9.9.9-rc.1' / 'launcher'
+        launcher.mkdir(parents=True)
+        (root / 'app' / 'current.txt').write_text('9.9.9-rc.1\n', encoding='utf-8')
+        (root / 'python' / 'bin').mkdir(parents=True)
+        os.symlink(sys.executable, root / 'python' / 'bin' / 'python3')
+        (launcher / 'cli.py').write_text('import platform, sys\nplatform.release()\n'
+                                         'print("up to date: 9.9.9-rc.1" if sys.argv[-1] == "check" else "ok")\n',
+                                         encoding='utf-8')
+        if shadow:
+            (launcher / 'platform').mkdir()
+            (launcher / 'platform' / '__init__.py').write_text('', encoding='utf-8')
+        return s
+
+    def test_cli_stage_runs_without_isolation(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn('check exit 0, tools exit 0', self.fake_install(d, False).stage_cli())
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(rc_smoke.Failed) as e:
+                self.fake_install(d, True).stage_cli()
+            self.assertIn('without -I', str(e.exception))
+            self.assertIn("no attribute 'release'", str(e.exception))
 
 
 if __name__ == '__main__':

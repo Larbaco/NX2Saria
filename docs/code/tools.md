@@ -4913,6 +4913,9 @@ the runs copy): `--bench` or `NX2SARIA_BENCH`. The dump is the game's `.nup` or 
 .venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --quick --detach
 .venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --only update --from v0.26.0 --detach
 .venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --only crash,privacy --keep-game
+flock <bench>/xbuild/.build.lock sh -c 'tools/rc_smoke.py v0.27.0-rc.3 --quick --keep-game --keep-root --lock-held &&
+    tools/rc_smoke.py v0.27.0-rc.3 --only run --lock-held --ini foliage_distance=2 --expect-file <file> \
+        --logs <bench>/xbuild/runs/<date>-rc-smoke-v0.27.0-rc.3-foliage2'
 ```
 
 The stages, each one line of PASS or FAIL with its reason:
@@ -4920,24 +4923,37 @@ The stages, each one line of PASS or FAIL with its reason:
 | Stage | What it proves |
 |---|---|
 | `install` | The tag's AppImage matches `SHA256SUMS.txt`, its own `tools/appimage_install.py` installs it, and `launcher.cli check` on the Preview channel says it is the newest |
+| `cli` | The installed `launcher/cli.py`, run as a script without `-I` as an older launcher runs it after an update, starts: `check` and `tools` end with code 0 |
 | `build` | `launcher.cli install` of the installed version builds the game from the dump; the build state names that version |
 | `run` | The game reaches the boot map's area: its `version:` line names the tag, the session ends `end normal`, no `FATAL` line, and the log has the lines the notes promise |
 | `window` | The installed window draws every screen of its selftest, each PNG kept and checked, and the real window opens on the home screen with the game found and closes cleanly |
 | `crash` | A `SIGSEGV` sent to the game in the area ends it with code 71; the `FATAL` line is whole, and the summary the launcher makes from it has the hardware (0.27.0 on) |
 | `update` | The previous stable release, installed and built the same way, updates to the tag through `launcher.cli update`: the rollback is kept, the game is rebuilt only as far as the notes say, and it runs |
+| `window-update` | The previous stable release, installed and built the same way, updates to the tag through its window: the window stages the tag in the background, the next start installs it and restarts through `nx2saria-launcher`, the new window rebuilds the game; the rollback is kept and the game runs |
 | `privacy` | No `launcher.log` of the throwaway roots says a session report, crash log or comment was sent |
 
-`--quick` runs all but `update` (one build). `--only` and `--skip` take a comma-separated list of stages; a stage
+`--quick` runs all but `update` and `window-update` (one build); the full run builds three times, about 75 minutes. `--only` and `--skip` take a comma-separated list of stages; a stage
 reuses the throwaway root an earlier run left, so a one-minute stage does not cost a new build when `--keep-game` kept
 the game.
 
+`--ini KEY=VALUE` (set in the clean game folder's `nx2saria.ini` before the `run` stage) and `--run-env KEY=VALUE` (in
+the game's environment for that stage, `NX2SARIA_` names too) make the `run` stage a variant: a setting the notes
+promise a line for, such as `--ini foliage_distance=2` with its line in an `--expect-file`. Both are repeatable and
+named in the stage's PASS line.
+
+The script and all it starts run with a core size of 0: a crashing game would otherwise dump its 20 GB of guest
+memory through RAM, and the dump says nothing, since it leaves the shared mappings out.
+
 ### Where it puts things
 
-- The launcher's root is a throwaway `HOME` on ext4, `/var/tmp/rc-smoke-<tag>/{clean,update}/home`, with every `XDG_`
+- The launcher's root is a throwaway `HOME` on ext4, `/var/tmp/rc-smoke-<tag>/{clean,update,winupd}/home`, with every `XDG_`
   folder inside it: the AppImage installer and the launcher find the root through `XDG_DATA_HOME`, so a player's own
-  installation is never touched. `--clean` deletes it at the end.
-- The game folders are under the bench, `xbuild/tmp-rc-smoke/<tag>/{clean,update}`, with the build's `TMPDIR` beside
-  them; they are deleted before the bench lock is let go, unless `--keep-game`.
+  installation is never touched. It is deleted at the end of a run whose stages all passed (`cleanup()`), and kept
+  after a failure for its diagnosis or with `--keep-root`, which a chain of `--lock-held` invocations that
+  reuse it passes to all but the last; `summary.md` says when it is kept.
+- The game folders are under the bench, `xbuild/tmp-rc-smoke/<tag>/{clean,update,winupd}`, with the build's `TMPDIR`
+  beside them; they are deleted before the bench lock is let go, unless `--keep-game`. Two of them do not fit on the
+  bench's disk together, so each build deletes the others first (`ROOTS`), unless `--keep-game`.
 - Logs, the selftest's PNGs, `window-home.png`, the crash's `nx2saria.log` and session files, and `summary.md` go to
   `xbuild/runs/<date>-rc-smoke-<tag>/`.
 
@@ -4946,10 +4962,19 @@ the game.
 Holds `xbuild/.build.lock` from the first stage to the last, as `xbuild/build-branch.sh` does, so no other build or
 game run shares the bench. It fails at once when the throwaway root's disk has less than 3 GB free.
 
+### `Smoke.take_lock()`
+
+Two invocations in a row let the lock go between them, and a build waiting for it takes it there, while the first
+one's game folder (`--keep-game`) holds 33 GB of the bench's disk. With `--lock-held` the caller holds the lock
+(`flock <bench>/xbuild/.build.lock <command>`) for every invocation it runs, and the script does not take it: it
+checks in `/proc/locks` (`lock_holders()`) that the process holding the lock is the script or one of its parents
+(`ancestors()`), and fails at once when the lock is free or another thread's process holds it.
+
 ### `Smoke.stage_install()`
 
 - The real feed is the one a player of the Preview channel reads. When the tag is not the newest release there, the
-  stage fails unless `--pin-url` is given: then the installed copy's `feed.json` names the tag's own
+  stage fails unless `--pin-url` is given (`Smoke.feed()`, which the `update` stage asks again right before the
+  update, since a release published during its build changes what the feed offers): then the installed copy's `feed.json` names the tag's own
   `NX2Saria-update-linux.json` (the `url` feed of `launcher/feed.py`). The PASS line and `summary.md` say which feed was
   used.
 - The AppImage is unpacked with `--appimage-extract` and installed by the `install()` of its own
@@ -4960,8 +4985,15 @@ game run shares the bench. It fails at once when the throwaway root's disk has l
 
 ### `Smoke.wait_for_disk()`
 
-A build takes about 33 GB of the bench's disk. Before each build it waits, up to `--disk-wait` seconds, for 36 GB free,
-and fails with the free space when it does not come.
+A build takes about 34 GB of the bench's disk, and its temporaries more while it runs. Before each build it waits, up
+to `--disk-wait` seconds, for 45 GB free, and fails with the free space when it does not come. 36 GB was not enough
+on a night when another build's folder grew beside it: the build stopped with a full disk.
+
+While a build runs (`build()`, and the rebuild of the `update` stage), `disk_watch()` measures the free space every
+`WATCH_EVERY` seconds; under `BUILD_FLOOR_GB` it stops the build and fails the stage with the free space, so the disk
+is never filled for the other threads' runs. `stop_tree()` stops the launcher's process and every process under it
+(`descendants()`, from `/proc`): the launcher starts `make_game` in a session of its own, which a signal to the
+launcher alone leaves running.
 
 ### `Smoke.game_run()`
 
@@ -4993,14 +5025,36 @@ default), under `SDL_VIDEODRIVER=offscreen`, `SDL_AUDIO_DRIVER=dummy`, `NX2SARIA
 
 - The previous stable release is the newest one without a pre-release mark older than the tag, or `--from`.
 - `launcher.cli update` of that version is the path without a window: the old launcher downloads, checks and stages
-  the new one, switches to it, and the new launcher's `continue-update` rebuilds the game.
+  the new one, switches to it, and the new launcher's `continue-update` rebuilds the game. The old `cli.py` is run as
+  a script without `-I`, as `docs/launcher.md` ("Command line") tells a player to run it, and it starts the new one
+  the same way.
+
+### `Smoke.stage_window_update()`
+
+- The path a player takes: the old version's window, with automatic updates on, checks the feed and stages the tag
+  in the background (`background update: <version> is staged`), and is closed. The next start of the window installs
+  it (`background update: installing <version> (a staged update waited for the launcher to start)`) and restarts
+  through `nx2saria-launcher` with `--continue-update`; the new window rebuilds the game and logs `job update: ok`.
+- `Smoke.open_window()` starts the window through `nx2saria-launcher`, waits for a line of `launcher.log` (or the
+  window's end), keeps a screenshot and that run's part of `launcher.log`, and closes the window with
+  `WM_DELETE_WINDOW`. The restart replaces the process with `execv`, so the process it waits for is the new window.
+- `window-update:` lines of the lines file are looked for in the second window's part of `launcher.log`, where the
+  rebuild writes `lift: done before` when the game's code was not translated again.
+
+### `Smoke.stage_cli()`
+
+`-I` keeps the script's own folder off `sys.path`; without it, `app/<version>/launcher/` comes first, and a module of
+the launcher can hide a module of Python's library with the same name (`launcher/platform` hid `platform` in
+0.27.0-rc.2 and rc.3). Every other stage starts the launcher with `-I`, as the AppImage and the `nx2saria-launcher`
+script do, so only this stage and `update` see what an older launcher's `continue-update` sees.
 - The lines of the notes for an update (`update:` in the lines file, such as `Translate the Code: Unchanged`) are
   looked for in the update's output.
 
 ### The promised lines
 
 `tools/data/rc-smoke/<version>.txt` lists, one per line, text the release's notes or changelog promise: `run:` in the
-game's log, `crash-launcher:` in `launcher.log` after the crash, `update:` in the update's output. `--expect 'run:
+game's log, `crash-launcher:` in `launcher.log` after the crash, `update:` in the update's output, `window-update:` in
+`launcher.log` of the window that finished the update. `--expect 'run:
 <text>'` adds one, `--expect-file` reads another file. A version without a file checks none.
 
 ### `detach()`
