@@ -130,7 +130,11 @@ app.whenReady().then(() => {
       });
       active.on('event', async frame => {
         if (worker !== active) return;
-        if (frame.event === 'job_started') {
+        if (frame.event === 'recovery_changed') {
+          state = frame.inspection;
+          log?.write('recovery', `state=${state?.recovery?.state ?? 'none'}`);
+          if (!window.isDestroyed()) window.webContents.send('recovery-changed', settingsView(state));
+        } else if (frame.event === 'job_started') {
           if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: buildAction ?? 'mods' });
         } else if (frame.event === 'job_progress') {
           if (!window.isDestroyed()) window.webContents.send('job-status', { status: 'running', task: buildAction ?? 'mods', fraction: frame.fraction });
@@ -289,6 +293,32 @@ app.whenReady().then(() => {
       buildAction = null;
     }
     log?.write(action, `result=${status}`);
+    return status;
+  });
+  ipcMain.handle('recover-build', async (event, action) => {
+    if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('recovery') ||
+        playing || !state?.job_marker_present || (action !== 'wait' && action !== 'stop')) return 'unavailable';
+    const active = worker;
+    if (action === 'stop') {
+      if (state.recovery?.state !== 'alive') return 'unavailable';
+      const answer = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Voltar', 'Parar compilação'],
+        defaultId: 0, cancelId: 0, message: 'Parar a compilação anterior?',
+        detail: 'Você poderá retomar a compilação depois que ela parar.' });
+      if (answer.response !== 1 || worker !== active) return 'cancelled';
+    }
+    let status = 'unavailable';
+    try {
+      const result = await active.request('recover_build', { action });
+      if (worker !== active) return status;
+      if (result?.status === 'finished') {
+        state = parseInspection(result.inspection);
+        if (!window.isDestroyed()) window.webContents.send('recovery-changed', settingsView(state));
+        status = 'finished';
+      } else if (result?.status === 'waiting' || result?.status === 'stopping') {
+        status = result.status;
+      }
+    } catch {}
+    log?.write('recovery', `${action} result=${status}`);
     return status;
   });
   ipcMain.handle('play', async event => {

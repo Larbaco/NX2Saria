@@ -3,7 +3,7 @@ type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost
 type BuildAction = 'install' | 'rebuild';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; onBuildEnded(callback: (result: BuildFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: 'wait' | 'stop'): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -13,6 +13,9 @@ const cancelJob = document.querySelector<HTMLButtonElement>('#cancel-job')!;
 const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-playing')!;
 const settingError = document.querySelector<HTMLElement>('#setting-error')!;
 const installButton = document.querySelector<HTMLButtonElement>('#begin-install')!;
+const recoveryControls = document.querySelector<HTMLElement>('#recovery-controls')!;
+const waitBuild = document.querySelector<HTMLButtonElement>('#wait-build')!;
+const stopBuild = document.querySelector<HTMLButtonElement>('#stop-build')!;
 const firstRun = document.querySelector<HTMLElement>('#first-run')!;
 const gameFolderSpace = document.querySelector<HTMLElement>('#game-folder-space')!;
 const gameFolderProposal = document.querySelector<HTMLElement>('#game-folder-proposal')!;
@@ -28,12 +31,19 @@ let playing = false;
 let savingPreference = false;
 let playFailed = false;
 let choosingSource = false;
+let recoveryAction: 'wait' | 'stop' | null = null;
+let askingRecovery = false;
 let proposedFolder: InstallDestination | null = null;
 let proposedDump: string | null = null;
 
 function updateControls() {
   const busy = selecting || playing || savingPreference || choosingSource;
-  button.disabled = busy;
+  button.disabled = busy || askingRecovery;
+  const previousBuild = installation?.recovery?.state;
+  recoveryControls.hidden = previousBuild !== 'alive' && previousBuild !== 'unverified';
+  stopBuild.hidden = previousBuild !== 'alive';
+  waitBuild.disabled = busy || askingRecovery || recoveryAction !== null;
+  stopBuild.disabled = busy || askingRecovery || recoveryAction === 'stop';
   playButton.disabled = busy || playFailed || installation?.status !== 'ready' ||
     installation.job_marker_present === true || installation.game_running === true;
   rebuildButton.hidden = installation?.status !== 'ready';
@@ -137,6 +147,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   selecting = true;
   installation = null;
   playFailed = false;
+  recoveryAction = null;
   settingError.textContent = '';
   proposedFolder = proposedDump = null;
   gameFolderProposal.textContent = gameFolderSpace.textContent = '';
@@ -158,6 +169,36 @@ async function loadSelection(action: () => Promise<Result | null>) {
 }
 button.onclick = () => { void loadSelection(() => window.launcher.selectInstallation()); };
 void loadSelection(() => window.launcher.discoverInstallation());
+
+async function recoverBuild(action: 'wait' | 'stop') {
+  const previous = installation;
+  askingRecovery = true;
+  updateControls();
+  try {
+    const result = await window.launcher.recoverBuild(action);
+    if (installation !== previous) return;
+    if (result === 'waiting' || result === 'stopping') {
+      recoveryAction = action;
+      detail.textContent = result === 'waiting' ? 'Aguardando a compilação anterior terminar…' : 'Parando a compilação anterior…';
+    } else if (result === 'unavailable') {
+      detail.textContent = 'Não foi possível executar essa ação. O registro da compilação foi mantido.';
+    }
+  } catch {
+    if (installation === previous) detail.textContent = 'Não foi possível verificar a compilação anterior.';
+  } finally {
+    askingRecovery = false;
+    updateControls();
+  }
+}
+waitBuild.onclick = () => { void recoverBuild('wait'); };
+stopBuild.onclick = () => { void recoverBuild('stop'); };
+window.launcher.onRecoveryChanged(state => {
+  installation = state;
+  if (state?.recovery?.state !== 'alive' && state?.recovery?.state !== 'unverified') recoveryAction = null;
+  firstRun.hidden = state?.status !== 'not_ready' && state?.status !== 'not_configured';
+  showResult(state);
+  updateControls();
+});
 
 hideWhilePlaying.onchange = async () => {
   const selected = installation;

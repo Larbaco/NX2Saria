@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { parseInspection } from './inspection';
 import { parseHandshake, PROTOCOL_VERSION, type WorkerHandshake } from './worker-protocol';
 
 export class WorkerRequestError extends Error {
@@ -63,10 +64,14 @@ export class WorkerClient extends EventEmitter {
           else if ('result' in frame) pending.resolve(frame.result);
           else throw new Error();
         } else if (typeof frame.event === 'string') {
-          if (!['game_started', 'game_window_ready', 'game_ended', 'job_started', 'job_progress', 'job_ended', 'memory_required', 'play_failed'].includes(frame.event) ||
+          const recovery = frame.event === 'recovery_changed';
+          if (!['game_started', 'game_window_ready', 'game_ended', 'job_started', 'job_progress', 'job_ended', 'memory_required', 'play_failed', 'recovery_changed'].includes(frame.event) ||
               !Number.isSafeInteger(frame.sequence) || frame.sequence !== this.lastSequence + 1 ||
-              !Number.isSafeInteger(frame.session) || frame.session < 1) throw new Error();
-          if (frame.event === 'job_started') {
+              !Number.isSafeInteger(frame.session) || (recovery ? frame.session !== 0 : frame.session < 1)) throw new Error();
+          if (recovery) {
+            if (this.activeJob !== null || this.activeSession !== null) throw new Error();
+            frame.inspection = parseInspection(frame.inspection);
+          } else if (frame.event === 'job_started') {
             if (this.activeJob !== null || this.activeSession !== null) throw new Error();
             this.activeJob = frame.session;
           } else if (frame.event === 'job_progress') {

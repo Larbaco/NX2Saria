@@ -610,14 +610,21 @@ class WorkerTest(unittest.TestCase):
         reopened.stdin.write('{"id":2,"method":"play"}\n')
         reopened.stdin.flush()
         self.assertEqual(json.loads(reopened.stdout.readline())['error']['code'], 'job_running')
-        reopened.stdin.close()
-        self.assertEqual(reopened.wait(timeout=10), 0)
+        reopened.stdin.write('{"id":8,"method":"recover_build","action":"wait"}\n')
+        reopened.stdin.flush()
+        self.assertEqual(json.loads(reopened.stdout.readline())['result']['status'], 'waiting')
         self.assertEqual(json.loads(marker.read_text())['build'], identity)
         release.touch()
-        deadline = time.monotonic() + 10
-        while not result.exists() and time.monotonic() < deadline:
-            time.sleep(.02)
+        frames = queue.Queue()
+        threading.Thread(target=lambda: frames.put(reopened.stdout.readline()), daemon=True).start()
+        event = json.loads(frames.get(timeout=10))
+        self.assertEqual((event['event'], event['inspection']['recovery']['state']), ('recovery_changed', 'interrupted'))
+        self.assertFalse(event['inspection']['job_marker_present'])
+        self.assertFalse(marker.exists())
         self.assertEqual(json.loads(result.read_text())['code'], 0)
+        reopened.stdin.close()
+        self.assertEqual(reopened.wait(timeout=10), 0)
+        marker.write_text(json.dumps(captured))
         self.assertIn('worker: build supervisor ready', (data / 'logs' / 'launcher.log').read_text())
         recovered = jobs.interrupted(SimpleNamespace(layout=SimpleNamespace(data=data)))
         self.assertEqual(recovered['task'], 'the rebuild of the game')
@@ -659,6 +666,63 @@ class WorkerTest(unittest.TestCase):
         reused.stdin.close()
         self.assertEqual(reused.wait(timeout=10), 0)
 
+
+    def test_stop_recovery_ends_a_verified_previous_build(self):
+        from launcher.platform import game_executable
+        from uuid import uuid4
+
+        data = self.root / 'data'
+        folder = Path(self.tmp.name) / 'game'
+        (folder / 'build-cache').mkdir(parents=True)
+        (folder / 'build-cache' / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        game_executable(folder).write_text('last finished build')
+        (data / 'launcher.json').write_text(json.dumps({'game_dir': str(folder)}))
+        token = uuid4().hex
+        run_dir = data / 'build-supervisor' / token
+        run_dir.mkdir(parents=True)
+        began = run_dir / 'began'
+        builder = 'import pathlib,sys,time; pathlib.Path(sys.argv[1]).touch(); time.sleep(12)'
+        supervisor = subprocess.Popen(
+            [sys.executable, '-m', 'launcher.build_supervisor', '--install-root', str(self.root),
+             '--run-dir', str(run_dir), '--', sys.executable, '-c', builder, str(began)],
+            cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=sys.platform.startswith('linux'))
+        self.addCleanup(self.stop_worker, supervisor)
+        identities = queue.Queue()
+        threading.Thread(target=lambda: identities.put(supervisor.stdout.readline()), daemon=True).start()
+        identity = {**json.loads(identities.get(timeout=10)), 'version': 1, 'token': token}
+        marker = data / 'job-running.json'
+        marker.write_text(json.dumps({'build': identity, 'kind': 'rebuild', 'task': 'synthetic previous rebuild',
+                                      'game_dir': str(folder)}))
+        supervisor.stdin.write('start\n')
+        supervisor.stdin.close()
+        deadline = time.monotonic() + 5
+        while not began.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(began.exists())
+        self.assertIsNone(supervisor.poll())
+        worker, _ = self.start_worker()
+        worker.stdin.write('{"id":6,"method":"recover_build","action":"stop"}\n')
+        worker.stdin.flush()
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+        response = frames.get(timeout=5)
+        self.assertEqual(response['result']['status'], 'stopping')
+        event = frames.get(timeout=5)
+        self.assertEqual(event['event'], 'recovery_changed')
+        self.assertEqual(event['inspection']['recovery']['state'], 'interrupted')
+        self.assertFalse(marker.exists())
+        status = supervisor.wait(timeout=2)
+        if identity['kind'] == 'windows_job':
+            self.assertNotEqual(status, 0)
+        else:
+            self.assertNotEqual(json.loads((run_dir / 'result.json').read_text())['code'], 0)
+        self.assertEqual(game_executable(folder).read_text(), 'last finished build')
 
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'

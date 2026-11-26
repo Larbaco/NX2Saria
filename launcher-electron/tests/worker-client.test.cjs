@@ -81,3 +81,21 @@ test('accepts a completed job followed by a game session', async () => {
   assert.deepEqual(seen, ['job_started', 'job_ended', 'game_started', 'game_ended']);
   await worker.close();
 });
+
+test('accepts a sequenced recovery snapshot outside a game or job session', async () => {
+  const { spawn } = require('node:child_process');
+  const { WorkerClient } = require('../dist/worker-client.js');
+  const inspection = { status: 'ready', root: '/synthetic', game_dir: '/synthetic/game', job_marker_present: false,
+    game_running: null, hide_while_playing: true, recovery: { state: 'interrupted', kind: 'rebuild', pid: 123 } };
+  const frame = { event: 'recovery_changed', sequence: 1, session: 0, inspection };
+  const script = `setTimeout(() => process.stdout.write(JSON.stringify(${JSON.stringify(frame)})+'\\n'), 20); process.stdin.resume()`;
+  const worker = new WorkerClient(spawn(process.execPath, ['-e', script]));
+  try {
+    const event = await new Promise((resolve, reject) => {
+      worker.once('event', resolve);
+      worker.once('disconnect', () => reject(new Error('Unexpected disconnect')));
+      setTimeout(() => reject(new Error('Events timed out')), 3000).unref();
+    });
+    assert.deepEqual(event.inspection.recovery, { state: 'interrupted', kind: 'rebuild' });
+  } finally { await worker.close(); }
+});

@@ -118,7 +118,7 @@ exit 2
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
     await fs.writeFile(path.join(root, 'data', 'job-running.json'), '{}');
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
-    await page.getByText('Há um registro de trabalho:', { exact: false }).waitFor({ timeout: 10000 });
+    await page.getByText('Não foi possível verificar a compilação anterior', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
     const log = await fs.readFile(path.join(root, 'data', 'logs', 'launcher.log'), 'utf8');
     assert.match(log, /worker: started/);

@@ -35,7 +35,7 @@ def stop_linux_build(identity, stopped_at):
     if time.monotonic() - stopped_at >= 5:
         from .platform import linux
         for member in linux.session_members(identity['session'], exclude=identity['pid']):
-            linux.kill_verified_member(member)
+            linux.signal_verified_member(member, signal.SIGKILL)
     return stopped_at
 
 

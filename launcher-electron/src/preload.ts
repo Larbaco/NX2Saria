@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld('launcher', {
   searchInstallDump: () => ipcRenderer.invoke('search-install-dump'),
   install: () => ipcRenderer.invoke('install'),
   rebuild: () => ipcRenderer.invoke('rebuild'),
+  recoverBuild: (action: string) => ipcRenderer.invoke('recover-build', action),
+  onRecoveryChanged: (callback: (result: unknown) => void) => ipcRenderer.on('recovery-changed', (_event, result) => callback(result)),
   setHideWhilePlaying: (value: boolean) => ipcRenderer.invoke('set-hide-while-playing', value),
   play: () => ipcRenderer.invoke('play'),
   cancelJob: () => ipcRenderer.invoke('cancel-job'),

@@ -2,7 +2,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawn } = require('node:child_process');
+const { once } = require('node:events');
+const { randomUUID } = require('node:crypto');
+const readline = require('node:readline');
 const { _electron } = require('playwright-core');
 
 const standInInstall = `
@@ -54,6 +57,7 @@ async function main() {
   const settings = path.join(root, 'data', 'launcher.json');
   const folder = path.join(base, 'games');
   let app;
+  const previousBuilds = [];
   try {
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(root, 'data'));
@@ -158,8 +162,61 @@ async function main() {
     await page.getByText('Não foi possível verificar a compilação anterior', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
     assert.equal(await fs.readFile(oldMarker, 'utf8'), '{broken marker');
+
+    async function previousBuild() {
+      const token = randomUUID().replaceAll('-', '');
+      const run = path.join(root, 'data', 'build-supervisor', token);
+      const release = path.join(run, 'release');
+      const begun = path.join(run, 'ready');
+      await fs.mkdir(run, { recursive: true });
+      const pythonExe = process.env.NX2SARIA_PYTHON || 'python3';
+      const builder = 'import pathlib,sys,time\na,b=map(pathlib.Path,sys.argv[1:])\na.touch()\n'
+        + 'end=time.monotonic()+15\nwhile not b.exists() and time.monotonic()<end: time.sleep(.05)';
+      const supervisor = spawn(pythonExe, ['-m', 'launcher.build_supervisor', '--install-root', root,
+        '--run-dir', run, '--', pythonExe, '-c', builder, begun, release], {
+        detached: true, cwd: repository, stdio: ['pipe', 'pipe', 'ignore']
+      });
+      previousBuilds.push({ release, ended: once(supervisor, 'exit') });
+      const input = readline.createInterface({ input: supervisor.stdout });
+      try {
+        const [line] = await once(input, 'line', { signal: AbortSignal.timeout(5000) });
+        const build = { ...JSON.parse(line), version: 1, token };
+        await fs.writeFile(oldMarker, JSON.stringify({ build, kind: 'rebuild', task: 'test build' }));
+        supervisor.stdin.end('start\n');
+      } finally { input.close(); }
+      const until = Date.now() + 5000;
+      while (Date.now() < until) {
+        try { await fs.access(begun); break; } catch {}
+        await new Promise(resolve => setTimeout(resolve, 30));
+      }
+      await fs.access(begun);
+      await page.getByRole('button', { name: 'Selecionar instalação' }).click();
+      await page.getByText('Uma compilação anterior ainda está rodando', { exact: true }).waitFor({ timeout: 5000 });
+      assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
+      return release;
+    }
+
+    const release = await previousBuild();
+    await page.getByRole('button', { name: 'Aguardar', exact: true }).click();
+    await page.getByText('Aguardando a compilação anterior terminar…').waitFor({ timeout: 5000 });
+    await fs.writeFile(release, '');
+    await page.getByText(/A compilação anterior não terminou/).waitFor({ timeout: 5000 });
+    assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
+
+    await previousBuild();
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+    });
+    await page.getByRole('button', { name: 'Parar compilação', exact: true }).click();
+    await page.getByText(/A compilação anterior não terminou/).waitFor({ timeout: 5000 });
+    assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
+    await assert.rejects(fs.access(oldMarker), { code: 'ENOENT' });
   } finally {
     if (app) await app.close();
+    for (const previous of previousBuilds) {
+      await fs.writeFile(previous.release, '');
+      await previous.ended;
+    }
     await fs.rm(base, { recursive: true, force: true });
   }
 }

@@ -3,6 +3,7 @@ import json
 import os
 import queue
 import runpy
+import signal
 import sys
 import threading
 import time
@@ -127,6 +128,30 @@ def action_log(ctx, counts, action, detail):
         ctx.log(f'worker: {action} {detail}')
     elif count == MAX_ACTION_LOGS:
         ctx.log(f'worker: {action} further events suppressed')
+
+
+def inspect_recovery(ctx, counts, previous):
+    observed = build_recovery.inspect_marker(ctx.layout)
+    if observed.state == 'gone':
+        jobs.interrupted(ctx)
+        remaining_marker = build_recovery.blocked(ctx.layout)
+        observed = build_recovery.Recovery(
+            'unverified' if remaining_marker else 'interrupted',
+            'marker_remove_failed' if remaining_marker else observed.reason, observed.kind)
+    if observed.state == 'none':
+        return previous if previous and previous.state == 'interrupted' else None
+    if not previous or observed.view() != previous.view():
+        action_log(ctx, counts, 'recovery', f'state={observed.state} reason={observed.reason} kind={observed.kind}')
+    return observed
+
+
+def installation_view(root, recovery):
+    result = inspect_installation(root)
+    if recovery:
+        result['recovery'] = recovery.view()
+        if recovery.state in ('alive', 'unverified'):
+            result['job_marker_present'] = True
+    return result
 
 
 def install_space(folder):
@@ -299,7 +324,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
@@ -319,6 +344,8 @@ def main(argv=None):
         disconnected = False
         shutdown_status = 0
         recovery = None
+        recovery_poll = None
+        stopping = None
         while True:
             if _output_disconnected:
                 disconnected = True
@@ -327,6 +354,23 @@ def main(argv=None):
                 if not run and not job:
                     ctx.log('worker: output disconnected idle')
                     return 0
+            if recovery_poll is not None and time.monotonic() >= recovery_poll and not disconnected:
+                previous = recovery
+                recovery = inspect_recovery(ctx, counts, recovery)
+                if recovery and recovery.state == 'alive' and stopping and recovery.identity == stopping[0]:
+                    if recovery.identity['kind'] == 'linux_group' and time.monotonic() >= stopping[1]:
+                        try:
+                            build_recovery.signal_linux_orphan(recovery.identity, signal.SIGKILL)
+                        except OSError:
+                            action_log(ctx, counts, 'recovery', 'stop escalation_failed')
+                if not recovery or recovery.state == 'interrupted':
+                    recovery_poll = stopping = None
+                else:
+                    recovery_poll = time.monotonic() + 0.5
+                if recovery != previous:
+                    sequence += 1
+                    emit({'event': 'recovery_changed', 'sequence': sequence, 'session': 0,
+                          'inspection': installation_view(root, recovery)})
             if job and job.finished is None and not job.cancelled() and job.steps and job.rev != job_revision and not disconnected:
                 with job.locked():
                     job_revision = job.rev
@@ -421,7 +465,7 @@ def main(argv=None):
                 sequence += 1
                 emit({'event': 'game_window_ready', 'sequence': sequence, 'session': session})
             try:
-                timeout = 0.2 if parent and not disconnected else (1 if run or job else None)
+                timeout = 0.2 if parent and not disconnected else (0.5 if recovery_poll is not None else 1 if run or job else None)
                 kind, request = requests.get(timeout=timeout)
             except queue.Empty:
                 if disconnected or not parent or not parent.exited():
@@ -636,28 +680,36 @@ def main(argv=None):
                         error(request['id'], 'preference_save_failed')
                     else:
                         emit({'id': request['id'], 'result': {'hide_while_playing': value}})
+            elif request.get('method') == 'recover_build':
+                action = request.get('action')
+                if lock_state != 'held' or run or job or pending or action not in ('wait', 'stop'):
+                    error(request['id'], 'recovery_unavailable')
+                    continue
+                recovery = inspect_recovery(ctx, counts, recovery)
+                if not recovery or recovery.state == 'interrupted':
+                    emit({'id': request['id'], 'result': {'status': 'finished', 'inspection': installation_view(root, recovery)}})
+                    continue
+                if action == 'stop':
+                    if recovery.state != 'alive':
+                        action_log(ctx, counts, 'recovery', 'stop refused')
+                        error(request['id'], 'recovery_unavailable')
+                        continue
+                    try:
+                        build_recovery.request_stop(layout, recovery.identity)
+                    except (OSError, ValueError):
+                        action_log(ctx, counts, 'recovery', 'stop failed')
+                        error(request['id'], 'recovery_unavailable')
+                        continue
+                    stopping = (recovery.identity, time.monotonic() + 5)
+                status = 'stopping' if action == 'stop' else 'waiting'
+                recovery_poll = time.monotonic() + 0.1
+                action_log(ctx, counts, 'recovery', f'{action} result={status}')
+                emit({'id': request['id'], 'result': {'status': status}})
             elif request.get('method') == 'inspect':
                 try:
                     if not job and lock_state == 'held':
-                        observed = build_recovery.inspect_marker(layout)
-                        if observed.state == 'gone':
-                            jobs.interrupted(ctx)
-                            remaining_marker = build_recovery.blocked(layout)
-                            observed = build_recovery.Recovery(
-                                'unverified' if remaining_marker else 'interrupted',
-                                'marker_remove_failed' if remaining_marker else observed.reason, observed.kind)
-                        if observed.state != 'none':
-                            if not recovery or observed.view() != recovery.view():
-                                action_log(ctx, counts, 'recovery',
-                                           f'state={observed.state} reason={observed.reason} kind={observed.kind}')
-                            recovery = observed
-                        elif recovery and recovery.state != 'interrupted':
-                            recovery = None
-                    result = inspect_installation(root)
-                    if recovery:
-                        result['recovery'] = recovery.view()
-                        if recovery.state in ('alive', 'unverified'):
-                            result['job_marker_present'] = True
+                        recovery = inspect_recovery(ctx, counts, recovery)
+                    result = installation_view(root, recovery)
                 except (OSError, ValueError, RuntimeError):
                     action_log(ctx, counts, 'inspect', 'failed')
                     error(request['id'], 'inspection_failed')

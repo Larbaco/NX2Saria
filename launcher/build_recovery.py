@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import signal
 import sys
 from dataclasses import dataclass
 
@@ -114,3 +115,30 @@ def inspect_marker(layout):
     except (OSError, ValueError, OverflowError, IndexError):
         state, reason = 'unverified', 'identity_unavailable'
     return Recovery(state, reason, kind, identity)
+
+
+def signal_linux_orphan(identity, sig):
+    from .platform import linux
+    try:
+        leader = linux.process_identity(identity['pid'])
+    except (FileNotFoundError, ProcessLookupError):
+        leader = None
+    if leader and (leader['start'] != identity['start'] or leader['session'] != identity['session']
+                   or leader['state'] != 'Z'):
+        return False
+    for process in linux.session_members(identity['session'], exclude=identity['pid']):
+        linux.signal_verified_member(process, sig)
+    return True
+
+
+def request_stop(layout, identity):
+    if identity['kind'] == 'windows_job':
+        from .platform import windows
+        windows.stop_build_job(windows.build_job_name(layout.root, identity['token']))
+        return
+    if identity['kind'] == 'linux_group' and signal_linux_orphan(identity, signal.SIGTERM):
+        return
+    run_dir = layout.data / 'build-supervisor' / identity['token']
+    if not run_dir.is_dir() or run_dir.is_symlink() or (run_dir / 'cancel').is_symlink():
+        raise OSError('could not reach the build supervisor')
+    (run_dir / 'cancel').touch()

@@ -199,6 +199,15 @@ locally on Linux. The Linux window test shows the unverified state with Play dis
 
 ### Wait, stop or recover
 
+Wait and Stop are distinct recovery requests and have no effect on a build owned by the
+current worker. After either request, the worker monitors the same recorded build identity
+without requiring another request from the window. Its sequenced recovery event carries an
+installation snapshot when the state changes. A stop refused by the OS leaves the marker
+and Play blocked. The test sends Wait before releasing a stand-in compiler, and verifies
+the completion notification without polling. A separate Stop test confirms the synthetic
+compiler had begun and that stopping it leaves the game executable untouched. The Linux Electron
+window test exercises both controls against a stand-in builder and re-enables Play after cleanup.
+
 The window shows when the earlier build is still running. The player can wait while keeping the
 launcher open, or confirm Stop Build. Wait watches for the group to exit. Stop targets only the
 verified group and waits for it to drain. Play, install and rebuild stay blocked until then.

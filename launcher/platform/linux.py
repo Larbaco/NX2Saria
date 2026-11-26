@@ -647,7 +647,7 @@ def session_members(session, exclude=None):
             members.append(identity)
     return members
 
-def kill_verified_member(member):
+def signal_verified_member(member, sig):
     try:
         pid = member['pid']
         fd = os.pidfd_open(pid)
@@ -656,7 +656,7 @@ def kill_verified_member(member):
     try:
         current = process_identity(pid)
         if (current['start'], current['session'], current['group']) == (member['start'], member['session'], member['group']):
-            signal.pidfd_send_signal(fd, signal.SIGKILL)
+            signal.pidfd_send_signal(fd, sig)
     except (OSError, AttributeError):
         pass
     finally:

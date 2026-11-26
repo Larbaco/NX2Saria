@@ -98,6 +98,7 @@ def build_group_kernel():
     k.OpenProcess.restype = wintypes.HANDLE
     k.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
     k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    k.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
     k.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
                                               wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
     return k
@@ -135,6 +136,20 @@ def active_build_job(name):
         raise ctypes.WinError(error)
     try:
         return active_build_members(k, job)
+    finally:
+        k.CloseHandle(job)
+
+
+def stop_build_job(name):
+    k = build_group_kernel()
+    job = k.OpenJobObjectW(8, False, name)
+    if not job:
+        if ctypes.get_last_error() == 2:
+            return
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not k.TerminateJobObject(job, 1):
+            raise ctypes.WinError(ctypes.get_last_error())
     finally:
         k.CloseHandle(job)
 

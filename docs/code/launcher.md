@@ -3611,6 +3611,13 @@ inaccessible markers as unverified. The worker consumes only a verified finished
 the existing job recovery function. The renderer receives the normalized state and kind. The
 log also records a reason, with no process information from the marker.
 
+`request_stop()` uses the verified Windows job handle or asks the matching supervisor to
+cancel. On Linux, `signal_linux_orphan()` handles a remaining session whose leader died,
+rechecking each process reference before sending a signal. The worker observes the marker
+with a bounded polling interval after a Wait or Stop request. A sequenced recovery snapshot
+uses session zero, since it belongs to neither a new job nor a game. The Electron client
+validates that snapshot before restoring the appropriate controls.
+
 ## `launcher/build_supervisor.py`
 
 `supervise()` reports the identity of its Linux session or Windows build group. It waits for a

@@ -5996,6 +5996,10 @@ compiler to finish. Inspection reports a still-live builder and recovers it afte
 The existing Tk marker reader consumes the same extended record. A reused PID and an
 unparseable record verify that recovery neither signals an unrelated process nor removes a
 record without verification. The Electron window test keeps Play disabled on the latter.
+The worker test also requests Wait and observes the final snapshot without sending another
+inspection request. A separate test asks the worker to stop a live synthetic build and verifies
+the last executable was untouched. The first-run Electron window test drives both recovery
+controls against these two states.
 
 
 ## `tests/launcher_mods_job_characterization_test.py`
