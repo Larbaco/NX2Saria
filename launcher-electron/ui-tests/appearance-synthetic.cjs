@@ -36,7 +36,7 @@ sounds=Path(sys.argv[1])
 (sounds/'back.wav').write_bytes(pcm_to_wav(8000,[(0,0),(-500,500)]))
 `, sounds], { cwd: path.resolve(__dirname, '../..') });
     app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none',
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TEST_LOCALE: 'pt-BR', NX2SARIA_TELEMETRY_URL: 'none',
         NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', GSETTINGS_BACKEND: 'memory' } });
     const page = await app.firstWindow();
     await page.waitForFunction(() => document.documentElement.classList.contains('game-display-font'));

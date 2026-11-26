@@ -43,7 +43,7 @@ async function main() {
     const python = path.join(base, 'test-python');
     await fs.writeFile(python, '#!/bin/sh\nexec "$NX2_TEST_PYTHON" -c "$NX2_TEST_STEAM" "$@"\n', { mode: 0o755 });
     app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_PYTHON: python,
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TEST_LOCALE: 'pt-BR', NX2SARIA_PYTHON: python,
         NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0',
         NX2_TEST_PYTHON: process.env.NX2SARIA_PYTHON || 'python3', NX2_TEST_STEAM: worker } });
     const page = await app.firstWindow();

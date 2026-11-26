@@ -16,6 +16,7 @@ from .build import game_log_path, game_log_paths
 from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
 from .paths import Layout, install_folder
+from . import worker_preferences
 from .worker_reports import QUESTION_ANSWERS, Reports, installed_crash_offer, preview_frame
 
 PROTOCOL = 1
@@ -579,7 +580,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         capabilities = ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates',
-                        'saves', 'mods', 'settings', 'reports', 'steam']
+                        'saves', 'mods', 'settings', 'reports', 'steam', 'language']
         try:
             from . import worker_appearance
         except (ImportError, OSError):
@@ -1068,6 +1069,26 @@ def main(argv=None):
                 else:
                     result = change_mod(ctx, game, run, counts, request)
                 emit({'id': request['id'], 'result': result})
+            elif request.get('method') in ('language_info', 'language_preference'):
+                if request['method'] == 'language_info':
+                    value = worker_preferences.language(layout)
+                    action_log(ctx, counts, 'language', f'choice={value} read')
+                else:
+                    value = request.get('value')
+                    if value not in worker_preferences.LANGUAGES:
+                        error(request['id'], 'invalid_preference')
+                        continue
+                    if lock_state != 'held' or job or pending or build_recovery.blocked(layout):
+                        error(request['id'], 'language_unavailable')
+                        continue
+                    try:
+                        worker_preferences.set_language(layout, value)
+                    except (OSError, ValueError):
+                        action_log(ctx, counts, 'language', 'result=failed')
+                        error(request['id'], 'language_unavailable')
+                        continue
+                    action_log(ctx, counts, 'language', f'choice={value} result=saved')
+                emit({'id': request['id'], 'result': {'locale': value}})
             elif request.get('method') in ('appearance_info', 'appearance_preference',
                                                'appearance_background', 'appearance_image', 'appearance_assets', 'appearance_asset'):
                 method = request['method']

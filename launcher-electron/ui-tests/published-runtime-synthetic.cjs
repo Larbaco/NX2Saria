@@ -37,6 +37,7 @@ async function testRelease(version) {
   const env = { ...process.env, LOCALAPPDATA: base };
   const privacyEnv = { ...env, USERPROFILE: 'C:\\Users\\Synthetic Player', NX2SARIA_LOG_SHORT_PATHS: '0' };
   await fs.mkdir(path.join(root, 'data'), { recursive: true });
+  await fs.writeFile(path.join(root, 'data', 'electron-preferences.json'), '{"locale":"pt-BR"}');
   await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
   assert.equal((await fs.readFile(path.join(root, 'app', 'current.txt'), 'utf8')).trim(), version);
   await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: false, warn_low_commit: false }));

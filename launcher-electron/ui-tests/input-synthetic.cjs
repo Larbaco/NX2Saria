@@ -19,7 +19,7 @@ async function main() {
     await fs.writeFile(path.join(game, 'ocarina'), 'synthetic executable marker');
 
     app = await _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none',
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TEST_LOCALE: 'pt-BR', NX2SARIA_TELEMETRY_URL: 'none',
         NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', GSETTINGS_BACKEND: 'memory' } });
     const page = await app.firstWindow();
     await app.evaluate(({ BrowserWindow }) => {

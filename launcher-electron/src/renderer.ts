@@ -20,7 +20,7 @@ type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { controllerUsed(): void; discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; appearanceInfo(): Promise<AppearanceState | null>; appearancePreference(key: string, value: string | number | boolean): Promise<AppearanceState | null>; appearanceImage(): Promise<string | null>; appearanceAssets(): Promise<{ title: string | null; select: string | null; back: string | null } | null>; appearanceBackground(choose: boolean): Promise<{ status: string; appearance: AppearanceState | null } | null>; steamInfo(): Promise<SteamView>; steamAdd(): Promise<{ status: string; detail?: string; view: SteamView }>; settingsInfo(): Promise<InstalledSettings>; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { languageInfo(): Promise<LanguageView>; languagePreference(value: string): Promise<LanguageView | null>; controllerUsed(): void; discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; appearanceInfo(): Promise<AppearanceState | null>; appearancePreference(key: string, value: string | number | boolean): Promise<AppearanceState | null>; appearanceImage(): Promise<string | null>; appearanceAssets(): Promise<{ title: string | null; select: string | null; back: string | null } | null>; appearanceBackground(choose: boolean): Promise<{ status: string; appearance: AppearanceState | null } | null>; steamInfo(): Promise<SteamView>; steamAdd(): Promise<{ status: string; detail?: string; view: SteamView }>; settingsInfo(): Promise<InstalledSettings>; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -149,7 +149,7 @@ function updateControls() {
     saveDestination.textContent = saveOptions.destination;
     includeSaveReport.checked = saveOptions.with_log;
     pendingSaveImport.hidden = !saveOptions.pending;
-    importSaveButton.textContent = saveOptions.waiting ? 'Importar save da pasta' : 'Importar save';
+    importSaveButton.textContent = saveOptions.waiting ? tr("Importar save da pasta") : tr("Importar save");
   }
   modsControl.hidden = installation?.status !== 'ready';
   modsPanel.hidden = !modPage;
@@ -167,12 +167,12 @@ function updateControls() {
   steamButton.setAttribute('aria-expanded', String(!steamPanel.hidden));
   steamButton.disabled = savesDisabled || steamControl.hidden;
   steamAdd.disabled = steamButton.disabled || (steamView?.status !== 'available' && steamView?.status !== 'added');
-  steamAdd.textContent = steamView?.status === 'added' ? 'Atualizar atalho da Steam' : 'Adicionar à Steam';
+  steamAdd.textContent = steamView?.status === 'added' ? tr("Atualizar atalho da Steam") : tr("Adicionar à Steam");
   if (steamView) {
-    steamStatus.textContent = steamLabels[steamView.status] || steamLabels.unavailable;
+    steamStatus.textContent = tr(steamLabels[steamView.status] || steamLabels.unavailable);
     steamRequirement.textContent = steamView.status === 'available' || steamView.status === 'added'
-      ? (steamView.linux ? 'Feche a Steam para alterar o atalho. Você pode reabri-la ao terminar.' :
-        'A Steam será reiniciada se estiver aberta.') : '';
+      ? (steamView.linux ? tr("Feche a Steam para alterar o atalho. Você pode reabri-la ao terminar.") :
+        tr("A Steam será reiniciada se estiver aberta.")) : '';
   }
   updateAppearanceControls(selecting || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy ||
     settingsBusy || (playing && !gameWindowReady) || installation?.job_marker_present === true);
@@ -183,12 +183,14 @@ function updateControls() {
   settingsButton.disabled = settingsOpeningDisabled;
   settingsOpenLogs.disabled = settingsOpeningDisabled;
   settingsOpenGame.disabled = settingsOpeningDisabled || !launcherSettings?.game_dir;
+  languageSelect.disabled = busy || !languageView?.writable || installation?.job_marker_present === true;
   settingsFields.disabled = settingsDump.disabled = busy || !launcherSettings?.writable || installation?.job_marker_present === true;
   settingsCommitOption.hidden = launcherSettings?.warn_low_commit == null;
   if (launcherSettings && !settingsBusy) {
+    languageSelect.value = languageView?.choice ?? 'automatic';
     settingsChannel.value = launcherSettings.channel;
-    settingsGameDir.textContent = launcherSettings.game_dir || 'Não escolhida';
-    settingsDumpName.textContent = launcherSettings.dump || 'Nenhum dump registrado';
+    settingsGameDir.textContent = launcherSettings.game_dir || tr("Não escolhida");
+    settingsDumpName.textContent = launcherSettings.dump || tr("Nenhum dump registrado");
     for (const key of Object.keys(settingsChecks) as (keyof typeof settingsChecks)[]) {
       settingsChecks[key].checked = launcherSettings[key] === true;
     }
@@ -214,11 +216,11 @@ function updateControls() {
   const requirements = installation?.first_run_requirements;
   let notice = '';
   if (requirements?.status === 'runtime_zstd_missing') {
-    notice = 'O runtime do launcher está sem suporte a Zstandard. Repare a instalação pelo launcher atual.';
+    notice = tr("O runtime do launcher está sem suporte a Zstandard. Repare a instalação pelo launcher atual.");
   } else if (requirements?.status === 'linux_tools_missing') {
     notice = requirements.message ?? '';
   } else if (requirements?.status === 'linux_check_failed') {
-    notice = 'Não foi possível verificar as ferramentas de compilação no Linux.';
+    notice = tr("Não foi possível verificar as ferramentas de compilação no Linux.");
   }
   firstRunRequirements.textContent = notice;
   firstRunRequirements.hidden = !notice;
@@ -235,28 +237,28 @@ function updateControls() {
 }
 
 function showResult(result: Result | null) {
-  if (!result) { statusElement.textContent = 'Nenhuma instalação selecionada'; detail.textContent = 'Use o instalador atual do NX2Saria para uma primeira instalação ou selecione a pasta de uma instalação existente.'; return; }
-  statusElement.textContent = messages[result.status] || 'Estado desconhecido';
-  if (result.reason === 'worker_busy') { detail.textContent = 'Outra instância está usando a instalação. Se o jogo ainda estiver aberto, aguarde ele terminar.'; return; }
-  if (result.reason === 'installation_required') { detail.textContent = 'Use o instalador atual do NX2Saria e selecione a pasta da instalação.'; return; }
-  if (result.reason === 'runtime_incompatible') { detail.textContent = 'Atualize ou repare esta instalação pelo launcher atual do NX2Saria e tente novamente.'; return; }
+  if (!result) { statusElement.textContent = tr("Nenhuma instalação selecionada"); detail.textContent = tr("Use o instalador atual do NX2Saria para uma primeira instalação ou selecione a pasta de uma instalação existente."); return; }
+  statusElement.textContent = tr(messages[result.status] || "Estado desconhecido");
+  if (result.reason === 'worker_busy') { detail.textContent = tr("Outra instância está usando a instalação. Se o jogo ainda estiver aberto, aguarde ele terminar."); return; }
+  if (result.reason === 'installation_required') { detail.textContent = tr("Use o instalador atual do NX2Saria e selecione a pasta da instalação."); return; }
+  if (result.reason === 'runtime_incompatible') { detail.textContent = tr("Atualize ou repare esta instalação pelo launcher atual do NX2Saria e tente novamente."); return; }
   if (result.recovery?.state === 'alive') {
-    statusElement.textContent = 'Uma compilação anterior ainda está rodando';
-    detail.textContent = 'Aguarde a compilação terminar antes de jogar, instalar ou recompilar.';
+    statusElement.textContent = tr("Uma compilação anterior ainda está rodando");
+    detail.textContent = tr("Aguarde a compilação terminar antes de jogar, instalar ou recompilar.");
     return;
   }
   if (result.recovery?.state === 'unverified') {
-    statusElement.textContent = 'Não foi possível verificar a compilação anterior';
-    detail.textContent = 'Há um registro de um trabalho interrompido. A instalação fica bloqueada enquanto esse trabalho puder estar em andamento.';
+    statusElement.textContent = tr("Não foi possível verificar a compilação anterior");
+    detail.textContent = tr("Há um registro de um trabalho interrompido. A instalação fica bloqueada enquanto esse trabalho puder estar em andamento.");
     return;
   }
   if (result.recovery?.state === 'interrupted') {
     detail.textContent = result.status === 'ready'
-      ? 'A compilação anterior não terminou. Jogar abre a última versão pronta. Recompilar retoma o trabalho.'
-      : 'A instalação anterior não terminou. Iniciar instalação retoma o trabalho das etapas concluídas.';
+      ? tr("A compilação anterior não terminou. Jogar abre a última versão pronta. Recompilar retoma o trabalho.")
+      : tr("A instalação anterior não terminou. Iniciar instalação retoma o trabalho das etapas concluídas.");
     return;
   }
-  detail.textContent = (result.game_dir || result.root || 'Confira a instalação e tente novamente.') + (result.job_marker_present ? ' Há um registro de trabalho: ele pode estar em andamento ou ter sido interrompido.' : '') + (result.game_running === true ? ' O jogo já está em execução.' : '');
+  detail.textContent = (result.game_dir || result.root || tr("Confira a instalação e tente novamente.")) + (result.job_marker_present ? tr(" Há um registro de trabalho: ele pode estar em andamento ou ter sido interrompido.") : '') + (result.game_running === true ? tr(" O jogo já está em execução.") : '');
 }
 async function showInstallDestination(pick: boolean) {
   choosingSource = true;
@@ -267,14 +269,14 @@ async function showInstallDestination(pick: boolean) {
     if (proposal) {
       proposedFolder = proposal;
       gameFolderProposal.textContent = proposal.folder;
-      const note = proposal.completeImage ? 'A imagem do jogo já está pronta.' : `A instalação precisa de cerca de ${proposal.required} GB.`;
-      gameFolderSpace.textContent = `${proposal.available} GB disponíveis. ${note}`;
+      const note = proposal.completeImage ? tr("A imagem do jogo já está pronta.") : tr("A instalação precisa de cerca de {value1} GB.", { value1: proposal.required });
+      gameFolderSpace.textContent = tr("{value1} GB disponíveis. {value2}", { value1: proposal.available, value2: note });
     }
   } catch {
-    gameFolderError.textContent = 'Não foi possível verificar a pasta do jogo.';
+    gameFolderError.textContent = tr("Não foi possível verificar a pasta do jogo.");
   } finally {
     if (proposedFolder?.pathTooLong && !gameFolderError.textContent) {
-      gameFolderError.textContent = 'O caminho é longo demais para as ferramentas do Windows. Escolha uma pasta com um caminho mais curto.';
+      gameFolderError.textContent = tr("O caminho é longo demais para as ferramentas do Windows. Escolha uma pasta com um caminho mais curto.");
     }
     choosingSource = false;
     updateControls();
@@ -290,10 +292,10 @@ async function showInstallDump(pick: boolean) {
     const file = await window.launcher.installDump(pick);
     if (file || !pick) {
       proposedDump = file;
-      gameDumpProposal.textContent = file ?? 'Nenhum dump escolhido';
+      gameDumpProposal.textContent = file ?? tr("Nenhum dump escolhido");
     }
   } catch {
-    gameDumpError.textContent = 'O arquivo selecionado não é um dump válido do jogo.';
+    gameDumpError.textContent = tr("O arquivo selecionado não é um dump válido do jogo.");
   } finally {
     choosingSource = false;
     updateControls();
@@ -302,19 +304,19 @@ async function showInstallDump(pick: boolean) {
 pickGameDump.onclick = () => { void showInstallDump(true); };
 
 async function searchForDump(selected: Result) {
-  gameDumpProposal.textContent = 'Procurando o dump do jogo…';
+  gameDumpProposal.textContent = tr("Procurando o dump do jogo…");
   while (installation === selected && !proposedDump && !firstRun.hidden) {
     try {
       const result = await window.launcher.searchInstallDump();
       if (installation !== selected || proposedDump || firstRun.hidden) return;
       if (result.status === 'complete') {
         proposedDump = result.file;
-        gameDumpProposal.textContent = proposedDump ?? 'Nenhum dump encontrado';
+        gameDumpProposal.textContent = proposedDump ?? tr("Nenhum dump encontrado");
         updateControls();
         return;
       }
     } catch {
-      if (installation === selected && !proposedDump && !firstRun.hidden) gameDumpProposal.textContent = 'Escolha o dump do jogo';
+      if (installation === selected && !proposedDump && !firstRun.hidden) gameDumpProposal.textContent = tr("Escolha o dump do jogo");
       return;
     }
     await new Promise(resolve => setTimeout(resolve, 300));
@@ -348,6 +350,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   updateControls();
   try {
     installation = await action();
+    await loadLanguage();
     updateControls();
     showResult(installation);
     if (installation) await loadAppearance();
@@ -359,11 +362,15 @@ async function loadSelection(action: () => Promise<Result | null>) {
       if (!proposedDump) void searchForDump(installation);
     }
   }
-  catch { statusElement.textContent = 'Não foi possível verificar'; detail.textContent = 'Tente novamente.'; }
+  catch { statusElement.textContent = tr("Não foi possível verificar"); detail.textContent = tr("Tente novamente."); }
   finally { selecting = false; updateControls(); }
 }
 button.onclick = () => { void loadSelection(() => window.launcher.selectInstallation()); };
-void loadSelection(() => window.launcher.discoverInstallation());
+void (async () => {
+  await loadLanguage();
+  document.documentElement.classList.remove('language-loading');
+  await loadSelection(() => window.launcher.discoverInstallation());
+})();
 
 async function recoverBuild(action: RecoveryAction) {
   const previous = installation;
@@ -374,12 +381,12 @@ async function recoverBuild(action: RecoveryAction) {
     if (installation !== previous) return;
     if (result === 'waiting' || result === 'stopping') {
       recoveryAction = result === 'waiting' ? 'wait' : 'stop';
-      detail.textContent = result === 'waiting' ? 'Aguardando a compilação anterior terminar…' : 'Parando a compilação anterior…';
+      detail.textContent = result === 'waiting' ? tr("Aguardando a compilação anterior terminar…") : tr("Parando a compilação anterior…");
     } else if (result === 'unavailable') {
-      detail.textContent = 'Não foi possível executar essa ação. O registro da compilação foi mantido.';
+      detail.textContent = tr("Não foi possível executar essa ação. O registro da compilação foi mantido.");
     }
   } catch {
-    if (installation === previous) detail.textContent = 'Não foi possível verificar a compilação anterior.';
+    if (installation === previous) detail.textContent = tr("Não foi possível verificar a compilação anterior.");
   } finally {
     askingRecovery = false;
     updateControls();
@@ -407,7 +414,7 @@ hideWhilePlaying.onchange = async () => {
   try {
     selected.hide_while_playing = await window.launcher.setHideWhilePlaying(value);
   } catch {
-    settingError.textContent = 'Não foi possível salvar a opção de ocultar. Tente novamente.';
+    settingError.textContent = tr("Não foi possível salvar a opção de ocultar. Tente novamente.");
   } finally {
     savingPreference = false;
     updateControls();
@@ -425,7 +432,7 @@ async function saveFirstRunPreference(key: keyof FirstRunPreferences, value: str
     const saved = await window.launcher.setFirstRunPreference(key, value);
     selected.first_run_preferences = { ...preferences, [key]: saved };
   } catch {
-    firstRunSettingsError.textContent = 'Não foi possível salvar a preferência. Tente novamente.';
+    firstRunSettingsError.textContent = tr("Não foi possível salvar a preferência. Tente novamente.");
   } finally {
     savingPreference = false;
     updateControls();
@@ -450,7 +457,7 @@ savesButton.onclick = () => {
     updateControls();
     return;
   }
-  void runSaveAction(async () => { saveOptions = await window.launcher.savesInfo(); }, 'Não foi possível abrir os saves.');
+  void runSaveAction(async () => { saveOptions = await window.launcher.savesInfo(); }, tr("Não foi possível abrir os saves."));
 };
 chooseSaveExport.onclick = () => {
   const options = saveOptions;
@@ -458,28 +465,28 @@ chooseSaveExport.onclick = () => {
   void runSaveAction(async () => {
     const destination = await window.launcher.chooseSaveExport();
     if (destination) options.destination = destination;
-  }, 'Não foi possível salvar a pasta de exportação.');
+  }, tr("Não foi possível salvar a pasta de exportação."));
 };
 includeSaveReport.onchange = () => {
   const options = saveOptions;
   if (!options) return;
   const checked = includeSaveReport.checked;
   void runSaveAction(async () => { options.with_log = await window.launcher.setSaveReport(checked); },
-    'Não foi possível salvar a opção de diagnóstico.');
+    tr("Não foi possível salvar a opção de diagnóstico."));
 };
 exportSaveButton.onclick = () => {
   void runSaveAction(async () => {
     const result = await window.launcher.exportSave();
     if (result.status === 'no_save') {
-      saveResult.textContent = 'O jogo ainda não tem um save. Jogue até salvar e tente novamente.';
+      saveResult.textContent = tr("O jogo ainda não tem um save. Jogue até salvar e tente novamente.");
     } else if (result.status === 'ok') {
       saveResult.textContent = result.files
-        ? `Save exportado em ${result.name} (${result.files} arquivo(s)).`
-        : `O jogo ainda não tem save. O diagnóstico foi exportado em ${result.name}.`;
+        ? tr("Save exportado em {value1} ({value2} arquivo(s)).", { value1: result.name, value2: result.files })
+        : tr("O jogo ainda não tem save. O diagnóstico foi exportado em {value1}.", { value1: result.name });
     } else {
-      saveResult.textContent = 'Não foi possível exportar o save. Confira o log do launcher.';
+      saveResult.textContent = tr("Não foi possível exportar o save. Confira o log do launcher.");
     }
-  }, 'Não foi possível exportar o save.');
+  }, tr("Não foi possível exportar o save."));
 };
 
 function importSave(source: 'archive' | 'folder') {
@@ -487,33 +494,33 @@ function importSave(source: 'archive' | 'folder') {
     const result = await window.launcher.importSave(source);
     if (!result) return;
     if (result.status === 'ok') {
-      const imported = result.slot ? `no slot ${result.slot.slice(-2)}` : `(${result.files} arquivo(s))`;
-      const backup = result.backup ? ` O save anterior está em ${result.backup}, na pasta dos saves.` : '';
-      saveResult.textContent = `Save importado ${imported}.${backup}`;
+      const imported = result.slot ? tr("no slot {value1}", { value1: result.slot.slice(-2) }) : tr("({value1} arquivo(s))", { value1: result.files });
+      const backup = result.backup ? tr(" O save anterior está em {value1}, na pasta dos saves.", { value1: result.backup }) : '';
+      saveResult.textContent = tr("Save importado {value1}.{value2}", { value1: imported, value2: backup });
       saveOptions = await window.launcher.savesInfo();
     } else if (result.status === 'game_running') {
-      saveResult.textContent = 'Feche o jogo antes de importar um save.';
+      saveResult.textContent = tr("Feche o jogo antes de importar um save.");
     } else if (result.detail) {
-      saveResult.textContent = `Não foi possível importar o save. ${result.detail}`;
+      saveResult.textContent = tr("Não foi possível importar o save. {value1}", { value1: result.detail });
     } else {
-      saveResult.textContent = 'Não foi possível importar o save. Confira o log do launcher.';
+      saveResult.textContent = tr("Não foi possível importar o save. Confira o log do launcher.");
     }
-  }, 'Não foi possível importar o save.');
+  }, tr("Não foi possível importar o save."));
 }
 importSaveButton.onclick = () => importSave('archive');
 importSaveFolder.onclick = () => importSave('folder');
 openSavesDir.onclick = () => {
   void runSaveAction(async () => {
     await window.launcher.openSavesDir();
-    saveResult.textContent = 'Pasta dos saves aberta.';
-  }, 'Não foi possível abrir a pasta dos saves.');
+    saveResult.textContent = tr("Pasta dos saves aberta.");
+  }, tr("Não foi possível abrir a pasta dos saves."));
 };
 
 function renderMods(page: ModPage) {
   modPage = page;
   modsEmpty.hidden = page.count !== 0;
   modsPagination.hidden = page.pages < 2;
-  modsPageNumber.textContent = `Página ${page.page + 1} de ${page.pages}`;
+  modsPageNumber.textContent = tr("Página {value1} de {value2}", { value1: page.page + 1, value2: page.pages });
   modsList.start = page.page * 6 + 1;
   modsList.replaceChildren();
   page.items.forEach((mod, index) => {
@@ -535,7 +542,7 @@ function renderMods(page: ModPage) {
     row.append(label);
     for (const direction of [-1, 1] as const) {
       const move = document.createElement('button');
-      move.textContent = direction === -1 ? 'Subir' : 'Descer';
+      move.textContent = direction === -1 ? tr("Subir") : tr("Descer");
       move.setAttribute('aria-label', `${move.textContent} ${mod.name}`);
       const position = page.page * 6 + index;
       if (position + direction < 0 || position + direction >= page.count) move.setAttribute('data-at-boundary', '');
@@ -543,12 +550,12 @@ function renderMods(page: ModPage) {
       row.append(' ', move);
     }
     const details = [
-      `${mod.files} arquivo(s), ${mod.patches} patch(es)${mod.cheats ? ', códigos de trapaça' : ''}.`,
-      mod.other_version ? `${mod.other_version} patch(es) de outra versão.` : '',
-      mod.waiting ? 'Jogar recompila o jogo com este mod.' : '',
+      tr("{value1} arquivo(s), {value2} patch(es){value3}.", { value1: mod.files, value2: mod.patches, value3: mod.cheats ? tr(", códigos de trapaça") : '' }),
+      mod.other_version ? tr("{value1} patch(es) de outra versão.", { value1: mod.other_version }) : '',
+      mod.waiting ? tr("Jogar recompila o jogo com este mod.") : '',
       mod.problem,
       ...mod.overlaps.map(conflict =>
-        `${conflict.files} arquivo(s) em conflito com ${conflict.name}. ${conflict.wins ? mod.name : conflict.name} vence.`),
+        tr("{value1} arquivo(s) em conflito com {value2}. {value3} vence.", { value1: conflict.files, value2: conflict.name, value3: conflict.wins ? mod.name : conflict.name })),
     ];
     const info = document.createElement('p');
     info.textContent = details.filter(Boolean).join(' ');
@@ -562,7 +569,7 @@ async function loadMods(page: number) {
   modsResult.textContent = '';
   updateControls();
   try { renderMods(await window.launcher.modsList(page)); }
-  catch { modsResult.textContent = 'Não foi possível listar os mods.'; }
+  catch { modsResult.textContent = tr("Não foi possível listar os mods."); }
   finally { modsBusy = false; updateControls(); }
 }
 
@@ -575,13 +582,13 @@ async function runModAction(action: () => Promise<ModAction | null>) {
     if (!result) return;
     if (result.status === 'ok') {
       renderMods(await window.launcher.modsList(result.page ?? modPage?.page ?? 0));
-      if (result.name) modsResult.textContent = `Mod adicionado: ${result.name}.${result.problem ? ' ' + result.problem : ''}`;
+      if (result.name) modsResult.textContent = tr("Mod adicionado: {value1}.{value2}", { value1: result.name, value2: result.problem ? ' ' + result.problem : '' });
     } else if (result.status === 'game_running') {
-      modsResult.textContent = 'Feche o jogo antes de alterar a ordem ou ativar um mod.';
+      modsResult.textContent = tr("Feche o jogo antes de alterar a ordem ou ativar um mod.");
     } else {
-      modsResult.textContent = result.detail || 'Não foi possível alterar os mods. Confira o log do launcher.';
+      modsResult.textContent = result.detail || tr("Não foi possível alterar os mods. Confira o log do launcher.");
     }
-  } catch { modsResult.textContent = 'Não foi possível atualizar os mods. Confira o log do launcher.'; }
+  } catch { modsResult.textContent = tr("Não foi possível atualizar os mods. Confira o log do launcher."); }
   finally { modsBusy = false; updateControls(); }
 }
 
@@ -602,7 +609,7 @@ async function runSteamAction(action: () => Promise<void>, progress: string) {
   steamResult.textContent = progress;
   updateControls();
   try { await action(); }
-  catch { steamResult.textContent = 'Não foi possível concluir. Confira o log do launcher.'; }
+  catch { steamResult.textContent = tr("Não foi possível concluir. Confira o log do launcher."); }
   finally { steamBusy = false; updateControls(); }
 }
 steamButton.onclick = () => {
@@ -615,15 +622,15 @@ steamButton.onclick = () => {
   void runSteamAction(async () => {
     steamView = await window.launcher.steamInfo();
     steamResult.textContent = '';
-  }, 'Verificando a Steam…');
+  }, tr("Verificando a Steam…"));
 };
 steamAdd.onclick = () => {
   void runSteamAction(async () => {
     const result = await window.launcher.steamAdd();
     steamView = result.view;
     steamResult.textContent = result.status === 'ok'
-      ? 'Atalho salvo na Steam.' : result.detail || steamLabels[result.status] || steamLabels.unavailable;
-  }, 'Salvando o atalho na Steam…');
+      ? tr("Atalho salvo na Steam.") : result.detail || tr(steamLabels[result.status] || steamLabels.unavailable);
+  }, tr("Salvando o atalho na Steam…"));
 };
 
 async function runSettingsAction(action: () => Promise<void>, failure: string) {
@@ -642,7 +649,7 @@ settingsButton.onclick = () => {
     return;
   }
   void runSettingsAction(async () => { launcherSettings = await window.launcher.settingsInfo(); },
-    'Não foi possível abrir as configurações.');
+    tr("Não foi possível abrir as configurações."));
 };
 
 function changeInstalledSetting(key: InstalledKey, value: boolean | string) {
@@ -659,8 +666,18 @@ function changeInstalledSetting(key: InstalledKey, value: boolean | string) {
       if (typeof saved !== 'boolean') throw new Error('Preferência inválida');
       options[key] = saved;
     }
-  }, 'Não foi possível salvar a configuração.');
+  }, tr("Não foi possível salvar a configuração."));
 }
+languageSelect.onchange = () => {
+  const selected = installation;
+  const requested = languageSelect.value;
+  void runSettingsAction(async () => {
+    const applied = await window.launcher.languagePreference(requested);
+    if (!applied || selected !== installation) throw new Error('Language unavailable');
+    applyLanguage(applied);
+    await loadSelection(() => Promise.resolve(selected));
+  }, tr('Não foi possível salvar o idioma.'));
+};
 settingsChannel.onchange = () => changeInstalledSetting('channel', settingsChannel.value);
 for (const key of Object.keys(settingsChecks) as (keyof typeof settingsChecks)[]) {
   settingsChecks[key].onchange = () => changeInstalledSetting(key, settingsChecks[key].checked);
@@ -674,19 +691,19 @@ settingsDump.onclick = () => {
     if (result.status === 'ok' && result.name) {
       options.dump = result.name;
       void loadAppearanceAssets();
-      settingsResult.textContent = 'Dump salvo. Ele será usado na próxima recompilação.';
+      settingsResult.textContent = tr("Dump salvo. Ele será usado na próxima recompilação.");
     } else {
       settingsResult.textContent = result.status === 'invalid_dump'
-        ? 'O arquivo escolhido não é um dump válido de Ocarina of Time.'
-        : 'Não foi possível salvar o dump.';
+        ? tr("O arquivo escolhido não é um dump válido de Ocarina of Time.")
+        : tr("Não foi possível salvar o dump.");
     }
-  }, 'Não foi possível salvar o dump.');
+  }, tr("Não foi possível salvar o dump."));
 };
 function openSettingsFolder(target: 'game' | 'logs') {
   void runSettingsAction(async () => {
     await window.launcher.settingsOpen(target);
-    settingsResult.textContent = target === 'game' ? 'Pasta do jogo aberta.' : 'Pasta dos logs aberta.';
-  }, 'Não foi possível abrir a pasta.');
+    settingsResult.textContent = target === 'game' ? tr("Pasta do jogo aberta.") : tr("Pasta dos logs aberta.");
+  }, tr("Não foi possível abrir a pasta."));
 }
 settingsOpenGame.onclick = () => openSettingsFolder('game');
 settingsOpenLogs.onclick = () => openSettingsFolder('logs');
@@ -703,20 +720,20 @@ const updateMessages: Record<string, string> = {
 checkUpdatesButton.onclick = async () => {
   const selected = installation;
   checkingUpdates = true;
-  updateResult.textContent = 'Buscando atualizações…';
+  updateResult.textContent = tr("Buscando atualizações…");
   updateNotes.hidden = true;
   updateControls();
   let status = 'unavailable';
   try { status = await window.launcher.checkUpdates(); } catch {}
   if (selected !== installation || status === 'checking') return;
   checkingUpdates = false;
-  updateResult.textContent = updateMessages[status] || updateMessages.unavailable;
+  updateResult.textContent = tr(updateMessages[status] || updateMessages.unavailable);
   updateControls();
 };
 window.launcher.onUpdateChecked(update => {
   checkingUpdates = false;
   updateResult.textContent = update.status === 'available'
-    ? `Versão ${update.version} disponível` : updateMessages[update.status] || updateMessages.unavailable;
+    ? tr("Versão {value1} disponível", { value1: update.version }) : tr(updateMessages[update.status] || updateMessages.unavailable);
   updateNotes.textContent = update.notes?.join('\n') ?? '';
   updateNotes.hidden = !updateNotes.textContent;
   updateControls();
@@ -724,18 +741,18 @@ window.launcher.onUpdateChecked(update => {
 
 function showPlayFeedback(result: PlayFeedback) {
   let kind = 'could_not_start';
-  let title = 'Não foi possível iniciar';
-  let description = 'Confira o estado da instalação e se há outro trabalho em andamento.';
+  let title = tr("Não foi possível iniciar");
+  let description = tr("Confira o estado da instalação e se há outro trabalho em andamento.");
   if (result.outcome === 'game_ended') {
     const failed = Boolean(result.alarm || (typeof result.code === 'number' && result.code !== 0));
     kind = failed ? 'ended_with_error' : 'game_ended';
-    title = failed ? 'O jogo terminou com erro' : 'Fluxo de jogo encerrado';
-    description = failed ? result.message || 'Confira os logs do launcher para identificar o problema.'
-      : 'Confira os logs para o resultado. Você pode jogar novamente quando a instalação estiver pronta.';
+    title = failed ? tr("O jogo terminou com erro") : tr("Fluxo de jogo encerrado");
+    description = failed ? result.message || tr("Confira os logs do launcher para identificar o problema.")
+      : tr("Confira os logs para o resultado. Você pode jogar novamente quando a instalação estiver pronta.");
   } else if (result.outcome === 'monitor_lost') {
     kind = 'monitor_lost';
-    title = 'Não foi possível acompanhar o jogo';
-    description = 'Confira os logs do launcher para identificar o problema.';
+    title = tr("Não foi possível acompanhar o jogo");
+    description = tr("Confira os logs do launcher para identificar o problema.");
   }
   statusElement.textContent = title;
   detail.textContent = description;
@@ -743,8 +760,8 @@ function showPlayFeedback(result: PlayFeedback) {
 }
 
 function showOpeningGame() {
-  statusElement.textContent = 'Abrindo o jogo…';
-  detail.textContent = 'Aguarde a janela do jogo aparecer.';
+  statusElement.textContent = tr("Abrindo o jogo…");
+  detail.textContent = tr("Aguarde a janela do jogo aparecer.");
 }
 
 playButton.onclick = async () => {
@@ -763,7 +780,7 @@ playButton.onclick = async () => {
 window.launcher.onGameWindowReady(() => {
   gameWindowReady = true;
   updateControls();
-  statusElement.textContent = 'Jogo em execução';
+  statusElement.textContent = tr("Jogo em execução");
   detail.textContent = '';
 });
 window.launcher.onPlayEnded(result => {
@@ -802,14 +819,14 @@ async function startBuild(action: BuildAction) {
   playing = true;
   updateControls();
   const labels = buildLabels[action];
-  statusElement.textContent = labels.active;
-  detail.textContent = 'Preparando as ferramentas.';
+  statusElement.textContent = tr(labels.active);
+  detail.textContent = tr("Preparando as ferramentas.");
   let result = 'unavailable';
   try { result = await window.launcher[action](); } catch {}
   if (result === 'building') return;
   playing = false;
-  statusElement.textContent = labels.refused;
-  detail.textContent = installMessages[result] || 'Confira o estado da instalação e tente novamente.';
+  statusElement.textContent = tr(labels.refused);
+  detail.textContent = tr(installMessages[result] || "Confira o estado da instalação e tente novamente.");
   updateControls();
 }
 installButton.onclick = () => { void startBuild('install'); };
@@ -822,10 +839,10 @@ window.launcher.onBuildEnded(({ action, outcome, state }) => {
   const labels = buildLabels[action];
   if (outcome === 'complete' && state?.status === 'ready') {
     showResult(state);
-    statusElement.textContent = labels.done;
+    statusElement.textContent = tr(labels.done);
   } else {
-    statusElement.textContent = outcome === 'cancelled' ? labels.cancelled : labels.failed;
-    detail.textContent = outcome === 'cancelled' ? 'Você pode tentar novamente.' : 'Confira o log do launcher e tente novamente.';
+    statusElement.textContent = outcome === 'cancelled' ? tr(labels.cancelled) : tr(labels.failed);
+    detail.textContent = outcome === 'cancelled' ? tr("Você pode tentar novamente.") : tr("Confira o log do launcher e tente novamente.");
   }
   if (outcome === 'complete' && state?.status === 'ready') {
     void loadAppearanceAssets();
@@ -840,8 +857,8 @@ window.launcher.onJobStatus(result => {
   cancelJob.disabled = false;
   if (result.status === 'running') {
     statusElement.textContent = result.task && result.task !== 'mods'
-      ? buildLabels[result.task].active : 'Preparando os mods para jogar…';
-    detail.textContent = typeof result.fraction === 'number' ? `Progresso: ${Math.round(result.fraction * 100)}%.` : 'Aguarde a compilação ou cancele.';
+      ? tr(buildLabels[result.task].active) : tr("Preparando os mods para jogar…");
+    detail.textContent = typeof result.fraction === 'number' ? tr("Progresso: {value1}%.", { value1: Math.round(result.fraction * 100) }) : tr("Aguarde a compilação ou cancele.");
   } else if (result.status === 'resuming') {
     showOpeningGame();
   }

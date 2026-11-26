@@ -1,6 +1,8 @@
 import { app, BrowserWindow, dialog, ipcMain } from 'electron';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { localeChoice, systemLocale, translateMessage, type LanguageChoice } from './locale';
+import { messageTables } from './messages';
 import { parseAppearance, validAppearancePreference } from './appearance-protocol';
 import { parseInstalledSettings, validSetting } from './installed-settings';
 import { parseModAction, parseModsPage } from './mods-protocol';
@@ -19,6 +21,16 @@ const startedAt = new Date();
 let build = 'unknown';
 try { build = readFileSync(path.join(__dirname, 'build-id.txt'), 'utf8').trim(); } catch {}
 app.whenReady().then(() => {
+  const detectedLocale = systemLocale(app.isPackaged || !process.env.NX2SARIA_TEST_LOCALE
+    ? app.getPreferredSystemLanguages() : [process.env.NX2SARIA_TEST_LOCALE]);
+  let currentLocale = detectedLocale;
+  function tr(message: string, values: Record<string, string | number | undefined> = {}) {
+    return translateMessage(messageTables[currentLocale], message, values);
+  }
+  function languageState(choice: LanguageChoice, writable: boolean) {
+    currentLocale = choice === 'automatic' ? detectedLocale : choice;
+    return { choice, writable, locale: currentLocale, messages: messageTables[currentLocale] };
+  }
   const window = new BrowserWindow({ width: 1040, height: 720, minWidth: 720, minHeight: 500, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
   let worker: WorkerClient | null = null;
   let state: Inspection | null = null;
@@ -91,11 +103,11 @@ app.whenReady().then(() => {
   }
   async function answerMemory(active: WorkerClient, result: Extract<PlayResult, { status: 'memory' }>): Promise<PlayResult> {
     const memory = result.memory;
-    const estimate = memory.unbounded ? 'ilimitada' : `${memory.need} MiB`;
+    const estimate = memory.unbounded ? tr("ilimitada") : `${memory.need} MiB`;
     let answer: { accept: boolean } | { dialog_error: true };
     try {
-      const response = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Cancelar', 'Jogar'], defaultId: 1, cancelId: 0,
-        message: 'A memória disponível pode ser insuficiente.', detail: `Disponível: ${Math.trunc(memory.remaining)} MiB de memória comprometida (RAM e arquivo de paginação). Estimativa do jogo: ${estimate}. Feche programas que usam muita memória e ative ou aumente o arquivo de paginação do Windows. Para 16 GB de RAM, use 32 GB fixos (32768 MB) e reinicie o Windows. Para não mostrar este aviso novamente, desative o aviso de memória em Configurações ou ajuste mem_need_mb = 0 em nx2saria.ini.` });
+      const response = await dialog.showMessageBox(window, { type: 'warning', buttons: [tr("Cancelar"), tr("Jogar")], defaultId: 1, cancelId: 0,
+        message: tr("A memória disponível pode ser insuficiente."), detail: tr("Disponível: {value1} MiB de memória comprometida (RAM e arquivo de paginação). Estimativa do jogo: {value2}. Feche programas que usam muita memória e ative ou aumente o arquivo de paginação do Windows. Para 16 GB de RAM, use 32 GB fixos (32768 MB) e reinicie o Windows. Para não mostrar este aviso novamente, desative o aviso de memória em Configurações ou ajuste mem_need_mb = 0 em nx2saria.ini.", { value1: Math.trunc(memory.remaining), value2: estimate }) });
       answer = { accept: response.response === 1 };
     } catch { answer = { dialog_error: true }; }
     return parsePlayResult(await active.request('memory_response', { attempt: result.attempt, ...answer }));
@@ -199,12 +211,12 @@ app.whenReady().then(() => {
           log?.write('play', `game_ended code=${frame.code ?? 'unknown'} alarm=${Boolean(frame.alarm)}`);
           try { state = parseInspection(await active.request('inspect')); } catch { state = null; }
           notifyPlayEnded({ state: settingsView(state), code: frame.code, alarm: frame.alarm, message: frame.message, outcome: 'game_ended' });
-          if (frame.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: 'Há uma atualização esperando. Abra o launcher instalado para aplicá-la.' });
+          if (frame.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: tr("Há uma atualização esperando. Abra o launcher instalado para aplicá-la.") });
         }
       });
       state = parseInspection(await active.request('inspect'));
-      if (active.handshake.lock === 'unavailable' && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'warning', message: 'Não foi possível bloquear a instalação. Evite abrir outro launcher ao mesmo tempo.' });
-      if (active.handshake.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: 'Há uma atualização esperando. Abra o launcher instalado para aplicá-la.' });
+      if (active.handshake.lock === 'unavailable' && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'warning', message: tr("Não foi possível bloquear a instalação. Evite abrir outro launcher ao mesmo tempo.") });
+      if (active.handshake.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: tr("Há uma atualização esperando. Abra o launcher instalado para aplicá-la.") });
       return inspected(settingsView(state)!, `result=${state.status}`);
     } catch (error) {
       if (current) await current.close();
@@ -228,7 +240,7 @@ app.whenReady().then(() => {
     worker = null;
     state = null;
     if (previous) await previous.close();
-    const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Select NX2Saria launcher folder' });
+    const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: tr("Selecionar pasta do launcher NX2Saria") });
     if (!chosen.canceled && chosen.filePaths[0]) return selectRoot(chosen.filePaths[0], 'manual');
     log?.write('inspection', 'selection_cancelled');
     return null;
@@ -239,7 +251,7 @@ app.whenReady().then(() => {
     const active = worker;
     let options = {};
     if (pick) {
-      const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: 'Escolher pasta do jogo' });
+      const chosen = await dialog.showOpenDialog(window, { properties: ['openDirectory'], title: tr("Escolher pasta do jogo") });
       if (chosen.canceled || !chosen.filePaths[0]) return null;
       options = { folder: chosen.filePaths[0] };
     }
@@ -262,8 +274,8 @@ app.whenReady().then(() => {
     let options = {};
     if (pick) {
       const chosen = await dialog.showOpenDialog(window, {
-        properties: ['openFile'], title: 'Escolher dump do jogo',
-        filters: [{ name: 'Dump do jogo', extensions: ['nup'] }, { name: 'Todos os arquivos', extensions: ['*'] }],
+        properties: ['openFile'], title: tr("Escolher dump do jogo"),
+        filters: [{ name: tr("Dump do jogo"), extensions: ['nup'] }, { name: tr("Todos os arquivos"), extensions: ['*'] }],
       });
       if (chosen.canceled || !chosen.filePaths[0]) return null;
       options = { file: chosen.filePaths[0] };
@@ -338,11 +350,11 @@ app.whenReady().then(() => {
       const stopping = action === 'stop';
       if (state.recovery?.state !== (stopping ? 'alive' : 'unverified')) return 'unavailable';
       const answer = await dialog.showMessageBox(window, { type: 'warning',
-        buttons: ['Voltar', stopping ? 'Parar compilação' : 'Sei que nenhuma compilação está rodando'],
+        buttons: [tr("Voltar"), stopping ? tr("Parar compilação") : tr("Sei que nenhuma compilação está rodando")],
         defaultId: 0, cancelId: 0,
-        message: stopping ? 'Parar a compilação anterior?' : 'Confirmar que a compilação anterior terminou?',
-        detail: stopping ? 'Você poderá retomar a compilação depois que ela parar.' :
-          'Confirme somente se você verificou que a compilação parou. Se tiver dúvida, reinicie o computador.' });
+        message: stopping ? tr("Parar a compilação anterior?") : tr("Confirmar que a compilação anterior terminou?"),
+        detail: stopping ? tr("Você poderá retomar a compilação depois que ela parar.") :
+          tr("Confirme somente se você verificou que a compilação parou. Se tiver dúvida, reinicie o computador.") });
       if (answer.response !== 1 || worker !== active) return 'cancelled';
     }
     let status = 'unavailable';
@@ -377,7 +389,7 @@ app.whenReady().then(() => {
   ipcMain.handle('choose-save-export', async event => {
     const active = gameWorker(event, 'saves');
     const options = await saveOptions(active);
-    const picked = await dialog.showOpenDialog(window, { title: 'Escolher pasta de exportação',
+    const picked = await dialog.showOpenDialog(window, { title: tr("Escolher pasta de exportação"),
       properties: ['openDirectory'], defaultPath: options.destination });
     const destination = picked.filePaths[0];
     if (picked.canceled || !destination) return null;
@@ -420,11 +432,11 @@ app.whenReady().then(() => {
     let choice: { source: string; path?: string } = { source: 'waiting' };
     if (kind === 'folder' || !options.waiting) {
       const picked = await dialog.showOpenDialog(window, {
-        title: kind === 'folder' ? 'Escolher pasta do save' : 'Escolher o save',
+        title: kind === 'folder' ? tr("Escolher pasta do save") : tr("Escolher o save"),
         defaultPath: options.destination,
         properties: kind === 'folder' ? ['openDirectory'] : ['openFile'],
-        ...(kind === 'archive' ? { filters: [{ name: 'Save do NX2Saria', extensions: ['zip'] },
-          { name: 'Todos os arquivos', extensions: ['*'] }] } : {}),
+        ...(kind === 'archive' ? { filters: [{ name: tr("Save do NX2Saria"), extensions: ['zip'] },
+          { name: tr("Todos os arquivos"), extensions: ['*'] }] } : {}),
       });
       const selected = picked.filePaths[0];
       if (picked.canceled || !selected) return null;
@@ -470,11 +482,11 @@ app.whenReady().then(() => {
     const active = gameWorker(event, 'mods');
     if (kind !== 'archive' && kind !== 'folder') throw new Error('Invalid mod source');
     const picked = await dialog.showOpenDialog(window, {
-      title: kind === 'folder' ? 'Escolher pasta do mod' : 'Escolher arquivo do mod',
+      title: kind === 'folder' ? tr("Escolher pasta do mod") : tr("Escolher arquivo do mod"),
       defaultPath: app.getPath('downloads'),
       properties: kind === 'folder' ? ['openDirectory'] : ['openFile'],
-      ...(kind === 'archive' ? { filters: [{ name: 'Mods', extensions: ['zip', '7z', 'rar'] },
-        { name: 'Todos os arquivos', extensions: ['*'] }] } : {}),
+      ...(kind === 'archive' ? { filters: [{ name: tr("Mods"), extensions: ['zip', '7z', 'rar'] },
+        { name: tr("Todos os arquivos"), extensions: ['*'] }] } : {}),
     });
     const selected = picked.filePaths[0];
     if (picked.canceled || !selected) return null;
@@ -492,6 +504,30 @@ app.whenReady().then(() => {
     return modAction(gameWorker(event, 'mods'), 'mod_move', { name, direction });
   });
   ipcMain.handle('open-mods-dir', event => modAction(gameWorker(event, 'mods'), 'open_mods_dir', {}));
+  ipcMain.handle('language-info', async event => {
+    if (event.sender !== window.webContents) throw new Error('Language unavailable');
+    const active = worker;
+    if (!active?.handshake.capabilities.includes('language')) return languageState('automatic', false);
+    const response = await active.request('language_info');
+    if (worker !== active) return languageState('automatic', false);
+    return languageState(localeChoice(response?.locale), active.handshake.lock === 'held');
+  });
+  ipcMain.handle('language-preference', async (event, value) => {
+    const active = worker;
+    const choice = localeChoice(value);
+    if (event.sender !== window.webContents || !active?.handshake.capabilities.includes('language') ||
+        active.handshake.lock !== 'held' || !state || state.job_marker_present ||
+        (playing && !gameSpawned) || (value !== 'automatic' && choice !== value)) return null;
+    try {
+      const response = await active.request('language_preference', { value: choice });
+      if (worker !== active || response?.locale !== choice) return null;
+      log?.write('settings', `language choice=${choice} result=saved`);
+      return languageState(choice, true);
+    } catch {
+      log?.write('settings', `language choice=${choice} result=failed`);
+      return null;
+    }
+  });
   function appearanceWorker(event: Electron.IpcMainInvokeEvent, write = false) {
     if (event.sender !== window.webContents || !state || state.status === 'inspection_error' ||
         !worker?.handshake.capabilities.includes('appearance') ||
@@ -536,10 +572,10 @@ app.whenReady().then(() => {
     if (!active || typeof choose !== 'boolean') return null;
     let source: string | null = null;
     if (choose) {
-      const picked = await dialog.showOpenDialog(window, { title: 'Escolher imagem de fundo',
+      const picked = await dialog.showOpenDialog(window, { title: tr("Escolher imagem de fundo"),
         defaultPath: app.getPath('pictures'), properties: ['openFile'],
-        filters: [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'tif', 'tiff'] },
-          { name: 'Todos os arquivos', extensions: ['*'] }] });
+        filters: [{ name: tr("Imagens"), extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'tif', 'tiff'] },
+          { name: tr("Todos os arquivos"), extensions: ['*'] }] });
       if (picked.canceled || !picked.filePaths[0]) return null;
       source = picked.filePaths[0];
       if (!path.isAbsolute(source) || appearanceWorker(event, true) !== active) return null;
@@ -638,8 +674,8 @@ app.whenReady().then(() => {
     if (settingsWorker(event, true) !== active) throw new Error('Settings unavailable');
     const chosen = await dialog.showOpenDialog(window, {
       defaultPath: path.isAbsolute(current.dump) ? path.dirname(current.dump) : app.getPath('home'),
-      title: 'Escolher dump do jogo', properties: ['openFile'],
-      filters: [{ name: 'Dump do jogo', extensions: ['nup'] }, { name: 'Todos os arquivos', extensions: ['*'] }],
+      title: tr("Escolher dump do jogo"), properties: ['openFile'],
+      filters: [{ name: tr("Dump do jogo"), extensions: ['nup'] }, { name: tr("Todos os arquivos"), extensions: ['*'] }],
     });
     if (chosen.canceled || !chosen.filePaths[0]) return null;
     const picked = chosen.filePaths[0];

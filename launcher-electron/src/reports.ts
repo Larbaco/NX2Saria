@@ -50,7 +50,7 @@ let reportGeneration = 0;
 function showReportScreen(screen: ReportsScreen | null) {
   reportScreen = screen;
   if (screen === null) { reportDialog.close(); return; }
-  reportTitle.textContent = reportTitles[screen];
+  reportTitle.textContent = tr(reportTitles[screen]);
   for (const section of Object.keys(reportPanels) as ReportsScreen[]) {
     reportPanels[section].hidden = section !== screen;
   }
@@ -63,10 +63,10 @@ function updateReportScreen() {
   reportSettingsButton.hidden = !reportState?.available;
   reportNotice.hidden = !reportState?.notice;
   reportNotice.textContent = reportState?.notice
-    ? 'Os relatórios de sessão estão ligados. Você pode desligá-los em Configurações.' : '';
+    ? tr("Os relatórios de sessão estão ligados. Você pode desligá-los em Configurações.") : '';
   reportTimer.textContent = reportState?.seconds == null
-    ? 'Os relatórios de sessão são ativados ao escolher Enviar ou fechar esta janela. Escolha Não enviar para mantê-los desligados.'
-    : `Os relatórios de sessão serão ativados em ${reportState.seconds} s ou se você fechar esta janela. Escolha Não enviar para mantê-los desligados.`;
+    ? tr("Os relatórios de sessão são ativados ao escolher Enviar ou fechar esta janela. Escolha Não enviar para mantê-los desligados.")
+    : tr("Os relatórios de sessão serão ativados em {value1} s ou se você fechar esta janela. Escolha Não enviar para mantê-los desligados.", { value1: reportState.seconds });
   if (!reportBusy) {
     reportConsent.checked = reportState?.consent === 'on';
     reportCrashSetting.checked = reportState?.crash_ask === true;
@@ -135,7 +135,7 @@ async function runReportAction(action: () => Promise<void>) {
   reportBusy = true;
   updateReportScreen();
   try { await action(); }
-  catch { reportMessage.textContent = 'Não foi possível concluir. Confira o log do launcher.'; }
+  catch { reportMessage.textContent = tr("Não foi possível concluir. Confira o log do launcher."); }
   finally { reportBusy = false; updateReportScreen(); }
 }
 
@@ -156,13 +156,13 @@ async function loadCrashOffer() {
     if (!offer || generation !== reportGeneration || reportScreen !== null) return;
     reportOffer = offer;
     crashGuardUntil = performance.now() + offer.guard_ms;
-    reportCrashError.textContent = offer.message || 'O jogo terminou com erro.';
+    reportCrashError.textContent = offer.message || tr("O jogo terminou com erro.");
     const total = offer.head_lines + offer.tail_lines;
-    const lines = offer.whole ? `O log inteiro desta sessão (${total} linhas)` :
-      offer.head_lines ? `As primeiras ${offer.head_lines} e as últimas ${offer.tail_lines} linhas do log` :
-      `As últimas ${offer.tail_lines} linhas do log`;
-    const summary = offer.summary ? ' e o relatório desta sessão' : '';
-    reportCrashDetails.textContent = `${lines} (${Math.max(1, Math.round(offer.bytes / 1024))} KB)${summary}. O launcher encurta dados pessoais no log. Nada é enviado sem sua confirmação.`;
+    const lines = offer.whole ? tr("O log inteiro desta sessão ({value1} linhas)", { value1: total }) :
+      offer.head_lines ? tr("As primeiras {value1} e as últimas {value2} linhas do log", { value1: offer.head_lines, value2: offer.tail_lines }) :
+      tr("As últimas {value1} linhas do log", { value1: offer.tail_lines });
+    const summary = offer.summary ? tr(" e o relatório desta sessão") : '';
+    reportCrashDetails.textContent = tr("{value1} ({value2} KB){value3}. O launcher encurta dados pessoais no log. Nada é enviado sem sua confirmação.", { value1: lines, value2: Math.max(1, Math.round(offer.bytes / 1024)), value3: summary });
     showReportScreen('crash');
     window.setTimeout(updateReportScreen, offer.guard_ms + 20);
   } catch {}
@@ -171,7 +171,7 @@ async function loadCrashOffer() {
 function chooseCrashOffer(answer: 'send' | 'decline' | 'comment' | 'closed') {
   if (!reportOffer || performance.now() < crashGuardUntil) return;
   void runReportAction(async () => {
-    if (answer === 'send') reportMessage.textContent = 'Enviando log…';
+    if (answer === 'send') reportMessage.textContent = tr("Enviando log…");
     const result = await window.launcher.reportsCrashAnswer(answer);
     if (result.status === 'guarded' || result.status === 'disabled') return;
     reportOffer = null;
@@ -183,7 +183,7 @@ function chooseCrashOffer(answer: 'send' | 'decline' | 'comment' | 'closed') {
     } else if (answer === 'send') {
       showReportScreen('options');
       reportMessage.textContent = result.status === 'ok'
-        ? 'Log enviado. Obrigado.' : 'Não foi possível enviar o log.';
+        ? tr("Log enviado. Obrigado.") : tr("Não foi possível enviar o log.");
       const state = await window.launcher.reportsStatus();
       if (state) applyReportState(state);
     } else {
@@ -198,8 +198,8 @@ function openReportsPreview() {
     const preview = await (previous === 'crash' ? window.launcher.reportsCrashPreview() : window.launcher.reportsPreview());
     if (!preview) throw new Error('Preview unavailable');
     reportPreviewBack = previous;
-    reportPreviewLabel.textContent = previous === 'crash' ? 'Conteúdo exato da oferta de log.' :
-      preview.example ? 'Exemplo de um relatório.' : 'Relatório da sessão pendente.';
+    reportPreviewLabel.textContent = previous === 'crash' ? tr("Conteúdo exato da oferta de log.") :
+      preview.example ? tr("Exemplo de um relatório.") : tr("Relatório da sessão pendente.");
     reportPreviewText.textContent = preview.text;
     if (previous === 'question') applyReportState(await window.launcher.reportsStatus());
     showReportScreen('preview');
@@ -257,7 +257,7 @@ function updateReportCommentSize() {
   const limit = reportState?.text_limit ?? 4000;
   const characters = [...reportCommentText.value];
   if (characters.length > limit) reportCommentText.value = characters.slice(0, limit).join('');
-  reportCommentSize.textContent = `${Math.min(characters.length, limit)} de ${limit} caracteres`;
+  reportCommentSize.textContent = tr("{value1} de {value2} caracteres", { value1: Math.min(characters.length, limit), value2: limit });
 }
 document.querySelector<HTMLButtonElement>('#reports-comment')!.onclick = () => {
   showReportScreen('comment');
@@ -267,15 +267,15 @@ document.querySelector<HTMLButtonElement>('#reports-comment')!.onclick = () => {
 reportCommentText.oninput = updateReportCommentSize;
 reportCommentSend.onclick = () => {
   void runReportAction(async () => {
-    reportMessage.textContent = 'Enviando comentário…';
+    reportMessage.textContent = tr("Enviando comentário…");
     const result = await window.launcher.reportsComment(reportCommentText.value, reportCommentAttach.checked);
     if (result.status === 'ok') {
       reportCommentText.value = '';
       updateReportCommentSize();
-      reportMessage.textContent = 'Comentário enviado. Obrigado.';
+      reportMessage.textContent = tr("Comentário enviado. Obrigado.");
     } else {
       reportMessage.textContent = result.reason
-        ? `Não foi possível enviar o comentário. ${result.reason}` : 'Não foi possível enviar o comentário.';
+        ? tr("Não foi possível enviar o comentário. {value1}", { value1: result.reason }) : tr("Não foi possível enviar o comentário.");
     }
     const state = await window.launcher.reportsStatus();
     if (state) applyReportState(state);

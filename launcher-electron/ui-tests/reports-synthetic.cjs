@@ -47,7 +47,7 @@ summary=telemetry.example_summary()
 sys.stdout.buffer.write(telemetry.body(telemetry.payload(summary,Path('VERSION').read_text().strip())))
 `, game], { cwd: repo, encoding: 'utf8' });
     const launch = endpoint => _electron.launch({ args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, GSETTINGS_BACKEND: 'memory',
+      env: { ...process.env, HOME: base, XDG_DATA_HOME: base, NX2SARIA_TEST_LOCALE: 'pt-BR', GSETTINGS_BACKEND: 'memory',
         NX2SARIA_TELEMETRY_URL: endpoint, NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } });
 
     app = await launch(`http://127.0.0.1:${server.address().port}`);

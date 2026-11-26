@@ -51,7 +51,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. The Electron reports screen now uses the same question, choices, preview, comment and sending policy. Private packages require the test sending opt-in documented below. Loopback tests verify exact report bytes, the shared sent marker, the Off and disabled states, and a newer session finishing before a previous report is acknowledged. The report tests passed on Linux and Windows in Electron launcher tests run `45761803115`. The installed update must pass its post-update startup reason through the future activation handoff. Private package evidence is recorded below.
 - [x] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. The Electron window now shows and previews these offers using the active installation’s existing implementation. The worker test checks guarded input, stale logs, opt-out, the disabled switch and exact loopback transmission. The Linux window confirms that the session question precedes the offer, previews the prepared request and verifies marker removal on decline. The opt-in still gates all sending. Both worker jobs passed in run `45762522567`. The extracted Linux package `335a0ab0` showed and previewed an offer after a stand-in fatal exit and consumed the marker after a refusal.
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
-- [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages. The Linux window test exercises keyboard Tab, Enter and Escape, a standard synthetic controller, ignored input without focus, direction, activation, return, scrolling and layout at the minimum window size and 140% zoom. Device Game Mode and complete localization remain open.
+- [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages. The Linux window test exercises keyboard Tab, Enter and Escape, a standard synthetic controller, ignored input without focus, direction, activation, return, scrolling and layout at the minimum window size and 140% zoom. The locale test covers all four languages at the minimum window width and 120% zoom, system fallback, selection and persistence, rollback after a failed write and a translated native dialog title. The Node test checks the labels and formatting fields. Game Mode on a device and language review by the owner remain open.
 - [ ] CLI, locks and diagnostics: retain existing supported command-line use, concurrent-job rules, crash/interruption reporting and log privacy; explicitly evaluate how the new UI shares these resources.
 - [ ] Uninstall: existing choices for retaining or removing the built game and preservation of unrelated installations.
 
@@ -588,6 +588,37 @@ rewrite Tk settings. Localize controls, status messages and native dialog
 labels with stable keys. Keep player data, diagnostic logs and release notes
 in their original text. Verify key completeness, formatted messages and
 layout bounds in each locale.
+
+## Uninstall contract
+
+Expose the installed launcher's Uninstall action in Settings. The confirmation
+starts with **Remove the built game** off and explains that turning it on
+removes the game's folder, saves and mods. Cancel or Escape leaves both trees
+untouched. Show platform-specific consequences before confirmation. Linux
+retains launcher logs. A Steam entry is removed from Steam itself.
+
+Uninstall uses the install root already held by the worker and the game and
+dump paths read from that installation's settings. The renderer supplies only
+the explicit retain/remove choice. The worker refuses while it lacks the lock
+or a game, build, interrupted job or other installation operation is active.
+It also refuses checkouts and roots without the installed entry point. A busy
+worker keeps the window open and tells the player what to close or wait for.
+
+Use the current platform uninstall plan and deferred removal helper. Preserve
+the original dump, the game directory when selected to keep and unrelated
+installations, shortcuts and files. On Windows, exclude an owned deletion
+candidate if it encloses a protected path, and refuse unsafe game-folder
+removal targets. A confirmed request schedules the operation before Electron
+closes. Log the selection and result without paths in Electron. Keep the
+existing uninstall diagnostic in the worker log. Standalone private shells
+remain outside the install tree. Removal of the eventual provisioned shell
+belongs to provisioning.
+
+Test cancellation, keep and remove on scratch roots for both platforms,
+including an original dump inside a candidate directory, unrelated files,
+legacy names, an interrupted job and a running game. Exercise the UI choices
+with a synthetic install. The private build is for verifying the confirmation
+and cancellation. Automated scenarios perform the actual deletion.
 
 ## Provisioning and handover design
 

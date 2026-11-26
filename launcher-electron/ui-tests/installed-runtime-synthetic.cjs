@@ -53,13 +53,14 @@ async function main() {
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     app = await _electron.launch(options);
     let page = await app.firstWindow();
-    await page.getByText('Use o instalador atual do NX2Saria para uma primeira instalação', { exact: false }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
+    await page.waitForFunction(() => document.querySelector('#detail').textContent.includes('NX2Saria'));
+    assert.equal(await page.locator('#play').isDisabled(), true);
     await app.close();
     await fs.cp(process.env.NX2_TEST_ACTIVE_APP, active, { recursive: true });
     await fs.cp(process.env.NX2_TEST_OLD_RUNTIME, localRuntime, { recursive: true });
     await fs.writeFile(file('app', 'current.txt'), '0.25.0');
     await fs.mkdir(file('data'), { recursive: true });
+    await fs.writeFile(file('data', 'electron-preferences.json'), '{"locale":"pt-BR"}');
     await fs.writeFile(file('data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: false, warn_low_commit: false }));
     app = await _electron.launch(options);
     page = await app.firstWindow();

@@ -91,7 +91,7 @@ async function main() {
     app = await _electron.launch({
       args: ['--no-sandbox', '.'],
       cwd: path.resolve(__dirname, '..'),
-      env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', NX2SARIA_PYTHON: python,
+      env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_TEST_LOCALE: 'pt-BR', NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', NX2SARIA_PYTHON: python,
         NX2SARIA_TEST_PYTHON: process.env.NX2SARIA_PYTHON || 'python3', NX2SARIA_TEST_INSTALL: standInInstall,
         NX2SARIA_TEST_FEED: `http://127.0.0.1:${server.address().port}/manifest.json` }
     });

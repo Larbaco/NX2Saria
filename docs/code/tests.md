@@ -5938,6 +5938,14 @@ controller. It checks focus order and restoration, selection changes, return,
 unfocused input suppression, scroll, and overflow at the minimum window size
 and at 140% zoom. Hardware Game Mode is a separate check.
 
+The locale worker test reads and writes the separate Electron preference,
+checks unknown fields and proves the Tk settings file stays byte-identical.
+The Node tests check system language fallback, unchanged interpolated player
+data, static and dynamic message references, and the same formatting fields
+in every language. The locale window test checks the four languages at 720
+pixels and 120% zoom, reports a failed write without changing the selection,
+checks the native dialog title, and reopens the window with the saved choice.
+
 The appearance test reads a nondefault theme and an old dimming value, compares
 the shared palette, changes the custom colors and verifies that invalid choices
 leave unrelated settings intact. The Linux window changes the theme, checks a

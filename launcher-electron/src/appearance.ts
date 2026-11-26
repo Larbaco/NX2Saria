@@ -133,7 +133,7 @@ async function writeAppearance(key: string, value: string | boolean | number) {
     if (!saved) throw new Error('Appearance unavailable');
     applyAppearance(saved);
   } catch {
-    appearanceResult.textContent = 'Não foi possível salvar a preferência de aparência.';
+    appearanceResult.textContent = tr("Não foi possível salvar a preferência de aparência.");
   } finally {
     appearanceBusy = false;
     updateControls();
@@ -167,9 +167,9 @@ async function changeAppearanceImage(choose: boolean) {
       await refreshAppearanceImage();
     } else {
       appearanceResult.textContent = result.status === 'invalid_picture'
-        ? 'Não foi possível ler a imagem escolhida.' : 'Não foi possível salvar a imagem de fundo.';
+        ? tr("Não foi possível ler a imagem escolhida.") : tr("Não foi possível salvar a imagem de fundo.");
     }
-  } catch { appearanceResult.textContent = 'Não foi possível salvar a imagem de fundo.'; }
+  } catch { appearanceResult.textContent = tr("Não foi possível salvar a imagem de fundo."); }
   finally {
     appearanceBusy = false;
     updateControls();

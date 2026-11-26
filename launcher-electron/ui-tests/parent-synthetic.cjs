@@ -41,7 +41,7 @@ async function main() {
   const readLog = () => fs.readFile(logPath, 'utf8').catch(() => '');
   const options = windows
     ? { executablePath: process.env.NX2_TEST_PORTABLE, env: { ...process.env, LOCALAPPDATA: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } }
-    : { args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'), env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } };
+    : { args: ['--no-sandbox', '.'], cwd: path.resolve(__dirname, '..'), env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_TEST_LOCALE: 'pt-BR', NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0' } };
   const apps = [];
   const launch = async () => {
     const app = await _electron.launch(options);
@@ -72,6 +72,7 @@ async function main() {
   };
   try {
     await fs.mkdir(path.join(root, 'data'), { recursive: true });
+    await fs.writeFile(path.join(root, 'data', 'electron-preferences.json'), '{"locale":"pt-BR"}');
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
     await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: true, warn_low_commit: false }));

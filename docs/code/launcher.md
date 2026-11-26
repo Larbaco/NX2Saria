@@ -2805,6 +2805,22 @@ A activates the focused control. B returns from its panel or takes the active
 dialog's cancel route. Losing focus pauses controller input until it returns to
 neutral. The renderer logs first use without including a hardware identifier.
 
+### Electron interface language
+
+The Electron main process resolves the first supported system locale, or
+English. `launcher/worker_preferences.py` `language()` reads the installed
+override and `set_language()` atomically changes its locale field. The worker
+requires the installation lock before changing it. Unknown fields are retained
+and the Tk settings and game language are independent.
+
+`launcher-electron/src/locale.ts` maps system tags and formats named values.
+`launcher-electron/src/messages.ts` holds the four translations. Use the source
+label as the catalog key. Mark static elements with `data-message`, passing
+dynamic messages through the active catalog. Interpolate runtime values after
+choosing the translation. File names, paths, raw diagnostics and release notes
+keep their original form. A failed preference write keeps the prior selection.
+The log records the canonical locale choice and outcome.
+
 ### Electron appearance preferences
 
 The appearance view uses the existing palette, custom slots, dimming steps and

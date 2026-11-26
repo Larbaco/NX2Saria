@@ -33,3 +33,5 @@ article p, article button, dialog p { overflow-wrap: anywhere; }
   main aside { display: none; }
   main article { padding: 24px 5%; }
 }
+
+.language-loading body { visibility: hidden; }

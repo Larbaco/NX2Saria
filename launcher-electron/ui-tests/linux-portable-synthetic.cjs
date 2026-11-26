@@ -23,6 +23,7 @@ async function main() {
     await fs.cp(publishedApp, path.join(root, 'app', version), { recursive: true, verbatimSymlinks: true });
     await fs.symlink(path.resolve(publishedRuntime), path.join(root, 'python'), 'dir');
     await fs.writeFile(path.join(root, 'app', 'current.txt'), version);
+    await fs.writeFile(path.join(root, 'data', 'electron-preferences.json'), '{"locale":"pt-BR"}');
     const settingsFile = path.join(root, 'data', 'launcher.json');
     const settings = { game_dir: game, hide_while_playing: true, telemetry: 'off', telemetry_asked: version };
     await fs.writeFile(settingsFile, JSON.stringify(settings));

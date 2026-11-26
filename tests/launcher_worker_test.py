@@ -861,6 +861,33 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse((game / 'logs' / telemetry.SUMMARY).exists())
         self.assertEqual(json.loads((game / 'logs' / telemetry.SENT).read_text())['session']['frames'], 2)
 
+    def test_electron_locale_preserves_tk_settings_and_other_preferences(self):
+        data = self.root / 'data'
+        settings = data / 'launcher.json'
+        settings.write_text(json.dumps({'channel': 'preview', 'telemetry': 'off'}))
+        before = settings.read_bytes()
+        preferences = data / 'electron-preferences.json'
+        preferences.write_text(json.dumps({'locale': 'unknown', 'unrelated': {'mode': 3}}))
+        requests = [
+            {'id': 1, 'method': 'hello', 'protocol': 1},
+            {'id': 2, 'method': 'language_info'},
+            {'id': 3, 'method': 'language_preference', 'value': 'zh-Hans'},
+            {'id': 4, 'method': 'language_preference', 'value': ['ru']},
+            {'id': 5, 'method': 'language_info'},
+        ]
+        result = subprocess.run([sys.executable, '-m', 'launcher.worker', '--root', str(self.root)], cwd=ROOT,
+                                input=''.join(json.dumps(request) + '\n' for request in requests),
+                                capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        hello, initial, valid, invalid, retained = map(json.loads, result.stdout.splitlines())
+        self.assertIn('language', hello['result']['capabilities'])
+        self.assertEqual(initial['result'], {'locale': 'automatic'})
+        self.assertEqual(valid['result'], {'locale': 'zh-Hans'})
+        self.assertEqual(invalid['error']['code'], 'invalid_preference')
+        self.assertEqual(retained['result'], valid['result'])
+        self.assertEqual(json.loads(preferences.read_text()), {'locale': 'zh-Hans', 'unrelated': {'mode': 3}})
+        self.assertEqual(settings.read_bytes(), before)
+
     def test_appearance_assets_reuse_the_installed_cache_and_fixed_names(self):
         import base64
         from launcher.ui import sound
