@@ -318,6 +318,98 @@ def udmabuf_log_line(status):
             f"offer={'offered' if offered == 'yes' else 'none'}{reason}")[:240]
 
 
+WRITE_WATCH_MIN = (6, 7)
+_USERFAULTFD = {'x86_64': 323, 'aarch64': 282}
+_UFFDIO_API = 0xC018AA3F
+_UFFD_FEATURES = (1 << 15) | (1 << 13)
+
+
+def _kernel_old(release):
+    parts = []
+    for piece in (release or '').split('.')[:2]:
+        digits = ''
+        for ch in piece[:6]:
+            if not ch.isdigit():
+                break
+            digits += ch
+        if not digits:
+            break
+        parts.append(int(digits))
+        if len(digits) < len(piece):
+            break
+    if not parts:
+        return None
+    return tuple(parts + [0])[:2] < WRITE_WATCH_MIN
+
+
+def write_watch_verdict(release, probe_err):
+    old = _kernel_old(release)
+    if probe_err is None:
+        return 'old' if old else 'on'
+    if not probe_err:
+        return 'on'
+    return 'old' if old else 'refused'
+
+
+def write_watch_probe(machine=None):
+    import platform
+    nr = _USERFAULTFD.get(machine or platform.machine())
+    if nr is None:
+        return None
+    try:
+        libc = ctypes.CDLL(None, use_errno=True)
+        fd = libc.syscall(ctypes.c_long(nr), ctypes.c_int(os.O_CLOEXEC | os.O_NONBLOCK | 1))
+        if fd < 0:
+            return ctypes.get_errno() or None
+        try:
+            api = (ctypes.c_uint64 * 3)(0xAA, _UFFD_FEATURES, 0)
+            if libc.ioctl(ctypes.c_int(fd), ctypes.c_ulong(_UFFDIO_API), api) != 0:
+                return ctypes.get_errno() or None
+            return 0
+        finally:
+            os.close(fd)
+    except (OSError, AttributeError):
+        return None
+
+
+def write_watch_status(release=None, probe=write_watch_probe, env=None):
+    import errno
+    import platform
+    env = os.environ if env is None else env
+    release = platform.release() if release is None else release
+    forced = env.get('NX2SARIA_TEST_NO_UFFD', '')
+    if forced and forced != '0':
+        err = errno.ENOSYS if forced == '1' else errno.EINVAL
+        release = release if forced == '1' else forced
+    else:
+        err = probe()
+    return {'verdict': write_watch_verdict(release, err), 'release': release, 'error': err, 'forced': bool(forced)
+            and forced != '0'}
+
+
+def write_watch_log_line(status):
+    err = status['error']
+    probe = 'not probed' if err is None else 'probe ok' if not err else f'probe failed: {os.strerror(err)}'
+    forced = '; forced by NX2SARIA_TEST_NO_UFFD' if status.get('forced') else ''
+    return f"write watch: {status['verdict']} (kernel {status['release']}; {probe}{forced})"[:240]
+
+
+def write_watch_text(status):
+    verdict, release = status['verdict'], status['release'] or 'unknown'
+    need = f'{WRITE_WATCH_MIN[0]}.{WRITE_WATCH_MIN[1]}'
+    if verdict == 'old':
+        return ('Kernel Too Old', f'Linux {release} is older than {need}: the game cannot track which memory it wrote, '
+                f'uploads all of it every frame and runs at about 1 fps. Update the system to Linux {need} or later '
+                'before you play.')
+    if verdict == 'refused':
+        err = status['error']
+        why = f' ({os.strerror(err)})' if err else ''
+        return ('Memory Tracking Off', f'Linux {release} refused the memory tracking the game needs{why}: it runs '
+                f'at about 1 fps. The game needs Linux {need} or later built with userfaultfd, and no sandbox that '
+                'blocks it (a Flatpak or container profile).')
+    return None
+
+
 def udmabuf_fix_installed(rules='/etc/udev/rules.d/70-udmabuf-uaccess.rules',
                            tmpfiles='/etc/tmpfiles.d/udmabuf.conf'):
     return Path(rules).is_file() or Path(tmpfiles).is_file()

@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=d38a6864bdb7072724d2ef92b4a8c01e00132e1b reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/known-issues.md source-hash=41b3391d0c3fa7d386e8c6d22997683db556c37d reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · [Português (Brasil)](../pt-BR/known-issues.md) · [Русский](../ru/known-issues.md) · **简体中文**
 
@@ -9,6 +9,10 @@
 # 已知问题
 
 当前版本中我们已知的问题，以及避免它们的方法。某个问题修复后，它会从此列表中移除，发布说明也会注明。[README](../../README.zh-Hans.md#现状与已知问题)介绍了项目的总体状态。
+
+## Linux 内核
+
+- **在 Linux 上，低于 6.7 的内核会让游戏只有约 1 fps。** 游戏通过内核的 userfaultfd 异步写保护来跟踪自己写过的内存，这一功能从 Linux 6.7 开始提供；没有它，游戏每一帧都要上传全部内存。较新的内核如果编译时没有 userfaultfd，或者有沙盒阻止它，结果也一样。启动器会在主界面上提示（*Linux Kernel*），游戏日志会在 `mem: write watch off: ...` 一行中写出内核版本（正常时为 `mem: write watch on`）。请把系统更新到 Linux 6.7 或更高版本；SteamOS 3.8 已经满足。
 
 ## 图形
 

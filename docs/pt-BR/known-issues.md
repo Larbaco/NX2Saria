@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=d38a6864bdb7072724d2ef92b4a8c01e00132e1b reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/known-issues.md source-hash=41b3391d0c3fa7d386e8c6d22997683db556c37d reviewed=no -->
 <!-- languages -->
 [English](../known-issues.md) · **Português (Brasil)** · [Русский](../ru/known-issues.md) · [简体中文](../zh-Hans/known-issues.md)
 
@@ -9,6 +9,15 @@
 # Problemas conhecidos
 
 Problemas que conhecemos na versão atual e o que os evita. Quando um deles é corrigido, ele sai desta lista e as notas de versão dizem isso. O [README](../../README.pt-BR.md#status-e-problemas-conhecidos) traz o estado geral do projeto.
+
+## Kernel do Linux
+
+- **No Linux, um kernel anterior ao 6.7 roda o jogo a cerca de 1 fps.** O jogo acompanha a memória que escreveu pela
+  proteção de escrita assíncrona do userfaultfd do kernel, que chegou no Linux 6.7; sem ela, o jogo envia toda a sua
+  memória a cada quadro. Um kernel mais novo compilado sem userfaultfd, ou um sandbox que o bloqueia, dá no mesmo. O
+  launcher avisa na tela inicial (*Linux Kernel*), e o log do jogo nomeia o kernel numa linha
+  `mem: write watch off: ...` (`mem: write watch on` quando funciona). Atualize o sistema para o Linux 6.7 ou posterior;
+  o SteamOS 3.8 já tem.
 
 ## Gráficos
 

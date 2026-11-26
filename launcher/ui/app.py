@@ -1065,8 +1065,16 @@ class App:
             play_desc += (f'NX2Saria {staged["version"]} is downloaded and installs after you quit the game.',)
         if self.message:
             play_desc = (self.message,) + play_desc
+        kernel_row = []
+        if sys.platform.startswith('linux') and getattr(self.ctx, 'write_watch', None):
+            from ..platform import linux
+            warn = linux.write_watch_text(self.ctx.write_watch)
+            if warn:
+                play_desc = (warn[1],) + play_desc
+                kernel_row = [Row('value', 'Linux Kernel', warn[0], 'salmon', on=lambda: None, desc=(warn[1],))]
         return [
             Row('value', 'Play', play_value, big=True, icon='play', on=self.play, desc=play_desc),
+            *kernel_row,
             upd,
             Row('divider'),
             Row('value', 'Game Folder', gd, on=lambda: self.open(gd),

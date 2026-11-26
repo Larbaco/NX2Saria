@@ -44,6 +44,7 @@
 
 #include "platform.h"
 #include "proc_pressure.h"
+#include "write_watch_note.h"
 
 #ifndef PAGEMAP_SCAN
 struct page_region {
@@ -1236,22 +1237,49 @@ void plat_mem_dmabuf_done(uint64_t addr, uint64_t n) {
     plat_mutex_unlock(&vm_lock);
 }
 
+static int ww_tried, ww_result = -1, ww_err;
+static char ww_release[65], ww_why[160];
+
 static void ww_open(void) {
+    ww_tried = 1;
+    struct utsname u;
+    snprintf(ww_release, sizeof ww_release, "%s", uname(&u) ? "" : u.release);
+    const char *forced = cfg_env("NX2SARIA_TEST_NO_UFFD");
+    if (forced && *forced && strcmp(forced, "0")) {
+        ww_err = strcmp(forced, "1") ? EINVAL : ENOSYS;
+        if (ww_err == EINVAL) snprintf(ww_release, sizeof ww_release, "%s", forced);
+        snprintf(ww_why, sizeof ww_why, "%s; forced by NX2SARIA_TEST_NO_UFFD=%s", strerror(ww_err), forced);
+        ww_result = ww_verdict(ww_release, ww_err);
+        return;
+    }
     int fd = (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
     struct uffdio_api api = {.api = UFFD_API,
                              .features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED};
     if (fd < 0 || ioctl(fd, UFFDIO_API, &api)) {
-        fprintf(stderr, "platform: no asynchronous userfaultfd write protection (%s): written memory is not tracked\n",
-                strerror(errno));
+        ww_err = errno ? errno : EINVAL;
+        snprintf(ww_why, sizeof ww_why, "%s", strerror(ww_err));
+        ww_result = ww_verdict(ww_release, ww_err);
         if (fd >= 0) close(fd);
         return;
     }
     pm_fd = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
     if (pm_fd < 0) {
+        ww_err = errno ? errno : EINVAL;
+        snprintf(ww_why, sizeof ww_why, "/proc/self/pagemap: %s", strerror(ww_err));
+        ww_result = WW_REFUSED;
         close(fd);
         return;
     }
     ww_fd = fd;
+    ww_result = WW_ON;
+}
+
+int plat_write_watch_note(char *out, size_t cap) {
+    plat_mutex_lock(&vm_lock);
+    int r = ww_result;
+    if (r >= 0) ww_note(r, ww_release, ww_why, out, cap);
+    plat_mutex_unlock(&vm_lock);
+    return r >= 0;
 }
 
 int plat_mem_reserve(uint64_t addr, uint64_t n, int watch) {
@@ -1260,7 +1288,7 @@ int plat_mem_reserve(uint64_t addr, uint64_t n, int watch) {
         void *p = mmap(NULL, PS_LIMIT / PG, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
         pstate = p == MAP_FAILED ? NULL : p;
     }
-    if (watch && ww_fd < 0 && pm_fd < 0) ww_open();
+    if (watch && !ww_tried) ww_open();
     if (watch && !gm_state) gm_open();
     int shared = watch && gm_state > 0 && gm_nres < GM_RES_MAX;
     void *p = pstate && addr + n <= PS_LIMIT
