@@ -578,8 +578,17 @@ def main(argv=None):
         lock_state = 'held' if held.key is not None else 'unavailable'
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
+        capabilities = ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates',
+                        'saves', 'mods', 'settings', 'reports', 'steam']
+        try:
+            from . import worker_appearance
+        except (ImportError, OSError):
+            worker_appearance = None
+            ctx.log('worker: appearance unavailable')
+        else:
+            capabilities.append('appearance')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings', 'reports', 'steam', 'appearance'], 'update_waiting': waiting}})
+                                              'capabilities': capabilities, 'update_waiting': waiting}})
         counts = {}
         reports = Reports(ctx) if lock_state == 'held' else None
         requests = queue.Queue(maxsize=64)
@@ -1066,8 +1075,10 @@ def main(argv=None):
                         lock_state != 'held' or job or pending or build_recovery.blocked(layout)):
                     error(request['id'], 'appearance_unavailable')
                     continue
+                if worker_appearance is None:
+                    error(request['id'], 'appearance_unavailable')
+                    continue
                 try:
-                    from . import worker_appearance
                     if method == 'appearance_info':
                         result = worker_appearance.view(ctx.settings)
                         action_log(ctx, counts, 'appearance', f'theme={result["theme"]} read')
