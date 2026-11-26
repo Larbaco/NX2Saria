@@ -445,16 +445,27 @@ When GitHub takes requests again, for the message of a refused one: "after 14:32
 or says something that cannot be right (more than a day). A wait of zero or less means the allowance is whole again by
 this PC's clock, and the text is "in a minute".
 
-### `_github()`
+### `_tag_rank()`, `_newest()`, `_github()`
 
 - GitHub answers 403 or 429 when the allowance of requests is used up; both give the rate-limit message.
-- The API lists the newest release first: the first one the channel takes that has a manifest is the answer.
+- The answer is the release with the highest version (`launcher/versions.py` `parse()`, so 0.27.0 is above its rcs)
+  among those the channel takes (not a draft, a pre-release only on Preview) that have the manifest of this platform,
+  read from `tag_name`; a tag that is not a version ranks below every version, and equal ones keep the API's order.
+  The API's order is not the versions': between the publication of 0.27.0 and its promotion it listed
+  `v0.27.0-rc.4 v0.27.0-rc.3 v0.27.0-rc.2 v0.27.0-rc.1 v0.27.0 v0.26.0`, and the first eligible release, the answer up
+  to 0.27.0, offered rc.4 to a Preview launcher on 0.26.0 and told one on rc.4 it was up to date. When the answer is
+  not the first eligible release the feed lists, `log` gets one line naming both (`update check: the feed lists ...
+  first; ... is the newest and is the one offered`; `launcher/jobs.py` `CheckJob` passes the job's log, so it lands in
+  `launcher.log`).
+- Only the chosen release's manifest is downloaded. When it cannot be read the check fails with its tag in the error,
+  as before: it does not fall back to an older release, which would hide the newest one without a trace.
 - With a token, a private repository's files come through the API with the token (`Accept:
   application/octet-stream`).
 
 ### `latest()`
 
-The newest release the feed offers on the channel, or `None` when it has none.
+The newest release the feed offers on the channel, or `None` when it has none. `log`, when given, takes the lines of
+the choice (`_github()`).
 
 ### `plain_notes()`
 

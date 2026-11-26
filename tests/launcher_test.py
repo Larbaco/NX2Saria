@@ -1108,6 +1108,46 @@ class FeedTest(Tmp):
         self.assertTrue(any(h.get('Authorization') == 'Bearer secret' for _, h in srv.hits))
         self.assertEqual(feed.plain_notes('## Head\n- **One**\n* `Two`\n<!-- x -->'), ['Head', 'One', 'Two'])
 
+    def test_github_offers_the_newest_version_not_the_first_listed(self):
+        srv = self.serve_github()
+        f = {'type': 'github', 'repo': 'o/r', 'api': srv.url.rstrip('/')}
+        rcs = [self.release(srv, f'v0.27.0-rc.{n}', f'0.27.0-rc.{n}', pre=True) for n in (4, 3, 2, 1)]
+        final, older = self.release(srv, 'v0.27.0', '0.27.0'), self.release(srv, 'v0.26.0', '0.26.0')
+
+        def check(channel, releases, want, line=None):
+            self.publish(releases)
+            srv.hits.clear()
+            logged = []
+            self.assertEqual(feed.latest(f, channel, platform='win32', log=logged.append).version, want)
+            self.assertEqual(logged, [line] if line else [], (channel, want))
+            self.assertEqual([p for p, _ in srv.hits if p.startswith('/m-')], [f'/m-{want}.json'])
+
+        out_of_order = rcs + [final, older]
+        check('preview', out_of_order, '0.27.0',
+              'update check: the feed lists v0.27.0-rc.4 first; v0.27.0 is the newest and is the one offered')
+        check('stable', out_of_order, '0.27.0')
+        check('preview', [final] + rcs + [older], '0.27.0')
+        check('stable', [older, final], '0.27.0',
+              'update check: the feed lists v0.26.0 first; v0.27.0 is the newest and is the one offered')
+        check('preview', rcs[2:] + rcs[:2] + [older], '0.27.0-rc.4',
+              'update check: the feed lists v0.27.0-rc.2 first; v0.27.0-rc.4 is the newest and is the one offered')
+
+        nightly = self.release(srv, 'nightly', '9.9.9')
+        check('stable', [nightly, older], '0.26.0',
+              'update check: the feed lists nightly first; v0.26.0 is the newest and is the one offered')
+        check('stable', [nightly], '9.9.9')
+
+        no_manifest = self.release(srv, 'v0.28.0', '0.28.0', manifest=False)
+        check('preview', [no_manifest] + out_of_order, '0.27.0',
+              'update check: the feed lists v0.27.0-rc.4 first; v0.27.0 is the newest and is the one offered')
+        check('stable', [no_manifest, older], '0.26.0')
+
+        broken = self.release(srv, 'v0.29.0', '0.29.0')
+        (self.tmp / 'm-0.29.0.json').write_text('not json')
+        self.publish([older, broken])
+        with self.assertRaisesRegex(feed.FeedError, '^v0.29.0: '):
+            feed.latest(f, 'stable', platform='win32')
+
     def test_windows_feed_ignores_linux_assets_in_ten_asset_release(self):
         srv = self.serve_github()
         win_zip = make_app_zip(self.tmp, '0.3.11')

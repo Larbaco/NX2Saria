@@ -90,7 +90,22 @@ def _manifest_names(platform=None):
     return (LINUX_MANIFEST,) if platform.startswith('linux') else (MANIFEST, LEGACY_MANIFEST)
 
 
-def _github(feed, channel, token, version, platform=None):
+def _tag_rank(tag):
+    try:
+        return 1, versions.parse(tag)
+    except ValueError:
+        return 0, ()
+
+
+def _newest(candidates):
+    best = None
+    for c in candidates:
+        if best is None or _tag_rank(c[0].get('tag_name')) > _tag_rank(best[0].get('tag_name')):
+            best = c
+    return best
+
+
+def _github(feed, channel, token, version, platform=None, log=None):
     api = feed.get('api', GITHUB_API).rstrip('/')
     headers = {'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28'}
     if token:
@@ -105,26 +120,32 @@ def _github(feed, channel, token, version, platform=None):
             when = retry_text(getattr(e, 'headers', None))
             raise FeedError(f'GitHub refused the request (rate limit); try again {when or "in an hour"}') from e
         raise FeedError(f'GitHub could not be reached: {e}') from e
+    candidates = []
     for r in releases:
         if r.get('draft') or (r.get('prerelease') and channel != 'preview'):
             continue
         assets = {a['name']: a for a in r.get('assets', [])}
         manifest_name = next((n for n in _manifest_names(platform) if n in assets), None)
-        if manifest_name is None:
-            continue
-        if token:
-            urls = {n: a['url'] for n, a in assets.items()}
-            asset_headers = {'Accept': 'application/octet-stream', 'Authorization': f'Bearer {token}'}
-        else:
-            urls = {n: a['browser_download_url'] for n, a in assets.items()}
-            asset_headers = {}
-        try:
-            m = _check_manifest(json.loads(net.get_bytes(urls[manifest_name], asset_headers, version=version)),
-                                f'{r.get("tag_name")}/{manifest_name}')
-        except (FeedError, ValueError, OSError) as e:
-            raise FeedError(f'{r.get("tag_name")}: {e}') from e
-        return Release(m, r.get('body') or '', r.get('html_url', ''), urls, asset_headers, bool(r.get('prerelease')))
-    return None
+        if manifest_name is not None:
+            candidates.append((r, assets, manifest_name))
+    if not candidates:
+        return None
+    r, assets, manifest_name = _newest(candidates)
+    if log and r is not candidates[0][0]:
+        log(f'update check: the feed lists {candidates[0][0].get("tag_name")} first; {r.get("tag_name")} is the newest '
+            'and is the one offered')
+    if token:
+        urls = {n: a['url'] for n, a in assets.items()}
+        asset_headers = {'Accept': 'application/octet-stream', 'Authorization': f'Bearer {token}'}
+    else:
+        urls = {n: a['browser_download_url'] for n, a in assets.items()}
+        asset_headers = {}
+    try:
+        m = _check_manifest(json.loads(net.get_bytes(urls[manifest_name], asset_headers, version=version)),
+                            f'{r.get("tag_name")}/{manifest_name}')
+    except (FeedError, ValueError, OSError) as e:
+        raise FeedError(f'{r.get("tag_name")}: {e}') from e
+    return Release(m, r.get('body') or '', r.get('html_url', ''), urls, asset_headers, bool(r.get('prerelease')))
 
 
 def _url(feed, version, platform=None):
@@ -145,11 +166,11 @@ def _url(feed, version, platform=None):
     return Release(m, assets=assets)
 
 
-def latest(feed, channel='stable', token='', version='dev', platform=None):
+def latest(feed, channel='stable', token='', version='dev', platform=None, log=None):
     if feed.get('type') == 'url':
         return _url(feed, version, platform)
     if feed.get('type') == 'github':
-        return _github(feed, channel, token, version, platform)
+        return _github(feed, channel, token, version, platform, log)
     raise FeedError(f'unknown feed type {feed.get("type")!r}')
 
 
