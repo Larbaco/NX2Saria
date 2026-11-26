@@ -40,7 +40,11 @@ typedef int PlatMutex;
 #define PLAT_MUTEX_INIT 0
 typedef struct PlatAppend PlatAppend;
 static void plat_mutex_lock(PlatMutex *m) { (void)m; }
-static int plat_mutex_trylock(PlatMutex *m) { (void)m; return 1; }
+static int lock_stuck;
+static int lock_tries;
+static int plat_mutex_trylock(PlatMutex *m) { (void)m; lock_tries++; return !lock_stuck; }
+static void plat_sleep_ms(uint32_t ms) { (void)ms; }
+static int32_t plat_xchg32(volatile int32_t *p, int32_t v) { return __atomic_exchange_n(p, v, __ATOMIC_ACQ_REL); }
 static void plat_mutex_unlock(PlatMutex *m) { (void)m; }
 static char file[1 << 16];
 static size_t file_n;
@@ -50,7 +54,13 @@ static int plat_append_write(PlatAppend *f, const void *p, size_t n) {
     file_n += n;
     return 1;
 }
-static int plat_stderr_write(const void *p, size_t n) { (void)p, (void)n; return 1; }
+static char err[1 << 16];
+static size_t err_n;
+static int plat_stderr_write(const void *p, size_t n) {
+    if (err_n + n <= sizeof err) memcpy(err + err_n, p, n);
+    err_n += n;
+    return 1;
+}
 static void logq_sync(void) {}
 #define LOG_CAP 4096ull
 #define LOG_END_RESERVE 2048ull
@@ -72,10 +82,28 @@ static int line(const char *tag, int i) {   // returns the line's length
     log_sink(b, (size_t)n);
     return n;
 }
+static int stuck(void) {
+    g_log_state = LOG_OFF;
+    lock_stuck = 1;
+    rt_log_ending();
+    rt_log_sync();
+    for (int i = 0; i < 50; i++) line("last", i);
+    int lines = 0, notes = 0;
+    for (const char *p = err; (p = strstr(p, "last ")) != NULL && p < err + err_n; p++) lines++;
+    for (const char *p = err; (p = strstr(p, "lock of the stderr writes was still held")) != NULL && p < err + err_n; p++)
+        notes++;
+    printf("stuck: stderr's lock held for good: %d of 50 end lines on stderr, the note %d time(s), %d tries of the lock\n",
+           lines, notes, lock_tries);
+    int fails = 0;
+    if (lines != 50 || notes != 1) printf("FAIL: the end's lines with stderr's lock held\n"), fails++;
+    if (lock_tries != ERR_LOCK_WAIT_MS) printf("FAIL: the lock was tried again after it was given up\n"), fails++;
+    return fails;
+}
 int main(int argc, char **argv) {
     // ending: rt_log_ending (an orderly end); fatal: rt_log_ending, then rt_log_sync (a fatal error, the crash report);
     // capture: rt_log_sync in play (a bug capture), more play, then rt_log_ending
     const char *how = argc > 1 ? argv[1] : "ending";
+    if (!strcmp(how, "stuck")) return stuck() ? 1 : 0;
     int fails = 0, play_n = 0, end_n = 0;
     for (int i = 0; i < 1000; i++) play_n = line("play", i);   // 35,000 bytes, many times the cap
     int play = count("play "), cut = count("reached 64 MiB");
@@ -141,6 +169,7 @@ def main():
     parts.append(re.search(r'static PlatMutex g_err_lock = PLAT_MUTEX_INIT;\n(.*?\n)\nvoid rt_log_ending', source, re.S)
                  .group(0).rsplit('\n', 1)[0])
     parts.append(function('void rt_log_ending(void)'))
+    parts.append(function('static int err_lock_final(void)'))
     parts.append(function('static void log_sink(const char *p, size_t n)'))
     parts.append(function('void rt_log_sync(void)'))
     parts.append(MAIN)
@@ -154,7 +183,7 @@ def main():
         env['PATH'] = str(MSYS_BIN) + os.pathsep + env.get('PATH', '')
     subprocess.check_call([compiler(), '-O1', '-g', '-Wall', '-Wno-unused-function', str(src), '-o', str(exe)], env=env)
     bad = static_checks()
-    for how in ('ending', 'fatal', 'capture'):
+    for how in ('ending', 'fatal', 'capture', 'stuck'):
         bad += subprocess.run([str(exe), how], env=env, timeout=60).returncode != 0
     print(f'log_cap_check: {"FAILED" if bad else "ok"}')
     return 1 if bad else 0

@@ -1,5 +1,6 @@
 #include "dispatch.h"
 #include "host.h"
+#include "log_line.h"
 #include "log_stall.h"
 #include "prof.h"
 #include "platform/platform.h"
@@ -88,9 +89,11 @@ static void fatal_end(int code, const char *fmt, va_list ap) {
     va_copy(aq, ap);
     vsnprintf(line, sizeof line, fmt, aq);
     va_end(aq);
-    rt_log_raw("FATAL: ", 7);
-    rt_vlogf(fmt, ap);
-    rt_log_raw("\n", 1);
+    static char out_buf[sizeof line + 16];
+    LogLine out = {out_buf, sizeof out_buf, 0, 0};
+    log_line_add(&out, "FATAL: ");
+    log_line_vadd(&out, fmt, ap);
+    rt_log_raw(out_buf, log_line_end(&out));
     char at[16];
     log_stamp(at, sizeof at, 0);
     rt_log("fatal: at %s local time", at);
