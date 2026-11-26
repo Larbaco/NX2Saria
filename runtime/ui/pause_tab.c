@@ -95,7 +95,7 @@ static void start_line(void) {
         return;
     }
     rt_log("pause_tab: on (NX2SARIA_PAUSE_SETTINGS_TAB): a fifth tab, %s%s, after the pause menu's System tab; R on "
-           "that tab opens it, L, B or Plus closes it; its page: the Picture rows",
+           "that tab opens it, L, B or Plus closes it; its page: the Picture, Sound, Controls and Game rows",
            kind == PT_NAME_SETTINGS ? "the menu language's \"Settings\"" : "\"NX2Saria\"",
            known ? "" : " (NX2SARIA_PAUSE_SETTINGS_TAB_NAME unknown: product taken)");
 }

@@ -932,7 +932,8 @@ reason, so `runtime/ui/pause_tab.c` shows the System page again.
 
 The tab's page: the Picture rows of `tab_screen()` that a player looks for in a pause menu, with the same row functions,
 so their notes ("after restart", the disabled sharpening) are the settings menu's; then the Sound tab's rows
-(`rows_sound()`) and the Controls tab's without the bindings (`rows_controls()`), each under its tab's name as a group.
+(`rows_sound()`) the Controls tab's without the bindings (`rows_controls()`) and the Game tab's (`rows_game()`), each under its
+tab's name as a group.
 
 ### `rows_sound()`
 
@@ -942,6 +943,12 @@ The Sound tab's rows, for the tab and for `tab_sound()`.
 
 The Controls tab's rows without the bindings page (`binds_rows()`), whose cells wait for a press: for the pause menu's
 settings tab and for `tab_controls()`, which adds the bindings after them.
+
+### `rows_game()`
+
+The Game tab's rows a player looks for in a pause menu: the game's language, the operation mode, playing in the
+background, the message speed, the amiibo daily limit and Discord. The frame limit is in Picture; the saves'
+export and import (a file dialog), the testing rows and the debug menu stay in `tab_game()` only.
 
 ### `pause_tab_label()`
 

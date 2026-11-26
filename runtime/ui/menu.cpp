@@ -1529,9 +1529,7 @@ static void rows_saves(void) {
     if (line[0]) opt_text_str(line, warn);
 }
 
-static void tab_game(float scale) {
-    opt_begin("##game", scale);
-    row_fps_limit();
+static void rows_game(void) {
     row_game_lang();
     static const UiTextId mode[] = {UI_MENU_MODE_DOCKED, UI_MENU_MODE_HANDHELD};
     opt_choice("NX2SARIA_OPERATION_MODE", UI_MENU_OPERATION_MODE, mode, 2, UI_MENU_OPERATION_MODE_DESC);
@@ -1543,6 +1541,12 @@ static void tab_game(float scale) {
     if (amiibo_daily_available())
         opt_toggle("NX2SARIA_AMIIBO_DAILY_LIMIT", UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC);
     opt_toggle("NX2SARIA_DISCORD_RPC", UI_MENU_DISCORD_RPC, UI_MENU_DISCORD_RPC_DESC);
+}
+
+static void tab_game(float scale) {
+    opt_begin("##game", scale);
+    row_fps_limit();
+    rows_game();
     rows_saves();
     opt_group_text("Testing");
     {
@@ -2235,7 +2239,8 @@ static void pause_tab_rows(void) {
     opt_group(UI_MENU_TAB_SOUND);
     rows_sound();
     opt_group(UI_MENU_TAB_CONTROLS);
-    rows_controls();
+    rows_controls();    opt_group(UI_MENU_TAB_GAME);
+    rows_game();
 }
 
 static const char *pause_tab_label(void) {

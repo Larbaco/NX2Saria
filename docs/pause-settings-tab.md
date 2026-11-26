@@ -22,7 +22,9 @@ they are. The implementation notes: [code/ui.md](code/ui.md), `runtime/ui/pause_
   does when it is left. The System tab's page comes back.
 - The rows are the settings menu's own, in groups: Picture (the frame limit, VSync, the upscaler, frame generation,
   sharpening, anisotropic filtering) Sound (the volume, the menu sounds' volume, the channels) and Controls (the mouse, the gamepad's layout and prompts, sprint,
-  vibration, the gyro, the sticks; the button bindings stay in the settings menu). A row whose setting takes a restart says so, as in the settings menu.
+  vibration, the gyro, the sticks; the button bindings stay in the settings menu) and Game (the language, the operation
+  mode, playing in the background, the message speed, the amiibo daily limit, Discord; the saves, the testing rows and
+  the debug menu stay in the settings menu). A row whose setting takes a restart says so, as in the settings menu.
 
 ## What the game has (1.1.1)
 
