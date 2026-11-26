@@ -158,8 +158,15 @@ def inspect_recovery(ctx, counts, previous):
     return observed
 
 
-def installation_view(root, recovery):
-    result = inspect_installation(root)
+def installation_view(ctx, recovery):
+    result = inspect_installation(ctx.layout.root)
+    if result['status'] in ('not_configured', 'not_ready'):
+        settings = ctx.settings
+        result['first_run_preferences'] = {
+            'channel': 'preview' if settings['channel'] == 'preview' else 'stable',
+            'auto_check': settings['auto_check'],
+            'desktop_shortcut': settings['desktop_shortcut'] if os.name == 'nt' else None,
+        }
     if recovery:
         result['recovery'] = recovery.view()
         if recovery.state in ('alive', 'unverified'):
@@ -383,7 +390,7 @@ def main(argv=None):
                 if recovery != previous:
                     sequence += 1
                     emit({'event': 'recovery_changed', 'sequence': sequence, 'session': 0,
-                          'inspection': installation_view(root, recovery)})
+                          'inspection': installation_view(ctx, recovery)})
             if job and job.finished is None and not job.cancelled() and job.steps and job.rev != job_revision and not disconnected:
                 with job.locked():
                     job_revision = job.rev
@@ -679,6 +686,32 @@ def main(argv=None):
                 emit({'id': request['id'], 'result': {'status': 'building'}})
                 sequence += 1
                 emit({'event': 'job_started', 'sequence': sequence, 'session': session})
+            elif request.get('method') == 'first_run_preference':
+                key, value = request.get('key'), request.get('value')
+                valid = (key == 'channel' and value in ('stable', 'preview')
+                         or key == 'auto_check' and type(value) is bool
+                         or key == 'desktop_shortcut' and os.name == 'nt' and type(value) is bool)
+                status = 'unavailable'
+                if valid:
+                    try:
+                        folder = ctx.settings.get('game_dir')
+                        if (lock_state == 'held' and not (job or run or pending or build_recovery.blocked(layout))
+                                and not build.installed(folder)):
+                            ctx.settings.save_preference(key, value)
+                            status = 'saved'
+                            if key == 'desktop_shortcut':
+                                shortcut = winsys.desktop_shortcut(layout, value)
+                                action_log(ctx, counts, 'settings',
+                                           'first_run desktop_shortcut result=' + ('updated' if shortcut else 'unavailable'))
+                    except (OSError, ValueError, RuntimeError, TypeError, AttributeError):
+                        status = 'save_failed'
+                    action_log(ctx, counts, 'settings', f'first_run key={key} result={status}')
+                else:
+                    action_log(ctx, counts, 'settings', 'first_run invalid')
+                if status == 'saved':
+                    emit({'id': request['id'], 'result': {'key': key, 'value': value}})
+                else:
+                    error(request['id'], 'preference_unavailable')
             elif request.get('method') == 'set_hide_while_playing':
                 value = request.get('value')
                 if type(value) is not bool:
@@ -713,7 +746,7 @@ def main(argv=None):
                         continue
                 if not recovery or recovery.state == 'interrupted':
                     recovery_poll = stopping = None
-                    emit({'id': request['id'], 'result': {'status': 'finished', 'inspection': installation_view(root, recovery)}})
+                    emit({'id': request['id'], 'result': {'status': 'finished', 'inspection': installation_view(ctx, recovery)}})
                     continue
                 if action == 'stop':
                     if recovery.state != 'alive':
@@ -735,7 +768,7 @@ def main(argv=None):
                 try:
                     if not job and lock_state == 'held':
                         recovery = inspect_recovery(ctx, counts, recovery)
-                    result = installation_view(root, recovery)
+                    result = installation_view(ctx, recovery)
                 except (OSError, ValueError, RuntimeError):
                     action_log(ctx, counts, 'inspect', 'failed')
                     error(request['id'], 'inspection_failed')

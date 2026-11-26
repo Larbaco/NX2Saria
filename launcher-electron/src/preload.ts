@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('launcher', {
   rebuild: () => ipcRenderer.invoke('rebuild'),
   recoverBuild: (action: string) => ipcRenderer.invoke('recover-build', action),
   onRecoveryChanged: (callback: (result: unknown) => void) => ipcRenderer.on('recovery-changed', (_event, result) => callback(result)),
+  setFirstRunPreference: (key: string, value: string | boolean) => ipcRenderer.invoke('first-run-preference', key, value),
   setHideWhilePlaying: (value: boolean) => ipcRenderer.invoke('set-hide-while-playing', value),
   play: () => ipcRenderer.invoke('play'),
   cancelJob: () => ipcRenderer.invoke('cancel-job'),

@@ -171,6 +171,57 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(worker.wait(timeout=15), 0)
         self.assertIn('worker: play status=not_built', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
 
+    def test_first_run_updates_only_existing_preferences_and_uses_windows_shortcut(self):
+        data = self.root / 'data'
+        settings = data / 'launcher.json'
+        settings.write_text('{"telemetry":"off","future_option":"kept"}')
+        shortcut = data / 'shortcut-called'
+        script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import winsys\n"
+                  "root,checked=sys.argv[1:]\n"
+                  "def desktop(layout,enabled):\n"
+                  " Path(checked).write_text('on' if enabled else 'off')\n"
+                  " return True\n"
+                  "sys.argv=['launcher.worker','--root',root]\n"
+                  "with mock.patch.object(winsys,'desktop_shortcut',desktop):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        requests = [
+            {'method': 'hello', 'protocol': 1},
+            {'method': 'inspect'},
+            {'method': 'first_run_preference', 'key': 'channel', 'value': 'preview'},
+            {'method': 'first_run_preference', 'key': 'auto_check', 'value': False},
+            {'method': 'first_run_preference', 'key': 'channel', 'value': 'hypothetical'},
+            {'method': 'first_run_preference', 'key': 'desktop_shortcut', 'value': False},
+            {'method': 'inspect'},
+        ]
+        result = subprocess.run([sys.executable, '-c', script, str(self.root), str(shortcut)],
+                                input=''.join(json.dumps({'id': i, **frame}) + '\n' for i, frame in enumerate(requests)),
+                                text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        _, before, channel, auto_check, rejected, on_desktop, after = map(json.loads, result.stdout.splitlines())
+        windows = os.name == 'nt'
+        self.assertEqual(before['result']['first_run_preferences'], {
+            'channel': 'stable', 'auto_check': True, 'desktop_shortcut': True if windows else None})
+        self.assertEqual(channel['result']['value'], 'preview')
+        self.assertFalse(auto_check['result']['value'])
+        self.assertIn('error', rejected)
+        updated = {'telemetry': 'off', 'future_option': 'kept', 'channel': 'preview', 'auto_check': False}
+        if windows:
+            self.assertFalse(on_desktop['result']['value'])
+            self.assertEqual(shortcut.read_text(), 'off')
+            updated['desktop_shortcut'] = False
+        else:
+            self.assertIn('error', on_desktop)
+            self.assertFalse(shortcut.exists())
+        self.assertEqual(after['result']['first_run_preferences'], {
+            'channel': 'preview', 'auto_check': False, 'desktop_shortcut': False if windows else None})
+        self.assertEqual(json.loads(settings.read_text()), updated)
+        log = (data / 'logs' / 'launcher.log').read_text()
+        self.assertIn('setting: channel stable -> preview', log)
+        self.assertIn('worker: settings first_run key=channel result=saved', log)
+
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout
 

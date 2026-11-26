@@ -74,7 +74,10 @@ app.whenReady().then(() => {
     return selected?.status === 'not_configured' || selected?.status === 'not_ready';
   }
   function settingsView(result: Inspection | null): Inspection | null {
-    return result && { ...result, hide_while_playing: worker?.handshake.lock === 'held' && !result.job_marker_present ? result.hide_while_playing : null };
+    if (!result) return null;
+    const editable = worker?.handshake.lock === 'held' && !result.job_marker_present;
+    return { ...result, hide_while_playing: editable ? result.hide_while_playing : null,
+      first_run_preferences: editable ? result.first_run_preferences : undefined };
   }
   function playRefused(error: string) {
     return { error, messageId: expectPlayMessage() };
@@ -294,6 +297,26 @@ app.whenReady().then(() => {
     }
     log?.write(action, `result=${status}`);
     return status;
+  });
+  ipcMain.handle('first-run-preference', async (event, key, value) => {
+    const valid = (key === 'channel' && (value === 'stable' || value === 'preview')) ||
+      (key === 'auto_check' && typeof value === 'boolean') ||
+      (key === 'desktop_shortcut' && process.platform === 'win32' && typeof value === 'boolean');
+    const preferences = state?.first_run_preferences;
+    if (event.sender !== window.webContents || !valid || playing || !worker ||
+        worker.handshake.lock !== 'held' || state?.job_marker_present || !preferences ||
+        !firstRunAvailable(state)) throw new Error('Unavailable');
+    const active = worker;
+    try {
+      const changed = await active.request('first_run_preference', { key, value });
+      if (worker !== active || changed?.key !== key || changed?.value !== value) throw new Error('Save unsuccessful');
+      if (state) state.first_run_preferences = { ...preferences, [key]: value };
+      log?.write('settings', `first_run key=${key} result=saved`);
+      return value;
+    } catch {
+      log?.write('settings', `first_run key=${key} result=save_failed`);
+      throw new Error('Save unsuccessful');
+    }
   });
   ipcMain.handle('recover-build', async (event, action) => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('recovery') ||

@@ -5901,6 +5901,11 @@ the test releases it. The native restart test checks that the worker records one
 lock, emits no intermediate end and reports the second copy's exit code under the original Play session.
 Linux compiles only this stand-in. Windows accepts the compiled fixture through `NX2_TEST_RESTART_GAME`.
 
+The first-run preference case switches the channel and update check, rejects an invalid
+channel and keeps existing fields including telemetry and an unrelated key. On Windows
+the stand-in stub records the desktop request. The Linux window test applies the two
+common preferences and confirms they persist through installation.
+
 The first-run destination test checks the default, normalizes a selected nonempty folder and refuses a
 relative path without modifying settings or the chosen directory. It also checks the disk-space metadata,
 recognizes a completed image and exercises the Windows path-length distinction. `launcher-electron/ui-tests/first-run-synthetic.cjs`

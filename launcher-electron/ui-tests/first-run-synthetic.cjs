@@ -130,6 +130,17 @@ async function main() {
     assert.equal(await dump.textContent(), valid);
     assert.deepEqual(await fs.readdir(folder), ['unrelated.txt']);
     assert.equal(await fs.readFile(settings, 'utf8'), '{"desktop_shortcut":false}');
+    const channel = page.getByLabel('Canal de atualizações');
+    const autoCheck = page.getByRole('checkbox', { name: 'Procurar atualizações ao abrir' });
+    assert.equal(await channel.inputValue({ timeout: 5000 }), 'stable');
+    assert.equal(await autoCheck.isChecked(), true);
+    assert.equal(await page.getByRole('checkbox', { name: 'Atalho na área de trabalho' }).isVisible(), false);
+    await channel.selectOption('preview');
+    await autoCheck.uncheck();
+    await page.waitForFunction(() => !document.querySelector('#first-run-auto-check').matches(':disabled'));
+    assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')), {
+      desktop_shortcut: false, channel: 'preview', auto_check: false,
+    });
     await install.click();
     const cancel = page.getByRole('button', { name: 'Cancelar compilação' });
     await cancel.click({ timeout: 5000 });
@@ -142,7 +153,9 @@ async function main() {
     await fs.writeFile(path.join(folder, 'allow-install'), '');
     await page.getByText('Instalação concluída', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isEnabled(), true);
-    assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')), { desktop_shortcut: false, game_dir: path.join(folder, 'NX2Saria'), dump: valid });
+    assert.deepEqual(JSON.parse(await fs.readFile(settings, 'utf8')), {
+      desktop_shortcut: false, channel: 'preview', auto_check: false, game_dir: path.join(folder, 'NX2Saria'), dump: valid,
+    });
 
     await page.getByRole('button', { name: 'Recompilar o jogo' }).click({ timeout: 5000 });
     await page.getByText('Recompilação concluída', { exact: true }).waitFor({ timeout: 10000 });

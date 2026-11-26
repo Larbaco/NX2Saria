@@ -1,5 +1,6 @@
 type Recovery = { state: 'alive' | 'interrupted' | 'unverified'; kind: 'install' | 'rebuild' | 'update' | 'other' };
-export type Inspection = { status: string; reason?: string; root?: string; game_dir?: string | null; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: Recovery };
+type FirstRunPreferences = { channel: 'stable' | 'preview'; auto_check: boolean; desktop_shortcut: boolean | null };
+export type Inspection = { status: string; reason?: string; root?: string; game_dir?: string | null; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: Recovery; first_run_preferences?: FirstRunPreferences };
 const statuses = new Set(['ready', 'not_ready', 'not_configured', 'inspection_error']);
 export function parseInspection(data: unknown): Inspection {
   if (!data || typeof data !== 'object') throw new Error();
@@ -14,5 +15,14 @@ export function parseInspection(data: unknown): Inspection {
     }
     recovery = { state: result.state, kind: result.kind };
   }
-  return { status: value.status, root: value.root, game_dir: value.game_dir as string | null, job_marker_present: value.job_marker_present as boolean, game_running: value.game_running as true | null, hide_while_playing: value.hide_while_playing as boolean | null, ...(typeof value.reason === 'string' ? { reason: value.reason } : {}), ...(recovery ? { recovery } : {}) };
+  let preferences: FirstRunPreferences | undefined;
+  if (value.first_run_preferences !== undefined) {
+    const result = value.first_run_preferences as Record<string, unknown> | null;
+    if (!result || (result.channel !== 'stable' && result.channel !== 'preview') ||
+        typeof result.auto_check !== 'boolean' || (result.desktop_shortcut !== null && typeof result.desktop_shortcut !== 'boolean')) {
+      throw new Error();
+    }
+    preferences = { channel: result.channel, auto_check: result.auto_check, desktop_shortcut: result.desktop_shortcut };
+  }
+  return { status: value.status, root: value.root, game_dir: value.game_dir as string | null, job_marker_present: value.job_marker_present as boolean, game_running: value.game_running as true | null, hide_while_playing: value.hide_while_playing as boolean | null, ...(typeof value.reason === 'string' ? { reason: value.reason } : {}), ...(recovery ? { recovery } : {}), ...(preferences ? { first_run_preferences: preferences } : {}) };
 }

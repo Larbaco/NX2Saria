@@ -3662,6 +3662,11 @@ through completion. During a job it requests cancellation and waits for marker, 
 `inspect` uses the read-only installation check. `set_hide_while_playing` accepts a boolean while idle
 and requires a held lock. It acknowledges the change after the settings write succeeds.
 
+First-run preference requests allow the existing update channel and check-at-start setting,
+plus desktop shortcut on Windows. The worker requires an idle first run and a held lock.
+It records the Windows shortcut preference and asks the same installed stub as Tk to
+apply it. The request does not schedule an update.
+
 `install_destination()` offers a proposed game folder for an unconfigured or unavailable game. The worker
 uses the saved path if present and otherwise asks `Layout.default_game_dir()`. A picker result must be an
 absolute existing directory and uses the shared `install_folder()` policy. The worker refuses the proposal

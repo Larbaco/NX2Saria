@@ -1,10 +1,11 @@
-type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string } };
+type FirstRunPreferences = { channel: 'stable' | 'preview'; auto_check: boolean; desktop_shortcut: boolean | null };
+type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -26,6 +27,12 @@ const gameFolderError = document.querySelector<HTMLElement>('#game-folder-error'
 const gameDumpProposal = document.querySelector<HTMLElement>('#game-dump-proposal')!;
 const pickGameDump = document.querySelector<HTMLButtonElement>('#pick-game-dump')!;
 const gameDumpError = document.querySelector<HTMLElement>('#game-dump-error')!;
+const firstRunOptions = document.querySelector<HTMLFieldSetElement>('#first-run-preferences')!;
+const firstRunChannel = document.querySelector<HTMLSelectElement>('#first-run-channel')!;
+const firstRunAutoCheck = document.querySelector<HTMLInputElement>('#first-run-auto-check')!;
+const firstRunDesktop = document.querySelector<HTMLInputElement>('#first-run-desktop')!;
+const firstRunDesktopOption = document.querySelector<HTMLElement>('#first-run-desktop-option')!;
+const firstRunSettingsError = document.querySelector<HTMLElement>('#first-run-settings-error')!;
 const messages: Record<string, string> = { ready: 'Instalação encontrada', not_ready: 'Jogo não está pronto', not_configured: 'Jogo não configurado', inspection_error: 'Não foi possível verificar' };
 let installation: Result | null = null;
 let selecting = false;
@@ -57,7 +64,16 @@ function updateControls() {
   pickGameFolder.disabled = pickGameDump.disabled = busy || firstRun.hidden;
   installButton.disabled = busy || firstRun.hidden || !proposedFolder || !proposedDump || proposedFolder.pathTooLong ||
     installation?.job_marker_present === true || installation?.game_running === true;
-  if (!savingPreference) hideWhilePlaying.checked = installation?.hide_while_playing === true;
+  const preferences = installation?.first_run_preferences;
+  firstRunOptions.hidden = !preferences;
+  firstRunOptions.disabled = busy;
+  firstRunDesktopOption.hidden = preferences?.desktop_shortcut == null;
+  if (!savingPreference) {
+    hideWhilePlaying.checked = installation?.hide_while_playing === true;
+    firstRunChannel.value = preferences?.channel ?? 'stable';
+    firstRunAutoCheck.checked = preferences?.auto_check === true;
+    firstRunDesktop.checked = preferences?.desktop_shortcut === true;
+  }
 }
 
 function showResult(result: Result | null) {
@@ -152,7 +168,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   installation = null;
   playFailed = false;
   recoveryAction = null;
-  settingError.textContent = '';
+  settingError.textContent = firstRunSettingsError.textContent = '';
   proposedFolder = proposedDump = null;
   gameFolderProposal.textContent = gameFolderSpace.textContent = '';
   gameDumpProposal.textContent = '';
@@ -221,6 +237,27 @@ hideWhilePlaying.onchange = async () => {
     updateControls();
   }
 };
+
+async function saveFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean) {
+  const selected = installation;
+  const preferences = selected?.first_run_preferences;
+  if (!selected || !preferences || firstRunOptions.disabled) return;
+  savingPreference = true;
+  firstRunSettingsError.textContent = '';
+  updateControls();
+  try {
+    const saved = await window.launcher.setFirstRunPreference(key, value);
+    selected.first_run_preferences = { ...preferences, [key]: saved };
+  } catch {
+    firstRunSettingsError.textContent = 'Não foi possível salvar a preferência. Tente novamente.';
+  } finally {
+    savingPreference = false;
+    updateControls();
+  }
+}
+firstRunChannel.onchange = () => { void saveFirstRunPreference('channel', firstRunChannel.value); };
+firstRunAutoCheck.onchange = () => { void saveFirstRunPreference('auto_check', firstRunAutoCheck.checked); };
+firstRunDesktop.onchange = () => { void saveFirstRunPreference('desktop_shortcut', firstRunDesktop.checked); };
 
 function showPlayFeedback(result: PlayFeedback) {
   let kind = 'could_not_start';

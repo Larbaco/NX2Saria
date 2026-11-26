@@ -105,18 +105,21 @@ class Settings(dict):
             if self.log and previous[key] != value:
                 self.log(f'setting: {key} {_shown(key, previous[key])} -> {_shown(key, value)}')
 
-    def save_hide_while_playing(self, value):
-        key = 'hide_while_playing'
+    def save_preference(self, key, value):
         data = self._read_for_write()
-        previous = data.get(key, DEFAULTS[key])
-        if type(previous) is not bool:
-            previous = DEFAULTS[key]
+        default = DEFAULTS[key]
+        previous = data.get(key, default)
+        if type(previous) is not type(default):
+            previous = default
         if previous != value:
             data[key] = value
             self._write(data)
             if self.log:
                 self.log(f'setting: {key} {_shown(key, previous)} -> {_shown(key, value)}')
         self[key] = self.saved[key] = value
+
+    def save_hide_while_playing(self, value):
+        self.save_preference('hide_while_playing', value)
 
     def reset(self):
         keep = {k: self[k] for k in ('game_dir', 'dump', 'last_check', 'last_seen', 'feed_repo', 'github_token',
