@@ -206,6 +206,9 @@ The steps, in order:
   32 KiB `PLAT_STACK_GUARANTEE` keeps, and only the thread `rt_ending_enter()` let through gets here. `rt_log_raw()`
   writes a line with a personal folder from a 2560-byte copy: one write unless the short forms make the line more than
   2.5 times longer (a form such as `%COMPUTERNAME%` stands for a name of 3 bytes or more), which a crash line does not.
+- A signal another process sent (`PlatCrash` `sent`, Linux) ends the FATAL line with `, sent by another process, pid
+  <pid>: not a fault, no address` (or `sent by the game's own process`) in place of the access and its address: before,
+  the line said `reading address 0x3e8...`, the sender's uid and pid.
 - What the thread was doing (a pipeline build names its shaders, `plat_crash_context_get()`): the stderr note the
   platform's exception handler writes misses the log.
 - For abort and invalid parameter: where the host code called it; for a fault in another module: the host calls that led
@@ -258,6 +261,9 @@ another without a pause, and once each has logged `PROBE_BUSY_LINES` (200) the m
 that failed inside its write would, and the main thread faults; the report must still come out (`err_lock_final()`).
 A probe opens no log file and arms no session summary (`main()`: only a game run does), so they write nothing into the
 folder they run in. `tests/fatal_line_check.py` runs them.
+
+`--probe-crash-wait` (`probe_crash_wait()`): prints `probe-crash-wait: waiting for a signal` and sleeps for up to 60 s,
+for a signal sent from outside; `tests/fatal_line_check.py` sends it SIGSEGV with `kill` on Linux.
 
 `--probe-crash-exit` is the fault of `--probe-crash-call`, made by an atexit handler after the mode has returned, the
 way a library another program put into the process faults in its detach. The process must end with the mode's own code

@@ -198,6 +198,7 @@ typedef struct {
     int nframes;
     uintptr_t frames[16];
     const char *module;
+    int sent, sender;
 } PlatCrash;
 void plat_crash_hook(void (*fn)(const PlatCrash *c));
 void plat_crash_context(const char *s);

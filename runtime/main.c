@@ -334,7 +334,10 @@ static void crash_handler(const PlatCrash *x) {
     log_line_add(&line, "FATAL: %s (%#x) at host %p (", x->what, x->code, (void *)rip);
     if (x->module && !*x->module) log_line_add(&line, "outside every module)");
     else log_line_add(&line, "%s+%#llx)", x->module ? x->module : "nx2saria", (unsigned long long)x->offset);
-    if (x->access >= 0)
+    if (x->sent)
+        log_line_add(&line, ", sent by %s %d: not a fault, no address",
+                     x->sent == 2 ? "the game's own process" : "another process, pid", x->sender);
+    else if (x->access >= 0)
         log_line_add(&line, ", %s address %#llx",
                      x->access == 1 ? "writing" : x->access == 8 ? "executing" : "reading", (unsigned long long)x->addr);
     rt_log_raw(line_buf, log_line_end(&line));
@@ -630,6 +633,14 @@ static int probe_crash_stuck(void) {
     return 1;
 }
 
+static int probe_crash_wait(void) {
+    printf("probe-crash-wait: waiting for a signal\n");
+    fflush(stdout);
+    for (int i = 0; i < 600; i++) plat_sleep_ms(100);
+    printf("probe-crash-wait: no signal came within 60 s\n");
+    return 1;
+}
+
 #define PROBE_EXIT_CODE 3
 static void probe_exit_fault(void) { printf("%zu\n", probe_strlen((const char *)(uintptr_t)8)); }
 
@@ -643,7 +654,7 @@ static int usage(const char *argv0) {
     fprintf(stderr, "usage: %s [--exefs DIR] [--romfs DIR] [--profile DIR] [--audio-device VALUE] [--monitor VALUE] [--list-audio-devices | --list-monitors | --selftest | --probe-loader | "
                     "--probe-cfg | --probe-dpi | --probe-mods | --probe-kernel | --probe-ipc | --probe-services | --probe-fs | --probe-gfx-abi | "
                     "--probe-nvn | --probe-nvn-tex | --probe-window | --probe-shader | --probe-vkmem | "
-                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-fsr3 | --probe-fsr3fg | --probe-zstd | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-crash-busy | --probe-fatal-busy | --probe-crash-stuck | --probe-discord | "
+                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-fsr3 | --probe-fsr3fg | --probe-zstd | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-crash-busy | --probe-fatal-busy | --probe-crash-stuck | --probe-crash-wait | --probe-discord | "
                     "--prepare-shaders | --warm-shaders | --prepare-pipelines | --probe-prewarm | --probe-buildgate | --probe-ffx-cache | --probe-memneed | --probe-devlost | --boot |--seconds S [--shot PNG]]\n", argv0);
     return 2;
 }
@@ -824,6 +835,7 @@ static int main_run(int argc, char **argv) {
     if (!strcmp(mode, "--probe-crash-busy")) return probe_busy(0);
     if (!strcmp(mode, "--probe-fatal-busy")) return probe_busy(1);
     if (!strcmp(mode, "--probe-crash-stuck")) return probe_crash_stuck();
+    if (!strcmp(mode, "--probe-crash-wait")) return probe_crash_wait();
     if (!strcmp(mode, "--probe-cfg")) return probe_cfg();
 #ifdef _WIN32
     if (!strcmp(mode, "--probe-dpi")) return probe_dpi();

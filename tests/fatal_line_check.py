@@ -1,6 +1,8 @@
 # needs: exe
 # args: {exe}
+import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -12,6 +14,9 @@ whole, on a line of its own, while other threads log (runtime/main.c crash_handl
   - --probe-fatal-busy: the same threads, and the main thread ends through rt_fatal.
   - --probe-crash-stuck: a thread holds the lock of the log's stderr writes for good and the main thread faults; the
     report still comes out, after one line that says the lock was given up.
+  - --probe-crash-wait, Linux: the probe waits and this script sends it SIGSEGV with kill. The FATAL line says the
+    signal came from another process and names this script's pid, with no address (the sender's pid and uid sit where
+    a fault's address would).
 
 Each busy probe runs RUNS times in a folder of its own, so no summary or header lands in a game folder.
 
@@ -31,6 +36,9 @@ CRASH_LINE = re.compile(r'^FATAL: access violation \(0x[0-9a-f]+\) at host ' + H
                         r' \((?:outside every module|[^()\[\]]+\+' + HEX + r')\)'
                         r'(?:, (?:reading|writing|executing) address ' + HEX + ')?$')
 FATAL_LINE = 'FATAL: probe-fatal-busy: a fatal error while 4 threads log'
+SENT_LINE = re.compile(r'^FATAL: signal SIGSEGV \(0xb\) at host ' + HOST +
+                       r' \((?:outside every module|[^()\[\]]+\+' + HEX + r')\), sent by another process, pid (\d+): '
+                       r'not a fault, no address$')
 STUCK_NOTE = '[host] log: the lock of the stderr writes was still held after'
 
 
@@ -44,6 +52,33 @@ def run(exe, mode, cwd):
 
 def fatal_lines(lines):
     return [ln for ln in lines if 'FATAL' in ln]
+
+
+def sent_signal(exe):
+    with tempfile.TemporaryDirectory() as cwd:
+        p = subprocess.Popen([exe, '--probe-crash-wait'], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=cwd)
+        lines = []
+        for raw in p.stdout:
+            lines.append(raw.decode('utf-8', 'replace').rstrip('\n'))
+            if lines[-1].startswith('probe-crash-wait: waiting'):
+                os.kill(p.pid, signal.SIGSEGV)
+                break
+        try:
+            rest, _ = p.communicate(timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.communicate()
+            return ['--probe-crash-wait: no end within %d s of the signal' % TIMEOUT]
+    lines += rest.decode('utf-8', 'replace').splitlines()
+    fatal = fatal_lines(lines)
+    fails = []
+    if p.returncode != CRASH_EXIT:
+        fails.append('--probe-crash-wait: exit code %d, expected %d' % (p.returncode, CRASH_EXIT))
+    m = SENT_LINE.match(fatal[0]) if len(fatal) == 1 else None
+    if not m or int(m.group(1)) != os.getpid():
+        fails.append('--probe-crash-wait: FATAL lines %r, expected one that names pid %d as the sender'
+                     % (fatal[:3], os.getpid()))
+    return fails
 
 
 def main():
@@ -88,11 +123,15 @@ def main():
         if sum(ln.startswith(STUCK_NOTE) for ln in lines) != 1:
             fails.append('--probe-crash-stuck: no one line that says the lock was given up')
 
+    if sys.platform.startswith('linux'):
+        fails += sent_signal(exe)
+
     for f in fails:
         print('fatal_line_check: FAIL:', f)
     if not fails:
         print('fatal_line_check: passed (%d runs of each busy probe, every FATAL line whole and alone; a held stderr '
-              'lock given up once)' % RUNS)
+              'lock given up once%s)' % (RUNS, '; a SIGSEGV sent with kill names its sender'
+                                                   if sys.platform.startswith('linux') else ''))
     return 1 if fails else 0
 
 

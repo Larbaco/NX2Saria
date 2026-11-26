@@ -1085,7 +1085,9 @@ temporary folder of its own. `RUNS` (20) times each, `--probe-crash-busy` and `-
 70 and exactly one FATAL line in the whole format the crash report (`CRASH_LINE`) or the probe's fatal error
 (`FATAL_LINE`) writes, with no other thread's text inside it; the check counts how many runs failed. Then
 `--probe-crash-stuck` must end with 71 within `TIMEOUT` (60 s), a whole FATAL line and one line that says stderr's lock
-was given up. Needs the executable (`--exe`); no game files, GPU or window.
+was given up. On Linux, `sent_signal()` starts `--probe-crash-wait` (`probe_crash_wait()`), sends it SIGSEGV with
+`os.kill` once it says it waits, and wants 71 and one FATAL line (`SENT_LINE`) that says another process sent the signal,
+names this script's pid and gives no address. Needs the executable (`--exe`); no game files, GPU or window.
 
 ## `tests/ffx_cache_check.py`
 
