@@ -1,33 +1,42 @@
 NX2Saria Electron — teste privado para Windows x64
 
-1. Extraia o ZIP e execute NX2Saria-Electron-Teste.exe.
-2. O teste usa o Python e as ferramentas da instalação selecionada.
-   Para uma primeira instalação, use o instalador atual do NX2Saria.
-   Feche o launcher instalado antes do teste para liberar o lock.
-3. Confira se a instalação foi encontrada. Desmarque Ocultar o
-   launcher ao jogar na tela inicial e clique em Jogar. Confira
-   se aparece Abrindo o jogo… logo após o clique e se o launcher
-   fica aberto quando o jogo aparece.
-4. Feche o jogo, marque a opção novamente e clique em Jogar outra
-   vez. O launcher deve ficar visível até a janela do jogo receber
-   foco, se ocultar e voltar quando o jogo fechar. A opção deve
-   permanecer gravada ao reabrir o launcher.
-5. Com o jogo aberto, tente abrir uma segunda janela do Electron.
-   Ela deve indicar que a instalação está ocupada. Feche o primeiro
-   launcher ainda durante o jogo: o jogo deve continuar, e o launcher
-   que você fechou deve permanecer fechado após a partida.
-6. Se usar um mod que exige recompilação, observe o progresso e a
-   retomada de Jogar. Em outra tentativa, observe o cancelamento.
-7. Copie data/logs/launcher-electron.log, data/logs/launcher.log e
-   logs/nx2saria.log (na pasta do jogo) para a pasta privada de
-   logs de sempre. O launcher.log agora identifica o Electron
-   como origem da execução.
+Extraia o ZIP e abra NX2Saria-Electron-Teste.exe.
+O build usa o Python 3.14 e as ferramentas da instalação selecionada.
+A referência desta rodada é a versão 0.27.0-rc.1 (canal Prévia). Use
+o launcher instalado para atualizar e feche-o antes de abrir o
+Electron. Os dois usam o mesmo lock.
 
-Este ZIP não instala atualizações nem envia relatórios. Só o
-resumo da última sessão fica disponível para
-envio. O launcher instalado é quem pode enviá-lo quando for aberto,
-se a opção de relatórios estiver ligada.
+O que testar nesta rodada
 
-Se o jogo encerrar com erro, uma instalação que tenha a oferta
-de log de crash pode mostrá-la ao abrir o launcher instalado,
-enquanto o log do jogo ainda for o da mesma sessão.
+1. Em uma instalação com o jogo pronto, escolha Recompilar o jogo.
+   Confira o progresso e, se cancelar, espere a limpeza terminar.
+   A janela deve voltar à instalação e permitir Jogar, sem abrir
+   o jogo sozinha.
+2. Se tiver uma instalação do launcher ainda sem jogo, confira a
+   pasta proposta, o dump encontrado ou escolhido e o espaço
+   disponível. Teste a troca de canal e a opção de checar ao abrir.
+   Na instalação de teste, Iniciar instalação deve mostrar o
+   progresso e oferecer cancelamento.
+3. Repita Jogar duas vezes. Confira Abrindo o jogo… logo após o
+   clique, a ocultação quando o jogo receber foco e o retorno
+   depois que o jogo fechar. Confira também a opção de manter a
+   janela visível. Com o jogo aberto, a segunda instância deve
+   indicar instalação ocupada. Se fechar o launcher durante o
+   jogo, a partida continua.
+4. Se aparecer aviso sobre uma compilação anterior, copie os logs.
+   Aguardar mantém Jogar bloqueado até a compilação terminar.
+
+O provisionamento do próprio launcher e as atualizações continuam no
+launcher instalado. Nesta rodada o Electron não envia relatórios.
+Com relatórios ligados, o resumo mais recente fica para o launcher
+instalado processar ao abrir. Após uma saída anormal, uma versão
+compatível pode mostrar a oferta de log enquanto ele for da mesma
+sessão.
+
+No Windows, o primeiro uso também mostra a opção de atalho na área
+de trabalho.
+
+Depois do teste, copie para a pasta privada de logs de sempre:
+- Na pasta do launcher, data/logs/launcher-electron.log.
+- Na pasta do launcher, data/logs/launcher.log.
+- Na pasta do jogo, logs/nx2saria.log.

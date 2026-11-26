@@ -263,6 +263,18 @@ start acknowledgement. Check the on-disk marker, untouched unrelated process and
 installation after every recovery.
 
 
+### Private operations test packages
+
+Use the same branch commit for both artifacts. The packages contain compiled TypeScript,
+the Python 3.14 worker bytecode, and Electron with its upstream notices. They reuse the
+selected installation's Python and tools. Test the package against a synthetic scratch
+installation assembled from the published 0.27.0-rc.1 app and runtime. The owner can
+exercise first run on a provisioned launcher, explicit Rebuild and the previous Play checks.
+The Portuguese LEIA-ME in each artifact lists the exact entry point and the launcher and
+game logs. This checkpoint leaves standalone provisioning, the transition and update
+implementation pending.
+
+
 ## Provisioning and handover design
 
 The approved direction reuses the Windows setup and stub and the Linux AppImage's external installer. The
