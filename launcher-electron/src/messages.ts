@@ -297,6 +297,19 @@ const catalogue: ReadonlyArray<readonly [string, string, string, string]> = [
   ["Atividade no Discord", "Discord activity", "Активность в Discord", "Discord 活动状态"],
   ["O jogo mostra o tempo de sessão no Discord quando você configura seu próprio ID de aplicativo. Você também pode mudar essa opção no menu do jogo.", "The game shows play time in Discord when you configure your own application ID. You can also change this option in the game's menu.", "Если вы укажете свой ID приложения, игра покажет в Discord время сеанса. Этот параметр можно изменить и в меню игры.", "配置自己的应用 ID 后，游戏会在 Discord 中显示游玩时长。你也可以在游戏菜单中更改此选项。"],
   ["Não foi possível mudar a atividade no Discord. Feche o jogo e tente novamente.", "Could not change Discord activity. Close the game and try again.", "Не удалось изменить активность в Discord. Закройте игру и попробуйте снова.", "无法更改 Discord 活动状态。请关闭游戏后重试。"],
+  ["Aplicar correção do udmabuf", "Apply the udmabuf fix", "Применить исправление udmabuf", "应用 udmabuf 修复"],
+  ["Remover correção do udmabuf", "Remove the udmabuf fix", "Удалить исправление udmabuf", "移除 udmabuf 修复"],
+  ["Instala uma regra de acesso ao dispositivo e define o limite de 1024 MB agora e na inicialização.", "Install a device access rule and set the limit to 1024 MB now and at startup.", "Установить правило доступа к устройству и задать лимит 1024 МБ сейчас и при запуске системы.", "安装设备访问规则，并将当前和开机时的上限设为 1024 MB。"],
+  ["Remove a regra de acesso ao dispositivo e o limite de 1024 MB configurado na inicialização.", "Remove the device access rule and the 1024 MB startup limit.", "Удалить правило доступа к устройству и лимит 1024 МБ при запуске системы.", "移除设备访问规则和开机时设置的 1024 MB 上限。"],
+  ["O sistema pedirá autorização de administrador se você continuar.", "The system will ask for administrator approval if you continue.", "Если продолжить, система запросит разрешение администратора.", "继续后，系统将请求管理员授权。"],
+  ["Continuar", "Continue", "Продолжить", "继续"],
+  ["O udmabuf está acessível com limite de 1024 MB. Abra o jogo novamente para usá-lo.", "udmabuf is accessible with a 1024 MB limit. Start the game again to use it.", "Доступ к udmabuf открыт с лимитом 1024 МБ. Запустите игру заново, чтобы использовать его.", "udmabuf 已可访问，上限为 1024 MB。重新启动游戏即可使用。"],
+  ["A correção do udmabuf foi removida.", "The udmabuf fix was removed.", "Исправление udmabuf удалено.", "已移除 udmabuf 修复。"],
+  ["Nenhuma mudança no sistema.", "No system changes were made.", "Система не изменена.", "未更改系统。"],
+  ["A correção rodou, mas o módulo udmabuf não está disponível.", "The fix ran, but the udmabuf module is unavailable.", "Исправление выполнено, но модуль udmabuf недоступен.", "已运行修复，但 udmabuf 模块不可用。"],
+  ["O acesso ao dispositivo ainda está bloqueado. Saia da sessão e entre novamente.", "Device access is still blocked. Sign out and sign back in.", "Доступ к устройству по-прежнему заблокирован. Выйдите из сеанса и войдите снова.", "设备访问仍受限制。请退出登录并重新登录。"],
+  ["O limite do udmabuf ainda está abaixo de 1024 MB. Confira o log do launcher.", "The udmabuf limit is still below 1024 MB. Check the launcher log.", "Лимит udmabuf всё ещё ниже 1024 МБ. Проверьте журнал лаунчера.", "udmabuf 的上限仍低于 1024 MB。请查看启动器日志。"],
+  ["Não foi possível alterar o udmabuf. Confira o log do launcher.", "Could not change udmabuf. Check the launcher log.", "Не удалось изменить udmabuf. Проверьте журнал лаунчера.", "无法更改 udmabuf。请查看启动器日志。"],
 ];
 
 export const messageTables: Record<Locale, Messages> = {

@@ -1463,6 +1463,46 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(worker.wait(timeout=15), 0)
         self.assertEqual(len(payloads), 2)
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux udmabuf settings')
+    def test_udmabuf_requires_confirmation_and_refreshes_the_installed_offer(self):
+        receipt = Path(self.tmp.name) / 'approval'
+        script = ROOT / 'tests' / 'fixtures' / 'worker_udmabuf.py'
+        env = {**os.environ, 'PYTHONPATH': str(ROOT)}
+        process = subprocess.Popen([sys.executable, str(script), str(receipt), '--root', str(self.root)],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   text=True, cwd=ROOT, env=env)
+        self.addCleanup(self.stop_worker, process)
+
+        def request(request_id, method, **fields):
+            process.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+            process.stdin.flush()
+            return json.loads(process.stdout.readline())
+
+        self.assertEqual(request(1, 'hello', protocol=1)['result']['lock'], 'held')
+        self.assertEqual(request(2, 'settings_info')['result']['udmabuf_action'], 'apply')
+        self.assertEqual(request(3, 'settings_udmabuf', action='remove', confirmed=True)['result']['status'],
+                         'unavailable')
+        self.assertEqual(request(4, 'settings_udmabuf', action='apply', confirmed=False)['result']['status'],
+                         'cancelled')
+        marker = self.root / 'data' / 'job-running.json'
+        marker.write_text('{}')
+        self.assertEqual(request(5, 'settings_udmabuf', action='apply', confirmed=True)['result']['status'], 'busy')
+        marker.unlink()
+        self.assertFalse(receipt.exists())
+        self.assertEqual(request(6, 'settings_udmabuf', action='apply', confirmed=True)['result']['status'], 'applied')
+        self.assertEqual(request(7, 'settings_info')['result']['udmabuf_action'], 'remove')
+        self.assertEqual(request(8, 'settings_udmabuf', action='remove', confirmed=True)['result']['status'],
+                         'cancelled')
+        self.assertEqual(request(9, 'settings_info')['result']['udmabuf_action'], 'remove')
+        self.assertEqual(request(10, 'settings_udmabuf', action='remove', confirmed=True)['result']['status'],
+                         'removed')
+        self.assertEqual(request(11, 'settings_info')['result']['udmabuf_action'], 'apply')
+        self.assertEqual(receipt.read_text().splitlines(), ['apply', 'remove', 'remove'])
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('udmabuf: offer refused; action=apply', log)
+        self.assertIn('udmabuf: offer refused; PolicyKit dialog dismissed', log)
+        self.assertIn('udmabuf: after apply: accessible=yes; size_limit_mb=1024', log)
+
     def test_discord_preference_preserves_the_game_ini_and_refuses_running_work(self):
         game = self.root / 'game'
         game.mkdir()
@@ -1554,6 +1594,7 @@ class WorkerTest(unittest.TestCase):
         (hello, view, channel, auto_install, auto_check, keep_cache, warn, wrong_type, unrelated, wrong_dump,
          after_wrong, dump, game_folder, logs, wrong_folder) = map(json.loads, result.stdout.splitlines())
         self.assertIn('settings', hello['result']['capabilities'])
+        self.assertIn(view['result'].pop('udmabuf_action'), (None, 'apply', 'remove') if os.name != 'nt' else (None,))
         self.assertEqual(view['result'], {key: initial[key] for key in (
             'game_dir', 'dump', 'channel', 'auto_check', 'auto_install', 'keep_cache')} |
             {'warn_low_commit': True if os.name == 'nt' else None, 'uninstall_available': False, 'discord_status': True})

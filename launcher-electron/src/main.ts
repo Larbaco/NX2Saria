@@ -694,6 +694,28 @@ app.whenReady().then(() => {
       throw new Error('Save unsuccessful');
     }
   });
+  ipcMain.handle('settings-udmabuf', async (event, action) => {
+    const active = settingsWorker(event, true);
+    if (process.platform !== 'linux' || (action !== 'apply' && action !== 'remove')) throw new Error('Invalid device action');
+    const current = parseInstalledSettings(await active.request('settings_info'));
+    if (current.udmabuf_action !== action || settingsWorker(event, true) !== active) throw new Error('Device action unavailable');
+    const title = action === 'apply' ? tr('Aplicar correção do udmabuf') : tr('Remover correção do udmabuf');
+    const change = action === 'apply'
+      ? tr('Instala uma regra de acesso ao dispositivo e define o limite de 1024 MB agora e na inicialização.')
+      : tr('Remove a regra de acesso ao dispositivo e o limite de 1024 MB configurado na inicialização.');
+    const confirm = await dialog.showMessageBox(window, {
+      type: 'question', title, message: change,
+      detail: tr('O sistema pedirá autorização de administrador se você continuar.'),
+      buttons: [tr('Continuar'), tr('Cancelar')], defaultId: 1, cancelId: 1,
+    });
+    if (settingsWorker(event, true) !== active) throw new Error('Device action unavailable');
+    const result = await active.request('settings_udmabuf', { action, confirmed: confirm.response === 0 }, 70000);
+    if (active !== worker || !['applied', 'removed', 'cancelled', 'failed', 'module_absent', 'no_access', 'low_limit',
+      'busy', 'unavailable'].includes(result?.status) ||
+        (result.action !== null && result.action !== 'apply' && result.action !== 'remove')) throw new Error('Invalid device response');
+    log?.write('settings', `udmabuf action=${action} result=${result.status}`);
+    return result;
+  });
   ipcMain.handle('settings-discord', async (event, value) => {
     const active = settingsWorker(event, true);
     if (typeof value !== 'boolean') throw new Error('Invalid game preference');

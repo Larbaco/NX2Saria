@@ -2929,6 +2929,14 @@ An explicit change enters `launcher/worker.py` `write_discord_setting()`,
 which refuses if the game is running and uses the same INI-format writer
 as Tk. The application ID is neither read for display nor logged.
 
+On Linux, `launcher/worker.py` `udmabuf_action()` follows the same device,
+limit and host-policy rules as the Tk settings. With an active app release
+the script comes from that release. Electron asks before calling the
+existing PolicyKit helper. The worker checks the current offer again
+and avoids system changes after cancellation. `change_udmabuf()` refreshes
+and logs the device probe after the helper and returns a bounded result
+for the controls. Windows does not expose an offer.
+
 ### Electron Mods
 
 The worker reads the ordered list with `mods.scan()` and the same conflict winners as Tk.

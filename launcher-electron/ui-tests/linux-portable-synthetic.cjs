@@ -46,6 +46,15 @@ async function main() {
     await hide.check();
     await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled);
     assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), settings);
+    const settingsButton = page.getByRole('button', { name: 'Configurações', exact: true });
+    await settingsButton.click();
+    const discord = page.getByRole('checkbox', { name: 'Atividade no Discord', exact: true });
+    assert.equal(await discord.isChecked(), true);
+    await discord.uncheck();
+    await page.waitForFunction(() => !document.querySelector('#settings-discord').matches(':disabled'));
+    assert.match(await fs.readFile(path.join(game, 'nx2saria.ini'), 'utf8'), /discord_rpc = 0/);
+    assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), settings);
+    await settingsButton.click();
     const slot = path.join(game, 'profile', 'save', '01'.repeat(16), 'slot_00');
     await fs.mkdir(slot, { recursive: true });
     await fs.writeFile(path.join(game, 'profile', 'account.uid'), Buffer.alloc(16, 1));

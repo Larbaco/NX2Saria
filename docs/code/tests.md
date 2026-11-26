@@ -5996,6 +5996,13 @@ loopback service. HTTP 400 suppresses future offers in that worker. The Linux
 window reads the preview and declines, and the portable test repeats the flow
 with the extracted package and published app.
 
+The udmabuf fixture replaces the Linux probe, installed-rule check and
+PolicyKit helper. The worker test refuses a stale action and an interrupted
+job, honours a declined confirmation, and updates the offer after applying
+or removing the fix. The Linux window test captures the native dialog,
+checks that cancellation is the default, proves Cancel never reaches the
+helper, and simulates a dismissed PolicyKit prompt and a successful retry.
+
 The Discord worker test reads a legacy INI without moving it, refuses to
 write during an interrupted job, and changes one value while preserving
 CRLF, the configured ID, and the launcher settings. The Linux locale

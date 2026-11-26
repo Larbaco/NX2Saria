@@ -368,6 +368,54 @@ def add_to_steam(ctx, game, dump, request):
     request.set_result({'status': status, 'detail': detail})
 
 
+def udmabuf_script(ctx):
+    return ctx.layout.app / 'launcher' / 'platform' / 'udmabuf_fix.sh'
+
+
+def udmabuf_action(ctx):
+    status = ctx.udmabuf
+    if not sys.platform.startswith('linux') or not status or not udmabuf_script(ctx).is_file():
+        return None
+    from .platform import linux
+    if status['offered']:
+        return 'apply'
+    if not status['needs_fix'] and linux.udmabuf_fix_installed() and linux.udmabuf_change_available():
+        return 'remove'
+    return None
+
+
+def change_udmabuf(ctx, action, confirmed):
+    if not sys.platform.startswith('linux'):
+        return 'unavailable'
+    from .platform import linux
+    ctx.udmabuf = linux.udmabuf_status()
+    if action != udmabuf_action(ctx):
+        return 'unavailable'
+    if not confirmed:
+        ctx.log(f'udmabuf: offer refused; action={action}')
+        return 'cancelled'
+
+    ctx.log(f'udmabuf: offer accepted; action={action}')
+    ok, detail = linux.run_udmabuf_fix(udmabuf_script(ctx), action)
+    cancelled = not ok and detail == 'authorization cancelled'
+    if cancelled:
+        ctx.log('udmabuf: offer refused; PolicyKit dialog dismissed')
+    status = ctx.udmabuf = linux.udmabuf_status()
+    ctx.log(linux.udmabuf_after_log_line(action, status))
+    ctx.log(f'udmabuf: fix {"succeeded" if ok else "failed"}: {detail}')
+    if not ok:
+        return 'cancelled' if cancelled else 'failed'
+    if action == 'remove':
+        return 'removed'
+    if status is None:
+        return 'module_absent'
+    if not status['accessible']:
+        return 'no_access'
+    if status['limit_mb'] < linux.UDMABUF_MINIMUM_MB:
+        return 'low_limit'
+    return 'applied'
+
+
 def installed_settings(ctx):
     settings = ctx.settings
     game = settings['game_dir']
@@ -381,7 +429,8 @@ def installed_settings(ctx):
             'game_dir': settings['game_dir'], 'dump': settings['dump'],
             'channel': 'preview' if settings['channel'] == 'preview' else 'stable',
             'warn_low_commit': settings['warn_low_commit'] if os.name == 'nt' else None,
-            'uninstall_available': winsys.uninstall_available(ctx.layout), 'discord_status': discord}
+            'uninstall_available': winsys.uninstall_available(ctx.layout), 'discord_status': discord,
+            'udmabuf_action': udmabuf_action(ctx)}
 
 
 def write_discord_setting(ctx, value):
@@ -1198,6 +1247,19 @@ def main(argv=None):
                         result = {'status': 'adding'}
                     action_log(ctx, counts, 'steam', f'add request={result["status"]}')
                 emit({'id': request['id'], 'result': result})
+            elif request.get('method') == 'settings_udmabuf':
+                action, confirmed = request.get('action'), request.get('confirmed')
+                if action not in ('apply', 'remove') or type(confirmed) is not bool:
+                    error(request['id'], 'invalid_preference')
+                    continue
+                game = ctx.settings['game_dir']
+                if (lock_state != 'held' or run or job or pending or build_recovery.blocked(layout)
+                        or (game and saves.game_running(game))):
+                    status = 'busy'
+                else:
+                    status = change_udmabuf(ctx, action, confirmed)
+                action_log(ctx, counts, 'settings udmabuf', f'action={action} result={status}')
+                emit({'id': request['id'], 'result': {'status': status, 'action': udmabuf_action(ctx)}})
             elif request.get('method') == 'uninstall':
                 remove = request.get('remove_game')
                 if type(remove) is not bool:

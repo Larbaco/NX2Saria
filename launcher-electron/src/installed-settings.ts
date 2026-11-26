@@ -24,5 +24,6 @@ export function parseInstalledSettings(value: unknown) {
   return { game_dir: settings.game_dir, dump: settings.dump, channel: settings.channel,
     auto_check: settings.auto_check, auto_install: settings.auto_install, keep_cache: settings.keep_cache,
     warn_low_commit: settings.warn_low_commit, uninstall_available: settings.uninstall_available === true,
-    discord_status: typeof settings.discord_status === 'boolean' ? settings.discord_status : null };
+    discord_status: typeof settings.discord_status === 'boolean' ? settings.discord_status : null,
+    udmabuf_action: settings.udmabuf_action === 'apply' || settings.udmabuf_action === 'remove' ? settings.udmabuf_action : null };
 }
