@@ -4861,7 +4861,9 @@ replaces an earlier one, as `nx2saria.ini` does. A line with no pad entry (`none
 the pad then presses nothing for it, and the prompt shows its own button.
 
 `binds_followed()`: the text the build's record of the prompts adds for them (`tools/make_game.py` `prompts_drawn()`),
-empty without a remap.
+empty without a remap. Each kind names at most `LISTED_MAX` (8) buttons and counts the rest ("and 8 more"): the game
+reads the record into 512 bytes (`runtime/hle/romfs.c` `overlay_init()`), and every button remapped both ways would
+have run to about 700.
 
 ### `_sticks()`
 

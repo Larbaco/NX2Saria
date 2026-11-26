@@ -289,7 +289,8 @@ The value in the settings table carries that default; this code only rejects wha
 
 ### `window_idle_log()`
 
-From the poll, whether the window has focus or not: one line `input: cursor_hide = 1 (...), background_mute = 0 (...)`
+From the poll, whether the window has focus or not and with `NX2SARIA_INPUT=none` too (the cursor and the mute still act
+then): one line `input: cursor_hide = 1 (...), background_mute = 0 (...)`
 at start, and again when either changes.
 
 ### `input_mouse_turned()`, `mouse_turn_log()`
@@ -301,8 +302,8 @@ selectors (the wheel and the quick lists) and the menus' pointer take the counts
 a wheel the wrong way round. An input recording (`input_record`) keeps the counts as they are too, and a replay goes
 through the same settings.
 
-`mouse_turn_log()`: from the poll (with `window_idle_log()`, before the keyboard's part, so also without the focus), one
-line `input: mouse camera: mouse_invert_x = ..., mouse_invert_y = ...,
+`mouse_turn_log()`: from the poll (with `window_idle_log()`, before anything else, so also without the focus and with
+`NX2SARIA_INPUT=none`), one line `input: mouse camera: mouse_invert_x = ..., mouse_invert_y = ...,
 mouse_sens_y = ...` when the three differ from the defaults at start, and again when they change while the game runs.
 With the defaults nothing is said.
 
@@ -773,7 +774,8 @@ is fully handled.
 
 `cursor_hide` (`NX2SARIA_CURSOR_HIDE`, read again when `cfg_version` changes) on Windows: the cursor over the client
 area, not captured, still for `CURSOR_IDLE_NS` (`runtime/input/window_idle.c` `cursor_idle_step()`) is hidden with
-`SetCursor(NULL)`. Windows sends `WM_SETCURSOR` only when the mouse moves, so the timer looks at it while it is still.
+`SetCursor(NULL)`; shown again without a move (`cursor_hide` switched off) it gets the class cursor back at once.
+Windows sends `WM_SETCURSOR` only when the mouse moves, so the timer looks at it while it is still.
 Over the window means `WindowFromPoint()` is this window and the point is inside the client rectangle: a window on top or
 the title bar keeps the cursor. The first hide of the session is logged.
 - `WM_MOUSEACTIVATE` comes before `WM_ACTIVATEAPP`: a title bar or border click must not capture.
@@ -1569,7 +1571,9 @@ On by default: the cursor shows only while it is released (Esc, the settings men
 use, the focus elsewhere), and in each of these a still pointer has nothing to show. Hiding it changes neither where it
 is nor what it clicks: the game's menus read the position (`ikb_pointer()`) and keep the button under it selected, and
 the settings menu takes clicks where the hidden pointer is. A move shows it before anything else reads it, and while
-the mouse camera has it (captured) the capture's own hiding applies, so the two never fight.
+the mouse camera has it (captured) the capture's own hiding applies, so the two never fight. A warp counts as a move:
+when the game's menus put the pointer on a button (`ikb_pointer_set()`, keys or the d-pad moving the focus), it shows
+there, and hides 3 s later.
 
 ### `focus_mute_step()`
 

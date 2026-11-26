@@ -107,9 +107,15 @@ def pad_binds(ini_text=None):
     return out
 
 
+LISTED_MAX = 8
+
+
 def binds_followed(ini_text=None):
     def listed(binds):
-        return ', '.join(f'{b}: {v}' for b, v in binds.items())
+        named = [f'{b}: {v}' for b, v in binds.items()]
+        if len(named) <= LISTED_MAX:
+            return ', '.join(named)
+        return ', '.join(named[:LISTED_MAX]) + f' and {len(named) - LISTED_MAX} more'
     pads, keys = pad_binds(ini_text), key_binds(ini_text)
     parts = []
     if pads:

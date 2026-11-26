@@ -3806,7 +3806,7 @@ class FileCheckTest(Tmp):
 
 PROMPT_LOGIC = ('d65e5ed91e94f72b4623eb41b6dbdbaf42ae0dde20ab73254c0387f5f0e8fe7e',
                 {'pad_prompts.py': '3fd123d30ffbe28b9b4e7af2e67747ede543875a3f422e1658017c923d5b2a40',
-                 'prompt_art.py': 'fff7074a622a87686ce9a98dc237af30fa3315c443cb77a0834d3e4cb0e46f40',
+                 'prompt_art.py': '56e8d7075ca781a1ebab87052bf2215cde3fa4a4ae03c342713394f60d8e4dd6',
                  'button_icons.py': '79a5b9d99c36d227838777e1338f0ffc7b2231fb5350a059a996b61b724319b9'})
 
 
@@ -3927,6 +3927,15 @@ class PromptToolsTest(Tmp):
         self.assertEqual(prompt_art.binds_followed('bind_A = key:f\n'), 'the keyboard prompts follow 1 remapped button '
                                                                        '(A: f)')
         self.assertEqual(pp.pc_keys(ini), {**pp.PC_KEYS, 'A': 'e', 'B': 'lctrl', 'Y': 'q'})
+        every = ''.join(f'bind_{b} = pad:south, key:x\n' for b in prompt_art.PAD_BUTTONS)
+        every += ''.join(f'bind_{b} = key:x\n' for b in prompt_art.PC_KEYS if b not in prompt_art.PAD_BUTTONS)
+        long_line = prompt_art.binds_followed(every)
+        self.assertEqual(long_line, 'the gamepad prompts follow 16 remapped buttons (A: south, B: east, X: west, Y: north, '
+                                    'L: l, R: r, ZL: zl, ZR: zr and 8 more), the keyboard prompts 20 (A: x, B: x, X: x, '
+                                    'Y: x, L: x, R: x, ZL: x, ZR: x and 12 more)'.replace('B: east', 'B: south')
+                         .replace('X: west', 'X: south').replace('Y: north', 'Y: south').replace('L: l', 'L: south')
+                         .replace('R: r,', 'R: south,').replace('ZL: zl', 'ZL: south').replace('ZR: zr', 'ZR: south'))
+        self.assertLess(len('drawn from JulioCacko, FREE Input Prompts Pack 1.4 (CC0 1.0); ' + long_line), 400)
 
     def test_the_prompts_key_is_the_one_installs_have(self):
         import make_game

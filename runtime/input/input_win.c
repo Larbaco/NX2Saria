@@ -139,7 +139,10 @@ static void cursor_idle_check(HWND h) {
     int hide = cursor_idle_step(&cursor_idle, cursor_idle_on, over, (float)p.x, (float)p.y, plat_now_ns());
     if (hide == cursor_idle_hidden) return;
     cursor_idle_hidden = hide;
-    if (!hide) return;
+    if (!hide) {
+        if (over) SetCursor((HCURSOR)GetClassLongPtrW(h, GCLP_HCURSOR));
+        return;
+    }
     SetCursor(NULL);
     if (cursor_idle.hides == 1)
         rt_log("input: cursor_hide: the cursor hid after %.0f s still over the window (the first time this session; a "

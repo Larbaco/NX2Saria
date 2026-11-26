@@ -207,7 +207,7 @@ The steps, in order:
   writes a line with a personal folder from a 2560-byte copy: one write unless the short forms make the line more than
   2.5 times longer (a form such as `%COMPUTERNAME%` stands for a name of 3 bytes or more), which a crash line does not.
 - A signal another process sent (`PlatCrash` `sent`, Linux) ends the FATAL line with `, sent by another process, pid
-  <pid>: not a fault, no address` (or `sent by the game's own process`) in place of the access and its address: before,
+  <pid>: not a fault, no address` (or `sent by the game's own process <pid>`) in place of the access and its address: before,
   the line said `reading address 0x3e8...`, the sender's uid and pid.
 - What the thread was doing (a pipeline build names its shaders, `plat_crash_context_get()`): the stderr note the
   platform's exception handler writes misses the log.

@@ -1251,10 +1251,10 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
     int32_t sl[2] = {0, 0}, sr[2] = {0, 0};
     plat_mutex_lock(&lock);
     if (!state) start();
+    mouse_turn_log();
+    window_idle_log();
     if (state > 0) {
         binds_refresh();
-        mouse_turn_log();
-        window_idle_log();
         if (state == 1) pad_read(&b, sl, sr);
         int pad_used = b || abs(sl[0]) > PAD_USED || abs(sl[1]) > PAD_USED || abs(sr[0]) > PAD_USED ||
                        abs(sr[1]) > PAD_USED, kbm_used = 0;
