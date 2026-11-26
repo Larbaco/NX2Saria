@@ -376,7 +376,7 @@ Windows releases carry `NX2Saria-update.json` (version, notes, and the size and 
 separate `NX2Saria-update-linux.json`, which names the Linux app, runtime and AppImage. Each launcher chooses the
 manifest for its own platform and ignores the other platform's files. The feed
 (`app/<version>/feed.json`) names a GitHub repository: the launcher reads its newest release (or pre-release, on the
-Preview channel) that has the manifest. A private repository answers only with a token (`github_token` in
+Preview channel) that has the manifest, by version number, whatever order GitHub lists them in. A private repository answers only with a token (`github_token` in
 `data/launcher.json`); players need a public one. `feed_repo` in `data/launcher.json` points one launcher at another
 repository for testing; a `{"type": "url", "url": "..."}` feed reads one manifest directly (Linux maps either
 standard manifest URL to `NX2Saria-update-linux.json`). Every address is https (plain http only to this PC), a redirect to http is refused, and the token is not
