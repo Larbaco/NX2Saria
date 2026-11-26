@@ -5938,6 +5938,13 @@ controller. It checks focus order and restoration, selection changes, return,
 unfocused input suppression, scroll, and overflow at the minimum window size
 and at 140% zoom. Hardware Game Mode is a separate check.
 
+The CLI contention fixtures use independent processes and the real
+installation lock. When the worker holds it, each mutating CLI command
+returns busy before executing, and the CLI check can still announce a
+synthetic update. In the other direction, the tools command holds its lock
+inside a stand-in job. A second worker refuses without changing its tree
+and can acquire the lock after the job exits.
+
 The worker's feed-order test serves a GitHub-style release list and only
 the newest manifest on loopback. It verifies the announced version, the
 single feed-order diagnostic in the installation log and the same active

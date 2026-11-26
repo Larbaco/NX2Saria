@@ -3587,14 +3587,66 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(self.tree(), before)
         self.assertEqual(json.loads(second.stdout)['error']['code'], 'busy')
         self.assertNotEqual(second.returncode, 0)
-        cli = subprocess.run([sys.executable, '-m', 'launcher.cli', '--root', str(self.root), 'tools'],
-                             text=True, capture_output=True, cwd=ROOT, timeout=15)
-        self.assertEqual(cli.returncode, 1)
-        self.assertIn('using', cli.stderr.lower())
+        cli_script = (
+            "import sys\n"
+            "from launcher import cli, feed\n"
+            "run=cli.run\n"
+            "def safe_run(args, ctx, held):\n"
+            " if args.cmd!='check': raise AssertionError('a mutating command acquired the worker lock')\n"
+            " return run(args, ctx, held)\n"
+            "cli.run=safe_run\n"
+            "feed.latest=lambda *args,**kwargs: feed.Release({'version':'999.0.0'})\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        commands = [('tools',), ('install', '--dump', 'scratch.dump', '--game', 'scratch-game'),
+                    ('rebuild',), ('update',), ('continue-update', '0.0.0'), ('fonts',)]
+        for command in commands:
+            with self.subTest(command=command[0]):
+                cli = subprocess.run([sys.executable, '-c', cli_script, '--root', str(self.root), *command],
+                                     text=True, capture_output=True, cwd=ROOT, timeout=15)
+                self.assertEqual(cli.returncode, 1)
+                self.assertIn('using', cli.stderr.lower())
+                self.assertNotIn('AssertionError', cli.stderr)
+        check = subprocess.run([sys.executable, '-c', cli_script, '--root', str(self.root), 'check'],
+                               text=True, capture_output=True, cwd=ROOT, timeout=15)
+        self.assertEqual(check.returncode, 0, check.stderr)
+        self.assertIn('update available: 999.0.0', check.stdout)
+        self.assertEqual((self.root / 'data' / 'launcher.json').read_text(), '{}')
+        self.assertEqual((self.root / 'app' / 'current.txt').read_text(), '0.0.1')
         worker.stdin.close()
         self.assertEqual(worker.wait(timeout=15), 0)
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
+
+    def test_worker_refuses_busy_cli_then_acquires_the_same_lock(self):
+        script = (
+            "import sys\n"
+            "from launcher import cli\n"
+            "def follow(job):\n"
+            " print('synthetic CLI job holding lock', flush=True)\n"
+            " sys.stdin.readline()\n"
+            " return 0\n"
+            "cli.follow=follow\n"
+            "sys.exit(cli.main(sys.argv[1:]))\n"
+        )
+        cli = subprocess.Popen([sys.executable, '-c', script, '--root', str(self.root), 'tools'],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, cli)
+        opened = queue.Queue()
+        threading.Thread(target=lambda: opened.put(cli.stdout.readline()), daemon=True).start()
+        self.assertEqual(opened.get(timeout=10).strip(), 'synthetic CLI job holding lock')
+        before = self.tree()
+        denied = self.run_worker({'id': 1, 'method': 'hello', 'protocol': 1})
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertEqual(json.loads(denied.stdout)['error']['code'], 'busy')
+        self.assertEqual(self.tree(), before)
+
+        cli.stdin.close()
+        self.assertEqual(cli.wait(timeout=10), 0)
+        allowed = self.run_worker({'id': 2, 'method': 'hello', 'protocol': 1})
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(json.loads(allowed.stdout)['result']['lock'], 'held')
 
     def test_startup_failure_is_sanitized_and_releases_the_lock(self):
         script = ("import runpy,sys\n"
