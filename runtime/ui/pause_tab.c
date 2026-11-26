@@ -235,10 +235,7 @@ static void drop_system(void) {
     g_inout_hidden = 0, g_sys_lyt = 0;
 }
 
-static uint64_t g_hdr;
-static void header_tick(uint64_t s);
-static int header_like(uint64_t p);
-static uint64_t find_header(uint64_t plus_screen);
+static uint64_t g_header_read_ms;
 
 static void static_header(uint64_t s) {
     PtBox before, last, tab;
@@ -294,70 +291,40 @@ static void plus_tick(uint64_t s) {
     memcpy(g_view.page, out, sizeof out);
     g_page_ms = shape && host ? now : g_page_ms;
     plat_mutex_unlock(&g_lock);
-    if (g_hdr && !header_like(g_hdr)) g_hdr = 0;
-    if (!g_hdr) g_hdr = find_header(s);
-    if (g_hdr) header_tick(g_hdr);
-    else static_header(s);
+    if (now - g_header_read_ms > 200) static_header(s);
 }
 
 static uint64_t g_bg_hidden;
 
-static int header_like(uint64_t p) { return game_object(p, HDR_CATS + 8) && layout_named(layout_of(p), "MenuOverlay_00"); }
-
-static uint64_t header_in(uint64_t base, uint64_t span, const char *what) {
-    for (uint64_t off = 0; off < span; off += 8) {
-        if (!ok_at(base + off, 8)) break;
-        uint64_t p = rd64(base + off);
-        if (header_like(p)) {
-            rt_log("pause_tab: the pause menu's header found at %s+%#llx", what, (unsigned long long)off);
-            return p;
-        }
-        if ((p & 7) || !ok_at(p, 64 * 8)) continue;
-        for (uint64_t j = 0; j < 64; j++) {
-            uint64_t q = rd64(p + j * 8);
-            if (header_like(q)) {
-                rt_log("pause_tab: the pause menu's header found at %s+%#llx, [%llu]", what, (unsigned long long)off,
-                       (unsigned long long)j);
-                return q;
-            }
-        }
-    }
-    return 0;
+static uint64_t category_layout(uint64_t cat) {
+    uint64_t holder = game_object(cat, CAT_LAYOUT + 8) ? rd64(cat + CAT_LAYOUT) : 0;
+    return ok_at(holder, 0x88) ? rd64(holder + 0x80) : 0;
 }
 
-static uint64_t find_header(uint64_t plus_screen) {
-    static int tries;
-    static uint64_t last_ms;
-    uint64_t now = plat_now_ms();
-    if (tries >= 20 || now - last_ms < 500) return 0;
-    last_ms = now;
-    uint64_t sys = rd64(MOD_MAIN_BASE + UI_SYSTEM), mgr = 0, h = 0;
-    if (game_object(sys, UI_SCREENS + 8) && rd64(sys) == MOD_MAIN_BASE + UI_SYSTEM_VT) mgr = rd64(sys + UI_SCREENS);
-    if (game_object(mgr, 0x400)) h = header_in(mgr, 0x400, "the screen manager");
-    if (!h) h = header_in(plus_screen, 0x600, "the pause menu");
-    if (!h && ++tries == 20)
-        rt_log("pause_tab: the pause menu's header was not found: the tab's place is the game's layout's, and the System "
-               "category keeps its plate while the tab is open");
-    return h;
-}
-
-static void header_tick(uint64_t s) {
+static int header_tick(uint64_t s) {
     static int reported;
     uint64_t now = plat_now_ms();
-    if (!ok_at(s, HDR_CATS + 8)) return;
+    if (!ok_at(s, HDR_CATS + 8)) return 0;
     uint32_t n = rd32(s + HDR_COUNT);
     uint64_t cats = rd64(s + HDR_CATS);
     if (n != HDR_CATEGORIES || !ok_at(cats, HDR_CATEGORIES * 8)) {
         if (!reported++)
-            rt_log("pause_tab: the pause menu's header has %u categories, not %d: no tab", n, HDR_CATEGORIES);
-        return;
+            rt_log("pause_tab: the pause menu's header has %u categories, not %d: the tab stands where the game's layout "
+                   "puts them", n, HDR_CATEGORIES);
+        return 0;
     }
     uint64_t host[2] = {0, 0}, last_lyt = 0;
     PtBox box[2];
     for (int i = 0; i < 2; i++) {
-        uint64_t cat = rd64(cats + (uint64_t)(2 + i) * 8), lyt = game_object(cat, CAT_LAYOUT + 8) ? rd64(cat + CAT_LAYOUT) : 0;
+        uint64_t lyt = category_layout(rd64(cats + (uint64_t)(2 + i) * 8));
         host[i] = ok_at(lyt, LYT_TREE + 8) ? rd64(lyt + LYT_HOST) : 0;
-        if (!pane_box(host[i], &box[i])) return;
+        if (!pane_box(host[i], &box[i])) {
+            static int lines;
+            if (lines++ < 4)
+                rt_log("pause_tab: the header's category %d has no box (layout %#llx, its part pane %#llx): the tab stands "
+                       "where the game's layout puts it", 2 + i, (unsigned long long)lyt, (unsigned long long)host[i]);
+            return 0;
+        }
         if (i) last_lyt = lyt;
     }
     PtBox tab;
@@ -385,6 +352,7 @@ static void header_tick(uint64_t s) {
     g_view.alpha = shown ? 1.0f : 0.0f;
     g_header_ms = shown ? now : g_header_ms;
     plat_mutex_unlock(&g_lock);
+    return 1;
 }
 
 static int layout_is(uint64_t s, const char *want) { return layout_named(layout_of(s), want); }
@@ -413,6 +381,7 @@ void pause_tab_screen_host(Cpu *c) {
     if (!game_object(s, SCR_PROJ + 64)) return;
     if (pause_tab_test("screens")) screens_seen(s);
     if (layout_is(s, "PlusMenu_00")) plus_tick(s);
+    else if (layout_is(s, "MenuOverlay_00") && header_tick(s)) g_header_read_ms = plat_now_ms();
 }
 
 int pause_tab_view(PauseTabView *v) {

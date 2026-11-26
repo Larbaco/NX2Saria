@@ -74,10 +74,8 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
 
 - `pause_tab: on (NX2SARIA_PAUSE_SETTINGS_TAB): a fifth tab, "NX2Saria", after the pause menu's System tab; ...` at
   start, or `pause_tab: off ...` with the reason.
-- `pause_tab: the pause menu's header found at ...`, or after 10 s `pause_tab: the pause menu's header was not found:
-  the tab's place is the game's layout's, ...`: the header's update does not run through the screens' site, so the
-  tab looks for the header object; without it the tab stands where the game's layout puts the categories and the
-  System category keeps its plate.
+- `pause_tab: the header's category 3 has no box ...` (at most 4 lines): the header could not be read, and the tab
+  stands where the game's layout puts the categories; the System category then keeps its plate while the tab is open.
 - `pause_tab: header: the System category at x 490..890, the tab at 1065..1465 (layout units); its plate found`: once,
   the first time the header shows.
 - `pause_tab: R on the System tab: the tab opens` (or `a click on the tab`), `pause_tab: the tab opened`,
