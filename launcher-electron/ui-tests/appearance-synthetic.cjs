@@ -56,6 +56,7 @@ sounds=Path(sys.argv[1])
     assert.equal(cues[1].volume, 0.18);
     assert.match(cues[0].source, /^data:audio\/wav;base64,/);
     assert.notEqual(cues[0].source, cues[1].source);
+    await page.getByRole('button', { name: 'Personalizar', exact: true }).click();
     const scheme = page.getByLabel('Tema de cores');
     assert.equal(await scheme.inputValue(), 'lake');
     const original = await page.evaluate(() => document.documentElement.style.getPropertyValue('--shell-panel'));

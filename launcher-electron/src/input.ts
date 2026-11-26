@@ -49,6 +49,8 @@ function activateLauncherControl() {
   current.click();
 }
 
+let returningFromLauncherPanel = false;
+
 function returnFromLauncherPanel() {
   const dialog = activeDialog();
   if (dialog) {
@@ -59,7 +61,8 @@ function returnFromLauncherPanel() {
   const expanded = focused?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]');
   if (!expanded || expanded.disabled) return false;
   focusLauncherControl(expanded);
-  expanded.click();
+  returningFromLauncherPanel = true;
+  try { expanded.click(); } finally { returningFromLauncherPanel = false; }
   return true;
 }
 

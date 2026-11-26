@@ -91,10 +91,10 @@ function playAppearanceEffect(cue: 'select' | 'back') {
 document.addEventListener('click', event => {
   if (!(event.target instanceof Element)) return;
   const control = event.target.closest('button, input, select');
-  if (control) playAppearanceEffect(/(?:-back|-close|-cancel)$/.test(control.id) ? 'back' : 'select');
+  if (control) playAppearanceEffect(returningFromLauncherPanel || /(?:-back|-close|-cancel)$/.test(control.id) ? 'back' : 'select');
 }, true);
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !event.repeat) playAppearanceEffect('back');
+  if (event.key === 'Escape' && !event.repeat && !event.defaultPrevented) playAppearanceEffect('back');
 });
 
 function updateAppearanceControls(disabled: boolean) {
