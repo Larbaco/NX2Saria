@@ -125,6 +125,7 @@ class Job:
         self.rev = 0
         self.cancel_flag = threading.Event()
         self.proc = None
+        self.supervised_build = None
         self.result = None
         self.error = ''
         self.lines = collections.deque(maxlen=500)
@@ -304,11 +305,14 @@ class Job:
                     if s.state == RUNNING:
                         s.state = FAILED if self.result == 'failed' else PENDING
                         s.value = 'Stopped' if self.result == 'failed' else 'Cancelled'
-            if marked:
+            if marked and not (self.supervised_build and self.supervised_build.needs_recovery):
                 try:
                     (self.ctx.layout.data / MARKER).unlink(missing_ok=True)
                 except OSError:
                     pass
+                else:
+                    if self.supervised_build:
+                        self.supervised_build.clean()
             locks.release_claim(claimed)
             if file:
                 file.release()
@@ -407,7 +411,12 @@ class Job:
 
         if self.cancelled():
             raise net.Cancelled()
-        self.proc = build.Run(build.command(self.ctx.layout, args), on_event, self.log)
+        layout = self.ctx.layout
+        command = build.command(layout, args)
+        if getattr(self.ctx, 'electron_worker', False) is True:
+            self.proc = self.supervised_build = build.SupervisedRun(layout, layout.data / MARKER, command, on_event, self.log)
+        else:
+            self.proc = build.Run(command, on_event, self.log)
         if self.cancelled():
             self.proc.cancel()
         code = self.proc.wait()

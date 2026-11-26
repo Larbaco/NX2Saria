@@ -148,7 +148,16 @@ through the current path. The initial supervisor test runs an inert command in a
 directory. It verifies that worker EOF before approval leaves the command unstarted. After
 approval the output and terminal result must survive the disappearance of the control channel.
 This standalone test passes locally on Linux. Wiring the supervisor into builds and verifying
-recovery after killing the worker are separate steps. Only the supervisor records the builder's terminal result after the
+recovery after killing the worker are separate steps.
+
+The next test exercises a real worker job with a stand-in compiler. The compiler reads the
+marker at its own startup and proves the supervisor identity was published first. After the
+worker is killed, the compiler must remain alive, finish when released by the test, and leave a
+terminal result in its temporary run directory. The same extended marker must remain consumable
+by the Tk recovery function, which uses the original task fields. Ordinary cancellation still
+waits for the build termination before releasing claims. Local Linux verification passed for
+the published identity, the refusal of a second Play while the builder lives, and the terminal
+result after killing the worker. The Tk marker reader consumed the result's extended job marker. Only the supervisor records the builder's terminal result after the
 verified group drains, then exits as soon as that record is written. Missing terminal status
 means the supervisor may have died and live group ownership must be checked.
 

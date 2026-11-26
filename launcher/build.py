@@ -1,9 +1,14 @@
 import json
 import os
+import queue
+import shutil
 import signal
 import stat
 import subprocess
+import sys
 import threading
+import time
+import uuid
 from pathlib import Path
 
 from . import winsys
@@ -69,13 +74,16 @@ class Run:
         self._reader.start()
 
     def _read(self, on_event, on_line):
+        self._read_lines(self.proc.stdout, on_event, on_line)
+
+    def _read_lines(self, lines, on_event, on_line):
         def call(handler, arg):
             try:
                 handler(arg)
             except Exception:   # noqa: BLE001 - any failure of a handler must leave the pipe read
                 self.dropped += 1
 
-        for line in self.proc.stdout:
+        for line in lines:
             line = line.rstrip('\r\n')
             if line.startswith('@@'):
                 try:
@@ -112,6 +120,102 @@ class Run:
                 os.killpg(self.proc.pid, signal.SIGTERM)
             except (ProcessLookupError, PermissionError):
                 pass
+
+
+SUPERVISOR = ('import runpy,sys; sys.path.insert(0,sys.argv.pop(1)); '
+              'runpy.run_module("launcher.build_supervisor",run_name="__main__")')
+
+
+class SupervisedRun(Run):
+    def __init__(self, layout, marker, cmd, on_event, log, cwd=None):
+        self.error = None
+        self.dropped = 0
+        self.supervisor_exited = False
+        self.needs_recovery = False
+        self.run_dir = layout.data / 'build-supervisor' / uuid.uuid4().hex
+        self.run_dir.mkdir(parents=True)
+        command = [sys.executable, '-I', '-c', SUPERVISOR, str(Path(__file__).resolve().parents[1]),
+                   '--install-root', str(layout.root), '--run-dir', str(self.run_dir), '--', *cmd]
+        flags = ({'creationflags': CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | BELOW_NORMAL_PRIORITY_CLASS}
+                 if os.name == 'nt' else {'start_new_session': True})
+        env = dict(os.environ, PYTHONUNBUFFERED='1', PYTHONIOENCODING='utf-8')
+        try:
+            self.proc = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                         cwd=cwd, env=env, text=True, encoding='utf-8', **flags)
+        except OSError:
+            shutil.rmtree(self.run_dir, ignore_errors=True)
+            raise
+        frames = queue.Queue()
+        reader = threading.Thread(target=lambda: frames.put(self.proc.stdout.readline(4096)), daemon=True)
+        reader.start()
+        try:
+            identity = json.loads(frames.get(timeout=10))
+            if identity['pid'] != self.proc.pid or identity['kind'] not in ('linux_group', 'windows_job', 'windows_pid'):
+                raise ValueError('invalid supervisor identity')
+            data = json.loads(marker.read_text(encoding='utf-8'))
+            data['build'] = {'version': 1, 'token': self.run_dir.name, **identity}
+            tmp = marker.with_name(marker.name + '.tmp')
+            tmp.write_text(json.dumps(data), encoding='utf-8')
+            os.replace(tmp, marker)
+        except (OSError, KeyError, ValueError, TypeError, queue.Empty) as e:
+            self.proc.stdin.close()
+            if self.proc.poll() is None:
+                self.proc.kill()
+            self.proc.wait()
+            reader.join(1)
+            self.proc.stdout.close()
+            shutil.rmtree(self.run_dir, ignore_errors=True)
+            raise BuildError('could not register the build process') from e
+        log(f'worker: build supervisor ready mode={identity["kind"]}')
+        try:
+            self.proc.stdin.write('start\n')
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        self.proc.stdout.close()
+        self.reader = threading.Thread(target=self._read_lines, args=(self.output_lines(), on_event, log), daemon=True)
+        self.reader.start()
+
+    def output_lines(self):
+        path = self.run_dir / 'output.log'
+        while not path.is_file():
+            if self.proc.poll() is not None:
+                return
+            time.sleep(0.1)
+        fragment = b''
+        with path.open('rb') as output:
+            while True:
+                part = output.readline()
+                if part.endswith(b'\n'):
+                    yield (fragment + part).decode('utf-8', 'replace')
+                    fragment = b''
+                else:
+                    fragment += part
+                    if self.supervisor_exited:
+                        if fragment:
+                            yield fragment.decode('utf-8', 'replace')
+                        return
+                    time.sleep(0.1)
+
+    def cancel(self):
+        try:
+            (self.run_dir / 'cancel').touch(exist_ok=True)
+        except OSError:
+            pass
+
+    def wait(self):
+        self.proc.wait()
+        self.supervisor_exited = True
+        self.reader.join(5)
+        try:
+            code = json.loads((self.run_dir / 'result.json').read_text(encoding='utf-8'))['code']
+        except (OSError, ValueError, KeyError, TypeError):
+            self.needs_recovery = True
+            raise BuildError('the build outcome could not be confirmed')
+        return code if type(code) is int else -1
+
+    def clean(self):
+        shutil.rmtree(self.run_dir, ignore_errors=True)
 
 
 ERROR_ACCESS_DENIED, ERROR_SHARING_VIOLATION = 5, 32

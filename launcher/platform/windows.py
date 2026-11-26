@@ -1,5 +1,6 @@
 import ctypes
 import os
+import subprocess
 from ctypes import wintypes
 
 
@@ -87,6 +88,10 @@ def build_group_kernel():
     k.GetProcessTimes.argtypes = [wintypes.HANDLE, filetime, filetime, filetime, filetime]
     k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
     k.CloseHandle.argtypes = [wintypes.HANDLE]
+    k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k.OpenProcess.restype = wintypes.HANDLE
+    k.IsProcessInJob.argtypes = [wintypes.HANDLE, wintypes.HANDLE, ctypes.POINTER(wintypes.BOOL)]
+    k.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
     k.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
                                               wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
     return k
@@ -127,15 +132,45 @@ class BuildJobGroup:
         if self.handle:
             self.kernel.CloseHandle(self.handle)
 
-    def drain(self):
-        import time
+    def active_members(self):
         if not self.handle:
-            return
+            return 0
         accounting = JobAccounting()
+        if not self.kernel.QueryInformationJobObject(self.handle, 1, ctypes.byref(accounting),
+                                                      ctypes.sizeof(accounting), None):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return max(0, accounting.active - 1)
+
+    def stop(self, primary_pid):
+        if not self.handle:
+            if primary_pid:
+                subprocess.run(['taskkill', '/T', '/F', '/PID', str(primary_pid)], capture_output=True,
+                               creationflags=0x08000000, timeout=15)
+            return
+        k = self.kernel
+        size = 8
         while True:
-            if not self.kernel.QueryInformationJobObject(self.handle, 1, ctypes.byref(accounting),
-                                                          ctypes.sizeof(accounting), None):
+            size = max(size, self.active_members() + 1)
+            ids = (ctypes.c_size_t * size)()
+
+            class JobPids(ctypes.Structure):
+                _fields_ = [('assigned', wintypes.DWORD), ('returned', wintypes.DWORD), ('ids', type(ids))]
+
+            members = JobPids()
+            if k.QueryInformationJobObject(self.handle, 3, ctypes.byref(members), ctypes.sizeof(members), None):
+                break
+            if ctypes.get_last_error() != 234:
                 raise ctypes.WinError(ctypes.get_last_error())
-            if accounting.active <= 1:
-                return
-            time.sleep(0.1)
+            size *= 2
+        for pid in members.ids[:members.returned]:
+            if pid == self.identity['pid']:
+                continue
+            process = k.OpenProcess(0x1001, False, pid)
+            if not process:
+                continue
+            try:
+                verified = wintypes.BOOL()
+                if k.IsProcessInJob(process, self.handle, ctypes.byref(verified)) and verified.value:
+                    k.TerminateProcess(process, 1)
+            finally:
+                k.CloseHandle(process)

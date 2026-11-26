@@ -74,7 +74,7 @@ app.whenReady().then(() => {
     return selected?.status === 'not_configured' || selected?.status === 'not_ready';
   }
   function settingsView(result: Inspection | null): Inspection | null {
-    return result && { ...result, hide_while_playing: worker?.handshake.lock === 'held' ? result.hide_while_playing : null };
+    return result && { ...result, hide_while_playing: worker?.handshake.lock === 'held' && !result.job_marker_present ? result.hide_while_playing : null };
   }
   function playRefused(error: string) {
     return { error, messageId: expectPlayMessage() };
@@ -319,7 +319,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('set-hide-while-playing', async (event, value) => {
     if (event.sender !== window.webContents || typeof value !== 'boolean' || playing || !worker ||
-        worker.handshake.lock !== 'held' || typeof state?.hide_while_playing !== 'boolean') throw new Error('Unavailable');
+        worker.handshake.lock !== 'held' || state?.job_marker_present || typeof state?.hide_while_playing !== 'boolean') throw new Error('Unavailable');
     const active = worker;
     try {
       const result = await active.request('set_hide_while_playing', { value });

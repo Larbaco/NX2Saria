@@ -475,7 +475,8 @@ def main(argv=None):
                     emit({'id': request['id'], 'result': {'status': 'cancelling'}})
                 continue
             if request.get('method') in ('play', 'memory_response'):
-                if job:
+                if job or (layout.data / jobs.MARKER).exists():
+                    action_log(ctx, counts, 'play', 'refused status=job_running')
                     error(request['id'], 'job_running')
                     continue
                 game_dir = ctx.settings.get('game_dir')
@@ -623,7 +624,7 @@ def main(argv=None):
                 value = request.get('value')
                 if type(value) is not bool:
                     error(request['id'], 'invalid_preference')
-                elif lock_state != 'held' or run or job or pending:
+                elif lock_state != 'held' or run or job or pending or (layout.data / jobs.MARKER).exists():
                     error(request['id'], 'preference_unavailable')
                 else:
                     try:

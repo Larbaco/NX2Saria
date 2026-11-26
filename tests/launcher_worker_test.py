@@ -515,6 +515,110 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual((allowed / 'output.log').read_text().strip(), 'synthetic output')
         self.assertEqual(json.loads((allowed / 'result.json').read_text())['code'], 0)
 
+        child_started.unlink()
+        child_release.unlink()
+        stopped = scratch / 'aefc9690f3ef4ab890540155d48654ff'
+        supervisor = supervise(stopped)
+        supervisor.stdin.write('start\n')
+        supervisor.stdin.flush()
+        supervisor.stdin.close()
+        deadline = time.monotonic() + 10
+        while not child_started.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(child_started.is_file())
+        (stopped / 'cancel').touch()
+        self.assertEqual(supervisor.wait(timeout=15), 0)
+        self.assertNotEqual(json.loads((stopped / 'result.json').read_text())['code'], 0)
+
+
+    def test_worker_publishes_build_identity_before_start_and_build_survives_worker_death(self):
+        from launcher import jobs
+        from launcher.platform import game_executable
+        from types import SimpleNamespace
+
+        base = Path(self.tmp.name)
+        game = base / 'game'
+        cache = game / 'build-cache'
+        cache.mkdir(parents=True)
+        (cache / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        game_executable(game).write_text('the last finished build')
+        data = self.root / 'data'
+        marker = data / 'job-running.json'
+        (data / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        started, release = base / 'build-saw-marker.json', base / 'end-build'
+        builder = ("import pathlib,sys,time\n"
+                   "marker,started,release=map(pathlib.Path,sys.argv[1:])\n"
+                   "started.write_text(marker.read_text())\n"
+                   "until=time.monotonic()+15\n"
+                   "while not release.exists() and time.monotonic()<until: time.sleep(.02)\n"
+                   "sys.exit(0 if release.exists() else 2)\n")
+        worker_code = ("import runpy,sys\n"
+                       "from unittest import mock\n"
+                       "from launcher import build,jobs,winsys\n"
+                       "root=sys.argv[1]\n"
+                       "command=[sys.executable,'-c',*sys.argv[2:]]\n"
+                       "sys.argv=['launcher.worker','--root',root]\n"
+                       "with (mock.patch.object(jobs.RebuildJob,'run',lambda job: job.make_game([], {})), "
+                       "mock.patch.object(build,'command',return_value=command), "
+                       "mock.patch.object(winsys,'keep_awake')):\n"
+                       " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', worker_code, str(self.root), builder,
+                                   str(marker), str(started), str(release)],
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, worker)
+        self.addCleanup(release.touch)
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+        worker.stdin.write('{"id":1,"method":"hello","protocol":1}\n')
+        worker.stdin.flush()
+        self.assertEqual(frames.get(timeout=10)['result']['lock'], 'held')
+        worker.stdin.write('{"id":2,"method":"rebuild"}\n')
+        worker.stdin.flush()
+        self.assertEqual(frames.get(timeout=10)['result']['status'], 'building')
+        self.assertEqual(frames.get(timeout=10)['event'], 'job_started')
+        deadline = time.monotonic() + 10
+        captured = None
+        while time.monotonic() < deadline:
+            try:
+                captured = json.loads(started.read_text())
+                break
+            except (FileNotFoundError, ValueError):
+                time.sleep(.02)
+        self.assertIsNotNone(captured)
+        identity = captured['build']
+        self.assertIn(identity['kind'], ('linux_group', 'windows_job', 'windows_pid'))
+        self.assertNotEqual(identity['pid'], worker.pid)
+        self.assertEqual(captured['kind'], 'rebuild')
+        self.assertIsNone(worker.poll())
+        worker.kill()
+        worker.wait(timeout=10)
+        result = data / 'build-supervisor' / identity['token'] / 'result.json'
+        self.assertFalse(result.exists())
+        reopened, hello = self.start_worker()
+        self.assertEqual(hello['result']['lock'], 'held')
+        reopened.stdin.write('{"id":2,"method":"play"}\n')
+        reopened.stdin.flush()
+        self.assertEqual(json.loads(reopened.stdout.readline())['error']['code'], 'job_running')
+        reopened.stdin.close()
+        self.assertEqual(reopened.wait(timeout=10), 0)
+        self.assertEqual(json.loads(marker.read_text())['build'], identity)
+        release.touch()
+        deadline = time.monotonic() + 10
+        while not result.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertEqual(json.loads(result.read_text())['code'], 0)
+        self.assertIn('worker: build supervisor ready', (data / 'logs' / 'launcher.log').read_text())
+        recovered = jobs.interrupted(SimpleNamespace(layout=SimpleNamespace(data=data)))
+        self.assertEqual(recovered['task'], 'the rebuild of the game')
+        self.assertEqual(recovered['game_dir'], str(game))
+        self.assertFalse(marker.exists())
+
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()

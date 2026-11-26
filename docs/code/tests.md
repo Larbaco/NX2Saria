@@ -5972,7 +5972,10 @@ rebuild and observes the ready screen and rebuild log without a Play request.
 The supervisor test verifies that process identity is available before the start acknowledgement.
 It closes the first supervisor's input without starting the command. A second run receives the
 acknowledgement, loses its control pipe, and still produces command output and a terminal result
-in a separate temporary run directory.
+in a separate temporary run directory. It repeats the test with a cancellation flag and a running command.
+The worker integration test inspects the mark from inside the stand-in compiler, kills the
+worker, checks that a new worker refuses Play while the compiler is alive, and releases the
+compiler to finish. Finally the existing Tk marker reader consumes the extended marker.
 
 
 ## `tests/launcher_mods_job_characterization_test.py`

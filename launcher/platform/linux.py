@@ -4,6 +4,7 @@ import fcntl
 import importlib.util
 import os
 import shutil
+import signal
 import subprocess
 from pathlib import Path
 
@@ -645,3 +646,18 @@ def session_members(session, exclude=None):
         if identity['session'] == session and identity['state'] != 'Z':
             members.append(identity)
     return members
+
+def kill_verified_member(member):
+    try:
+        pid = member['pid']
+        fd = os.pidfd_open(pid)
+    except (OSError, AttributeError):
+        return
+    try:
+        current = process_identity(pid)
+        if (current['start'], current['session'], current['group']) == (member['start'], member['session'], member['group']):
+            signal.pidfd_send_signal(fd, signal.SIGKILL)
+    except (OSError, AttributeError):
+        pass
+    finally:
+        os.close(fd)

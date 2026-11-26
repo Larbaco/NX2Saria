@@ -55,6 +55,7 @@ class Context:
         self.settings = Settings(self.layout.settings)
         self.version = self.layout.version
         self.echo = echo
+        self.electron_worker = electron_worker
         self._lock = threading.Lock()
         path = self.layout.logs / 'launcher.log'
         try:

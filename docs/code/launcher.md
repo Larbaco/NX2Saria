@@ -3578,14 +3578,24 @@ The detached Windows worker holds a handle with synchronization and query access
 rejects an already ended or reused PID. The worker checks the handle every 200 ms while waiting for a request
 and treats parent exit like EOF.
 
+### `launcher/build.py` `SupervisedRun`
+
+The Electron worker's build runner starts the supervisor from the same app code and Python
+runtime. It extends the existing marker atomically with the supervisor identity and only then
+acknowledges startup. The runner tails the supervisor's output file through the normal build
+progress parser. A cancel request is a flag in the private run directory. If the runner cannot
+observe a terminal result, the job keeps its marker for recovery. A completed job clears its
+marker and removes the supervisor's temporary files. Tk and CLI still create the usual `Run`.
+
 ## `launcher/build_supervisor.py`
 
 `supervise()` reports the identity of its Linux session or Windows build group. It waits for a
 single start acknowledgement; EOF before that line exits without creating a build log or
 starting the command. The build receives a file for its output so losing the worker pipe does
 not change how the compiler finishes. The supervisor waits for the main command and remaining
-members, replaces the terminal result file atomically and exits. This seam is tested independently
-while the worker still uses the existing job path.
+members, replaces the terminal result file atomically and exits. Linux sends SIGTERM to the dedicated group and permits a five-second grace period. After
+that the supervisor uses process descriptors for verified members. On Windows, the supervisor
+opens and verifies each named job member by handle before stopping it.
 
 `launcher/platform/linux.py` `process_identity()` reads the process group, session and creation
 tick from procfs. `session_members()` is used to drain the build session after the main command
