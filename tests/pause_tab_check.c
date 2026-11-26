@@ -81,6 +81,24 @@ static void five(void) {
     CHECK(pt_five_tab_at(0, 700) == -1 && pt_five_tab_at(1300, 1000) == -1, "off the row");
 }
 
+static void trans(void) {
+    float panes[PT_MOVED][44];
+    const float *rows[PT_MOVED];
+    for (int i = 0; i < PT_MOVED; i++) {
+        for (int k = 0; k < 44; k++) panes[i][k] = 1.0f;
+        panes[i][19] = PT_GAME_X[i], panes[i][20] = PT_GAME_Y[i] + 1000.0f;
+        panes[i][26] = PT_GAME_X[i], panes[i][27] = PT_GAME_Y[i];
+        rows[i] = panes[i];
+    }
+    CHECK(pt_find_trans(rows, 44, 10, 22) == 26, "the local position found, the matrix's own skipped");
+    CHECK(pt_find_trans(rows, 44, 0, 0) == 26, "a matrix x without the local y is not taken");
+    panes[5][27] = 3.0f;
+    CHECK(pt_find_trans(rows, 44, 10, 22) == -1, "R's y off: not found");
+    panes[5][27] = PT_GAME_Y[5];
+    for (int i = 0; i < PT_MOVED; i++) panes[i][34] = PT_GAME_X[i], panes[i][35] = PT_GAME_Y[i];
+    CHECK(pt_find_trans(rows, 44, 10, 22) == -2, "two places with the game's values: none taken");
+}
+
 static void page(void) {
     PtBox b;
     pt_page_box(&b, 1920.0f, 1);
@@ -105,6 +123,7 @@ int main(void) {
     settled();
     trees();
     five();
+    trans();
     page();
     names();
     printf("pause_tab_check: %s\n", fails ? "FAILED" : "passed");

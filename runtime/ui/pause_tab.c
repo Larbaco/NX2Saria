@@ -25,7 +25,7 @@ enum { ENT_BUTTON = 0x18, ENT_SCREEN = 0x20 };
 enum { SCR_LAYOUT = 0x28, SCR_CONTROLLER = 0x38, SCR_HIDDEN = 0x1a5, SCR_STATE = 0x1a6, SCR_BLOCK0 = 0x1aa,
        SCR_BLOCK1 = 0x1ab, SCR_PROJ = 0x1c0, SCR_OPEN = 2 };
 enum { BTN_ROOT = 0x58 };
-enum { PANE_LAYOUT = 0x18, PANE_MTX = 0x28, PANE_SIZE = 0x58, PANE_TRANS = 0x60, PANE_ALPHA = 0x74, PANE_EXTRA = 0x80, PANE_FLAGS = 0xa8,
+enum { PANE_LAYOUT = 0x18, PANE_MTX = 0x28, PANE_SIZE = 0x58, PANE_ALPHA = 0x74, PANE_EXTRA = 0x80, PANE_FLAGS = 0xa8,
        PANE_STRIDE = 0xb0, PANE_SHOWN = 1 };
 enum { LYT_NAME = 0xf8, LYT_PANES = 0x100, LYT_HOST = 0x108, LYT_TREE = 0x110 };
 enum { HDR_COUNT = 0x328, HDR_CATS = 0x330, CAT_LAYOUT = 0x20, HDR_CATEGORIES = 4 };
@@ -303,7 +303,7 @@ static uint64_t category_layout(uint64_t cat) {
 }
 
 static volatile int32_t g_five;
-static int g_five_failed, g_five_pending;
+static int g_five_failed, g_five_pending, g_trans = -1;
 static uint64_t g_five_ms;
 
 int pause_tab_five(void) { return __atomic_load_n(&g_five, __ATOMIC_ACQUIRE); }
@@ -321,7 +321,19 @@ static int moved_panes(uint64_t s, uint64_t cats, uint64_t p[PT_MOVED]) {
 }
 
 static void place(const uint64_t p[PT_MOVED], const float x[PT_MOVED]) {
-    for (int i = 0; i < PT_MOVED; i++) memcpy((void *)(uintptr_t)(p[i] + PANE_TRANS), &x[i], 4);
+    for (int i = 0; i < PT_MOVED; i++) memcpy((void *)(uintptr_t)(p[i] + (uint64_t)g_trans), &x[i], 4);
+}
+
+static int find_trans(const uint64_t p[PT_MOVED]) {
+    float words[PT_MOVED][PANE_STRIDE / 4];
+    const float *rows[PT_MOVED];
+    for (int i = 0; i < PT_MOVED; i++) memcpy(words[i], (const void *)(uintptr_t)p[i], PANE_STRIDE), rows[i] = words[i];
+    int k = pt_find_trans(rows, PANE_STRIDE / 4, PANE_MTX / 4, PANE_SIZE / 4);
+    if (k >= 0) rt_log("pause_tab: the header panes' own position found at +%#x (the game's x and y in all six)", k * 4);
+    else
+        rt_log("pause_tab: the header panes' own position %s: the four categories keep their places and the tab stands "
+               "after the R icon", k == -2 ? "is at more than one place" : "was not found");
+    return k >= 0 ? k * 4 : -1;
 }
 
 static void respace(uint64_t s, uint64_t cats, int want) {
@@ -334,8 +346,15 @@ static void respace(uint64_t s, uint64_t cats, int want) {
                "and the tab stands after the R icon");
         return;
     }
+    if (g_trans < 0) {
+        if (!want) return;
+        if ((g_trans = find_trans(p)) < 0) {
+            g_five_failed = 1;
+            return;
+        }
+    }
     float x[PT_MOVED], y[PT_MOVED];
-    for (int i = 0; i < PT_MOVED; i++) x[i] = rdf(p[i] + PANE_TRANS), y[i] = rdf(p[i] + PANE_TRANS + 4);
+    for (int i = 0; i < PT_MOVED; i++) x[i] = rdf(p[i] + (uint64_t)g_trans), y[i] = rdf(p[i] + (uint64_t)g_trans + 4);
     int as = pt_spacing(x), ys = fabsf(y[3]) < 0.5f && fabsf(y[5] - 2.0f) < 0.5f;
     uint64_t now = plat_now_ms();
     if ((as == PT_AS_OTHER || !ys) && !want) return;

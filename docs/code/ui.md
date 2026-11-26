@@ -3005,8 +3005,11 @@ A category's layout: its +0x20 holds the layout's holder, whose +0x80 is the lay
 
 ### `pause_tab_five()`, `moved_panes()`, `place()`, `respace()`
 
-The header in five places. A pane's local position is at +0x60 (x) and +0x64 (y) (`PANE_TRANS`), which the game turns
-into the matrix at +0x28 on its next update. While the fourth category is set shown (the Plus menu's header; the Minus
+The header in five places, by moving the panes' own (local) position, which the game turns into the matrix at +0x28
+on its next update. Where that position lies in a pane is found, not assumed (`find_trans()`, `g_trans`): the one
+offset outside the matrix where all six panes hold the game's x and y (`runtime/ui/pause_tab_core.h`
+`pt_find_trans()`); none, or more than one, and the header is left alone. +0x60 holds 1.0 in all six on the bench (a
+scale), which the first guess took for the position: the check before writing refused it. While the fourth category is set shown (the Plus menu's header; the Minus
 menu clears that bit), the four categories go to x -840, -420, 0 and 420 and the L and R icons to -1100 and 1100
 (`runtime/ui/pause_tab_core.h` `PT_FIVE_X`), so the tab gets the fifth place at 840; with the bit clear they go back to
 the game's -690, -230, 230, 690 and -990, 990 (`PT_GAME_X`). The panes are the header layout's 8 to 11, 13 and 14,

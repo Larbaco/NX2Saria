@@ -80,6 +80,22 @@ static inline int pt_spacing(const float x[PT_MOVED]) {
     return game ? PT_AS_GAME : five ? PT_AS_FIVE : PT_AS_OTHER;
 }
 
+static const float PT_GAME_Y[PT_MOVED] = {0.0f, 0.0f, 0.0f, 0.0f, 2.0f, 2.0f};
+
+static inline int pt_find_trans(const float *panes[PT_MOVED], int words, int skip_from, int skip_to) {
+    int found = -1;
+    for (int k = 0; k + 1 < words; k++) {
+        if (k >= skip_from && k < skip_to) continue;
+        int all = 1;
+        for (int i = 0; i < PT_MOVED && all; i++)
+            all = fabsf(panes[i][k] - PT_GAME_X[i]) < 0.01f && fabsf(panes[i][k + 1] - PT_GAME_Y[i]) < 0.01f;
+        if (!all) continue;
+        if (found >= 0) return -2;
+        found = k;
+    }
+    return found;
+}
+
 static inline void pt_five_box(const PtBox *last, PtBox *out) {
     *out = (PtBox){PT_FIVE_TAB_X - PT_FIVE_TAB_HALF, last->y0, PT_FIVE_TAB_X + PT_FIVE_TAB_HALF, last->y1};
 }

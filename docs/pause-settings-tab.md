@@ -85,6 +85,7 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
   start, or `pause_tab: off ...` with the reason.
 - `pause_tab: the header's category 3 has no box ...` (at most 4 lines): the header could not be read, and the tab
   stands where the game's layout puts the categories; the System category then keeps its plate while the tab is open.
+- `pause_tab: the header panes' own position found at +0x..`, once, or `... was not found` and the old place.
 - `pause_tab: the header's categories moved to make room for a fifth (...)`, then `pause_tab: the header's new places
   took effect (the System category's centre at x 420.0)`; `... back where the game puts them (the Minus menu's
   header)`. If not: `... did not take effect (...)` or `the header's panes are at x ...`, once.

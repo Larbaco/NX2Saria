@@ -4076,6 +4076,8 @@ the panes the tab writes and the parents it relies on are as `PT_SYSTEM_TREE` an
   panes moved are `Pa_Category_00` to `_03`, `T_BtnL_00` and `T_BtnR_00` at the game's x and y, with the parents the
   tab checks.
 - The page box at 16:9 and at 21:9, with the wide menus spread and in the middle.
+- The panes' own position: found where all six hold the game's x and y, the matrix's words skipped, a matrix x
+  without the local y not taken, nothing when one value is off, nothing when two offsets match.
 
 ## `tests/quit_menu_check.c`
 
