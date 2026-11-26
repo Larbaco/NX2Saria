@@ -1,0 +1,3 @@
+run: telemetry: session header written to logs/session-start.json at
+crash-launcher: a summary was made from its FATAL line, with the hardware and settings of logs/session-start.json
+update: Translate the Code: Unchanged

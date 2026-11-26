@@ -54,7 +54,13 @@ that (`docs/install.md` "Verify your download"). Nobody uploads, replaces or edi
      uploads them to a draft and publishes the draft as a **pre-release**, whether or not the tag has a suffix. The
      release page is the notes with a pre-release line on top (unless a release candidate's notes have their own)
      and a line that links to "Verify your download" at the end (`tools/release_files.py body`).
-3. **Stable:** once the owner has tried a version without a suffix, `gh workflow run release-promote.yml -f
+3. **Smoke test of what was published, on the Linux bench:** `tools/rc_smoke.py vX.Y.Z-rc.N --quick --detach` installs
+   the tag's AppImage in a throwaway root, builds the game with the installed launcher, runs it to an area, opens the
+   window, crashes the game once and checks that nothing was sent; without `--quick` it also updates from the last
+   stable release. It writes `summary.md` beside its logs, and a FAIL is a finding about the release, fixed in the next
+   version ([code/tools.md](../code/tools.md#toolsrc_smokepy)). The lines the notes promise go in
+   `tools/data/rc-smoke/<version>.txt` before the run.
+4. **Stable:** once the owner has tried a version without a suffix, `gh workflow run release-promote.yml -f
    tag=vX.Y.Z` (from `main`) drops the page's pre-release line and marks the release stable and Latest. It uploads
    nothing. It promotes only a release that GitHub Actions published, whose `SHA256SUMS.txt` carries `release.yml`'s
    attestation for that tag and lists exactly the release's files, and only when no stable release is as new.
