@@ -5999,7 +5999,10 @@ record without verification. The Electron window test keeps Play disabled on the
 The worker test also requests Wait and observes the final snapshot without sending another
 inspection request. A separate test asks the worker to stop a live synthetic build and verifies
 the last executable was untouched. The first-run Electron window test drives both recovery
-controls against these two states.
+controls against these two states. The explicit recovery case changes the marker during confirmation
+and checks refusal. A confirmed unchanged marker and the same marker found after a simulated
+reboot exercise both recovery routes. The window test leaves the corrupt marker intact when
+the confirmation is cancelled and consumes it when confirmed.
 
 
 ## `tests/launcher_mods_job_characterization_test.py`

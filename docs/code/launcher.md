@@ -3618,6 +3618,14 @@ with a bounded polling interval after a Wait or Stop request. A sequenced recove
 uses session zero, since it belongs to neither a new job nor a game. The Electron client
 validates that snapshot before restoring the appropriate controls.
 
+`rebooted_since_observation()` keeps the marker fingerprint and boot identity in a private
+sidecar for an unverified marker. The same marker observed in a different boot can be
+consumed under the worker lock. Linux reads its kernel boot ID. On Windows,
+`launcher/platform/windows.py` `last_boot_utc()` asks the OS for its last restart time once,
+through the system PowerShell executable. If that query or the marker read fails, there is
+no automatic reboot recovery. The explicit confirmation must still match the marker
+inspected earlier. Player confirmation and reboot evidence have distinct log reasons.
+
 ## `launcher/build_supervisor.py`
 
 `supervise()` reports the identity of its Linux session or Windows build group. It waits for a

@@ -297,13 +297,19 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('recover-build', async (event, action) => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('recovery') ||
-        playing || !state?.job_marker_present || (action !== 'wait' && action !== 'stop')) return 'unavailable';
+        playing || !state?.job_marker_present || (action !== 'wait' && action !== 'stop' && action !== 'confirm')) {
+      return 'unavailable';
+    }
     const active = worker;
-    if (action === 'stop') {
-      if (state.recovery?.state !== 'alive') return 'unavailable';
-      const answer = await dialog.showMessageBox(window, { type: 'warning', buttons: ['Voltar', 'Parar compilação'],
-        defaultId: 0, cancelId: 0, message: 'Parar a compilação anterior?',
-        detail: 'Você poderá retomar a compilação depois que ela parar.' });
+    if (action !== 'wait') {
+      const stopping = action === 'stop';
+      if (state.recovery?.state !== (stopping ? 'alive' : 'unverified')) return 'unavailable';
+      const answer = await dialog.showMessageBox(window, { type: 'warning',
+        buttons: ['Voltar', stopping ? 'Parar compilação' : 'Sei que nenhuma compilação está rodando'],
+        defaultId: 0, cancelId: 0,
+        message: stopping ? 'Parar a compilação anterior?' : 'Confirmar que a compilação anterior terminou?',
+        detail: stopping ? 'Você poderá retomar a compilação depois que ela parar.' :
+          'Confirme somente se você verificou que a compilação parou. Se tiver dúvida, reinicie o computador.' });
       if (answer.response !== 1 || worker !== active) return 'cancelled';
     }
     let status = 'unavailable';

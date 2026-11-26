@@ -1,9 +1,11 @@
+import hashlib
 import json
 import os
 import re
 import signal
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from functools import lru_cache
 
 
 from .jobs import MARKER
@@ -18,6 +20,7 @@ class Recovery:
     reason: str
     kind: str = 'other'
     identity: dict | None = None
+    fingerprint: str | None = None
 
     def view(self):
         return {'state': self.state, 'reason': self.reason, 'kind': self.kind}
@@ -85,15 +88,21 @@ def inspect_marker(layout):
     try:
         with (layout.data / MARKER).open('rb') as marker:
             raw = marker.read(MAX_MARKER + 1)
-        if len(raw) > MAX_MARKER:
-            return Recovery('unverified', 'invalid_marker')
-        data = json.loads(raw.decode('utf-8'))
     except FileNotFoundError:
         return Recovery('none', 'no_marker')
     except OSError:
         return Recovery('unverified', 'unreadable_marker')
-    except (ValueError, RecursionError):
+    if len(raw) > MAX_MARKER:
         return Recovery('unverified', 'invalid_marker')
+    fingerprint = hashlib.sha256(raw).hexdigest()
+    try:
+        data = json.loads(raw.decode('utf-8'))
+    except (ValueError, RecursionError):
+        return Recovery('unverified', 'invalid_marker', fingerprint=fingerprint)
+    return replace(check_identity(layout, data), fingerprint=fingerprint)
+
+
+def check_identity(layout, data):
     if not isinstance(data, dict):
         return Recovery('unverified', 'invalid_marker')
     kind = data.get('kind') if data.get('kind') in KINDS else 'other'
@@ -115,6 +124,58 @@ def inspect_marker(layout):
     except (OSError, ValueError, OverflowError, IndexError):
         state, reason = 'unverified', 'identity_unavailable'
     return Recovery(state, reason, kind, identity)
+
+
+BOOT_OBSERVATION = 'build-recovery.json'
+
+
+@lru_cache(maxsize=1)
+def boot_identity():
+    try:
+        if sys.platform.startswith('linux'):
+            from .platform import linux
+            identity = linux.boot_identity()
+            return f'linux:{identity}' if identity else None
+        if os.name == 'nt':
+            from .platform import windows
+            identity = windows.last_boot_utc()
+            return f'windows:{identity}' if identity else None
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def rebooted_since_observation(layout, recovery):
+    if not recovery.fingerprint:
+        return False
+    boot = boot_identity()
+    if not boot:
+        return False
+    record = layout.data / BOOT_OBSERVATION
+    try:
+        with record.open('rb') as stream:
+            previous = json.loads(stream.read(4096).decode('utf-8'))
+    except (OSError, ValueError, RecursionError):
+        previous = None
+    if isinstance(previous, dict) and previous.get('marker') == recovery.fingerprint:
+        earlier = previous.get('boot')
+        if (isinstance(earlier, str) and earlier.partition(':')[2]
+                and earlier.partition(':')[0] == boot.partition(':')[0]):
+            return earlier != boot
+    temp = record.with_suffix('.tmp')
+    try:
+        temp.write_text(json.dumps({'marker': recovery.fingerprint, 'boot': boot}), encoding='utf-8')
+        os.replace(temp, record)
+    except OSError:
+        pass
+    return False
+
+
+def forget_observation(layout):
+    try:
+        (layout.data / BOOT_OBSERVATION).unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def signal_linux_orphan(identity, sig):

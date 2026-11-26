@@ -1,9 +1,10 @@
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string } };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
 type BuildAction = 'install' | 'rebuild';
+type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: 'wait' | 'stop'): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -15,6 +16,7 @@ const settingError = document.querySelector<HTMLElement>('#setting-error')!;
 const installButton = document.querySelector<HTMLButtonElement>('#begin-install')!;
 const recoveryControls = document.querySelector<HTMLElement>('#recovery-controls')!;
 const waitBuild = document.querySelector<HTMLButtonElement>('#wait-build')!;
+const confirmRecovery = document.querySelector<HTMLButtonElement>('#confirm-recovery')!;
 const stopBuild = document.querySelector<HTMLButtonElement>('#stop-build')!;
 const firstRun = document.querySelector<HTMLElement>('#first-run')!;
 const gameFolderSpace = document.querySelector<HTMLElement>('#game-folder-space')!;
@@ -42,6 +44,8 @@ function updateControls() {
   const previousBuild = installation?.recovery?.state;
   recoveryControls.hidden = previousBuild !== 'alive' && previousBuild !== 'unverified';
   stopBuild.hidden = previousBuild !== 'alive';
+  confirmRecovery.hidden = previousBuild !== 'unverified';
+  confirmRecovery.disabled = busy || askingRecovery;
   waitBuild.disabled = busy || askingRecovery || recoveryAction !== null;
   stopBuild.disabled = busy || askingRecovery || recoveryAction === 'stop';
   playButton.disabled = busy || playFailed || installation?.status !== 'ready' ||
@@ -170,7 +174,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
 button.onclick = () => { void loadSelection(() => window.launcher.selectInstallation()); };
 void loadSelection(() => window.launcher.discoverInstallation());
 
-async function recoverBuild(action: 'wait' | 'stop') {
+async function recoverBuild(action: RecoveryAction) {
   const previous = installation;
   askingRecovery = true;
   updateControls();
@@ -178,7 +182,7 @@ async function recoverBuild(action: 'wait' | 'stop') {
     const result = await window.launcher.recoverBuild(action);
     if (installation !== previous) return;
     if (result === 'waiting' || result === 'stopping') {
-      recoveryAction = action;
+      recoveryAction = result === 'waiting' ? 'wait' : 'stop';
       detail.textContent = result === 'waiting' ? 'Aguardando a compilação anterior terminar…' : 'Parando a compilação anterior…';
     } else if (result === 'unavailable') {
       detail.textContent = 'Não foi possível executar essa ação. O registro da compilação foi mantido.';
@@ -192,6 +196,7 @@ async function recoverBuild(action: 'wait' | 'stop') {
 }
 waitBuild.onclick = () => { void recoverBuild('wait'); };
 stopBuild.onclick = () => { void recoverBuild('stop'); };
+confirmRecovery.onclick = () => { void recoverBuild('confirm'); };
 window.launcher.onRecoveryChanged(state => {
   installation = state;
   if (state?.recovery?.state !== 'alive' && state?.recovery?.state !== 'unverified') recoveryAction = null;

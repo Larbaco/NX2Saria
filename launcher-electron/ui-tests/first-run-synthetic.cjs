@@ -162,6 +162,20 @@ async function main() {
     await page.getByText('Não foi possível verificar a compilação anterior', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
     assert.equal(await fs.readFile(oldMarker, 'utf8'), '{broken marker');
+    assert.equal(await page.getByRole('button', { name: 'Parar compilação' }).isVisible(), false);
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 0, checkboxChecked: false });
+    });
+    const confirm = page.getByRole('button', { name: 'Recuperar instalação' });
+    await confirm.click({ timeout: 5000 });
+    await page.waitForFunction(() => !document.querySelector('#confirm-recovery').disabled);
+    assert.equal(await fs.readFile(oldMarker, 'utf8'), '{broken marker');
+    await app.evaluate(({ dialog }) => {
+      dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false });
+    });
+    await confirm.click();
+    await page.getByText(/A compilação anterior não terminou/).waitFor({ timeout: 5000 });
+    await assert.rejects(fs.access(oldMarker), { code: 'ENOENT' });
 
     async function previousBuild() {
       const token = randomUUID().replaceAll('-', '');

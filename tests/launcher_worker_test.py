@@ -724,6 +724,61 @@ class WorkerTest(unittest.TestCase):
             self.assertNotEqual(json.loads((run_dir / 'result.json').read_text())['code'], 0)
         self.assertEqual(game_executable(folder).read_text(), 'last finished build')
 
+    def test_unverified_build_recovery_requires_same_marker_or_a_new_boot(self):
+        data = self.root / 'data'
+        marker = data / 'job-running.json'
+        original = b'broken original'
+        changed = b'broken replacement'
+        marker.write_bytes(original)
+        worker, _ = self.start_worker()
+
+        def request(target, request_id, method, **fields):
+            target.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+            target.stdin.flush()
+            return json.loads(target.stdout.readline())
+
+        state = request(worker, 2, 'inspect')['result']
+        self.assertEqual(state['recovery']['state'], 'unverified')
+        self.assertIn('error', request(worker, 3, 'recover_build', action='stop'))
+        marker.write_bytes(changed)
+        self.assertIn('error', request(worker, 4, 'recover_build', action='confirm'))
+        self.assertEqual(marker.read_bytes(), changed)
+        state = request(worker, 5, 'inspect')['result']
+        self.assertEqual(state['recovery']['state'], 'unverified')
+        recovery = request(worker, 6, 'recover_build', action='confirm')['result']
+        self.assertEqual(recovery['inspection']['recovery']['reason'], 'player_confirmed')
+        self.assertFalse(marker.exists())
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=10), 0)
+
+        marker.write_bytes(original)
+        script = ("import runpy,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher import build_recovery\n"
+                  "root,boot=sys.argv[1:]\n"
+                  "sys.argv=['launcher.worker','--root',root]\n"
+                  "with mock.patch.object(build_recovery,'boot_identity',return_value=boot):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+
+        def after_boot(boot):
+            response = subprocess.run([sys.executable, '-c', script, str(self.root), boot],
+                                      input='{"id":1,"method":"hello","protocol":1}\n{"id":2,"method":"inspect"}\n',
+                                      capture_output=True, text=True, cwd=ROOT, timeout=15)
+            self.assertEqual(response.returncode, 0, response.stderr)
+            return json.loads(response.stdout.splitlines()[-1])['result']
+
+        self.assertEqual(after_boot('test:before')['recovery']['state'], 'unverified')
+        self.assertEqual(after_boot('test:before')['recovery']['state'], 'unverified')
+        marker.write_bytes(changed)
+        self.assertEqual(after_boot('test:after')['recovery']['state'], 'unverified')
+        self.assertEqual(marker.read_bytes(), changed)
+        self.assertEqual(after_boot('test:later')['recovery']['reason'], 'boot_changed')
+        self.assertFalse(marker.exists())
+        log = (data / 'logs' / 'launcher.log').read_text()
+        self.assertIn('reason=player_confirmed', log)
+        self.assertIn('reason=boot_changed', log)
+        self.assertNotIn('test:later', log)
+
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()

@@ -130,14 +130,27 @@ def action_log(ctx, counts, action, detail):
         ctx.log(f'worker: {action} further events suppressed')
 
 
+def finish_recovery(ctx, observed, reason):
+    try:
+        jobs.interrupted(ctx)
+    except RecursionError:
+        try:
+            (ctx.layout.data / jobs.MARKER).unlink(missing_ok=True)
+        except OSError:
+            pass
+    if build_recovery.blocked(ctx.layout):
+        return build_recovery.Recovery('unverified', 'marker_remove_failed', observed.kind,
+                                       fingerprint=observed.fingerprint)
+    build_recovery.forget_observation(ctx.layout)
+    return build_recovery.Recovery('interrupted', reason, observed.kind)
+
+
 def inspect_recovery(ctx, counts, previous):
     observed = build_recovery.inspect_marker(ctx.layout)
     if observed.state == 'gone':
-        jobs.interrupted(ctx)
-        remaining_marker = build_recovery.blocked(ctx.layout)
-        observed = build_recovery.Recovery(
-            'unverified' if remaining_marker else 'interrupted',
-            'marker_remove_failed' if remaining_marker else observed.reason, observed.kind)
+        observed = finish_recovery(ctx, observed, observed.reason)
+    elif observed.state == 'unverified' and build_recovery.rebooted_since_observation(ctx.layout, observed):
+        observed = finish_recovery(ctx, observed, 'boot_changed')
     if observed.state == 'none':
         return previous if previous and previous.state == 'interrupted' else None
     if not previous or observed.view() != previous.view():
@@ -682,11 +695,24 @@ def main(argv=None):
                         emit({'id': request['id'], 'result': {'hide_while_playing': value}})
             elif request.get('method') == 'recover_build':
                 action = request.get('action')
-                if lock_state != 'held' or run or job or pending or action not in ('wait', 'stop'):
+                if lock_state != 'held' or run or job or pending or action not in ('wait', 'stop', 'confirm'):
                     error(request['id'], 'recovery_unavailable')
                     continue
+                previous = recovery
                 recovery = inspect_recovery(ctx, counts, recovery)
+                if action == 'confirm' and recovery and recovery.state != 'interrupted':
+                    if (recovery.state != 'unverified' or not previous or not previous.fingerprint or
+                            previous.state != 'unverified' or previous.fingerprint != recovery.fingerprint):
+                        action_log(ctx, counts, 'recovery', 'confirmation refused')
+                        error(request['id'], 'recovery_unavailable')
+                        continue
+                    recovery = finish_recovery(ctx, recovery, 'player_confirmed')
+                    action_log(ctx, counts, 'recovery', f'confirm state={recovery.state} reason={recovery.reason}')
+                    if recovery.state != 'interrupted':
+                        error(request['id'], 'recovery_unavailable')
+                        continue
                 if not recovery or recovery.state == 'interrupted':
+                    recovery_poll = stopping = None
                     emit({'id': request['id'], 'result': {'status': 'finished', 'inspection': installation_view(root, recovery)}})
                     continue
                 if action == 'stop':

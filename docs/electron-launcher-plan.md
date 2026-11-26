@@ -223,6 +223,17 @@ Before that, the recovery control requires an explicit acknowledgement, "I know 
 running". Record that as a player confirmation, distinct from platform proof. Never signal a PID
 parsed from an unverified record.
 
+Bind the explicit acknowledgement to the marker observed by that worker. A marker replaced
+while the confirmation is open must be inspected again before confirmation can proceed. Store
+a private hash of the observed marker and the current boot identity so a different boot only
+recovers that same marker. Linux uses the kernel boot ID. Windows uses the OS-reported restart
+time in UTC from Win32_OperatingSystem. If either the boot source or marker identity cannot
+be read, retain the marker. The Windows query is cached within the worker and has a bounded
+timeout. See [Win32_OperatingSystem.LastBootUpTime](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/win32-operatingsystem). The test simulates a new boot identity with the same marker and
+checks the explicit confirmation separately, without rebooting either CI runner. The Linux
+window test verifies that dismissing the confirmation preserves the marker, and that accepting
+it returns to recovery of the installation.
+
 Log the state and reason on first observation and on each change, plus a wait, stop or recovery
 request and its result. Use fixed tags and counts, with no path or raw marker contents. The
 Electron launcher tests workflow must kill the worker while a stand-in build stays alive and

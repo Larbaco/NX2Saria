@@ -4,6 +4,7 @@ import re
 import os
 import subprocess
 from ctypes import wintypes
+from pathlib import Path
 
 
 class ProcessEntry(ctypes.Structure):
@@ -173,6 +174,26 @@ def build_process_status(pid, start):
         raise ctypes.WinError(ctypes.get_last_error())
     finally:
         k.CloseHandle(process)
+
+
+def last_boot_utc():
+    k = ctypes.WinDLL('kernel32', use_last_error=True)
+    k.GetSystemDirectoryW.argtypes = [wintypes.LPWSTR, wintypes.UINT]
+    k.GetSystemDirectoryW.restype = wintypes.UINT
+    directory = ctypes.create_unicode_buffer(32768)
+    size = k.GetSystemDirectoryW(directory, len(directory))
+    if not 0 < size < len(directory):
+        return None
+    powershell = Path(directory.value) / 'WindowsPowerShell' / 'v1.0' / 'powershell.exe'
+    try:
+        result = subprocess.run(
+            [str(powershell), '-NoLogo', '-NoProfile', '-NonInteractive', '-Command',
+             '$os = Get-CimInstance -ClassName Win32_OperatingSystem; $os.LastBootUpTime.ToUniversalTime().Ticks'],
+            capture_output=True, timeout=5, creationflags=0x08000000)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    value = result.stdout.strip()
+    return value.decode('ascii') if result.returncode == 0 and re.fullmatch(rb'[0-9]{15,19}', value) else None
 
 
 class BuildJobGroup:
