@@ -35,14 +35,14 @@ void foliage_distance_init(void) {
         snprintf(why, sizeof why, "; foliage_distance = %s is outside %g to %g: %g is used", v, (double)FOLIAGE_MIN,
                  (double)FOLIAGE_MAX, (double)factor);
     if (!RT_V111) {
-        rt_log("foliage: distance factor %.2f not applied: the foliage's distances are known for game 1.1.1 only (this "
+        rt_log("foliage: distance factor %g not applied: the foliage's distances are known for game 1.1.1 only (this "
                "is %d.%d.%d)%s",
                (double)factor, rt_game_version / 100, rt_game_version / 10 % 10, rt_game_version % 10, why);
         return;
     }
     const RtLoaded *m = ldr_count() ? ldr_module(0) : NULL;
     if (!m || m->size < FOLIAGE_LOD_OFF + sizeof foliage_game) {
-        rt_log("foliage: distance factor %.2f not applied: main is not loaded%s", (double)factor, why);
+        rt_log("foliage: distance factor %g not applied: main is not loaded%s", (double)factor, why);
         return;
     }
     uint64_t at = m->base + FOLIAGE_LOD_OFF;
@@ -51,22 +51,22 @@ void foliage_distance_init(void) {
     memcpy(game, (const void *)(uintptr_t)at, sizeof game);
     list_floats(was, sizeof was, game);
     if (memcmp(game, foliage_game, sizeof game)) {
-        rt_log("foliage: distance factor %.2f not applied: main+%#x holds %s, not the game's 1.1.1 distances (an ExeFS "
+        rt_log("foliage: distance factor %g not applied: main+%#x holds %s, not the game's 1.1.1 distances (an ExeFS "
                "mod changed them?)%s",
                (double)factor, FOLIAGE_LOD_OFF, was, why);
         return;
     }
     int capped = foliage_scale(factor, game, now);
     if (factor == 1.0f) {
-        rt_log("foliage: distance factor 1.00 (the game's: %s m; now: the same)%s", was, why);
+        rt_log("foliage: distance factor 1 (the game's: %s m; now: the same)%s", was, why);
         return;
     }
     if (!write_main(at, now, sizeof now)) {
-        rt_log("foliage: distance factor %.2f not applied: main+%#x could not be written%s", (double)factor,
+        rt_log("foliage: distance factor %g not applied: main+%#x could not be written%s", (double)factor,
                FOLIAGE_LOD_OFF, why);
         return;
     }
     list_floats(to, sizeof to, now);
-    rt_log("foliage: distance factor %.2f (the game's: %s m; now: %s m%s)%s", (double)factor, was, to,
+    rt_log("foliage: distance factor %g (the game's: %s m; now: %s m%s)%s", (double)factor, was, to,
            capped ? "; ornaments at most 75 m and low trees' leaves at most 70 m" : "", why);
 }

@@ -85,10 +85,10 @@ int main(void) {
 #if GAME_VERSION == 111
     run(NULL);
     assert(!memcmp(lod(), foliage_game, sizeof foliage_game) && protects == 0);
-    assert(strstr(logged[0], "foliage: distance factor 1.00 (the game's: 40, 60, 35, 30, 40, 135, 10, 45 m; now: the same)"));
+    assert(strstr(logged[0], "foliage: distance factor 1 (the game's: 40, 60, 35, 30, 40, 135, 10, 45 m; now: the same)"));
     run("2");
     assert(lod()[0] == 80 && lod()[5] == 270 && lod()[6] == 20 && prot == PLAT_PROT_READ && protects == 2);
-    assert(strstr(logged[0], "factor 2.00 (the game's: 40, 60, 35, 30, 40, 135, 10, 45 m; now: 80, 120, 70, 60, 80, 270, 20, 90 m)"));
+    assert(strstr(logged[0], "factor 2 (the game's: 40, 60, 35, 30, 40, 135, 10, 45 m; now: 80, 120, 70, 60, 80, 270, 20, 90 m)"));
     run("0.5");
     assert(lod()[1] == 30 && lod()[7] == 22.5f);
     assert(strstr(logged[0], "now: 20, 30, 17.5, 15, 20, 67.5, 5, 22.5 m)"));
@@ -114,7 +114,7 @@ int main(void) {
 #else
     run("2");
     assert(!memcmp(lod(), foliage_game, sizeof foliage_game) && protects == 0);
-    assert(strstr(logged[0], "factor 2.00 not applied: the foliage's distances are known for game 1.1.1 only (this is 1.1.0)"));
+    assert(strstr(logged[0], "factor 2 not applied: the foliage's distances are known for game 1.1.1 only (this is 1.1.0)"));
 #endif
     printf("foliage_distance_check: ok (game %d)\n", GAME_VERSION);
     return 0;

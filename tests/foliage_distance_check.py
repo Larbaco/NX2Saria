@@ -20,7 +20,7 @@ main+0x3eefd38.
 Usage: python tests/foliage_distance_check.py [--cc <clang>] [--exefs <folder with main>]
 """
 
-MSYS_BIN = Path(r'C:\\msys64\\ucrt64\\bin')
+MSYS_BIN = Path(r'C:\msys64\ucrt64\bin')
 
 
 def main():
