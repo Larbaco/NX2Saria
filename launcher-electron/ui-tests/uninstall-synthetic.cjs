@@ -48,15 +48,20 @@ async function main() {
         NX2SARIA_PYTHON: python, NX2_TEST_UNINSTALL_PYTHON: process.env.NX2SARIA_PYTHON || 'python3' } });
     const page = await app.firstWindow();
     const status = page.locator('#status');
-    await status.getByText('Recompilação necessária', { exact: true }).waitFor();
     const play = page.getByRole('button', { name: 'Jogar', exact: true });
+    await page.getByText(`O jogo foi compilado com 0.0.0. Recompilar o jogo atualiza para ${version}.`, { exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('#play').disabled);
+    assert.equal(await page.locator('#rebuild[data-rebuild-required]').isEnabled(), true);
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, root);
+    await fs.writeFile(receipt, JSON.stringify({ version: 2, kit: version, steps: { exefs: {}, romfs: {} } }));
+    await page.locator('#select').click();
+    await status.getByText('Recompilação necessária', { exact: true }).waitFor();
     await page.waitForFunction(() => !document.querySelector('#rebuild').disabled);
     assert.equal(await play.isDisabled(), true);
     assert.equal((await page.evaluate(() => window.launcher.play())).error, 'rebuild_required');
     await fs.writeFile(receipt, JSON.stringify({ kit: version, steps: { compile: {} } }));
-    await app.evaluate(({ dialog }, selected) => {
-      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
-    }, root);
     await page.locator('#select').click();
     await status.getByText('Instalação encontrada', { exact: true }).waitFor();
     await page.waitForFunction(() => !document.querySelector('#play').disabled);

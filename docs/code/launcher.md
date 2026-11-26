@@ -2829,14 +2829,14 @@ many paths it removed once the worker closed.
 
 ### Build compatibility before Electron Play
 
-`launcher/worker.py` `rebuild_required()` checks the last compiled kit
-against the active app on a released installation. It also recognizes
-a resumable game whose compile receipt was cleared. This is a separate
-inspection field so the existing installation and Rebuild remain
-available. `prepare_worker_play()` and the memory response path check
-again before launching, including after resuming a mods build. Rebuild
-refreshes the inspection. A game that still has an older build keeps the
-rebuild message and disabled Play control.
+`launcher/worker.py` `pending_rebuild()` compares the last compiled kit
+with the active app and checks for a resumable game whose compile
+receipt was cleared. On an older completed build, the inspection sends
+both versions and the rebuild flag, and the window emphasizes Rebuild
+while leaving Play available. `start_worker_play()` logs the versions
+when the worker attempts to launch. A missing receipt leaves the
+versions absent, and `prepare_worker_play()` and the memory response
+path refuse the launch. The worker reinspects after a rebuild.
 
 ### Selecting the Electron installation
 

@@ -313,6 +313,7 @@ const catalogue: ReadonlyArray<readonly [string, string, string, string]> = [
   ["O argumento --launcher-root precisa indicar o caminho absoluto da instalação.", "The --launcher-root argument needs the absolute installation path.", "Для аргумента --launcher-root укажите абсолютный путь к установленному лаунчеру.", "--launcher-root 参数需要安装目录的绝对路径。"],
   ["Recompilação necessária", "Rebuild required", "Требуется пересборка", "需要重新构建"],
   ["Selecione Recompilar o jogo para terminar a compilação antes de jogar.", "Select Rebuild the game to finish the build before playing.", "Выберите «Пересобрать игру», чтобы завершить сборку перед запуском.", "请先选择“重新构建游戏”，完成构建后再开始游戏。"],
+  ["O jogo foi compilado com {value1}. Recompilar o jogo atualiza para {value2}.", "The game was built with {value1}. Rebuild the Game brings it to {value2}.", "Игра собрана с помощью {value1}. Пересоберите игру, чтобы обновить её до {value2}.", "游戏使用 {value1} 构建。重新构建游戏可将其更新到 {value2}。"],
 ];
 
 export const messageTables: Record<Locale, Messages> = {

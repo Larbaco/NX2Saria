@@ -178,28 +178,38 @@ def first_run_requirements(ctx):
     return {'status': 'ready'}
 
 
-def rebuild_required(ctx, game):
+def pending_rebuild(ctx, game):
     if ctx.layout.dev or not game:
-        return False
+        return {}
     built = build.built_version(game)
     if not built:
-        return build.installed(game)
+        return {'rebuild_required': True} if build.installed(game) else {}
     try:
-        return versions.newer(ctx.version, built)
+        if isinstance(built, str) and len(built) <= 64 and len(ctx.version) <= 64 and versions.parse(built) != versions.parse(ctx.version):
+            return {'rebuild_required': True, 'build_version': versions.display(built), 'app_version': versions.display(ctx.version)}
     except (TypeError, ValueError):
-        return False
+        pass
+    return {}
 
 
 def prepare_worker_play(ctx, game, run, failed_mods, built=False):
-    if rebuild_required(ctx, game):
+    rebuild = pending_rebuild(ctx, game)
+    if rebuild and 'build_version' not in rebuild:
         return play.PlayPreparation('rebuild_required')
     return play.prepare(ctx, ctx.settings, game, run, failed_mods, built=built)
 
 
+def start_worker_play(ctx, prepared, game):
+    rebuild = pending_rebuild(ctx, game)
+    if 'build_version' in rebuild:
+        ctx.log(f'play: game build {rebuild["build_version"]} under app {rebuild["app_version"]}, rebuild pending')
+    return play.start(ctx, prepared, game)
+
+
 def installation_view(ctx, recovery, counts):
     result = inspect_installation(ctx.layout.root)
-    if result['status'] == 'ready' and rebuild_required(ctx, result['game_dir']):
-        result['rebuild_required'] = True
+    if result['status'] == 'ready':
+        result.update(pending_rebuild(ctx, result['game_dir']))
     if result['status'] in ('not_configured', 'not_ready'):
         settings = ctx.settings
         requirements = first_run_requirements(ctx)
@@ -798,7 +808,7 @@ def main(argv=None):
                                                           'unbounded': memory.unbounded}}})
                         elif prepared.status == 'ready':
                             window_log = GameWindowLog(job_game_dir)
-                            run, failure = play.start(ctx, prepared, job_game_dir)
+                            run, failure = start_worker_play(ctx, prepared, job_game_dir)
                             if failure:
                                 action_log(ctx, counts, 'spawn', 'failed')
                                 sequence += 1
@@ -956,14 +966,15 @@ def main(argv=None):
                         play.not_started(ctx.log, 'the game is already running', prepared.searched)
                         emit({'id': request['id'], 'result': {'status': 'external_game'}})
                         continue
-                    if rebuild_required(ctx, game_dir):
+                    rebuild = pending_rebuild(ctx, game_dir)
+                    if rebuild and 'build_version' not in rebuild:
                         action_log(ctx, counts, 'play', 'status=rebuild_required')
                         emit({'id': request['id'], 'result': {'status': 'rebuild_required'}})
                         continue
                     prepared.status = 'ready'
                 if prepared.status == 'ready':
                     window_log = GameWindowLog(game_dir)
-                    run, failure = play.start(ctx, prepared, game_dir)
+                    run, failure = start_worker_play(ctx, prepared, game_dir)
                     if failure:
                         action_log(ctx, counts, 'spawn', 'failed')
                         error(request['id'], 'start_failed')

@@ -1,5 +1,5 @@
 type FirstRunPreferences = { channel: 'stable' | 'preview'; auto_check: boolean; desktop_shortcut: boolean | null };
-type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; rebuild_required?: true; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences; first_run_requirements?: { status: string; message?: string } };
+type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; rebuild_required?: true; build_version?: string; app_version?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences; first_run_requirements?: { status: string; message?: string } };
 type PlayFeedback = { error?: string; messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result | null };
 type SaveOptions = { destination: string; with_log: boolean; waiting: boolean; pending: boolean };
 type SaveImport = { status: string; files?: number; slot?: string | null; backup?: string | null; detail?: string };
@@ -228,8 +228,9 @@ function updateControls() {
   waitBuild.disabled = busy || askingRecovery || recoveryAction !== null;
   stopBuild.disabled = busy || askingRecovery || recoveryAction === 'stop';
   playButton.disabled = busy || playFailed || installation?.status !== 'ready' ||
-    installation.rebuild_required === true || installation.job_marker_present === true || installation.game_running === true;
+    (installation.rebuild_required === true && !installation.build_version) || installation.job_marker_present === true || installation.game_running === true;
   rebuildButton.hidden = installation?.status !== 'ready';
+  rebuildButton.toggleAttribute('data-rebuild-required', installation?.rebuild_required === true);
   rebuildButton.disabled = busy || rebuildButton.hidden ||
     installation?.job_marker_present === true || installation?.game_running === true;
   hideWhilePlaying.disabled = busy || typeof installation?.hide_while_playing !== 'boolean';
@@ -259,6 +260,11 @@ function updateControls() {
   }
 }
 
+function buildVersionNotice(result: Result) {
+  return tr('O jogo foi compilado com {value1}. Recompilar o jogo atualiza para {value2}.',
+    { value1: result.build_version, value2: result.app_version });
+}
+
 function showRequiredRebuild() {
   statusElement.textContent = tr('Recompilação necessária');
   detail.textContent = tr('Selecione Recompilar o jogo para terminar a compilação antes de jogar.');
@@ -285,7 +291,8 @@ function showResult(result: Result | null) {
     return;
   }
   if (result.rebuild_required) {
-    showRequiredRebuild();
+    if (result.build_version) detail.textContent = buildVersionNotice(result);
+    else showRequiredRebuild();
     return;
   }
   if (result.recovery?.state === 'interrupted') {
@@ -966,6 +973,7 @@ window.launcher.onBuildEnded(({ action, outcome, state }) => {
   } else {
     statusElement.textContent = outcome === 'cancelled' ? tr(labels.cancelled) : tr(labels.failed);
     detail.textContent = outcome === 'cancelled' ? tr("Você pode tentar novamente.") : tr("Confira o log do launcher e tente novamente.");
+    if (state?.build_version) detail.textContent += ' ' + buildVersionNotice(state);
   }
   if (outcome === 'complete' && state?.status === 'ready') {
     void loadAppearanceAssets();

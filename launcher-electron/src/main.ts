@@ -104,7 +104,7 @@ app.whenReady().then(() => {
   }
   async function rebuildRefusal(active: WorkerClient) {
     playing = false;
-    if (!state?.rebuild_required) {
+    if (!state?.rebuild_required || state.build_version) {
       try { state = parseInspection(await active.request('inspect')); } catch {}
     }
     return { error: 'rebuild_required', state: settingsView(state) };
@@ -915,7 +915,7 @@ app.whenReady().then(() => {
     try {
       state = parseInspection(await active.request('inspect'));
       if (state.status !== 'ready' || state.job_marker_present || state.game_running) throw new Error('Not ready');
-      let result: PlayResult = state.rebuild_required ? { status: 'rebuild_required' }
+      let result: PlayResult = state.rebuild_required && !state.build_version ? { status: 'rebuild_required' }
         : parsePlayResult(await active.request('play'));
       if (result.status === 'memory') result = await answerMemory(active, result);
       log?.write('play', `result=${result.status}`);

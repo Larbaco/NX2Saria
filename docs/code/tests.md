@@ -5939,11 +5939,12 @@ unfocused input suppression, scroll, and overflow at the minimum window size
 and at 140% zoom. Hardware Game Mode is a separate check.
 
 The installed worker build-compatibility test pairs a newer fixture app
-with an old executable and replaces the spawn call with a recorder.
-It blocks the old kit and a missing compile receipt, preserves the
-executable, and accepts a normalized matching build. The Linux window
-fixture verifies the disabled Play screen and the improvement after
-refreshing a current receipt, without starting the game.
+with an earlier completed executable and substitutes an in-memory process.
+It verifies Play and the version log, refusal for a missing compile
+receipt (including after a memory prompt), and acceptance of a normalized
+matching build. The Linux window fixture checks the notice and both
+available controls before the compile receipt is cleared, then checks
+that Play is disabled and Rebuild remains available.
 
 The uninstall worker tests schedule the real platform cleanup helper against
 two scratch roots, keep or remove the game, and preserve an original dump

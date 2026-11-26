@@ -100,27 +100,26 @@ build the game. The local full suite remains on hold.
 
 ### Rebuild after an interrupted app update
 
-On a provisioned installation, keep the game visible as installed when
-the recorded build kit predates the active app or the build can be
-resumed but its compile receipt is absent. Require an explicit Rebuild
-before Play. The worker checks this again before accepting Play or
-resuming it from a memory prompt or mods rebuild. The launcher retains
-the old executable and settings until Rebuild runs. Compare known
-versions using the launcher's existing version ordering. A current or
-newer build stays playable. A local checkout keeps its development
-behavior. The Tk launcher still offers the last finished build after
-a cancellation.
+Match the Tk home screen for a completed build made with a different kit.
+Show the built and active versions, emphasize Rebuild and keep Play
+available for the last completed executable. Log both versions whenever
+the worker attempts to launch it. If the compile receipt is absent from a
+resumable build, indicate that Rebuild is required and refuse Play.
+Reinspect when the build finishes and check again after a memory prompt.
+Compare known versions using the existing version parser. A checkout
+keeps its development behavior.
 
-The notebook's Tk update continuation was cancelled before rebuilding.
-The older worker returned `ready` because the 0.26.0 executable still had
-a compile receipt. On ordinary startup Tk distinguishes that older build
-in its home screen and offers Rebuild, while `--continue-update` is the
-automatic post-install job. The later log shows a completed manual-style
-RebuildJob, without proving the input that started it. A worker subprocess
-test reproduced the old build reaching the spawn call with that call
-replaced by a recorder. The corrected worker refuses before the call
-and the Linux UI fixture checks that Rebuild remains available.
+On the notebook, the Tk update continuation was cancelled before rebuilding.
+The previous Electron worker returned `ready` because the old executable
+still had a compile receipt. On ordinary startup Tk distinguishes that
+older build and offers Rebuild. The `--continue-update` path starts the
+automatic post-install job. The later log shows a completed RebuildJob,
+without proving the input that started it. A worker subprocess test
+reproduced the earlier behavior with the spawn call replaced by a recorder.
 
+Product question for a later review: whether to prohibit Play until an
+updated app has a matching game build. The test package retains the
+existing launcher behavior for a completed older build.
 
 ## Replacement gate
 

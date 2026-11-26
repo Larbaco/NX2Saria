@@ -13,6 +13,7 @@ p, aside { color: var(--shell-muted, #b4c4b4); }
 aside strong { color: var(--shell-text, #f4efd9); }
 button { background-color: var(--shell-button, #e0bd7a); color: var(--shell-button-text, #17231a); }
 :is(#reports-dialog, #uninstall-dialog) { background: var(--shell-panel, #17251d); color: var(--shell-text, #f5efdf); }
+#rebuild[data-rebuild-required]:enabled { background-color: #e5aa93; color: #231a17; }
 :root[data-animations="on"] button { transition: background-color 140ms ease, color 140ms ease, transform 140ms ease; }
 :root[data-animations="on"] button:enabled:active { transform: scale(.97); }
 @media (prefers-reduced-motion: reduce) {
