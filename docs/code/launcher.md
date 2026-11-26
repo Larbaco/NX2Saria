@@ -2770,6 +2770,12 @@ color override. The Electron main process validates every swatch before the
 window applies its theme variables. The animation preference controls the
 window transitions and the system reduced-motion preference takes precedence.
 
+The picker writes a normalized copy through `picture.keep()`. Replacing the
+shared background cache keeps a temporary copy of the previous image to restore
+if the settings write fails. Removing the background affects only the retained
+cache. The renderer sees a scaled PNG in bounded frames. The picker supplies the
+original path directly to the worker, and the Electron log keeps only outcomes.
+
 ### Steam in Electron
 
 The worker uses the same Steam detection, binary VDF and art writer as Tk.

@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parseAppearance, validAppearancePreference } from './appearance-protocol';
 import { parseInstalledSettings, validSetting } from './installed-settings';
 import { parseModAction, parseModsPage } from './mods-protocol';
-import { parseCrashOffer, parseReportsView, readReportPreview } from './reports-protocol';
+import { parseCrashOffer, parseReportsView, readReportPreview, readWorkerBytes } from './reports-protocol';
 import { parseInspection, type Inspection } from './inspection';
 import { openWorker, WorkerRequestError, type WorkerClient } from './worker-client';
 import { parsePlayResult, type PlayResult } from './worker-protocol';
@@ -520,6 +520,35 @@ app.whenReady().then(() => {
       log?.write('appearance', `key=${key} result=failed`);
       return null;
     }
+  });
+  ipcMain.handle('appearance-image', async event => {
+    const active = appearanceWorker(event);
+    if (!active) return null;
+    const first = await active.request('appearance_image', { offset: 0 });
+    if (!first || worker !== active) return null;
+    const { bytes } = await readWorkerBytes(offset => offset === 0
+      ? Promise.resolve(first) : active.request('appearance_image', { offset }));
+    return worker === active && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
+      ? `data:image/png;base64,${bytes.toString('base64')}` : null;
+  });
+  ipcMain.handle('appearance-background', async (event, choose) => {
+    const active = appearanceWorker(event, true);
+    if (!active || typeof choose !== 'boolean') return null;
+    let source: string | null = null;
+    if (choose) {
+      const picked = await dialog.showOpenDialog(window, { title: 'Escolher imagem de fundo',
+        defaultPath: app.getPath('pictures'), properties: ['openFile'],
+        filters: [{ name: 'Imagens', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'tif', 'tiff'] },
+          { name: 'Todos os arquivos', extensions: ['*'] }] });
+      if (picked.canceled || !picked.filePaths[0]) return null;
+      source = picked.filePaths[0];
+      if (!path.isAbsolute(source) || appearanceWorker(event, true) !== active) return null;
+    }
+    const result = await active.request('appearance_background', { path: source });
+    if (worker !== active || !['ok', 'invalid_picture', 'failed'].includes(result?.status)) return null;
+    log?.write('appearance', `background ${choose ? 'choose' : 'remove'} result=${result.status}`);
+    return { status: result.status,
+      appearance: result.status === 'ok' ? { ...parseAppearance(result.appearance), writable: true } : null };
   });
   const steamStatuses = ['added', 'available', 'not_found', 'flatpak_unsupported', 'unavailable'];
   async function steamStatus(active: WorkerClient) {

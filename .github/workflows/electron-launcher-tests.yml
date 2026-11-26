@@ -50,7 +50,7 @@ jobs:
           uv python install -q 3.14.9
           python=$(uv python find --managed-python 3.14.9)
           deps="$RUNNER_TEMP/electron-test-deps"
-          uv pip install -q --python "$python" --target "$deps" 'numpy==2.5.4'
+          uv pip install -q --python "$python" --target "$deps" 'numpy==2.5.4' 'pillow==12.3.0'
           if [[ "$RUNNER_OS" == 'Windows' ]]; then
             cygpath -w "$(dirname "$(cygpath -u "$python")")" >> "$GITHUB_PATH"
             printf 'PYTHONPATH=.;%s\n' "$(cygpath -w "$deps")" >> "$GITHUB_ENV"

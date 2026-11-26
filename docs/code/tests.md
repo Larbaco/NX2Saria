@@ -5923,6 +5923,11 @@ The appearance test reads a nondefault theme and an old dimming value, compares
 the shared palette, changes the custom colors and verifies that invalid choices
 leave unrelated settings intact. The Linux window changes the theme, checks a
 custom color and its reset, disables animation and changes the sound preference.
+The background test uses generated images and verifies rollback after an injected
+settings write failure. The window test covers the native picker, cancel, invalid
+input, rendered image dimensions, dimming and removing the retained copy. The
+Linux window lifecycle test waits for installation controls to be initialized
+before asserting the stored hide preference.
 
 The Steam test uses a scratch account and the real VDF writer. It updates a
 legacy shortcut without changing its ID or an unrelated entry, checks image

@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { execFileSync } = require('node:child_process');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
@@ -45,8 +46,36 @@ async function main() {
     const saved = JSON.parse(await fs.readFile(settings, 'utf8'));
     assert.deepEqual({ theme: saved.theme, animations: saved.animations, sounds: saved.sounds,
       untouched: saved.future_option }, { theme: 'custom', animations: false, sounds: 'off', untouched: 'preserved' });
+    const selected = path.join(base, 'test-background.png');
+    const invalid = path.join(base, 'test-invalid.png');
+    execFileSync(process.env.NX2SARIA_PYTHON || 'python3',
+      ['-c', 'from PIL import Image; import sys; Image.new("RGB", (18, 14), "green").save(sys.argv[1])', selected]);
+    await fs.writeFile(invalid, 'invalid image');
+    const pick = file => app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: !selected, filePaths: selected ? [selected] : [] });
+    }, file);
+    const choose = page.getByRole('button', { name: 'Escolher imagem de fundo' });
+    await pick(selected);
+    await choose.click();
+    await page.waitForFunction(() => document.querySelector('#shell-background').naturalWidth === 1200);
+    await page.getByLabel('Escurecimento da imagem').selectOption('80');
+    await page.waitForFunction(() => Number(getComputedStyle(document.querySelector('#shell-background')).opacity) === 0.2);
+    await pick(invalid);
+    await choose.click();
+    await page.getByText('Não foi possível ler a imagem escolhida.', { exact: true }).waitFor();
+    assert.equal(await page.locator('#shell-background').isVisible(), true);
+    await pick(null);
+    await choose.click();
+    await page.waitForFunction(() => !document.querySelector('#appearance-picture-choose').disabled);
+    assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).background, selected);
+    await page.getByRole('button', { name: 'Remover imagem de fundo' }).click();
+    await page.locator('#shell-background').waitFor({ state: 'hidden' });
+    assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).background, '');
+    await fs.access(selected);
     const log = await fs.readFile(path.join(root, 'data', 'logs', 'launcher-electron.log'), 'utf8');
     assert.match(log, /electron: appearance key=custom_panel result=saved/);
+    assert.match(log, /electron: appearance background choose result=invalid_picture/);
+    assert.doesNotMatch(log, /test-background\.png|nx2-appearance-/);
   } finally {
     if (app) await app.close().catch(() => {});
     await fs.rm(base, { recursive: true, force: true, maxRetries: 3 });

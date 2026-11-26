@@ -16,7 +16,7 @@ from .build import game_log_path, game_log_paths
 from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
 from .paths import Layout, install_folder
-from .worker_reports import QUESTION_ANSWERS, Reports, installed_crash_offer
+from .worker_reports import QUESTION_ANSWERS, Reports, installed_crash_offer, preview_frame
 
 PROTOCOL = 1
 MAX_FRAME = 65536
@@ -606,6 +606,7 @@ def main(argv=None):
         check_started = None
         check_channel = None
         steam_result = {'status': 'idle'}
+        background_image = None
         while True:
             if steam_work and steam_work.done():
                 steam_result = steam_work.result()
@@ -1056,10 +1057,11 @@ def main(argv=None):
                 else:
                     result = change_mod(ctx, game, run, counts, request)
                 emit({'id': request['id'], 'result': result})
-            elif request.get('method') in ('appearance_info', 'appearance_preference'):
+            elif request.get('method') in ('appearance_info', 'appearance_preference',
+                                               'appearance_background', 'appearance_image'):
                 method = request['method']
-                if method == 'appearance_preference' and (lock_state != 'held' or job or pending
-                                                          or build_recovery.blocked(layout)):
+                if method in ('appearance_preference', 'appearance_background') and (
+                        lock_state != 'held' or job or pending or build_recovery.blocked(layout)):
                     error(request['id'], 'appearance_unavailable')
                     continue
                 try:
@@ -1067,18 +1069,35 @@ def main(argv=None):
                     if method == 'appearance_info':
                         result = worker_appearance.view(ctx.settings)
                         action_log(ctx, counts, 'appearance', f'theme={result["theme"]} read')
+                    elif method == 'appearance_image':
+                        offset = request.get('offset')
+                        if type(offset) is not int or offset < 0:
+                            error(request['id'], 'invalid_offset')
+                            continue
+                        if offset == 0:
+                            background_image = worker_appearance.saved_background(layout, ctx.settings)
+                            if ctx.settings['background']:
+                                action_log(ctx, counts, 'appearance', 'background read=' +
+                                           ('ready' if background_image else 'unavailable'))
+                        result = preview_frame(background_image, offset)
+                    elif method == 'appearance_background':
+                        result = (worker_appearance.change_background(layout, ctx.settings, request['path'])
+                                  if 'path' in request else {'status': 'invalid_picture'})
+                        background_image = None
+                        action_log(ctx, counts, 'appearance background', f'result={result["status"]}')
                     else:
                         key = request.get('key')
                         result = worker_appearance.preference(ctx.settings, key, request.get('value'))
                         action_log(ctx, counts, f'appearance key={key}', 'result=saved')
-                except ValueError:
-                    action_log(ctx, counts, 'appearance', 'invalid preference')
-                    error(request['id'], 'invalid_preference')
-                    continue
-                except (OSError, ImportError):
-                    action_log(ctx, counts, 'appearance', 'unavailable')
-                    error(request['id'], 'appearance_unavailable')
-                    continue
+                except (ValueError, OSError, ImportError) as failure:
+                    if method == 'appearance_background':
+                        action_log(ctx, counts, 'appearance background', 'result=failed')
+                        result = {'status': 'failed'}
+                    else:
+                        invalid = method == 'appearance_preference' and isinstance(failure, ValueError)
+                        action_log(ctx, counts, 'appearance', 'invalid preference' if invalid else 'unavailable')
+                        error(request['id'], 'invalid_preference' if invalid else 'appearance_unavailable')
+                        continue
                 emit({'id': request['id'], 'result': result})
             elif request.get('method') in ('steam_info', 'steam_add', 'steam_result'):
                 method = request['method']

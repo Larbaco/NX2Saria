@@ -13,6 +13,10 @@ const appearanceDim = document.querySelector<HTMLSelectElement>('#appearance-dim
 const appearanceAnimations = document.querySelector<HTMLInputElement>('#appearance-animations')!;
 const appearanceSounds = document.querySelector<HTMLSelectElement>('#appearance-sounds')!;
 const appearanceResult = document.querySelector<HTMLElement>('#appearance-result')!;
+const appearancePicture = document.querySelector<HTMLImageElement>('#shell-background')!;
+const appearancePictureName = document.querySelector<HTMLElement>('#appearance-picture-name')!;
+const appearancePictureChoose = document.querySelector<HTMLButtonElement>('#appearance-picture-choose')!;
+const appearancePictureClear = document.querySelector<HTMLButtonElement>('#appearance-picture-clear')!;
 const appearanceSlots = ['background', 'panel', 'buttons'] as const;
 let appearanceState: AppearanceState | null = null;
 let appearanceBusy = false;
@@ -26,17 +30,22 @@ function applyAppearance(state: AppearanceState | null) {
     if (state) root.style.setProperty(property, state.palette[key]);
     else root.style.removeProperty(property);
   }
+  root.style.setProperty('--shell-picture-opacity', String(1 - (state?.background_dim ?? 40) / 100));
   root.dataset.animations = state?.animations ? 'on' : 'off';
 }
 
 function resetAppearance() {
   applyAppearance(null);
+  showAppearanceImage(null);
   appearanceOpen = false;
   appearanceResult.textContent = '';
 }
 
 async function loadAppearance() {
-  try { applyAppearance(await window.launcher.appearanceInfo()); }
+  try {
+    applyAppearance(await window.launcher.appearanceInfo());
+    if (appearanceState?.background) await refreshAppearanceImage();
+  }
   catch { applyAppearance(null); }
 }
 
@@ -47,6 +56,10 @@ function updateAppearanceControls(disabled: boolean) {
   appearanceButton.disabled = disabled || appearanceBusy;
   const readOnly = disabled || appearanceBusy || !appearanceState?.writable;
   appearanceTheme.disabled = appearanceAnimations.disabled = appearanceSounds.disabled = readOnly;
+  appearancePictureChoose.disabled = readOnly;
+  appearancePictureClear.disabled = readOnly || !appearanceState?.background;
+  appearancePictureName.hidden = !appearanceState?.background;
+  appearancePictureName.textContent = appearanceState?.background ?? '';
   appearanceDim.disabled = readOnly || !appearanceState?.background;
   for (const button of appearanceColors.querySelectorAll<HTMLButtonElement>('button')) button.disabled = readOnly;
   for (const input of appearanceColors.querySelectorAll<HTMLInputElement>('input')) input.disabled = readOnly;
@@ -78,6 +91,40 @@ async function writeAppearance(key: string, value: string | boolean | number) {
   }
 }
 
+function showAppearanceImage(image: string | null) {
+  appearancePicture.hidden = !image;
+  if (image) appearancePicture.src = image;
+  else appearancePicture.removeAttribute('src');
+}
+
+async function refreshAppearanceImage() {
+  try { showAppearanceImage(await window.launcher.appearanceImage()); }
+  catch { showAppearanceImage(null); }
+}
+
+async function changeAppearanceImage(choose: boolean) {
+  appearanceBusy = true;
+  appearanceResult.textContent = '';
+  updateControls();
+  try {
+    const result = await window.launcher.appearanceBackground(choose);
+    if (!result) return;
+    if (result.status === 'ok' && result.appearance) {
+      applyAppearance(result.appearance);
+      await refreshAppearanceImage();
+    } else {
+      appearanceResult.textContent = result.status === 'invalid_picture'
+        ? 'Não foi possível ler a imagem escolhida.' : 'Não foi possível salvar a imagem de fundo.';
+    }
+  } catch { appearanceResult.textContent = 'Não foi possível salvar a imagem de fundo.'; }
+  finally {
+    appearanceBusy = false;
+    updateControls();
+  }
+}
+
+appearancePictureChoose.onclick = () => { void changeAppearanceImage(true); };
+appearancePictureClear.onclick = () => { void changeAppearanceImage(false); };
 appearanceButton.onclick = () => { appearanceOpen = !appearanceOpen; updateControls(); };
 appearanceTheme.onchange = () => { void writeAppearance('theme', appearanceTheme.value); };
 appearanceDim.onchange = () => { void writeAppearance('background_dim', Number(appearanceDim.value)); };

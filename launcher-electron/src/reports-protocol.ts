@@ -39,7 +39,7 @@ export function parseCrashOffer(value: unknown): CrashView | null {
   return { status, kind, message, head_lines, tail_lines, bytes, summary, whole, guard_ms, can_send };
 }
 
-export async function readReportPreview(get: (offset: number) => Promise<unknown>) {
+export async function readWorkerBytes(get: (offset: number) => Promise<unknown>, maxBytes = 4 * 1024 * 1024) {
   let size = 0;
   let example = false;
   let offset = 0;
@@ -48,7 +48,7 @@ export async function readReportPreview(get: (offset: number) => Promise<unknown
     const result = await get(offset);
     if (!result || typeof result !== 'object') throw new Error('Invalid preview');
     const frame = result as { size: number; chunk: string; example: boolean };
-    if (!Number.isSafeInteger(frame.size) || frame.size < 1 || frame.size > 4 * 1024 * 1024 ||
+    if (!Number.isSafeInteger(frame.size) || frame.size < 1 || frame.size > maxBytes ||
         typeof frame.chunk !== 'string' || frame.chunk.length > 22000 ||
         typeof frame.example !== 'boolean') throw new Error('Invalid preview');
     if (offset === 0) {
@@ -62,5 +62,10 @@ export async function readReportPreview(get: (offset: number) => Promise<unknown
     chunks.push(chunk);
     offset += chunk.length;
   } while (offset < size);
-  return { text: new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, size)), example };
+  return { bytes: Buffer.concat(chunks, size), example };
+}
+
+export async function readReportPreview(get: (offset: number) => Promise<unknown>) {
+  const { bytes, example } = await readWorkerBytes(get);
+  return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), example };
 }

@@ -42,7 +42,7 @@ exit 2
     const visible = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isVisible());
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
     const hide = page.getByRole('checkbox', { name: 'Ocultar o launcher ao jogar' });
-    await hide.waitFor({ timeout: 5000 });
+    await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled, { timeout: 5000 });
     assert.equal(await hide.isChecked(), true);
     await fs.mkdir(settingsFile + '.tmp');
     await hide.click();
@@ -55,6 +55,7 @@ exit 2
     assert.deepEqual(JSON.parse(await fs.readFile(settingsFile, 'utf8')), { ...initialSettings, hide_while_playing: false });
     await page.getByRole('button', { name: 'Selecionar instalação' }).click();
     await page.locator('#status').getByText('Instalação encontrada').waitFor({ timeout: 10000 });
+    await page.waitForFunction(() => !document.querySelector('#hide-while-playing').disabled);
     assert.equal(await hide.isChecked(), false);
     for (let round = 0; round < 2; round++) {
       await page.getByRole('button', { name: 'Jogar' }).click();

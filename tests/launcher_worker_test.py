@@ -861,6 +861,68 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse((game / 'logs' / telemetry.SUMMARY).exists())
         self.assertEqual(json.loads((game / 'logs' / telemetry.SENT).read_text())['session']['frames'], 2)
 
+    def test_background_uses_shared_cache_and_keeps_previous_picture_on_failure(self):
+        import base64
+        from PIL import Image
+        from launcher.ui import picture
+
+        base = Path(self.tmp.name)
+        existing, rejected, selected = (base / (name + '.png') for name in ('existing', 'rejected', 'selected'))
+        for filename, color in zip((existing, rejected, selected), ('red', 'blue', 'green')):
+            Image.new('RGB', (18, 14), color=color).save(filename)
+        invalid = base / 'invalid.png'
+        invalid.write_text('this is not an image')
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'background': str(existing), 'future_key': 'kept'}))
+        cache = self.root / 'data' / 'background.npy'
+        picture.keep(existing, cache)
+        original_cache = cache.read_bytes()
+        script = ("import runpy,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher.settings import Settings\n"
+                  "root,rejected=sys.argv[1:]\n"
+                  "write=Settings._write\n"
+                  "def fail(self,values):\n"
+                  " if values.get('background')==rejected: raise OSError('synthetic settings failure')\n"
+                  " return write(self,values)\n"
+                  "sys.argv=['launcher.worker','--root',root]\n"
+                  "with mock.patch.object(Settings,'_write',fail):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), str(rejected)], cwd=ROOT,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop_worker, worker)
+        serial = 0
+
+        def request(method, **fields):
+            nonlocal serial
+            serial += 1
+            worker.stdin.write(json.dumps({'id': serial, 'method': method, **fields}) + '\n')
+            worker.stdin.flush()
+            frame = json.loads(worker.stdout.readline())
+            self.assertEqual(frame['id'], serial)
+            self.assertIn('result', frame)
+            return frame['result']
+
+        self.assertIn('appearance', request('hello', protocol=1)['capabilities'])
+        first = request('appearance_image', offset=0)
+        self.assertTrue(base64.b64decode(first['chunk']).startswith(b'\x89PNG\r\n\x1a\n'))
+        self.assertEqual(request('appearance_background', path=str(invalid))['status'], 'invalid_picture')
+        self.assertEqual(request('appearance_background', path=str(rejected))['status'], 'failed')
+        self.assertEqual(cache.read_bytes(), original_cache)
+        self.assertEqual(json.loads(settings.read_text())['background'], str(existing))
+        applied = request('appearance_background', path=str(selected))
+        self.assertEqual(applied['status'], 'ok')
+        self.assertEqual(applied['appearance']['background'], selected.name)
+        self.assertEqual(picture.kept_shape(cache), (picture.KEEP_H, picture.KEEP_W))
+        self.assertNotEqual(request('appearance_image', offset=0)['chunk'], first['chunk'])
+        self.assertEqual(request('appearance_background', path=None)['status'], 'ok')
+        self.assertFalse(cache.exists())
+        self.assertIsNone(request('appearance_image', offset=0))
+        self.assertTrue(all(file.is_file() for file in (existing, rejected, selected, invalid)))
+        self.assertEqual(json.loads(settings.read_text()), {'background': '', 'future_key': 'kept'})
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=15), 0)
+
     def test_appearance_view_reads_existing_settings_and_validates_changes(self):
         from launcher.ui import art
 
