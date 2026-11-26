@@ -1,6 +1,7 @@
 import fcntl
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -45,7 +46,7 @@ class Pieces(unittest.TestCase):
         for p in sorted((ROOT / 'tools' / 'data' / 'rc-smoke').glob('*.txt')):
             got = rc_smoke.read_expect(p)
             self.assertTrue(got, p.name)
-            self.assertLessEqual(set(got), {'run', 'crash-launcher', 'update'}, p.name)
+            self.assertLessEqual(set(got), {'run', 'crash-launcher', 'update', 'window-update'}, p.name)
             self.assertTrue(rc_smoke.version_key(p.stem), p.name)
 
     def test_sent_lines(self):
@@ -116,6 +117,10 @@ class Pieces(unittest.TestCase):
         self.assertEqual(rc_smoke.chosen(args(quick=True, skip='window')),
                          ['install', 'cli', 'build', 'run', 'crash', 'privacy'])
         self.assertIn('cli', rc_smoke.QUICK)
+        self.assertNotIn('window-update', rc_smoke.QUICK)
+        self.assertEqual(rc_smoke.chosen(args(only='privacy,window-update')), ['window-update', 'privacy'])
+        for stage in rc_smoke.STAGES:
+            self.assertTrue(callable(getattr(rc_smoke.Smoke, 'stage_' + stage.replace('-', '_'))), stage)
         with self.assertRaises(SystemExit):
             rc_smoke.chosen(args(only='nope'))
 
@@ -150,6 +155,21 @@ def smoke(d, **kw):
 
 
 class Options(unittest.TestCase):
+    def test_ancestors_and_locks_table(self):
+        self.assertEqual(rc_smoke.ancestors()[0], os.getpid())
+        self.assertIn(os.getppid(), rc_smoke.ancestors())
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / 'lock'
+            f.touch()
+            st = os.stat(f)
+            ident = f'{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}'
+            table = Path(d) / 'locks'
+            table.write_text(f'1: POSIX  ADVISORY  WRITE 11 {ident} 0 EOF\n'
+                             f'2: FLOCK  ADVISORY  WRITE 22 {ident} 0 EOF\n'
+                             f'2: -> FLOCK  ADVISORY  WRITE 33 {ident} 0 EOF\n'
+                             f'3: FLOCK  ADVISORY  WRITE 44 00:00:1 0 EOF\n', encoding='ascii')
+            self.assertEqual(rc_smoke.lock_holders(f, table), [22])
+
     def test_ini_with(self):
         text = '# kept\nfps_limit = 60\nfoliage_distance = 1\n  foliage_distance=3\n'
         got = rc_smoke.ini_with(text, [('foliage_distance', '2'), ('pause_settings_tab', '1')])
@@ -181,12 +201,39 @@ class Options(unittest.TestCase):
             self.assertFalse(s.take_lock())
             with open(s.lock_path, 'a') as held:
                 fcntl.flock(held, fcntl.LOCK_EX)
+                self.assertEqual(rc_smoke.lock_holders(s.lock_path), [os.getpid()])
                 self.assertTrue(s.take_lock())
             self.assertIsNone(s.lock)
             s.release_lock()
+            other = subprocess.Popen([sys.executable, '-c', 'import fcntl, sys, time; f = open(sys.argv[1], "a"); '
+                                      'fcntl.flock(f, fcntl.LOCK_EX); print("held", flush=True); time.sleep(30)',
+                                      str(s.lock_path)], stdout=subprocess.PIPE, text=True)
+            try:
+                self.assertEqual(other.stdout.readline().strip(), 'held')
+                self.assertEqual(rc_smoke.lock_holders(s.lock_path), [other.pid])
+                self.assertFalse(s.take_lock())
+            finally:
+                other.kill()
+                other.wait()
             free = smoke(d)
             self.assertTrue(free.take_lock())
             free.release_lock()
+
+    def test_build_frees_the_other_game_folders(self):
+        for keep in (False, True):
+            with tempfile.TemporaryDirectory() as d:
+                s = smoke(d, keep_game=keep)
+                for which in rc_smoke.ROOTS:
+                    (s.game(which) / 'ocarina').parent.mkdir(parents=True)
+                    (s.game(which) / 'ocarina').write_text('x', encoding='utf-8')
+
+                def stop():
+                    raise rc_smoke.Failed('stop')
+                s.wait_for_disk = stop
+                with self.assertRaises(rc_smoke.Failed):
+                    s.build('winupd', 'b')
+                left = sorted(w for w in rc_smoke.ROOTS if s.game(w).exists())
+                self.assertEqual(left, ['clean', 'update'] if keep else [])
 
     def fake_install(self, d, shadow):
         s = smoke(d)

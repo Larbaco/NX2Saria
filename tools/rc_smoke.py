@@ -36,7 +36,8 @@ REPO = 'Larbaco/NX2Saria'
 GITHUB_API = 'https://api.github.com'
 DOWNLOAD = f'https://github.com/{REPO}/releases/download'
 LINUX_MANIFEST = 'NX2Saria-update-linux.json'
-STAGES = ('install', 'cli', 'build', 'run', 'window', 'crash', 'update', 'privacy')
+STAGES = ('install', 'cli', 'build', 'run', 'window', 'crash', 'update', 'window-update', 'privacy')
+ROOTS = ('clean', 'update', 'winupd')
 QUICK = ('install', 'cli', 'build', 'run', 'window', 'crash', 'privacy')
 BUILD_FREE_GB = 36
 ROOT_FREE_GB = 3
@@ -251,6 +252,34 @@ def pairs(items, what):
     return out
 
 
+def lock_holders(path, table='/proc/locks'):
+    st = os.stat(path)
+    ident = f'{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}'
+    try:
+        lines = Path(table).read_text(encoding='ascii', errors='replace').splitlines()
+    except OSError:
+        return []
+    held = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 6 and parts[1] == 'FLOCK' and parts[5] == ident and parts[4].isdigit():
+            held.append(int(parts[4]))
+    return held
+
+
+def ancestors(pid=None):
+    pid = os.getpid() if pid is None else pid
+    out = []
+    while pid > 1 and pid not in out:
+        out.append(pid)
+        try:
+            stat = Path(f'/proc/{pid}/stat').read_text(encoding='ascii', errors='replace')
+            pid = int(stat.rsplit(')', 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return out
+
+
 def png_problem(path):
     try:
         size = path.stat().st_size
@@ -360,14 +389,14 @@ class Smoke:
     def take_lock(self):
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
         if self.a.lock_held:
-            with open(self.lock_path, 'a') as probe:
-                try:
-                    fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                except BlockingIOError:
-                    self.say(f'bench lock: held by the caller (--lock-held): {self.lock_path}')
-                    return True
-                fcntl.flock(probe, fcntl.LOCK_UN)
-            self.say(f'--lock-held, but nothing holds {self.lock_path}: run under flock {self.lock_path} ...')
+            self.lock_path.touch()
+            holders = lock_holders(self.lock_path)
+            mine = set(ancestors())
+            if any(pid in mine for pid in holders):
+                self.say(f'bench lock: held by the caller (--lock-held, pid {holders[0]}): {self.lock_path}')
+                return True
+            self.say(f'--lock-held, but no caller of this run holds {self.lock_path}'
+                     + (f' (pid {holders[0]} does)' if holders else '') + f': run under flock {self.lock_path} ...')
             return False
         self.lock = open(self.lock_path, 'a')
         try:
@@ -560,6 +589,11 @@ class Smoke:
     def build(self, which, name):
         game = self.game(which)
         shutil.rmtree(game, ignore_errors=True)
+        if not self.a.keep_game:
+            for other in ROOTS:
+                if other != which and self.game(other).exists():
+                    shutil.rmtree(self.game(other), ignore_errors=True)
+                    self.say(f'deleted {self.game(other)}: a build needs its disk')
         game.parent.mkdir(parents=True, exist_ok=True)
         have = self.wait_for_disk()
         t0 = time.time()
@@ -763,6 +797,111 @@ class Smoke:
             raise Failed('; '.join(bad))
         return '; '.join(s for s in said if s)
 
+    def open_window(self, which, display, name, until, limit):
+        root = self.root(which)
+        log_path = root / 'data' / 'logs' / 'launcher.log'
+        start = log_path.stat().st_size if log_path.is_file() else 0
+
+        def since():
+            if not log_path.is_file():
+                return ''
+            with open(log_path, encoding='utf-8', errors='replace') as f:
+                f.seek(start)
+                return f.read()
+        env = self.env(which, DISPLAY=display)
+        env.pop('WAYLAND_DISPLAY', None)
+        t0 = time.time()
+        with open(self.runs / f'{name}.out', 'w') as out:
+            proc = subprocess.Popen([root / 'nx2saria-launcher'], env=env, stdout=out, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL)
+        hit = None
+        while time.time() - t0 < limit and proc.poll() is None and not hit:
+            time.sleep(3)
+            hit = re.search(until, since())
+        subprocess.run(['import', '-display', display, '-window', 'root', self.runs / f'{name}.png'],
+                       capture_output=True, timeout=60)
+        code = proc.poll()
+        if code is None:
+            time.sleep(5)
+            subprocess.run([sys.executable, '-I', '-c', X_CLOSE, display, 'NX2Saria'], capture_output=True, timeout=30)
+            try:
+                code = proc.wait(90)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                code = proc.wait(30)
+        new = since()
+        (self.runs / f'{name}-launcher.log').write_text(new, encoding='utf-8')
+        return hit, code, new
+
+    def stage_window_update(self):
+        stable = self.a.from_tag or self.previous_stable()
+        if not stable:
+            raise Failed('no earlier stable release found: give --from')
+        old, w = tag_version(stable), 'winupd'
+        shutil.rmtree(self.base / w, ignore_errors=True)
+        self.install_tag(w, stable)
+        self.prepare_settings(w, self.game(w))
+        self.settings(w, auto_check=True, auto_install=True, last_check=0.0)
+        built = self.build(w, 'winupd-build-old')
+        if self.a.pin_url:
+            self.pin_feed(w, self.tag)
+        self.feed_used = self.feed(fresh=True)
+        root = self.root(w)
+        xproc, display = self.xvfb()
+        try:
+            _, code, new = self.open_window(w, display, 'winupd-window1',
+                                            r'background update: \S+ (?:is staged|was not staged)', 900)
+            staged = re.search(r'background update: (\S+) is staged', new)
+            if not staged or staged.group(1) != self.version or code:
+                said = ' | '.join(ln for ln in new.splitlines() if 'update' in ln)[-300:]
+                raise Failed(f'the {old} window did not stage {self.version} in the background '
+                             f'({staged.group(0) if staged else said or "no update line"}; exit {code})')
+            t0 = time.time()
+            _, code, new = self.open_window(w, display, 'winupd-window2', r'job update: (?:ok|failed|cancelled)', 3600)
+            minutes = (time.time() - t0) / 60
+        finally:
+            xproc.terminate()
+            try:
+                xproc.wait(10)
+            except subprocess.TimeoutExpired:
+                xproc.kill()
+        _, cur, _, _ = self.installed(w)
+        prev_file = root / 'app' / 'previous.txt'
+        prev = prev_file.read_text(encoding='utf-8').strip() if prev_file.is_file() else ''
+        kit = self.build_state(self.game(w)).get('kit')
+        job = re.search(r'job update: (\S+)[^\n]*', new)
+        inst = re.search(r'background update: installing [^\n]*', new)
+        heads = re.findall(r'--- NX2Saria launcher (\S+)', new)
+        bad = []
+        if not inst:
+            bad.append('no "background update: installing" line')
+        if not job or job.group(1) != 'ok':
+            bad.append(f'the update job: {job.group(0) if job else "no job line"}')
+        if cur != self.version:
+            bad.append(f'current.txt says {cur}, not {self.version}')
+        if prev != old or not (root / 'app' / old / 'launcher' / 'start.pyw').is_file():
+            bad.append(f'rollback not kept: previous.txt {prev!r}')
+        if kit != self.version:
+            bad.append(f'the game build says kit {kit!r} after the update')
+        if self.version not in heads:
+            bad.append(f'the launchers that started: {", ".join(heads) or "none"}')
+        if 'Traceback' in new:
+            bad.append('a traceback in launcher.log')
+        if code:
+            bad.append(f'the window exit code was {code}')
+        lost = missing_lines(new, self.expect.get('window-update', []))
+        if lost:
+            bad.append('the update did not do what the notes say: ' + ' | '.join(lost))
+        if bad:
+            raise Failed('; '.join(bad))
+        lift = re.search(r'^\d\d:\d\d:\d\d lift: [^\n]*', new, re.M)
+        compiled = re.search(r'\d+ compiled, \d+ unchanged since the last build', new)
+        ran = self.game_run(w, 'winupd-run')
+        return (f'{old} ({built}) staged {self.version} in its window, installed it at the next start '
+                f'({" -> ".join(heads)}), {job.group(0).strip()} in {minutes:.0f} min; previous.txt {prev}; '
+                f'{lift.group(0)[9:] if lift else "no lift line"}; {compiled.group(0) if compiled else ""}; '
+                f'{ran.split(";")[0]}')
+
     def stage_crash(self):
         root, ver, py, app = self.installed('clean')
         game = self.game('clean')
@@ -880,7 +1019,7 @@ class Smoke:
 
     def stage_privacy(self):
         found, read = [], 0
-        for which in ('clean', 'update'):
+        for which in ROOTS:
             logs = self.root(which) / 'data' / 'logs'
             for name in ('launcher.log', 'launcher.1.log'):
                 p = logs / name
@@ -898,7 +1037,7 @@ class Smoke:
     def cleanup(self):
         shutil.rmtree(self.games / 'tmp', ignore_errors=True)
         if not self.a.keep_game:
-            for which in ('clean', 'update'):
+            for which in ROOTS:
                 g = self.game(which)
                 if g.exists():
                     shutil.rmtree(g, ignore_errors=True)
@@ -941,7 +1080,7 @@ class Smoke:
             self.summary(stages, started)
             return 1
         if not self.take_lock():
-            self.record('setup', False, f'--lock-held, but nothing holds {self.lock_path}', 0)
+            self.record('setup', False, f'--lock-held, but no caller of this run holds {self.lock_path}', 0)
             self.summary(stages, started)
             return 1
         try:
@@ -949,7 +1088,7 @@ class Smoke:
                 t0 = time.time()
                 self.say(f'--- {stage}')
                 try:
-                    why = getattr(self, f'stage_{stage}')()
+                    why = getattr(self, f'stage_{stage.replace("-", "_")}')()
                     self.record(stage, True, why, time.time() - t0)
                 except Failed as e:
                     self.record(stage, False, str(e), time.time() - t0)
