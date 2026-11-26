@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('launcher', {
   modEnabled: (name: string, value: boolean) => ipcRenderer.invoke('mod-enabled', name, value),
   modMove: (name: string, direction: number) => ipcRenderer.invoke('mod-move', name, direction),
   openModsDir: () => ipcRenderer.invoke('open-mods-dir'),
+  controllerUsed: () => ipcRenderer.send('controller-used'),
   appearanceInfo: () => ipcRenderer.invoke('appearance-info'),
   appearancePreference: (key: string, value: string | number | boolean) => ipcRenderer.invoke('appearance-preference', key, value),
   appearanceAssets: () => ipcRenderer.invoke('appearance-assets'),

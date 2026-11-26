@@ -5933,6 +5933,11 @@ a complete backup. The Linux window test uses the native dialog seams for the ex
 and the generated backup folder. A Node check verifies that a save transaction can finish
 after the ordinary request timeout.
 
+The input window test uses native keyboard events and a standard synthetic
+controller. It checks focus order and restoration, selection changes, return,
+unfocused input suppression, scroll, and overflow at the minimum window size
+and at 140% zoom. Hardware Game Mode is a separate check.
+
 The appearance test reads a nondefault theme and an old dimming value, compares
 the shared palette, changes the custom colors and verifies that invalid choices
 leave unrelated settings intact. The Linux window changes the theme, checks a

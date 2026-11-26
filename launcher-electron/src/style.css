@@ -22,3 +22,14 @@ button { background-color: var(--shell-button, #e0bd7a); color: var(--shell-butt
 #shell-background { position: fixed; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: var(--shell-picture-opacity, .6); pointer-events: none; }
 header, main { position: relative; }
 .game-display-font h1, .game-display-font h2 { font-family: 'NX2Saria Game Display', Georgia, serif; }
+
+input:focus-visible, select:focus-visible, textarea:focus-visible, pre:focus-visible, a:focus-visible {
+  outline: 3px solid white;
+  outline-offset: 3px;
+}
+article { min-width: 0; width: 100%; }
+article p, article button, dialog p { overflow-wrap: anywhere; }
+@media (max-width: 640px) {
+  main aside { display: none; }
+  main article { padding: 24px 5%; }
+}

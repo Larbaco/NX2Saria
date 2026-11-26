@@ -124,6 +124,7 @@ function updateAppearanceControls(disabled: boolean) {
 }
 
 async function writeAppearance(key: string, value: string | boolean | number) {
+  const previousFocus = document.activeElement;
   appearanceBusy = true;
   appearanceResult.textContent = '';
   updateControls();
@@ -136,6 +137,10 @@ async function writeAppearance(key: string, value: string | boolean | number) {
   } finally {
     appearanceBusy = false;
     updateControls();
+    if (document.activeElement === document.body && previousFocus instanceof HTMLElement &&
+        appearancePanel.contains(previousFocus) && previousFocus.getClientRects().length) {
+      focusLauncherControl(previousFocus);
+    }
   }
 }
 

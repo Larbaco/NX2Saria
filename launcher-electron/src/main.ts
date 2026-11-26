@@ -829,6 +829,9 @@ app.whenReady().then(() => {
       throw new Error('Save unsuccessful');
     }
   });
+  ipcMain.on('controller-used', event => {
+    if (event.sender === window.webContents && window.isFocused()) log?.write('input', 'controller=standard');
+  });
   ipcMain.on('play-message-shown', (event, id, kind) => {
     if (event.sender !== window.webContents || pendingPlayMessage === null || id !== pendingPlayMessage ||
         !['could_not_start', 'ended_with_error', 'game_ended', 'monitor_lost'].includes(kind)) return;

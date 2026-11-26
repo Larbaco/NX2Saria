@@ -2783,6 +2783,15 @@ Add to Steam: the game in the Steam library, started from there without the laun
 exception of the work is caught and logged with its traceback: a Steam folder in a state nobody expected must say so
 instead of ending the launcher.
 
+### Keyboard and controller in the Electron window
+
+Chromium retains the native keyboard sequence. The controller uses the standard
+mapping. Its directions move among visible, enabled controls in the active
+screen; left and right change a selected dropdown, and the right stick scrolls.
+A activates the focused control. B returns from its panel or takes the active
+dialog's cancel route. Losing focus pauses controller input until it returns to
+neutral. The renderer logs first use without including a hardware identifier.
+
 ### Electron appearance preferences
 
 The appearance view uses the existing palette, custom slots, dimming steps and
