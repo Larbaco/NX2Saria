@@ -3667,6 +3667,10 @@ plus desktop shortcut on Windows. The worker requires an idle first run and a he
 It records the Windows shortcut preference and asks the same installed stub as Tk to
 apply it. The request does not schedule an update.
 
+`first_run_requirements()` displays the runtime's existing Zstandard status and reuses Linux's
+compiler and header probes with a bounded timeout. The result is advisory. It checks no game files
+and requests no package installation. The install job still performs its normal toolchain checks.
+
 `install_destination()` offers a proposed game folder for an unconfigured or unavailable game. The worker
 uses the saved path if present and otherwise asks `Layout.default_game_dir()`. A picker result must be an
 absolute existing directory and uses the shared `install_folder()` policy. The worker refuses the proposal

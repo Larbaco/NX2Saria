@@ -47,6 +47,7 @@ with (mock.patch.object(jobs.InstallJob, 'run', install),
       mock.patch.object(jobs.RebuildJob, 'run', rebuild),
       mock.patch.object(paths, 'free_gb', return_value=100),
       mock.patch.object(linux, 'mounted_drives', return_value=[]),
+      mock.patch.object(linux, 'toolchain_missing', return_value='Missing synthetic header: opus/opus.h'),
       mock.patch.object(gamefiles, 'candidate_dirs', search_dirs)):
     runpy.run_module('launcher.worker', run_name='__main__')
 `;
@@ -87,6 +88,7 @@ async function main() {
     await location.getByText(path.join(root, 'game'), { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await install.isDisabled({ timeout: 5000 }), true);
     await page.getByText('100 GB disponíveis. A instalação precisa de cerca de 34 GB.', { exact: true }).waitFor();
+    await page.getByText('Missing synthetic header: opus/opus.h', { exact: true }).waitFor({ timeout: 5000 });
     await page.getByText('Procurando o dump do jogo…').waitFor({ timeout: 5000 });
 
     await app.evaluate(({ dialog }, selected) => {

@@ -1,5 +1,5 @@
 type FirstRunPreferences = { channel: 'stable' | 'preview'; auto_check: boolean; desktop_shortcut: boolean | null };
-type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences };
+type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences; first_run_requirements?: { status: string; message?: string } };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
@@ -19,6 +19,7 @@ const recoveryControls = document.querySelector<HTMLElement>('#recovery-controls
 const waitBuild = document.querySelector<HTMLButtonElement>('#wait-build')!;
 const confirmRecovery = document.querySelector<HTMLButtonElement>('#confirm-recovery')!;
 const stopBuild = document.querySelector<HTMLButtonElement>('#stop-build')!;
+const firstRunRequirements = document.querySelector<HTMLElement>('#first-run-requirements')!;
 const firstRun = document.querySelector<HTMLElement>('#first-run')!;
 const gameFolderSpace = document.querySelector<HTMLElement>('#game-folder-space')!;
 const gameFolderProposal = document.querySelector<HTMLElement>('#game-folder-proposal')!;
@@ -64,6 +65,17 @@ function updateControls() {
   pickGameFolder.disabled = pickGameDump.disabled = busy || firstRun.hidden;
   installButton.disabled = busy || firstRun.hidden || !proposedFolder || !proposedDump || proposedFolder.pathTooLong ||
     installation?.job_marker_present === true || installation?.game_running === true;
+  const requirements = installation?.first_run_requirements;
+  let notice = '';
+  if (requirements?.status === 'runtime_zstd_missing') {
+    notice = 'O runtime do launcher está sem suporte a Zstandard. Repare a instalação pelo launcher atual.';
+  } else if (requirements?.status === 'linux_tools_missing') {
+    notice = requirements.message ?? '';
+  } else if (requirements?.status === 'linux_check_failed') {
+    notice = 'Não foi possível verificar as ferramentas de compilação no Linux.';
+  }
+  firstRunRequirements.textContent = notice;
+  firstRunRequirements.hidden = !notice;
   const preferences = installation?.first_run_preferences;
   firstRunOptions.hidden = !preferences;
   firstRunOptions.disabled = busy;

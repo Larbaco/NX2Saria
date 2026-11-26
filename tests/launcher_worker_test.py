@@ -222,6 +222,37 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('setting: channel stable -> preview', log)
         self.assertIn('worker: settings first_run key=channel result=saved', log)
 
+    def test_first_run_reports_build_prerequisites_without_installing_packages(self):
+        settings = self.root / 'data' / 'launcher.json'
+        script = ("import contextlib,runpy,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher import toolchain\n"
+                  "root,mode=sys.argv[1:]\n"
+                  "sys.argv=['launcher.worker','--root',root]\n"
+                  "def missing(layout): return 'runtime missing' if mode=='runtime' else ''\n"
+                  "linux=(mock.patch('launcher.platform.linux.toolchain_missing', "
+                  "return_value='Missing compiler: clang.' if mode=='tools' else '') "
+                  "if sys.platform.startswith('linux') else contextlib.nullcontext())\n"
+                  "with mock.patch.object(toolchain,'zstd_missing',missing), linux:\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        states = {'runtime': 'runtime_zstd_missing', 'tools': 'linux_tools_missing' if sys.platform.startswith('linux') else 'ready',
+                  'ready': 'ready'}
+        for mode, expected in states.items():
+            with self.subTest(mode=mode):
+                response = subprocess.run(
+                    [sys.executable, '-c', script, str(self.root), mode],
+                    input='{"id":1,"method":"hello","protocol":1}\n{"id":2,"method":"inspect"}\n',
+                    capture_output=True, text=True, cwd=ROOT, timeout=15)
+                self.assertEqual(response.returncode, 0, response.stderr)
+                view = json.loads(response.stdout.splitlines()[-1])['result']['first_run_requirements']
+                self.assertEqual(view['status'], expected)
+                if expected == 'linux_tools_missing':
+                    self.assertIn('clang', view['message'])
+        self.assertEqual(settings.read_text(), '{}')
+        self.assertFalse((self.root / 'game').exists())
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: install requirements status=runtime_zstd_missing', log)
+
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout
 

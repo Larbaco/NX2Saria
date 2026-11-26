@@ -5904,7 +5904,9 @@ Linux compiles only this stand-in. Windows accepts the compiled fixture through 
 The first-run preference case switches the channel and update check, rejects an invalid
 channel and keeps existing fields including telemetry and an unrelated key. On Windows
 the stand-in stub records the desktop request. The Linux window test applies the two
-common preferences and confirms they persist through installation.
+common preferences and confirms they persist through installation. It also displays an advisory
+missing header. The worker requirements test substitutes the runtime and toolchain probes to
+exercise both missing and ready outcomes without touching the settings or game directory.
 
 The first-run destination test checks the default, normalizes a selected nonempty folder and refuses a
 relative path without modifying settings or the chosen directory. It also checks the disk-space metadata,

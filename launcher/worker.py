@@ -4,9 +4,11 @@ import os
 import queue
 import runpy
 import signal
+import subprocess
 import sys
 import threading
 import time
+from functools import partial
 from pathlib import Path
 
 from . import build, build_recovery, commit, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
@@ -158,10 +160,27 @@ def inspect_recovery(ctx, counts, previous):
     return observed
 
 
-def installation_view(ctx, recovery):
+def first_run_requirements(ctx):
+    if ctx.zstd_missing:
+        return {'status': 'runtime_zstd_missing'}
+    if sys.platform.startswith('linux'):
+        from .platform.linux import toolchain_missing
+        try:
+            missing = toolchain_missing(run=partial(subprocess.run, timeout=2))
+        except (OSError, subprocess.SubprocessError):
+            return {'status': 'linux_check_failed'}
+        if missing:
+            return {'status': 'linux_tools_missing', 'message': missing}
+    return {'status': 'ready'}
+
+
+def installation_view(ctx, recovery, counts):
     result = inspect_installation(ctx.layout.root)
     if result['status'] in ('not_configured', 'not_ready'):
         settings = ctx.settings
+        requirements = first_run_requirements(ctx)
+        result['first_run_requirements'] = requirements
+        action_log(ctx, counts, 'install', f'requirements status={requirements["status"]}')
         result['first_run_preferences'] = {
             'channel': 'preview' if settings['channel'] == 'preview' else 'stable',
             'auto_check': settings['auto_check'],
@@ -390,7 +409,7 @@ def main(argv=None):
                 if recovery != previous:
                     sequence += 1
                     emit({'event': 'recovery_changed', 'sequence': sequence, 'session': 0,
-                          'inspection': installation_view(ctx, recovery)})
+                          'inspection': installation_view(ctx, recovery, counts)})
             if job and job.finished is None and not job.cancelled() and job.steps and job.rev != job_revision and not disconnected:
                 with job.locked():
                     job_revision = job.rev
@@ -746,7 +765,7 @@ def main(argv=None):
                         continue
                 if not recovery or recovery.state == 'interrupted':
                     recovery_poll = stopping = None
-                    emit({'id': request['id'], 'result': {'status': 'finished', 'inspection': installation_view(ctx, recovery)}})
+                    emit({'id': request['id'], 'result': {'status': 'finished', 'inspection': installation_view(ctx, recovery, counts)}})
                     continue
                 if action == 'stop':
                     if recovery.state != 'alive':
@@ -768,7 +787,7 @@ def main(argv=None):
                 try:
                     if not job and lock_state == 'held':
                         recovery = inspect_recovery(ctx, counts, recovery)
-                    result = installation_view(ctx, recovery)
+                    result = installation_view(ctx, recovery, counts)
                 except (OSError, ValueError, RuntimeError):
                     action_log(ctx, counts, 'inspect', 'failed')
                     error(request['id'], 'inspection_failed')
