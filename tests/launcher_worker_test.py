@@ -173,6 +173,76 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(worker.wait(timeout=15), 0)
         self.assertIn('worker: play status=not_built', (self.root / 'data' / 'logs' / 'launcher.log').read_text())
 
+    def test_installed_worker_requires_rebuild_before_playing_an_old_game(self):
+        from launcher.platform import game_executable
+
+        active = '0.27.0-rc.4'
+        app = self.root / 'app' / active
+        (app / 'tools').mkdir(parents=True)
+        (app / 'tools' / 'make_game.py').touch()
+        (app / 'VERSION').write_text(active)
+        (app.parent / 'current.txt').write_text(active)
+        game = self.root / 'game'
+        (game / 'build-cache').mkdir(parents=True)
+        exe = game_executable(game)
+        exe.write_text('last finished executable fixture')
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(game), 'telemetry': 'off', 'warn_low_commit': False}))
+        receipt = game / 'build-cache' / 'state.json'
+        old = {'version': 2, 'kit': '0.26.0', 'steps': {'compile': {}, 'exefs': {}, 'romfs': {}}}
+        receipt.write_text(json.dumps(old))
+        spy = self.root / 'spawn-attempts'
+        script = (
+            "import sys\n"
+            "from pathlib import Path\n"
+            "from launcher import commit, worker, winsys\n"
+            "target = Path(sys.argv.pop(1))\n"
+            "def spawn(*args):\n"
+            " with target.open('a') as out: out.write('attempted\\n')\n"
+            " raise OSError('synthetic spawn blocked')\n"
+            "winsys.start_game = spawn\n"
+            "def memory(*args):\n"
+            " if target.with_name('force-memory').is_file(): return commit.MemoryRequest(100, 200, False)\n"
+            "commit.play_memory_request = memory\n"
+            "sys.exit(worker.main(sys.argv[1:]))\n"
+        )
+        process = subprocess.Popen([sys.executable, '-c', script, str(spy), '--root', str(self.root),
+                                    '--app-version', active], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, text=True, cwd=ROOT)
+        self.addCleanup(self.stop_worker, process)
+
+        def request(request_id, method, **fields):
+            process.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+            process.stdin.flush()
+            return json.loads(process.stdout.readline())
+
+        self.assertEqual(request(1, 'hello', protocol=1)['result']['version'], active)
+        before = request(2, 'inspect')['result']
+        play = request(3, 'play')
+        self.assertEqual((before['status'], before.get('rebuild_required'), play.get('result'), spy.exists()),
+                         ('ready', True, {'status': 'rebuild_required'}, False))
+        self.assertEqual(json.loads(receipt.read_text()), old)
+        receipt.write_text(json.dumps({**old, 'kit': active, 'steps': {'exefs': {}, 'romfs': {}}}))
+        self.assertTrue(request(4, 'inspect')['result']['rebuild_required'])
+        self.assertEqual(request(5, 'play')['result'], {'status': 'rebuild_required'})
+        self.assertFalse(spy.exists())
+        receipt.write_text(json.dumps({**old, 'kit': 'v' + active + '+fixture'}))
+        self.assertFalse(request(6, 'inspect')['result'].get('rebuild_required', False))
+        self.assertEqual(request(7, 'play')['error']['code'], 'start_failed')
+        self.assertEqual(spy.read_text().splitlines(), ['attempted'])
+        receipt.write_text(json.dumps({**old, 'kit': '0.27.0'}))
+        self.assertFalse(request(8, 'inspect')['result'].get('rebuild_required', False))
+        spy.with_name('force-memory').touch()
+        waiting = request(9, 'play')['result']
+        self.assertEqual(waiting['status'], 'memory')
+        receipt.write_text(json.dumps(old))
+        self.assertEqual(request(10, 'memory_response', attempt=waiting['attempt'], accept=True)['result'],
+                         {'status': 'rebuild_required'})
+        self.assertEqual(spy.read_text().splitlines(), ['attempted'])
+        self.assertEqual(exe.read_text(), 'last finished executable fixture')
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: play status=rebuild_required', log)
+
     def test_first_run_updates_only_existing_preferences_and_uses_windows_shortcut(self):
         data = self.root / 'data'
         settings = data / 'launcher.json'

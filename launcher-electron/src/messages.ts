@@ -311,6 +311,8 @@ const catalogue: ReadonlyArray<readonly [string, string, string, string]> = [
   ["O limite do udmabuf ainda está abaixo de 1024 MB. Confira o log do launcher.", "The udmabuf limit is still below 1024 MB. Check the launcher log.", "Лимит udmabuf всё ещё ниже 1024 МБ. Проверьте журнал лаунчера.", "udmabuf 的上限仍低于 1024 MB。请查看启动器日志。"],
   ["Não foi possível alterar o udmabuf. Confira o log do launcher.", "Could not change udmabuf. Check the launcher log.", "Не удалось изменить udmabuf. Проверьте журнал лаунчера.", "无法更改 udmabuf。请查看启动器日志。"],
   ["O argumento --launcher-root precisa indicar o caminho absoluto da instalação.", "The --launcher-root argument needs the absolute installation path.", "Для аргумента --launcher-root укажите абсолютный путь к установленному лаунчеру.", "--launcher-root 参数需要安装目录的绝对路径。"],
+  ["Recompilação necessária", "Rebuild required", "Требуется пересборка", "需要重新构建"],
+  ["Selecione Recompilar o jogo para terminar a compilação antes de jogar.", "Select Rebuild the game to finish the build before playing.", "Выберите «Пересобрать игру», чтобы завершить сборку перед запуском.", "请先选择“重新构建游戏”，完成构建后再开始游戏。"],
 ];
 
 export const messageTables: Record<Locale, Messages> = {

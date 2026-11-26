@@ -178,8 +178,28 @@ def first_run_requirements(ctx):
     return {'status': 'ready'}
 
 
+def rebuild_required(ctx, game):
+    if ctx.layout.dev or not game:
+        return False
+    built = build.built_version(game)
+    if not built:
+        return build.installed(game)
+    try:
+        return versions.newer(ctx.version, built)
+    except (TypeError, ValueError):
+        return False
+
+
+def prepare_worker_play(ctx, game, run, failed_mods, built=False):
+    if rebuild_required(ctx, game):
+        return play.PlayPreparation('rebuild_required')
+    return play.prepare(ctx, ctx.settings, game, run, failed_mods, built=built)
+
+
 def installation_view(ctx, recovery, counts):
     result = inspect_installation(ctx.layout.root)
+    if result['status'] == 'ready' and rebuild_required(ctx, result['game_dir']):
+        result['rebuild_required'] = True
     if result['status'] in ('not_configured', 'not_ready'):
         settings = ctx.settings
         requirements = first_run_requirements(ctx)
@@ -765,7 +785,7 @@ def main(argv=None):
                         ctx.log('worker: parent exit after job')
                         return shutdown_status
                     if outcome == 'resume':
-                        prepared = play.prepare(ctx, ctx.settings, job_game_dir, run, failed_mods, built=True)
+                        prepared = prepare_worker_play(ctx, job_game_dir, run, failed_mods, built=True)
                         action_log(ctx, counts, 'play', f'status={prepared.status}')
                         if prepared.status == 'memory':
                             attempt += 1
@@ -888,7 +908,7 @@ def main(argv=None):
                 if request['method'] == 'play':
                     attempt += 1
                     pending = None
-                    prepared = play.prepare(ctx, ctx.settings, game_dir, run, failed_mods)
+                    prepared = prepare_worker_play(ctx, game_dir, run, failed_mods)
                     action_log(ctx, counts, 'play', f'status={prepared.status}')
                     if prepared.status == 'rebuild':
                         job = jobs.ModsRebuildJob(ctx, game_dir)
@@ -935,6 +955,10 @@ def main(argv=None):
                     if saves.game_running(game_dir):
                         play.not_started(ctx.log, 'the game is already running', prepared.searched)
                         emit({'id': request['id'], 'result': {'status': 'external_game'}})
+                        continue
+                    if rebuild_required(ctx, game_dir):
+                        action_log(ctx, counts, 'play', 'status=rebuild_required')
+                        emit({'id': request['id'], 'result': {'status': 'rebuild_required'}})
                         continue
                     prepared.status = 'ready'
                 if prepared.status == 'ready':
@@ -1459,7 +1483,10 @@ def main(argv=None):
                     action_log(ctx, counts, 'inspect', 'failed')
                     error(request['id'], 'inspection_failed')
                     continue
-                action_log(ctx, counts, 'inspect', f'status={result["status"]}')
+                detail = f'status={result["status"]}'
+                if result.get('rebuild_required'):
+                    detail += ' rebuild_required=True'
+                action_log(ctx, counts, 'inspect', detail)
                 emit({'id': request['id'], 'result': result})
             else:
                 action_log(ctx, counts, 'unknown', 'method')

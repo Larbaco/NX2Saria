@@ -20,13 +20,13 @@ export function parseHandshake(input: unknown): WorkerHandshake {
     capabilities: value.capabilities, update_waiting: value.update_waiting };
 }
 
-export type PlayResult = { status: 'started' | 'not_built' | 'own_game' | 'external_game' | 'rebuild' | 'building' | 'declined' } |
+export type PlayResult = { status: 'started' | 'not_built' | 'rebuild_required' | 'own_game' | 'external_game' | 'rebuild' | 'building' | 'declined' } |
   { status: 'memory'; attempt: number; memory: { remaining: number; need: number | null; unbounded: boolean } };
 
 export function parsePlayResult(input: unknown): PlayResult {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid Play result');
   const value = input as Record<string, unknown>;
-  if (['started', 'not_built', 'own_game', 'external_game', 'rebuild', 'building', 'declined'].includes(value.status as string)) {
+  if (['started', 'not_built', 'rebuild_required', 'own_game', 'external_game', 'rebuild', 'building', 'declined'].includes(value.status as string)) {
     return { status: value.status } as PlayResult;
   }
   if (value.status !== 'memory' || !Number.isSafeInteger(value.attempt) || (value.attempt as number) < 1 ||

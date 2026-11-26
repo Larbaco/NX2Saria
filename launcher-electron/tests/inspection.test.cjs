@@ -6,6 +6,9 @@ test('validates persistent worker inspection and removes unrelated fields', () =
     game_running: null, hide_while_playing: true, secret: 'private' };
   assert.equal(parseInspection(valid).status, 'ready');
   assert.equal('secret' in parseInspection(valid), false);
+  assert.equal(parseInspection({ ...valid, rebuild_required: true }).rebuild_required, true);
+  assert.throws(() => parseInspection({ ...valid, status: 'not_ready', rebuild_required: true }));
+  assert.throws(() => parseInspection({ ...valid, rebuild_required: 'yes' }));
   assert.throws(() => parseInspection({ ...valid, game_running: false }));
   assert.throws(() => parseInspection({ ...valid, status: 'invented' }));
 });

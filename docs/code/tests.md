@@ -5938,6 +5938,13 @@ controller. It checks focus order and restoration, selection changes, return,
 unfocused input suppression, scroll, and overflow at the minimum window size
 and at 140% zoom. Hardware Game Mode is a separate check.
 
+The installed worker build-compatibility test pairs a newer fixture app
+with an old executable and replaces the spawn call with a recorder.
+It blocks the old kit and a missing compile receipt, preserves the
+executable, and accepts a normalized matching build. The Linux window
+fixture verifies the disabled Play screen and the improvement after
+refreshing a current receipt, without starting the game.
+
 The uninstall worker tests schedule the real platform cleanup helper against
 two scratch roots, keep or remove the game, and preserve an original dump
 inside a candidate path and unrelated files. They exercise a Windows legacy

@@ -36,7 +36,8 @@ async function main() {
     await fs.writeFile(settings, initial);
     await fs.writeFile(dump, 'dump fixture');
     await fs.writeFile(save, 'save fixture');
-    await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: version, steps: { compile: {} } }));
+    const receipt = path.join(game, 'build-cache', 'state.json');
+    await fs.writeFile(receipt, JSON.stringify({ kit: '0.0.0', steps: { compile: {} } }));
     await fs.writeFile(path.join(game, 'ocarina'), 'not an executable');
     const options = executable
       ? { executablePath: path.resolve(executable), args: ['--user-data-dir=' + path.join(base, 'electron-profile')] }
@@ -46,7 +47,21 @@ async function main() {
         NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', NX2SARIA_TELEMETRY_URL: 'none',
         NX2SARIA_PYTHON: python, NX2_TEST_UNINSTALL_PYTHON: process.env.NX2SARIA_PYTHON || 'python3' } });
     const page = await app.firstWindow();
-    await page.locator('#status').getByText('Instalação encontrada', { exact: true }).waitFor();
+    const status = page.locator('#status');
+    await status.getByText('Recompilação necessária', { exact: true }).waitFor();
+    const play = page.getByRole('button', { name: 'Jogar', exact: true });
+    await page.waitForFunction(() => !document.querySelector('#rebuild').disabled);
+    assert.equal(await play.isDisabled(), true);
+    assert.equal((await page.evaluate(() => window.launcher.play())).error, 'rebuild_required');
+    await fs.writeFile(receipt, JSON.stringify({ kit: version, steps: { compile: {} } }));
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, root);
+    await page.locator('#select').click();
+    await status.getByText('Instalação encontrada', { exact: true }).waitFor();
+    await page.waitForFunction(() => !document.querySelector('#play').disabled);
+    const workerLog = await fs.readFile(path.join(data, 'logs', 'launcher.log'), 'utf8');
+    assert.doesNotMatch(workerLog, /worker: spawn started/);
     await page.getByRole('button', { name: 'Configurações', exact: true }).click();
 
     const open = page.getByRole('button', { name: 'Desinstalar NX2Saria', exact: true });

@@ -41,6 +41,7 @@ test('validates play results and memory estimates without passing extra fields',
   assert.deepEqual(parsePlayResult({status:'memory', attempt:1, memory:{remaining:100, need:null, unbounded:true}, secret:'hidden'}),
     {status:'memory', attempt:1, memory:{remaining:100, need:null, unbounded:true}});
   assert.deepEqual(parsePlayResult({status:'started', secret:'hidden'}), {status:'started'});
+  assert.deepEqual(parsePlayResult({status:'rebuild_required'}), {status:'rebuild_required'});
   for (const bad of [{status:'unknown'}, {status:'memory',attempt:0,memory:{remaining:1,need:2,unbounded:false}},
     {status:'memory',attempt:1,memory:{remaining:1,need:null,unbounded:false}},
     {status:'memory',attempt:1,memory:{remaining:NaN,need:2,unbounded:false}}]) assert.throws(() => parsePlayResult(bad));

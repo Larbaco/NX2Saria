@@ -2827,6 +2827,17 @@ Linux follows its AppImage ownership plan and retains the logs. A log line
 records the choice and the scheduling result; the Linux helper records how
 many paths it removed once the worker closed.
 
+### Build compatibility before Electron Play
+
+`launcher/worker.py` `rebuild_required()` checks the last compiled kit
+against the active app on a released installation. It also recognizes
+a resumable game whose compile receipt was cleared. This is a separate
+inspection field so the existing installation and Rebuild remain
+available. `prepare_worker_play()` and the memory response path check
+again before launching, including after resuming a mods build. Rebuild
+refreshes the inspection. A game that still has an older build keeps the
+rebuild message and disabled Play control.
+
 ### Selecting the Electron installation
 
 `launcher-electron/src/main.ts` `selectRoot()` releases the old worker and

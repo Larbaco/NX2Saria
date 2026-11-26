@@ -102,6 +102,13 @@ app.whenReady().then(() => {
   function playRefused(error: string) {
     return { error, messageId: expectPlayMessage() };
   }
+  async function rebuildRefusal(active: WorkerClient) {
+    playing = false;
+    if (!state?.rebuild_required) {
+      try { state = parseInspection(await active.request('inspect')); } catch {}
+    }
+    return { error: 'rebuild_required', state: settingsView(state) };
+  }
   async function answerMemory(active: WorkerClient, result: Extract<PlayResult, { status: 'memory' }>): Promise<PlayResult> {
     const memory = result.memory;
     const estimate = memory.unbounded ? tr("ilimitada") : `${memory.need} MiB`;
@@ -186,7 +193,7 @@ app.whenReady().then(() => {
             log?.write('play', `resumed result=${result.status}`);
             if (result.status !== 'started') {
               playing = false;
-              notifyPlayEnded({ error: result.status });
+              notifyPlayEnded(result.status === 'rebuild_required' ? await rebuildRefusal(active) : { error: result.status });
             }
           } catch {
             playing = false;
@@ -195,8 +202,9 @@ app.whenReady().then(() => {
           }
         } else if (frame.event === 'play_failed') {
           playing = false;
-          log?.write('play', 'resumed result=play_failed');
-          notifyPlayEnded({ error: 'play_failed' });
+          const needsRebuild = frame.reason === 'rebuild_required';
+          log?.write('play', needsRebuild ? 'resumed result=rebuild_required' : 'resumed result=play_failed');
+          notifyPlayEnded(needsRebuild ? await rebuildRefusal(active) : { error: 'play_failed' });
         } else if (frame.event === 'game_started') {
           gameSpawned = true;
         } else if (frame.event === 'game_window_ready' && !window.isDestroyed()) {
@@ -220,7 +228,7 @@ app.whenReady().then(() => {
       state = parseInspection(await active.request('inspect'));
       if (active.handshake.lock === 'unavailable' && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'warning', message: tr("Não foi possível bloquear a instalação. Evite abrir outro launcher ao mesmo tempo.") });
       if (active.handshake.update_waiting && !window.isDestroyed()) void dialog.showMessageBox(window, { type: 'info', message: tr("Há uma atualização esperando. Abra o launcher instalado para aplicá-la.") });
-      return inspected(settingsView(state)!, `result=${state.status}`);
+      return inspected(settingsView(state)!, `result=${state.rebuild_required ? "rebuild_required" : state.status}`);
     } catch (error) {
       if (current) await current.close();
       if (worker === current) worker = null;
@@ -907,9 +915,11 @@ app.whenReady().then(() => {
     try {
       state = parseInspection(await active.request('inspect'));
       if (state.status !== 'ready' || state.job_marker_present || state.game_running) throw new Error('Not ready');
-      let result = parsePlayResult(await active.request('play'));
+      let result: PlayResult = state.rebuild_required ? { status: 'rebuild_required' }
+        : parsePlayResult(await active.request('play'));
       if (result.status === 'memory') result = await answerMemory(active, result);
       log?.write('play', `result=${result.status}`);
+      if (result.status === 'rebuild_required') return rebuildRefusal(active);
       if (result.status === 'building') return { started: true, building: true };
       if (result.status !== 'started') { playing = false; return playRefused(result.status); }
       return { started: true };

@@ -82,8 +82,10 @@ Both artifacts were packaged at `4bbd8059`. The extracted Linux package
 used the published 0.27.0-rc.4 app and Python runtime under Xvfb. It verified
 default and explicit startup, cancellation without replacing the worker,
 the Discord activity setting and a clean exit. The Windows ZIP passed
-integrity, contents, build ID and notices checks. Its native notebook run
-is still open. The LEIA-ME covers the new settings and discovery behavior
+integrity, contents, build ID and notices checks. The owner opened it on a Windows notebook on November 26. The two launcher
+logs verify default detection of 0.27.0-rc.4, the saved shadow theme, writes to
+the shared hide preference in both directions and clean exit. The notebook
+session did not exercise Play. The LEIA-ME covers the new settings and discovery behavior
 and gives the initial notebook test sequence.
 
 The same launcher code passed on both CI runners in `45844664530`.
@@ -95,6 +97,30 @@ build the game. The local full suite remains on hold.
   SHA-256 `2b5da4f0ceaba74f9d018bb6290a717b3e929c1578c8f274a79c407d9c3ca1b8`.
 - Windows `NX2Saria-Electron-Worker-Windows-x64-4bbd8059.zip`, 147,006,384 bytes.
   SHA-256 `af50c215e2fcc819a981fd14eb8aa1ad2123710f2ed57d48466890544a92e197`.
+
+### Rebuild after an interrupted app update
+
+On a provisioned installation, keep the game visible as installed when
+the recorded build kit predates the active app or the build can be
+resumed but its compile receipt is absent. Require an explicit Rebuild
+before Play. The worker checks this again before accepting Play or
+resuming it from a memory prompt or mods rebuild. The launcher retains
+the old executable and settings until Rebuild runs. Compare known
+versions using the launcher's existing version ordering. A current or
+newer build stays playable. A local checkout keeps its development
+behavior. The Tk launcher still offers the last finished build after
+a cancellation.
+
+The notebook's Tk update continuation was cancelled before rebuilding.
+The older worker returned `ready` because the 0.26.0 executable still had
+a compile receipt. On ordinary startup Tk distinguishes that older build
+in its home screen and offers Rebuild, while `--continue-update` is the
+automatic post-install job. The later log shows a completed manual-style
+RebuildJob, without proving the input that started it. A worker subprocess
+test reproduced the old build reaching the spawn call with that call
+replaced by a recorder. The corrected worker refuses before the call
+and the Linux UI fixture checks that Rebuild remains available.
+
 
 ## Replacement gate
 
