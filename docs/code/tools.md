@@ -4899,6 +4899,117 @@ release and `bin/python3` the version.
 The full archive's `python/licenses/*` into the folder given, unpacked with the system's `tar --zstd` (the AppImage is
 built with Python 3.12, whose `tarfile` reads no zstd); every name `LINUX_TEXTS` lists must be among them.
 
+## `tools/rc_smoke.py`
+
+Proves a published release on the Linux bench without anyone watching: what GitHub Actions published for a tag, not a
+build of a checkout. It is a step of the release flow ([releases/README.md](../releases/README.md), "How a release is
+made"). It needs the network, the game's dump, a GPU and about 40 minutes per build, so CI never runs it.
+
+The bench is the folder that holds `xbuild/` (its build lock, `runs/`) and `profile/` (the profile with save backups
+the runs copy): `--bench` or `NX2SARIA_BENCH`. The dump is the game's `.nup` or dump folder, read only: `--dump` or
+`NX2SARIA_DUMP`.
+
+```
+.venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --quick --detach
+.venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --only update --from v0.26.0 --detach
+.venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --only crash,privacy --keep-game
+```
+
+The stages, each one line of PASS or FAIL with its reason:
+
+| Stage | What it proves |
+|---|---|
+| `install` | The tag's AppImage matches `SHA256SUMS.txt`, its own `tools/appimage_install.py` installs it, and `launcher.cli check` on the Preview channel says it is the newest |
+| `build` | `launcher.cli install` of the installed version builds the game from the dump; the build state names that version |
+| `run` | The game reaches the boot map's area: its `version:` line names the tag, the session ends `end normal`, no `FATAL` line, and the log has the lines the notes promise |
+| `window` | The installed window draws every screen of its selftest, each PNG kept and checked, and the real window opens on the home screen with the game found and closes cleanly |
+| `crash` | A `SIGSEGV` sent to the game in the area ends it with code 71; the `FATAL` line is whole, and the summary the launcher makes from it has the hardware (0.27.0 on) |
+| `update` | The previous stable release, installed and built the same way, updates to the tag through `launcher.cli update`: the rollback is kept, the game is rebuilt only as far as the notes say, and it runs |
+| `privacy` | No `launcher.log` of the throwaway roots says a session report, crash log or comment was sent |
+
+`--quick` runs all but `update` (one build). `--only` and `--skip` take a comma-separated list of stages; a stage
+reuses the throwaway root an earlier run left, so a one-minute stage does not cost a new build when `--keep-game` kept
+the game.
+
+### Where it puts things
+
+- The launcher's root is a throwaway `HOME` on ext4, `/var/tmp/rc-smoke-<tag>/{clean,update}/home`, with every `XDG_`
+  folder inside it: the AppImage installer and the launcher find the root through `XDG_DATA_HOME`, so a player's own
+  installation is never touched. `--clean` deletes it at the end.
+- The game folders are under the bench, `xbuild/tmp-rc-smoke/<tag>/{clean,update}`, with the build's `TMPDIR` beside
+  them; they are deleted before the bench lock is let go, unless `--keep-game`.
+- Logs, the selftest's PNGs, `window-home.png`, the crash's `nx2saria.log` and session files, and `summary.md` go to
+  `xbuild/runs/<date>-rc-smoke-<tag>/`.
+
+### `Smoke.main()`
+
+Holds `xbuild/.build.lock` from the first stage to the last, as `xbuild/build-branch.sh` does, so no other build or
+game run shares the bench. It fails at once when the throwaway root's disk has less than 3 GB free.
+
+### `Smoke.stage_install()`
+
+- The real feed is the one a player of the Preview channel reads. When the tag is not the newest release there, the
+  stage fails unless `--pin-url` is given: then the installed copy's `feed.json` names the tag's own
+  `NX2Saria-update-linux.json` (the `url` feed of `launcher/feed.py`). The PASS line and `summary.md` say which feed was
+  used.
+- The AppImage is unpacked with `--appimage-extract` and installed by the `install()` of its own
+  `tools/appimage_install.py`, with `APPIMAGE` set as the AppImage's runtime sets it. The step the AppImage's start
+  script adds, starting the window, is the `window` stage.
+- The settings the stages start from: Preview channel, session reports `off`, the crash log offer `off`, no desktop
+  shortcut, no sounds, the dump and the game folder.
+
+### `Smoke.wait_for_disk()`
+
+A build takes about 33 GB of the bench's disk. Before each build it waits, up to `--disk-wait` seconds, for 36 GB free,
+and fails with the free space when it does not come.
+
+### `Smoke.game_run()`
+
+`tools/run_game.py` on a copy of the bench's profile with its newest save backup, `--boot-map` (`KokiriForest_Child` by
+default), under `SDL_VIDEODRIVER=offscreen`, `SDL_AUDIO_DRIVER=dummy`, `NX2SARIA_AUDIO=none` and
+`NX2SARIA_MESH_FALLBACK=1`. It is not run when another `ocarina` runs; afterwards it checks that none is left, that
+`nx2saria.ini` did not change and that the kernel log has no `amdgpu` timeout or reset since the start.
+
+### `Smoke.stage_window()`
+
+- Runs on a display of its own (`Xvfb :90` and up): the launcher only, never the game.
+- The selftest (`launcher/ui/selftest.py`) prints how many screens it drew: 27 on Linux, the 26 of every platform and
+  the udmabuf one. Each PNG must exist, hold more than 1 KB and not be one colour.
+- The real window is started through the installed `nx2saria-launcher` script, as the menu entry starts it. It is
+  closed with `WM_DELETE_WINDOW` (`X_CLOSE`, sent through Xlib, since Xvfb has no window manager), the way a player's
+  close button closes it, so the log's `window closed by the player on the home screen` line is the proof. A
+  `first run:` line means the installed game was not found.
+
+### `Smoke.stage_crash()`
+
+- `CRASH_DRIVER` runs in the installed launcher's Python with the installed `launcher` package: it starts the game with
+  `winsys.start_game()`, waits for `boot map: arrived in`, sends `SIGSEGV`, and calls `game_session.finish_game()`, the
+  code the window runs when the game ends. The window's Play button is not pressed.
+- `finish_game()` makes the crash summary only when a telemetry server is set: the driver sets
+  `NX2SARIA_TELEMETRY_URL=http://127.0.0.1:9`, where nothing listens, with session reports and the crash log offer
+  `off`, so the summary is written and nothing can be sent.
+
+### `Smoke.stage_update()`
+
+- The previous stable release is the newest one without a pre-release mark older than the tag, or `--from`.
+- `launcher.cli update` of that version is the path without a window: the old launcher downloads, checks and stages
+  the new one, switches to it, and the new launcher's `continue-update` rebuilds the game.
+- The lines of the notes for an update (`update:` in the lines file, such as `Translate the Code: Unchanged`) are
+  looked for in the update's output.
+
+### The promised lines
+
+`tools/data/rc-smoke/<version>.txt` lists, one per line, text the release's notes or changelog promise: `run:` in the
+game's log, `crash-launcher:` in `launcher.log` after the crash, `update:` in the update's output. `--expect 'run:
+<text>'` adds one, `--expect-file` reads another file. A version without a file checks none.
+
+### `detach()`
+
+`--detach` starts the same run in a scope of its own and returns: `systemd-run --user --scope` with `MemoryMax=18G`
+and `OOMPolicy=continue` (without it, systemd ends the whole scope with the first process the kernel kills),
+`taskset -c 0-11`, `nice -n 10` and `ionice -c 2 -n 7`, under `nohup` in a new session, so the run outlives the shell
+that started it. Its output goes to `rc_smoke.out` in the logs folder.
+
 ## `tools/release_files.py`
 
 The checks and the page text of a release that GitHub Actions builds and publishes (`.github/workflows/release.yml`;
