@@ -894,13 +894,26 @@ class WorkerTest(unittest.TestCase):
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.stop_worker, worker)
         serial = 0
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+            frames.put(None)
+
+        threading.Thread(target=collect, daemon=True).start()
 
         def request(method, **fields):
             nonlocal serial
             serial += 1
             worker.stdin.write(json.dumps({'id': serial, 'method': method, **fields}) + '\n')
             worker.stdin.flush()
-            frame = json.loads(worker.stdout.readline())
+            try:
+                frame = frames.get(timeout=20)
+            except queue.Empty:
+                self.fail(f'worker timed out waiting for {method}')
+            if frame is None:
+                self.fail(worker.stderr.read())
             self.assertEqual(frame['id'], serial)
             return frame
 
@@ -959,13 +972,26 @@ class WorkerTest(unittest.TestCase):
                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.stop_worker, worker)
         serial = 0
+        frames = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+            frames.put(None)
+
+        threading.Thread(target=collect, daemon=True).start()
 
         def request(method, **fields):
             nonlocal serial
             serial += 1
             worker.stdin.write(json.dumps({'id': serial, 'method': method, **fields}) + '\n')
             worker.stdin.flush()
-            frame = json.loads(worker.stdout.readline())
+            try:
+                frame = frames.get(timeout=20)
+            except queue.Empty:
+                self.fail(f'worker timed out waiting for {method}')
+            if frame is None:
+                self.fail(worker.stderr.read())
             self.assertEqual(frame['id'], serial)
             self.assertIn('result', frame)
             return frame['result']
