@@ -65,6 +65,7 @@ A or B; the pointer call says a menu has the pointer, so the mouse camera's capt
 `runtime/ui/menu_mouse.c`: the same for 1.1.1's menus (the poll adds the A, B, up and down the mouse asked for).
 `runtime/ui/quit_menu.c` `quit_menu_poll()` runs after them in `input_poll()`: it takes A away while the focus is on a
 Quit Game entry of the game's menus, a click's A included.
+`runtime/ui/pause_tab.c` `pause_tab_poll()` runs last: it takes R away when R opens the pause menu's settings tab.
 
 ### `input_game_input_blocked()`
 
@@ -568,6 +569,12 @@ taking the mouse; where an update stops taking it, the mouse is the right stick 
 A press or a full-way stick on the pad wins over keys held in the same poll: the player picked it up. Minus and Plus
 held together (gamepad or keys) open or close the menu and never reach the game; L3+R3 step the performance overlay
 (F10).
+
+### `input_script_buttons()`
+
+The buttons `NX2SARIA_INPUT_SCRIPT` holds now, for the settings menu while it is the pause menu's tab
+(`runtime/ui/menu.cpp` `pad_events()`), which reads the pad and not the game's merged input. Each line still logs
+once, whichever poll reaches it first.
 
 ### `input_cursor_allowed()`, `input_block()`, `input_menu()`, `blocked()`, `input_poll()`
 

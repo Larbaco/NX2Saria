@@ -106,7 +106,7 @@ listed as they are; search for all of a group when you look at one subsystem:
 - RomFS and files: `RomFS:`, `RomFS` (the image and index checks), `RomFS overlay:`, `RomFS ready:`, `fs:`, `fs`
   (mounts and the RomFS trace), `fs commit save:`, `host save import:`, `host save recovery:`, `host save storage:`,
   `host save working copy:`, `save share:`, `mods:`.
-- Menus: `menu:`, `menu_cursor:`, `menu_mouse:`, `menu_sound:`, `quit_menu:`, `debug:`.
+- Menus: `menu:`, `menu_cursor:`, `menu_mouse:`, `menu_sound:`, `quit_menu:`, `pause_tab:`, `debug:`.
 - Widescreen: `widescreen:`, `wide hud:`, `wide menus:`, `balloon:`, `camera clearance:`, `fov:`.
 - Input and motion: `input:`, `hid:`, `motion:` (the gyro), `mouse:`, `mousetrace:`, `mic:`.
 - Audio: `audio:`, `audren:`, `aud:u:`, `auddmg:u manager:`, `audsmx:u:`, `nn::codec:`.
@@ -256,6 +256,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `ocarina:` | Ocarina recorder clock and staff | `frame_rate.c` |
 | `oe:` | Operation mode and performance requests the game sees | `ov_system.c` |
 | `par_jobs:` | Parallel jobs for large texture copies | `par_jobs.c` |
+| `pause_tab:` | The settings tab in the game's pause menu (docs/pause-settings-tab.md) | `pause_tab.c` |
 | `patches:` | The patch sets and whether each is on, at start | `patches.c` |
 | `pctl:` | Parental controls service (none) | `ov_system.c` |
 | `perf:` | Performance windows: waits, bound verdicts, counters | `vk_exec.c`, `vk_texture.c`, `vk_sync.c`, ... |

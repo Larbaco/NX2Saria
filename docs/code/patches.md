@@ -42,7 +42,7 @@ owns them. A slot registered twice ends the start (`runtime/dispatch.c` `rt_regi
 | +0xf20 | `owater`: the surfaces' fixed-step sites | `runtime/pacing/frame_rate.c` |
 | +0xf10, +0xf00 | `osound`: the sound job's two sites | `runtime/pacing/frame_rate.c` |
 | +0xef0 | `wide_bars`: the screens' setup site | `runtime/patches/wide_bars.c` `wide_bars_screen_host()` |
-| +0xee0 | `menu_mouse` and `quit_menu`: every interface screen's update site | `screens_host()` here, which calls `runtime/ui/menu_mouse.c` `menu_mouse_screen_host()` and `runtime/ui/quit_menu.c` `quit_menu_screen_host()` |
+| +0xee0 | `menu_mouse` and `quit_menu`: every interface screen's update site | `screens_host()` here, which calls `runtime/ui/menu_mouse.c` `menu_mouse_screen_host()`, `runtime/ui/quit_menu.c` `quit_menu_screen_host()` and `runtime/ui/pause_tab.c` `pause_tab_screen_host()` |
 | +0xed0, +0xec0 | `heap_retry` | `runtime/patches/heap_retry.c` |
 | +0xeb0 | the debug menu's field of view | `runtime/diag/debug_tools.c` |
 | +0xea0, +0xe80 | the horse's jump and Gohma's turn | `runtime/pacing/frame_rate.c` |

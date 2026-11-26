@@ -467,6 +467,7 @@ static const char *const text_en[UI_TEXT_COUNT] = {
     [UI_MENU_OV_FMT_SIZE] = "%ux%u", [UI_MENU_OV_FMT_SCENE] = "%ux%u, %.0f%%",
     [UI_MENU_OV_FMT_FSR] = "AMD FSR 1, sharpness %d%%",
     [UI_MENU_TAB_CHEATS] = "Cheats",
+    [UI_MENU_PAUSE_TAB] = "Settings",
     [UI_MENU_CHEATS_NONE] = "No cheats for this game version. A mod's cheats are an Atmosphere cheat file in its "
                             "cheats folder, named after the game's build: mods\\<mod>\\cheats\\%s. Restart the game to "
                             "read them. For cheats that change the game's code, the game rebuilds itself at start (a "
@@ -1038,6 +1039,7 @@ static const char *const text_ru[UI_TEXT_COUNT] = {
     [UI_MENU_OV_FMT_SIZE] = "%ux%u", [UI_MENU_OV_FMT_SCENE] = "%ux%u, %.0f%%",
     [UI_MENU_OV_FMT_FSR] = "AMD FSR 1, резкость %d%%",
     [UI_MENU_TAB_CHEATS] = "Читы",
+    [UI_MENU_PAUSE_TAB] = "Настройки",
     [UI_MENU_CHEATS_NONE] = "Для этой версии игры читов нет. Читы мода — это файл читов Atmosphere в его папке cheats "
                             "с именем по сборке игры: mods\\<мод>\\cheats\\%s. Перезапустите игру, чтобы они "
                             "прочитались. Для читов, меняющих код игры, игра пересоберётся сама при запуске (несколько "
@@ -1601,6 +1603,7 @@ static const char *const text_pt_br[UI_TEXT_COUNT] = {
     [UI_MENU_AA_TAA_FSR4] = "TAA (%s)",
     [UI_MENU_AA_WITH_TAA] = "mais o TAA do Upscaling",
     [UI_MENU_TAB_CHEATS] = "Cheats",
+    [UI_MENU_PAUSE_TAB] = "Configurações",
     [UI_MENU_CHEATS_NONE] = "Nenhum cheat para esta versão do jogo. Os cheats de um mod são um arquivo de cheats do "
                             "Atmosphere na pasta cheats dele, com o nome da build do jogo: mods\\<mod>\\cheats\\%s. "
                             "Reinicie o jogo para lê-los. Para cheats que alteram o código do jogo, o jogo se recompila "
@@ -2185,6 +2188,7 @@ static const char *const text_zh_hans[UI_TEXT_COUNT] = {
     [UI_MENU_AA_TAA_FSR4] = "TAA（%s）",
     [UI_MENU_AA_WITH_TAA] = "另加 Upscaling 的 TAA",
     [UI_MENU_TAB_CHEATS] = "金手指",
+    [UI_MENU_PAUSE_TAB] = "设置",
     [UI_MENU_CHEATS_NONE] = "此游戏版本没有金手指。模组的金手指是它的 cheats 文件夹中以游戏构建命名的 Atmosphere "
                             "金手指文件：mods\\<模组>\\cheats\\%s。重启游戏后才会读取。对于修改游戏代码的金手指，"
                             "游戏会在启动时自行重新构建（几分钟）。",
