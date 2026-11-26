@@ -259,7 +259,10 @@ Electron launcher tests workflow must kill the worker while a stand-in build sta
 exercise wait and stop on Linux and Windows. Cover a descendant that outlives the leader,
 stale and reused identities, unreadable markers, failed access, the Tk fallback consuming a worker marker,
 and a worker death around the
-start acknowledgement. Check the on-disk marker, untouched unrelated process and usable
+start acknowledgement. Force Windows job assignment to fail in its own fixture so PID mode
+is exercised even when the runner allows nested jobs. On Linux, kill the supervisor while its
+builder is still alive and refuses SIGTERM. The recovery stop must observe the remaining
+session and wait for termination after the five-second grace interval. Check the on-disk marker, untouched unrelated process and usable
 installation after every recovery.
 
 

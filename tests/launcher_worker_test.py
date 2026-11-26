@@ -613,6 +613,92 @@ class WorkerTest(unittest.TestCase):
         self.assertNotEqual(json.loads((stopped / 'result.json').read_text())['code'], 0)
 
 
+    @unittest.skipUnless(os.name == 'nt', 'Windows job objects')
+    def test_supervisor_can_build_when_windows_job_assignment_is_refused(self):
+        from uuid import uuid4
+
+        run_dir = Path(self.tmp.name) / uuid4().hex
+        run_dir.mkdir()
+        script = ("import runpy,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher.platform import windows\n"
+                  "kernel=windows.build_group_kernel()\n"
+                  "kernel.AssignProcessToJobObject=lambda *args: False\n"
+                  "with mock.patch.object(windows,'build_group_kernel',return_value=kernel):\n"
+                  " runpy.run_module('launcher.build_supervisor',run_name='__main__')\n")
+        result = subprocess.run([sys.executable, '-c', script, '--install-root', str(self.root),
+                                 '--run-dir', str(run_dir), '--', sys.executable, '-c', "print('stand-in built')"],
+                                input='start\n', cwd=ROOT, capture_output=True, text=True, timeout=15)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['kind'], 'windows_pid')
+        self.assertEqual((run_dir / 'output.log').read_text().strip(), 'stand-in built')
+        self.assertEqual(json.loads((run_dir / 'result.json').read_text())['code'], 0)
+
+    @unittest.skipUnless(sys.platform.startswith('linux') and hasattr(os, 'pidfd_open'), 'Linux process descriptors')
+    def test_recovery_stops_a_descendant_after_the_supervisor_dies(self):
+        from launcher.platform import linux
+        from uuid import uuid4
+
+        data = self.root / 'data'
+        token = uuid4().hex
+        run_dir = data / 'build-supervisor' / token
+        run_dir.mkdir(parents=True)
+        began = run_dir / 'began'
+        builder = ("import os,pathlib,signal,sys,time\n"
+                   "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                   "pathlib.Path(sys.argv[1]).write_text(str(os.getpid()))\n"
+                   "time.sleep(14)\n")
+        supervisor = subprocess.Popen(
+            [sys.executable, '-m', 'launcher.build_supervisor', '--install-root', str(self.root),
+             '--run-dir', str(run_dir), '--', sys.executable, '-c', builder, str(began)],
+            cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            start_new_session=True)
+        self.addCleanup(self.stop_worker, supervisor)
+        ready = queue.Queue()
+        threading.Thread(target=lambda: ready.put(supervisor.stdout.readline()), daemon=True).start()
+        identity = {**json.loads(ready.get(timeout=10)), 'version': 1, 'token': token}
+        marker = data / 'job-running.json'
+        marker.write_text(json.dumps({'build': identity, 'kind': 'install', 'task': 'stand-in install'}))
+        supervisor.stdin.write('start\n')
+        supervisor.stdin.close()
+        deadline = time.monotonic() + 5
+        pid = None
+        while time.monotonic() < deadline:
+            try:
+                pid = int(began.read_text())
+                break
+            except (FileNotFoundError, ValueError):
+                time.sleep(.02)
+        self.assertIsNotNone(pid)
+        member = linux.process_identity(pid)
+        self.assertEqual(member['session'], supervisor.pid)
+        self.addCleanup(linux.signal_verified_member, member, 9)
+        supervisor.kill()
+        supervisor.wait(timeout=5)
+        self.assertNotEqual(linux.process_identity(pid)['state'], 'Z')
+        worker, _ = self.start_worker()
+        worker.stdin.write('{"id":2,"method":"recover_build","action":"stop"}\n')
+        worker.stdin.flush()
+        events = queue.Queue()
+
+        def collect():
+            for line in worker.stdout:
+                events.put(json.loads(line))
+
+        threading.Thread(target=collect, daemon=True).start()
+        self.assertEqual(events.get(timeout=5)['result']['status'], 'stopping')
+        observed_at = time.monotonic()
+        self.assertTrue(marker.is_file())
+        event = events.get(timeout=10)
+        self.assertEqual(event['inspection']['recovery']['state'], 'interrupted')
+        self.assertGreaterEqual(time.monotonic() - observed_at, 4.5)
+        self.assertFalse(marker.exists())
+        try:
+            current = linux.process_identity(pid)
+        except (FileNotFoundError, ProcessLookupError):
+            current = None
+        self.assertTrue(current is None or current['start'] != member['start'] or current['state'] == 'Z')
+
     def test_worker_publishes_build_identity_before_start_and_build_survives_worker_death(self):
         from launcher import jobs
         from launcher.platform import game_executable

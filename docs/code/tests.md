@@ -6014,7 +6014,11 @@ the last executable was untouched. The first-run Electron window test drives bot
 controls against these two states. The explicit recovery case changes the marker during confirmation
 and checks refusal. A confirmed unchanged marker and the same marker found after a simulated
 reboot exercise both recovery routes. The window test leaves the corrupt marker intact when
-the confirmation is cancelled and consumes it when confirmed.
+the confirmation is cancelled and consumes it when confirmed. The supervisor regression also forces
+Windows job assignment to fail and tests that the command still runs by verified PID.
+On Linux a stand-in ignores SIGTERM and writes its PID inside the build session. The test
+kills the supervisor, confirms that the stand-in is alive, and verifies that Stop waits
+for the grace interval before the recovered marker is cleared.
 
 
 ## `tests/launcher_mods_job_characterization_test.py`
