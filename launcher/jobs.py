@@ -566,7 +566,7 @@ class CheckJob(Job):
     def run(self):
         s = self.ctx.settings
         self.release = feed.latest(feed.load(self.ctx.layout, s), s.get('channel', 'stable'),
-                                   s.get('github_token', ''), self.ctx.version)
+                                   s.get('github_token', ''), self.ctx.version, log=self.log)
 
     def overall(self):
         return 0.0
