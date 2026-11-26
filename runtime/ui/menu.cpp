@@ -28,6 +28,7 @@ static int g_font_bad;
 #include "ui/binds_page.h"
 #include "ui/debug_menu.h"
 #include "ui/option_rows.h"
+#include "ui/pause_tab.h"
 #include "ui/perf_panel.h"
 #include "gpu_choice.h"
 
@@ -66,6 +67,7 @@ int wide_scene_settable(void);
 void wide_picture(unsigned *w, unsigned *h);
 int ov_movie_live(void);
 int wide_menu_open(void);
+int gfx_picture_rect(float out[4]);
 int wide_loading_open(void);
 int64_t frame_step_world_us(void);
 double wide_scene_share(void);
@@ -120,8 +122,19 @@ static PlatMutex open_lock = PLAT_MUTEX_INIT;
 static PlatMutex ev_lock = PLAT_MUTEX_INIT;
 static int ev_n;
 
+static std::atomic<int> g_pause_tab{0};
+static const char *g_pause_why = "closed";
+
 static int change_open(int want) {
     plat_mutex_lock(&open_lock);
+    if (want == 2) {
+        if (g_open.load()) {
+            plat_mutex_unlock(&open_lock);
+            return 0;
+        }
+        g_pause_tab.store(1);
+        want = 1;
+    }
     int open = want < 0 ? !g_open.load() : want;
     if (g_open.load() != open) {
         g_open.store(open);
@@ -130,8 +143,11 @@ static int change_open(int want) {
         ev_n = 0;
         plat_mutex_unlock(&ev_lock);
         input_menu(open);
-        menu_sound_play(open ? MENU_SOUND_OPEN : MENU_SOUND_CLOSE);
-        rt_log("menu: %s", open ? "open" : "closed");
+        const bool tab = g_pause_tab.load() != 0;
+        menu_sound_play(open ? (tab ? MENU_SOUND_TAB_RIGHT : MENU_SOUND_OPEN) : (tab ? MENU_SOUND_TAB_LEFT : MENU_SOUND_CLOSE));
+        rt_log("menu: %s%s", open ? "open" : "closed", g_pause_tab.load() ? " (the pause menu's tab)" : "");
+        if (g_pause_tab.load()) pause_tab_set_open(open, g_pause_why);
+        if (!open) g_pause_tab.store(0);
     }
     plat_mutex_unlock(&open_lock);
     return open;
@@ -240,6 +256,7 @@ static const struct { int bit; ImGuiKey key; } pad_keys[] = {
 };
 static uint64_t pad_prev;
 static int stick_dir = -1;
+static int g_pad_plus;
 
 static int stick_to_dpad(int32_t lx, int32_t ly) {
     float x = lx / 32767.0f, y = ly / 32767.0f;
@@ -253,18 +270,21 @@ static void pad_events(ImGuiIO &io, int reset) {
     uint64_t b;
     int32_t lx, ly;
     int have = input_pad_read(&b, &lx, &ly);
+    if (g_pause_tab.load(std::memory_order_relaxed)) input_script_buttons(&b), have = 1;
     if (have) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     else io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
     stick_dir = stick_to_dpad(lx, ly);
     if (stick_dir >= 0) b |= 1ull << stick_dir;
     if (reset) {
         pad_prev = b;
+        g_pad_plus = 0;
         return;
     }
     for (const auto &k : pad_keys) {
         uint64_t m = 1ull << k.bit;
         if ((b ^ pad_prev) & m) io.AddKeyEvent(k.key, (b & m) != 0);
     }
+    if (g_pause_tab.load(std::memory_order_relaxed) && (b & ~pad_prev & (1ull << B_PLUS))) g_pad_plus = 1;
     pad_prev = b;
 }
 
@@ -466,7 +486,7 @@ static int fonts_up(float scale) {
         rc.FontDataOwnedByAtlas = false;
         fa->AddFontFromMemoryTTF((void *)roboto_ttf, (int)sizeof roboto_ttf, 30.0f * scale, &rc, kRanges);
         static const UiTextId titles[] = {UI_MENU_TITLE, UI_MENU_TAB_SCREEN, UI_MENU_TAB_GAME, UI_MENU_TAB_SOUND,
-                                          UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_CHEATS,
+                                          UI_MENU_TAB_CONTROLS, UI_MENU_TAB_AMIIBO, UI_MENU_TAB_CHEATS, UI_MENU_PAUSE_TAB,
                                           UI_BOOT_TITLE};
         for (int i = 0; i < N; i++) {
             if (!data[i]) continue;
@@ -1911,6 +1931,18 @@ static void apply_confirm(float scale) {
                                                        : n == 0 ? "closed: nothing left in the draft (changed outside)"
                                                                 : "Discard");
     if (apply || discard || keep) ImGui::CloseCurrentPopup();
+    if (apply && g_pause_tab.load()) {
+        std::string list;
+        for (int i = 0; i < n; i++) {
+            OptDraftItem it;
+            if (!opt_draft_item(i, &it)) break;
+            list += std::string(i ? "; " : "") + it.label + ": " + it.from + " -> " + it.to + (it.restart ? " (after restart)" : "");
+        }
+        pause_tab_applied(n, list.c_str());
+        g_pause_why = "Apply";
+    } else if (discard && g_pause_tab.load()) {
+        g_pause_why = "Discard";
+    }
     if (apply) {
         g_restart_lines.clear();
         for (int i = 0; i < n; i++) {
@@ -2167,6 +2199,97 @@ static void menu_sounds_frame(void) {
     }
     if (g_tab != last_tab) g_tab_sounded = -1;
     last_nav = g.NavId, last_tab = g_tab;
+}
+
+static int g_pause_frames;
+
+static void pause_tab_close(const char *why) {
+    g_pause_why = why;
+    g_apply_ask = false;
+    if (GImGui->OpenPopupStack.Size) ImGui::ClosePopupToLevel(0, false);
+    g_modal = false;
+    opt_draft_discard();
+    set_open(0);
+}
+
+static void pause_tab_rows(void) {
+    opt_group(UI_MENU_GRAPHICS);
+    row_fps_limit();
+    opt_toggle_value("NX2SARIA_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate", vsync_note());
+    row_upscaling();
+    row_framegen();
+    int dl = opt_bool("NX2SARIA_DLAA"), fsr3 = dl && !strcmp(opt_value("NX2SARIA_TAA"), "fsr3") && vk_ffx_available();
+    if (!fsr3 && (strcmp(opt_value("NX2SARIA_UPSCALER"), "fsr") || dl)) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
+    opt_slider("NX2SARIA_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
+    static const char *const aniso[] = {"game", "2", "4", "8", "16"};
+    const char *aniso_names[] = {menu_text(UI_MENU_ANISO_GAME), "2x", "4x", "8x", "16x"};
+    opt_choice_list("NX2SARIA_ANISO", UI_MENU_ANISO, aniso, aniso_names, 5, UI_MENU_ANISO_DESC);
+}
+
+static const char *pause_tab_label(void) {
+    return pause_tab_name_kind() == 1 ? menu_text(UI_MENU_PAUSE_TAB) : "NX2Saria";
+}
+
+static void pause_tab_header(uint32_t w, uint32_t h, float scale, bool current) {
+    PauseTabView v;
+    float r[4];
+    if (!pause_tab_view(&v) || !gfx_picture_rect(r)) return;
+    const float x0 = (r[0] + v.tab[0] * r[2]) * w, y0 = (r[1] + v.tab[1] * r[3]) * h;
+    const float x1 = (r[0] + v.tab[2] * r[2]) * w, y1 = (r[1] + v.tab[3] * r[3]) * h;
+    if (!(x1 > x0 && y1 > y0)) return;
+    const float cx = (x0 + x1) * 0.5f, cy = (y0 + y1) * 0.5f, bw = x1 - x0, bh = y1 - y0;
+    ImFontAtlas *atlas = ImGui::GetIO().Fonts;
+    ImFont *font = atlas->Fonts.Size ? atlas->Fonts[0] : ImGui::GetFont();
+    const char *label = pause_tab_label();
+    float px = bh * 0.28f;
+    const float wide = font->CalcTextSizeA(px, FLT_MAX, 0, label).x;
+    if (wide > bw * 0.92f) px *= bw * 0.92f / wide;
+    const float top = r[1] * h, bottom = cy + bh * 0.545f;
+    skin_header_tab(ImGui::GetBackgroundDrawList(), ImVec2(x0, top), ImVec2(x1, bottom), ImVec2(cx, cy), scale, current,
+                    label, font, px, v.alpha);
+}
+
+static void layout_pause_tab(uint32_t w, uint32_t h, float scale) {
+    PauseTabView v = {};
+    float r[4];
+    g_modal = false;
+    pause_tab_view(&v);
+    g_pause_frames++;
+    if (pause_tab_test("fail") && g_pause_frames > 30) {
+        pause_tab_close("its page failed to draw (NX2SARIA_PAUSE_SETTINGS_TAB_TEST=fail); the System tab's page comes back");
+        return;
+    }
+    if (!v.page_ok || !gfx_picture_rect(r)) {
+        pause_tab_close("the pause menu's page is not seen any more; the System tab's page comes back");
+        return;
+    }
+    opt_draft_sync();
+    const ImVec2 a((r[0] + v.page[0] * r[2]) * w, (r[1] + v.page[1] * r[3]) * h);
+    const ImVec2 b((r[0] + v.page[2] * r[2]) * w, (r[1] + v.page[3] * r[3]) * h);
+    ImGui::SetNextWindowPos(a, ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(b.x - a.x, b.y - a.y), ImGuiCond_Always);
+    ImGui::Begin("##pausetab", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                            ImGuiWindowFlags_NoSavedSettings);
+    if (g_pause_frames == 1) opt_focus_first();
+    opt_reserve_bottom(0);
+    opt_begin("##pausetab", scale);
+    pause_tab_rows();
+    opt_end();
+    apply_confirm(scale);
+    post_confirm(scale);
+    menu_sounds_frame();
+    const bool was_modal = g_modal || g_post != POST_NONE || ImGui::GetIO().WantTextInput;
+    const bool plus = g_pad_plus != 0;
+    g_pad_plus = 0;
+    const char *key = ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false) ? "L"
+                      : ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight, false) || ImGui::IsKeyPressed(ImGuiKey_Escape, false) ? "B"
+                      : plus ? "Plus" : nullptr;
+    if (!was_modal && key) {
+        g_pause_why = key;
+        menu_sound_play(MENU_SOUND_CANCEL);
+        leave_menu();
+    }
+    ImGui::End();
 }
 
 static void layout_menu(uint32_t w, uint32_t h, float scale) {
@@ -2585,6 +2708,8 @@ static void capture_note(const MenuTarget *t, float scale) {
     if (line2[0]) dl->AddText(ImVec2(p.x + (w - s2.x) * 0.5f, p.y + pady + s1.y + gap), SKIN_TEXT_DIM, line2);
 }
 
+static PauseTabView g_pause_seen;
+
 static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot) {
     *shot = NULL;
     if (t->phys && t->phys != g_gpu_vendor_of) {
@@ -2637,7 +2762,13 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
             amiibo_picker_begin();
             set_open(1);
             open = true;
-        } else if (!g_perf_mode && !g_notice_until_ns && !capture_shows && !amiibo_note_shows()) {
+        } else if (pause_tab_request_take()) {
+            g_debug.store(0);
+            g_picker.store(0);
+            g_pause_frames = 0;
+            g_pause_why = "closed";
+            open = change_open(2) != 0;
+        } else if (!g_perf_mode && !g_notice_until_ns && !capture_shows && !amiibo_note_shows() && !pause_tab_view(&g_pause_seen)) {
             return 0;
         }
     }
@@ -2700,9 +2831,12 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
             set_open(0);
     } else if (open && g_picker.load(std::memory_order_relaxed)) {
         if (!amiibo_picker_layout(t->width, t->height, scale)) set_open(0);
+    } else if (open && g_pause_tab.load(std::memory_order_relaxed)) {
+        layout_pause_tab(t->width, t->height, scale);
     } else if (open) {
         layout_menu(t->width, t->height, scale);
     }
+    if (pause_tab_on()) pause_tab_header(t->width, t->height, scale, open && g_pause_tab.load(std::memory_order_relaxed));
     perf_draw(t, scale);
     capture_note(t, scale);
     amiibo_note_draw(t->width, scale);

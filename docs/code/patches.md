@@ -42,7 +42,7 @@ owns them. A slot registered twice ends the start (`runtime/dispatch.c` `rt_regi
 | +0xf20 | `owater`: the surfaces' fixed-step sites | `runtime/pacing/frame_rate.c` |
 | +0xf10, +0xf00 | `osound`: the sound job's two sites | `runtime/pacing/frame_rate.c` |
 | +0xef0 | `wide_bars`: the screens' setup site | `runtime/patches/wide_bars.c` `wide_bars_screen_host()` |
-| +0xee0 | `menu_mouse` and `quit_menu`: every interface screen's update site | `screens_host()` here, which calls `runtime/ui/menu_mouse.c` `menu_mouse_screen_host()` and `runtime/ui/quit_menu.c` `quit_menu_screen_host()` |
+| +0xee0 | `menu_mouse` and `quit_menu`: every interface screen's update site | `screens_host()` here, which calls `runtime/ui/menu_mouse.c` `menu_mouse_screen_host()`, `runtime/ui/quit_menu.c` `quit_menu_screen_host()` and `runtime/ui/pause_tab.c` `pause_tab_screen_host()` |
 | +0xed0, +0xec0 | `heap_retry` | `runtime/patches/heap_retry.c` |
 | +0xeb0 | the debug menu's field of view | `runtime/diag/debug_tools.c` |
 | +0xea0, +0xe80 | the horse's jump and Gohma's turn | `runtime/pacing/frame_rate.c` |
@@ -1576,6 +1576,42 @@ each page at once, as the game's skip does). Unskippable messages keep the game'
 Whether the set may run at all is read once, after the start: `NX2SARIA_TEXT_SPEED_PATCH=0`, or a mod whose code
 patches the same sites (`runtime/patches/mods.c` `mods_exefs_switch()`), leaves it off then, and switching it on later
 must not undo that.
+
+## `runtime/patches/foliage_distance.h`
+
+The foliage's draw distances as data the tests can reach without the game: `foliage_distance_init()`, the address
+(`FOLIAGE_LOD_OFF`, main+0x3eefd38), the game's eight values, their caps, and the two pure functions.
+
+- `foliage_game`: the defaults of the game's foliage LOD settings (`game::foliage::ResLodSetting`), in metres, in the
+  game's order: undergrowth 0 (40), undergrowth 1 (60), ornaments (35), the low trees' shoots and leaves (30), the low
+  trees' shadows (40), the low trees (135), and the ranges between the low trees' detail levels 0 to 1 (10) and 1 to 2
+  (45). They sit in main's read-only data.
+- `foliage_cap`: the ornaments at most 75 m and the low trees' leaves at most 70 m, unless the game's own value is
+  larger; further out both were seen to flicker. 0: no cap.
+- `foliage_factor()`: the setting as a factor: 0 and 1 for unset or a number from `FOLIAGE_MIN` (0.5) to `FOLIAGE_MAX`
+  (3), 1 and the nearer bound for a number outside them, -1 and 1 for anything else.
+- `foliage_scale()`: the eight values times the factor, capped; returns how many were capped.
+
+## `runtime/patches/foliage_distance.c`
+
+Setting `foliage_distance` (restart; issue #100): how far out the game draws grass, bushes, flowers, stones and low
+trees. The game reads the eight defaults from main's read-only data at every area entry, for each area that has no
+distances of its own (most of them: Hyrule Field, Kakariko, Lake Hylia, the Market; the Graveyard, Zora's River and
+Zora's Domain, and the Hyrule Castle ornaments have their own and keep them), once for the docked and once for the
+handheld mode, but its foliage system builds its distance tables once a run, at the first area entry. So the values
+are written once, before the guest starts (`runtime/boot.c` `rt_boot()`), and a change waits for the next start. Only
+data changes: no shader, no actor's range. It is not the short grass simulated around Link, which another system
+draws with its own distances.
+
+### `foliage_distance_init()`
+
+Writes nothing for 1, for a version other than 1.1.1, or when the address does not hold the game's eight values (an
+ExeFS mod or a cheat that changed them keeps its own). Otherwise the page is made writable for the copy and read-only
+again (`write_main()`, as `runtime/patches/cheats.c` `wr_main()` does). One `foliage:` line in every case: the factor,
+the game's values and the ones now in use, or why nothing was written, and a value the setting could not take. The
+lifted code loads these floats from memory at every use (the generator folds no load), so the written values are the
+ones the game reads. `tests/foliage_distance_check.py` builds the file with stand-ins; with `--exefs` it also reads the
+values from the game's main.
 
 ## `runtime/patches/amiibo_daily.h`
 

@@ -54,6 +54,7 @@ Cfg_reload_file: the file's lines as a list of (key, value), a repeated key keep
 - `CHANGEBANK_HOLD`, `CHANGEBANK_HOLD_MS`: `changebank_hold.c`: the set changebank_hold and its hold
 - `CAMERA_CLEARANCE_FIX`: `camera_clearance.c`: the set camera_clearance
 - `QUIT_MENU`, `QUIT_MENU_TEST`: `quit_menu.c`: the set quit_menu and its test switches; no menu row
+- `PAUSE_SETTINGS_TAB`, `PAUSE_SETTINGS_TAB_NAME`, `PAUSE_SETTINGS_TAB_TEST`: `pause_tab.c`: the settings tab in the game's pause menu (off by default), its name and its test switches; no menu row
 - `POS_TRACE`: `debug_tools.c`: Link's position each frame to a file, for movement checks; no menu row
 - `HANG_WATCH_S`: `hang_watch.c`: the hang watch's seconds
 - `COOP`, `COOP_BETA`, `COOP_NAME`, `COOP_SERVER`, `COOP_PORT`, `COOP_ROOM`, `COOP_AUTO`, `COOP_DROP`: retired: the settings of the co-op of versions up to 0.9.2; read by nothing, listed so that a file which still sets them logs no unknown key
@@ -198,6 +199,7 @@ The lazy write-back (`memory.c` "Lazy write-back") is on where it has run: its f
 - `TEX_RELEASED_MAX`: the settings the low-end GPU mode had rows for up to 0.10.1 (lowend_set, below): each is read by itself now `vk_texture.c` released_max: "" by the video memory budget, else 1..16384
 - `SUBMIT_FINISH_KINDS`: `vk_sync.c` res_mask
 - `FOLIAGE`: `vk_exec_draw.c` foliage_skip
+- `FOLIAGE_DISTANCE`: `foliage_distance.c` foliage_distance_init: a factor on the foliage's draw distances, 1.1.1 only, read once before the game starts
 - `VRAM_HEAP_LIMIT`: `vk_device.c` vram_heap_limits: auto, 0 or MiB
 - `VRAM_RESERVE_MB`: `vk_vma_budget.c`: video memory kept free of VMA's allocations
 - `UPLOAD_BATCH_MB`: `vk_memory.c` vk_upload_end: MiB of staging before a batch goes early. 0: at 64 MiB, the staging pool's own limit (STG_FLUSH), which also holds for every value above it

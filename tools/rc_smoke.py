@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import resource
 import shlex
 import shutil
 import signal
@@ -35,9 +36,12 @@ REPO = 'Larbaco/NX2Saria'
 GITHUB_API = 'https://api.github.com'
 DOWNLOAD = f'https://github.com/{REPO}/releases/download'
 LINUX_MANIFEST = 'NX2Saria-update-linux.json'
-STAGES = ('install', 'build', 'run', 'window', 'crash', 'update', 'privacy')
-QUICK = ('install', 'build', 'run', 'window', 'crash', 'privacy')
-BUILD_FREE_GB = 36
+STAGES = ('install', 'cli', 'build', 'run', 'window', 'crash', 'update', 'window-update', 'privacy')
+ROOTS = ('clean', 'update', 'winupd')
+QUICK = ('install', 'cli', 'build', 'run', 'window', 'crash', 'privacy')
+BUILD_FREE_GB = 45
+BUILD_FLOOR_GB = 5
+WATCH_EVERY = 10
 ROOT_FREE_GB = 3
 SELFTEST_SCREENS = 26
 CPUS = '0-11'
@@ -226,6 +230,94 @@ def summary_problems(summary, fatal, with_hardware):
     return bad
 
 
+def ini_with(text, values):
+    lines = text.splitlines()
+    for key, value in values:
+        line = f'{key} = {value}'
+        at = [i for i, ln in enumerate(lines) if re.match(rf'\s*{re.escape(key)}\s*=', ln)]
+        if at:
+            lines[at[0]] = line
+            for i in reversed(at[1:]):
+                del lines[i]
+        else:
+            lines.append(line)
+    return '\n'.join(lines) + '\n'
+
+
+def pairs(items, what):
+    out = []
+    for item in items:
+        key, sep, value = item.partition('=')
+        if not sep or not key.strip() or not re.fullmatch(r'[A-Za-z0-9_]+', key.strip()):
+            raise SystemExit(f'rc_smoke: {what} takes KEY=VALUE, not {item!r}')
+        out.append((key.strip(), value.strip()))
+    return out
+
+
+def lock_holders(path, table='/proc/locks'):
+    st = os.stat(path)
+    ident = f'{os.major(st.st_dev):02x}:{os.minor(st.st_dev):02x}:{st.st_ino}'
+    try:
+        lines = Path(table).read_text(encoding='ascii', errors='replace').splitlines()
+    except OSError:
+        return []
+    held = []
+    for line in lines:
+        parts = line.split()
+        if len(parts) >= 6 and parts[1] == 'FLOCK' and parts[5] == ident and parts[4].isdigit():
+            held.append(int(parts[4]))
+    return held
+
+
+def ancestors(pid=None):
+    pid = os.getpid() if pid is None else pid
+    out = []
+    while pid > 1 and pid not in out:
+        out.append(pid)
+        try:
+            stat = Path(f'/proc/{pid}/stat').read_text(encoding='ascii', errors='replace')
+            pid = int(stat.rsplit(')', 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return out
+
+
+def descendants(pid, proc='/proc'):
+    kids = {}
+    for p in Path(proc).glob('[0-9]*'):
+        try:
+            ppid = int((p / 'stat').read_text(encoding='ascii', errors='replace').rsplit(')', 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        kids.setdefault(ppid, []).append(int(p.name))
+    out, todo = [], [pid]
+    while todo:
+        for kid in kids.get(todo.pop(), []):
+            if kid not in out:
+                out.append(kid)
+                todo.append(kid)
+    return out
+
+
+def stop_tree(proc):
+    tree = [proc.pid, *descendants(proc.pid)]
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in tree:
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+        try:
+            proc.wait(20)
+        except subprocess.TimeoutExpired:
+            pass
+        deadline = time.time() + 20
+        while time.time() < deadline and any(Path(f'/proc/{pid}').exists() for pid in tree):
+            time.sleep(0.5)
+    if proc.poll() is None:
+        proc.wait()
+
+
 def png_problem(path):
     try:
         size = path.stat().st_size
@@ -334,6 +426,16 @@ class Smoke:
 
     def take_lock(self):
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.a.lock_held:
+            self.lock_path.touch()
+            holders = lock_holders(self.lock_path)
+            mine = set(ancestors())
+            if any(pid in mine for pid in holders):
+                self.say(f'bench lock: held by the caller (--lock-held, pid {holders[0]}): {self.lock_path}')
+                return True
+            self.say(f'--lock-held, but no caller of this run holds {self.lock_path}'
+                     + (f' (pid {holders[0]} does)' if holders else '') + f': run under flock {self.lock_path} ...')
+            return False
         self.lock = open(self.lock_path, 'a')
         try:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -341,6 +443,7 @@ class Smoke:
             self.say(f'waiting for {self.lock_path} (another build or run holds it)')
             fcntl.flock(self.lock, fcntl.LOCK_EX)
         self.say(f'bench lock taken: {self.lock_path}')
+        return True
 
     def release_lock(self):
         if self.lock:
@@ -349,19 +452,29 @@ class Smoke:
             self.lock = None
             self.say('bench lock released')
 
-    def run_logged(self, name, cmd, env, timeout=None, cwd=None):
+    def run_logged(self, name, cmd, env, timeout=None, cwd=None, watch=None):
         log = self.runs / f'{name}.log'
         t0 = time.time()
+        self.stopped = ''
         with open(log, 'w', encoding='utf-8', errors='replace') as f:
             f.write('$ ' + ' '.join(shlex.quote(str(c)) for c in cmd) + '\n')
             f.flush()
-            try:
-                p = subprocess.run([str(c) for c in cmd], env=env, cwd=cwd, stdout=f, stderr=subprocess.STDOUT,
-                                   stdin=subprocess.DEVNULL, timeout=timeout)
-                code = p.returncode
-            except subprocess.TimeoutExpired:
-                code = 124
-                f.write(f'\nrc_smoke: stopped after {timeout} s\n')
+            proc = subprocess.Popen([str(c) for c in cmd], env=env, cwd=cwd, stdout=f, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL)
+            while True:
+                try:
+                    code = proc.wait(WATCH_EVERY if watch else timeout)
+                    break
+                except subprocess.TimeoutExpired:
+                    why = watch() if watch else ''
+                    if not why and timeout and time.time() - t0 >= timeout:
+                        why = f'stopped after {timeout} s'
+                    if why:
+                        stop_tree(proc)
+                        code = 124 if why.startswith('stopped after') else 125
+                        self.stopped = why
+                        f.write(f'\nrc_smoke: {why}\n')
+                        break
             f.write(f'\nrc_smoke: exit {code} after {time.time() - t0:.0f} s\n')
         return code, log.read_text(encoding='utf-8', errors='replace')
 
@@ -373,10 +486,17 @@ class Smoke:
             raise Failed(f'nothing installed in {root}: run the install stage') from None
         return root, ver, root / 'python' / 'bin' / 'python3', root / 'app' / ver
 
-    def cli(self, which, name, args, timeout=None, **extra):
+    def cli(self, which, name, args, timeout=None, isolated=True, watch=None, **extra):
         root, _, py, app = self.installed(which)
-        return self.run_logged(name, [py, '-I', app / 'launcher' / 'cli.py', '--root', root, *args],
-                               self.env(which, **extra), timeout=timeout)
+        return self.run_logged(name, [py, *(['-I'] if isolated else []), app / 'launcher' / 'cli.py', '--root', root,
+                                      *args], self.env(which, **extra), timeout=timeout, watch=watch)
+
+    def disk_watch(self):
+        have = free_gb(self.games)
+        if have < BUILD_FLOOR_GB:
+            return (f'stopped the build: {have:.1f} GB left on the bench disk, less than {BUILD_FLOOR_GB} GB; another '
+                    'folder grew during the build')
+        return ''
 
     def settings(self, which, **values):
         path = self.root(which) / 'data' / 'launcher.json'
@@ -475,15 +595,19 @@ class Smoke:
             return Path(self.a.dump)
         raise Failed(f'no dump at {self.a.dump!r}: give --dump or set NX2SARIA_DUMP')
 
-    def stage_install(self):
-        newest = self.newest_preview()
+    def feed(self, fresh=False):
+        if fresh and hasattr(self, '_releases'):
+            del self._releases
         if self.a.pin_url:
-            self.feed_used = f'pinned URL {DOWNLOAD}/{self.tag}/{LINUX_MANIFEST}'
-        elif newest != self.tag:
+            return f'pinned URL {DOWNLOAD}/{self.tag}/{LINUX_MANIFEST}'
+        newest = self.newest_preview()
+        if newest != self.tag:
             raise Failed(f'{self.tag} is not the newest release on the Preview channel ({newest} is): '
                          'give --pin-url to test it from its own manifest')
-        else:
-            self.feed_used = 'the real GitHub feed, Preview channel'
+        return 'the real GitHub feed, Preview channel'
+
+    def stage_install(self):
+        self.feed_used = self.feed()
         shutil.rmtree(self.base / 'clean', ignore_errors=True)
         image, sha = self.install_tag('clean', self.tag)
         self.prepare_settings('clean', self.game('clean'))
@@ -493,6 +617,18 @@ class Smoke:
         if code or f'up to date: {self.version}' not in out:
             raise Failed(f'launcher.cli check through {self.feed_used}: {out.strip().splitlines()[-2][:200]}')
         return f'{image.name} sha256 {sha[:12]} matches SHA256SUMS.txt; installed {self.version}; feed: {self.feed_used}'
+
+    def stage_cli(self):
+        root, ver, py, app = self.installed('clean')
+        said = []
+        for args, want in ((['check'], (f'up to date: {ver}', 'update available:')), (['tools'], ())):
+            code, out = self.cli('clean', f'cli-script-{args[0]}', args, timeout=600, isolated=False)
+            if code or 'Traceback' in out or (want and not any(w in out for w in want)):
+                tail = [ln for ln in out.strip().splitlines() if ln and not ln.startswith('rc_smoke:')][-1:]
+                raise Failed(f'{app.name}/launcher/cli.py {args[0]}, run as a script without -I as an older '
+                             f'launcher runs it after an update: exit {code}: {(tail or [""])[0][:200]}')
+            said.append(f'{args[0]} exit 0')
+        return 'cli.py as a script without -I: ' + ', '.join(said)
 
     def wait_for_disk(self):
         deadline = time.time() + self.a.disk_wait
@@ -508,11 +644,19 @@ class Smoke:
     def build(self, which, name):
         game = self.game(which)
         shutil.rmtree(game, ignore_errors=True)
+        if not self.a.keep_game:
+            for other in ROOTS:
+                if other != which and self.game(other).exists():
+                    shutil.rmtree(self.game(other), ignore_errors=True)
+                    self.say(f'deleted {self.game(other)}: a build needs its disk')
         game.parent.mkdir(parents=True, exist_ok=True)
         have = self.wait_for_disk()
         t0 = time.time()
-        code, out = self.cli(which, name, ['install', '--dump', self.dump(), '--game', game])
+        code, out = self.cli(which, name, ['install', '--dump', self.dump(), '--game', game], watch=self.disk_watch)
         minutes = (time.time() - t0) / 60
+        if self.stopped:
+            shutil.rmtree(game, ignore_errors=True)
+            raise Failed(f'{self.stopped}, after {minutes:.0f} min; its folder is deleted')
         if code:
             err = [ln for ln in out.splitlines() if ln.startswith('error:')]
             raise Failed(f'launcher.cli install failed (exit {code}) after {minutes:.0f} min: '
@@ -548,8 +692,10 @@ class Smoke:
         return backups[-1]
 
     def game_env(self, which, **extra):
-        return self.env(which, SDL_VIDEODRIVER='offscreen', SDL_AUDIO_DRIVER='dummy', NX2SARIA_AUDIO='none',
-                        NX2SARIA_MESH_FALLBACK='1', **extra)
+        values = dict(SDL_VIDEODRIVER='offscreen', SDL_AUDIO_DRIVER='dummy', NX2SARIA_AUDIO='none',
+                      NX2SARIA_MESH_FALLBACK='1')
+        values.update(extra)
+        return self.env(which, **values)
 
     def game_run(self, which, name):
         game = self.game(which)
@@ -559,13 +705,17 @@ class Smoke:
             raise Failed('another ocarina is running (someone may be playing): not run')
         save = self.bench_profile(game)
         ini = game / 'nx2saria.ini'
+        if which == 'clean' and self.a.ini:
+            ini.write_text(ini_with(ini.read_text(encoding='utf-8') if ini.is_file() else '', self.a.ini),
+                           encoding='utf-8')
         before = ini.read_bytes() if ini.is_file() else None
         t0 = time.time()
         log = self.runs / f'{name}-game.log'
         code, out = self.run_logged(name, [sys.executable, self.checkout / 'tools' / 'run_game.py', game,
                                            '--save', save, '--boot-map', self.a.area, '--seconds', self.a.seconds,
                                            '--wall', self.a.wall, '--tag', 'rc-smoke', '--log', log],
-                                    self.game_env(which), timeout=self.a.wall + 120)
+                                    self.game_env(which, **(dict(self.a.run_env) if which == 'clean' else {})),
+                                    timeout=self.a.wall + 120)
         time.sleep(3)
         bad = []
         if ocarina_running():
@@ -596,8 +746,11 @@ class Smoke:
         if bad:
             raise Failed('; '.join(bad))
         arrived = re.search(r'boot map: arrived in [^\n]*', text)
+        extra = [f'{k}={v}' for k, v in (self.a.ini if which == 'clean' else [])]
+        extra += [f'{k}={v}' for k, v in (self.a.run_env if which == 'clean' else [])]
         return (f'{m.group(0)}; {arrived.group(0)[:90]}; end normal; no FATAL; '
-                f'{len(self.expect.get("run", []))} promised lines found')
+                f'{len(self.expect.get("run", []))} promised lines found'
+                + (f'; with {", ".join(extra)}' if extra else ''))
 
     def stage_run(self):
         return self.game_run('clean', 'clean-run')
@@ -702,6 +855,111 @@ class Smoke:
             raise Failed('; '.join(bad))
         return '; '.join(s for s in said if s)
 
+    def open_window(self, which, display, name, until, limit):
+        root = self.root(which)
+        log_path = root / 'data' / 'logs' / 'launcher.log'
+        start = log_path.stat().st_size if log_path.is_file() else 0
+
+        def since():
+            if not log_path.is_file():
+                return ''
+            with open(log_path, encoding='utf-8', errors='replace') as f:
+                f.seek(start)
+                return f.read()
+        env = self.env(which, DISPLAY=display)
+        env.pop('WAYLAND_DISPLAY', None)
+        t0 = time.time()
+        with open(self.runs / f'{name}.out', 'w') as out:
+            proc = subprocess.Popen([root / 'nx2saria-launcher'], env=env, stdout=out, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL)
+        hit = None
+        while time.time() - t0 < limit and proc.poll() is None and not hit:
+            time.sleep(3)
+            hit = re.search(until, since())
+        subprocess.run(['import', '-display', display, '-window', 'root', self.runs / f'{name}.png'],
+                       capture_output=True, timeout=60)
+        code = proc.poll()
+        if code is None:
+            time.sleep(5)
+            subprocess.run([sys.executable, '-I', '-c', X_CLOSE, display, 'NX2Saria'], capture_output=True, timeout=30)
+            try:
+                code = proc.wait(90)
+            except subprocess.TimeoutExpired:
+                proc.terminate()
+                code = proc.wait(30)
+        new = since()
+        (self.runs / f'{name}-launcher.log').write_text(new, encoding='utf-8')
+        return hit, code, new
+
+    def stage_window_update(self):
+        stable = self.a.from_tag or self.previous_stable()
+        if not stable:
+            raise Failed('no earlier stable release found: give --from')
+        old, w = tag_version(stable), 'winupd'
+        shutil.rmtree(self.base / w, ignore_errors=True)
+        self.install_tag(w, stable)
+        self.prepare_settings(w, self.game(w))
+        self.settings(w, auto_check=True, auto_install=True, last_check=0.0)
+        built = self.build(w, 'winupd-build-old')
+        if self.a.pin_url:
+            self.pin_feed(w, self.tag)
+        self.feed_used = self.feed(fresh=True)
+        root = self.root(w)
+        xproc, display = self.xvfb()
+        try:
+            _, code, new = self.open_window(w, display, 'winupd-window1',
+                                            r'background update: \S+ (?:is staged|was not staged)', 900)
+            staged = re.search(r'background update: (\S+) is staged', new)
+            if not staged or staged.group(1) != self.version or code:
+                said = ' | '.join(ln for ln in new.splitlines() if 'update' in ln)[-300:]
+                raise Failed(f'the {old} window did not stage {self.version} in the background '
+                             f'({staged.group(0) if staged else said or "no update line"}; exit {code})')
+            t0 = time.time()
+            _, code, new = self.open_window(w, display, 'winupd-window2', r'job update: (?:ok|failed|cancelled)', 3600)
+            minutes = (time.time() - t0) / 60
+        finally:
+            xproc.terminate()
+            try:
+                xproc.wait(10)
+            except subprocess.TimeoutExpired:
+                xproc.kill()
+        _, cur, _, _ = self.installed(w)
+        prev_file = root / 'app' / 'previous.txt'
+        prev = prev_file.read_text(encoding='utf-8').strip() if prev_file.is_file() else ''
+        kit = self.build_state(self.game(w)).get('kit')
+        job = re.search(r'job update: (\S+)[^\n]*', new)
+        inst = re.search(r'background update: installing [^\n]*', new)
+        heads = re.findall(r'--- NX2Saria launcher (\S+)', new)
+        bad = []
+        if not inst:
+            bad.append('no "background update: installing" line')
+        if not job or job.group(1) != 'ok':
+            bad.append(f'the update job: {job.group(0) if job else "no job line"}')
+        if cur != self.version:
+            bad.append(f'current.txt says {cur}, not {self.version}')
+        if prev != old or not (root / 'app' / old / 'launcher' / 'start.pyw').is_file():
+            bad.append(f'rollback not kept: previous.txt {prev!r}')
+        if kit != self.version:
+            bad.append(f'the game build says kit {kit!r} after the update')
+        if self.version not in heads:
+            bad.append(f'the launchers that started: {", ".join(heads) or "none"}')
+        if 'Traceback' in new:
+            bad.append('a traceback in launcher.log')
+        if code:
+            bad.append(f'the window exit code was {code}')
+        lost = missing_lines(new, self.expect.get('window-update', []))
+        if lost:
+            bad.append('the update did not do what the notes say: ' + ' | '.join(lost))
+        if bad:
+            raise Failed('; '.join(bad))
+        lift = re.search(r'^\d\d:\d\d:\d\d lift: [^\n]*', new, re.M)
+        compiled = re.search(r'\d+ compiled, \d+ unchanged since the last build', new)
+        ran = self.game_run(w, 'winupd-run')
+        return (f'{old} ({built}) staged {self.version} in its window, installed it at the next start '
+                f'({" -> ".join(heads)}), {job.group(0).strip()} in {minutes:.0f} min; previous.txt {prev}; '
+                f'{lift.group(0)[9:] if lift else "no lift line"}; {compiled.group(0) if compiled else ""}; '
+                f'{ran.split(";")[0]}')
+
     def stage_crash(self):
         root, ver, py, app = self.installed('clean')
         game = self.game('clean')
@@ -783,9 +1041,12 @@ class Smoke:
         before = self.build_state(game)
         if self.a.pin_url:
             self.pin_feed('update', self.tag)
+        self.feed_used = self.feed(fresh=True)
         t0 = time.time()
-        code, out = self.cli('update', 'update', ['update'])
+        code, out = self.cli('update', 'update', ['update'], isolated=False, watch=self.disk_watch)
         minutes = (time.time() - t0) / 60
+        if self.stopped:
+            raise Failed(f'{self.stopped}, during the update, after {minutes:.0f} min')
         root, cur, py, app = self.installed('update')
         bad = []
         if code:
@@ -818,7 +1079,7 @@ class Smoke:
 
     def stage_privacy(self):
         found, read = [], 0
-        for which in ('clean', 'update'):
+        for which in ROOTS:
             logs = self.root(which) / 'data' / 'logs'
             for name in ('launcher.log', 'launcher.1.log'):
                 p = logs / name
@@ -836,7 +1097,7 @@ class Smoke:
     def cleanup(self):
         shutil.rmtree(self.games / 'tmp', ignore_errors=True)
         if not self.a.keep_game:
-            for which in ('clean', 'update'):
+            for which in ROOTS:
                 g = self.game(which)
                 if g.exists():
                     shutil.rmtree(g, ignore_errors=True)
@@ -845,9 +1106,13 @@ class Smoke:
                 self.games.rmdir()
             except OSError:
                 pass
-        if self.a.clean:
+        if self.a.keep_root:
+            self.notes.append(f'The launcher root {self.base} is kept (--keep-root).')
+        elif self.results and all(r[1] for r in self.results):
             shutil.rmtree(self.base, ignore_errors=True)
             self.say(f'deleted {self.base}')
+        elif self.base.exists():
+            self.notes.append(f'The launcher root {self.base} is kept for the failure\'s diagnosis: delete it after.')
 
     def summary(self, stages, started):
         ok = all(r[1] for r in self.results)
@@ -878,13 +1143,16 @@ class Smoke:
                         'needed', 0)
             self.summary(stages, started)
             return 1
-        self.take_lock()
+        if not self.take_lock():
+            self.record('setup', False, f'--lock-held, but no caller of this run holds {self.lock_path}', 0)
+            self.summary(stages, started)
+            return 1
         try:
             for stage in stages:
                 t0 = time.time()
                 self.say(f'--- {stage}')
                 try:
-                    why = getattr(self, f'stage_{stage}')()
+                    why = getattr(self, f'stage_{stage.replace("-", "_")}')()
                     self.record(stage, True, why, time.time() - t0)
                 except Failed as e:
                     self.record(stage, False, str(e), time.time() - t0)
@@ -954,14 +1222,20 @@ def main(argv=None):
     ap.add_argument('--logs')
     ap.add_argument('--disk-wait', type=float, default=1800)
     ap.add_argument('--keep-game', action='store_true')
-    ap.add_argument('--clean', action='store_true')
+    ap.add_argument('--keep-root', action='store_true')
     ap.add_argument('--detach', action='store_true')
+    ap.add_argument('--lock-held', action='store_true')
+    ap.add_argument('--ini', action='append', default=[])
+    ap.add_argument('--run-env', action='append', default=[])
     a = ap.parse_args(argv)
+    a.ini, a.run_env = pairs(a.ini, '--ini'), pairs(a.run_env, '--run-env')
     stages = chosen(a)
     if not a.bench or not (Path(a.bench) / 'xbuild').is_dir():
         sys.exit('rc_smoke: no bench: give --bench or set NX2SARIA_BENCH to the folder that holds xbuild/ and profile/')
     if a.detach:
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         return detach(argv, a)
+    resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     return Smoke(a).main(stages)
 

@@ -18,6 +18,7 @@ uint8_t rt_patch_on[RT_PATCH_COUNT > 0 ? RT_PATCH_COUNT : 1];
 
 #ifdef RT_PATCH_PAGE
 #include "debug_tools.h"
+#include "ui/pause_tab.h"
 #include "ui/quit_menu.h"
 __attribute__((constructor)) static void freecam_register(void) { rt_register_host(RT_PATCH_PAGE + 0xf70, dbg_freecam_host); }
 __attribute__((constructor)) static void fov_register(void) {
@@ -46,6 +47,7 @@ __attribute__((constructor)) static void wide_bars_register(void) {
 static void screens_host(Cpu *c) {
     menu_mouse_screen_host(c);
     quit_menu_screen_host(c);
+    pause_tab_screen_host(c);
 }
 __attribute__((constructor)) static void menu_mouse_register(void) {
     if (!RT_V111) return;
