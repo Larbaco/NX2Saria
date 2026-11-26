@@ -40,6 +40,8 @@ STAGES = ('install', 'cli', 'build', 'run', 'window', 'crash', 'update', 'window
 ROOTS = ('clean', 'update', 'winupd')
 QUICK = ('install', 'cli', 'build', 'run', 'window', 'crash', 'privacy')
 BUILD_FREE_GB = 45
+BUILD_FLOOR_GB = 5
+WATCH_EVERY = 10
 ROOT_FREE_GB = 3
 SELFTEST_SCREENS = 26
 CPUS = '0-11'
@@ -280,6 +282,42 @@ def ancestors(pid=None):
     return out
 
 
+def descendants(pid, proc='/proc'):
+    kids = {}
+    for p in Path(proc).glob('[0-9]*'):
+        try:
+            ppid = int((p / 'stat').read_text(encoding='ascii', errors='replace').rsplit(')', 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        kids.setdefault(ppid, []).append(int(p.name))
+    out, todo = [], [pid]
+    while todo:
+        for kid in kids.get(todo.pop(), []):
+            if kid not in out:
+                out.append(kid)
+                todo.append(kid)
+    return out
+
+
+def stop_tree(proc):
+    tree = [proc.pid, *descendants(proc.pid)]
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in tree:
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+        try:
+            proc.wait(20)
+        except subprocess.TimeoutExpired:
+            pass
+        deadline = time.time() + 20
+        while time.time() < deadline and any(Path(f'/proc/{pid}').exists() for pid in tree):
+            time.sleep(0.5)
+    if proc.poll() is None:
+        proc.wait()
+
+
 def png_problem(path):
     try:
         size = path.stat().st_size
@@ -414,19 +452,29 @@ class Smoke:
             self.lock = None
             self.say('bench lock released')
 
-    def run_logged(self, name, cmd, env, timeout=None, cwd=None):
+    def run_logged(self, name, cmd, env, timeout=None, cwd=None, watch=None):
         log = self.runs / f'{name}.log'
         t0 = time.time()
+        self.stopped = ''
         with open(log, 'w', encoding='utf-8', errors='replace') as f:
             f.write('$ ' + ' '.join(shlex.quote(str(c)) for c in cmd) + '\n')
             f.flush()
-            try:
-                p = subprocess.run([str(c) for c in cmd], env=env, cwd=cwd, stdout=f, stderr=subprocess.STDOUT,
-                                   stdin=subprocess.DEVNULL, timeout=timeout)
-                code = p.returncode
-            except subprocess.TimeoutExpired:
-                code = 124
-                f.write(f'\nrc_smoke: stopped after {timeout} s\n')
+            proc = subprocess.Popen([str(c) for c in cmd], env=env, cwd=cwd, stdout=f, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL)
+            while True:
+                try:
+                    code = proc.wait(WATCH_EVERY if watch else timeout)
+                    break
+                except subprocess.TimeoutExpired:
+                    why = watch() if watch else ''
+                    if not why and timeout and time.time() - t0 >= timeout:
+                        why = f'stopped after {timeout} s'
+                    if why:
+                        stop_tree(proc)
+                        code = 124 if why.startswith('stopped after') else 125
+                        self.stopped = why
+                        f.write(f'\nrc_smoke: {why}\n')
+                        break
             f.write(f'\nrc_smoke: exit {code} after {time.time() - t0:.0f} s\n')
         return code, log.read_text(encoding='utf-8', errors='replace')
 
@@ -438,10 +486,17 @@ class Smoke:
             raise Failed(f'nothing installed in {root}: run the install stage') from None
         return root, ver, root / 'python' / 'bin' / 'python3', root / 'app' / ver
 
-    def cli(self, which, name, args, timeout=None, isolated=True, **extra):
+    def cli(self, which, name, args, timeout=None, isolated=True, watch=None, **extra):
         root, _, py, app = self.installed(which)
         return self.run_logged(name, [py, *(['-I'] if isolated else []), app / 'launcher' / 'cli.py', '--root', root,
-                                      *args], self.env(which, **extra), timeout=timeout)
+                                      *args], self.env(which, **extra), timeout=timeout, watch=watch)
+
+    def disk_watch(self):
+        have = free_gb(self.games)
+        if have < BUILD_FLOOR_GB:
+            return (f'stopped the build: {have:.1f} GB left on the bench disk, less than {BUILD_FLOOR_GB} GB; another '
+                    'folder grew during the build')
+        return ''
 
     def settings(self, which, **values):
         path = self.root(which) / 'data' / 'launcher.json'
@@ -597,8 +652,11 @@ class Smoke:
         game.parent.mkdir(parents=True, exist_ok=True)
         have = self.wait_for_disk()
         t0 = time.time()
-        code, out = self.cli(which, name, ['install', '--dump', self.dump(), '--game', game])
+        code, out = self.cli(which, name, ['install', '--dump', self.dump(), '--game', game], watch=self.disk_watch)
         minutes = (time.time() - t0) / 60
+        if self.stopped:
+            shutil.rmtree(game, ignore_errors=True)
+            raise Failed(f'{self.stopped}, after {minutes:.0f} min; its folder is deleted')
         if code:
             err = [ln for ln in out.splitlines() if ln.startswith('error:')]
             raise Failed(f'launcher.cli install failed (exit {code}) after {minutes:.0f} min: '
@@ -985,8 +1043,10 @@ class Smoke:
             self.pin_feed('update', self.tag)
         self.feed_used = self.feed(fresh=True)
         t0 = time.time()
-        code, out = self.cli('update', 'update', ['update'], isolated=False)
+        code, out = self.cli('update', 'update', ['update'], isolated=False, watch=self.disk_watch)
         minutes = (time.time() - t0) / 60
+        if self.stopped:
+            raise Failed(f'{self.stopped}, during the update, after {minutes:.0f} min')
         root, cur, py, app = self.installed('update')
         bad = []
         if code:

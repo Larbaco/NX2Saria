@@ -1,9 +1,11 @@
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -234,6 +236,38 @@ class Options(unittest.TestCase):
                     s.build('winupd', 'b')
                 left = sorted(w for w in rc_smoke.ROOTS if s.game(w).exists())
                 self.assertEqual(left, ['clean', 'update'] if keep else [])
+
+    def test_watch_stops_the_whole_tree(self):
+        child = ('import subprocess, sys, time; '
+                 'g = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True); '
+                 'print("grandchild", g.pid, flush=True); time.sleep(60)')
+        old = rc_smoke.WATCH_EVERY
+        rc_smoke.WATCH_EVERY = 0.2
+        try:
+            with tempfile.TemporaryDirectory() as d:
+                s = smoke(d)
+                calls = []
+
+                def watch():
+                    calls.append(1)
+                    return 'stopped the build: 1.0 GB left' if len(calls) >= 3 else ''
+                t0 = time.time()
+                code, out = s.run_logged('w', [sys.executable, '-c', child], dict(os.environ), watch=watch)
+                self.assertLess(time.time() - t0, 30)
+                self.assertEqual(code, 125)
+                self.assertEqual(s.stopped, 'stopped the build: 1.0 GB left')
+                grand = int(re.search(r'grandchild (\d+)', out).group(1))
+                self.assertFalse(Path(f'/proc/{grand}').exists() and
+                                 Path(f'/proc/{grand}/stat').read_text().split()[2] != 'Z')
+                code, out = s.run_logged('t', [sys.executable, '-c', 'import time; time.sleep(60)'], dict(os.environ),
+                                         timeout=0.5)
+                self.assertEqual(code, 124)
+                code, out = s.run_logged('ok', [sys.executable, '-c', 'print("fine")'], dict(os.environ),
+                                         watch=lambda: '')
+                self.assertEqual((code, s.stopped), (0, ''))
+                self.assertIn('fine', out)
+        finally:
+            rc_smoke.WATCH_EVERY = old
 
     def fake_install(self, d, shadow):
         s = smoke(d)

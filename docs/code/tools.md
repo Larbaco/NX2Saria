@@ -4987,6 +4987,12 @@ A build takes about 34 GB of the bench's disk, and its temporaries more while it
 to `--disk-wait` seconds, for 45 GB free, and fails with the free space when it does not come. 36 GB was not enough
 on a night when another build's folder grew beside it: the build stopped with a full disk.
 
+While a build runs (`build()`, and the rebuild of the `update` stage), `disk_watch()` measures the free space every
+`WATCH_EVERY` seconds; under `BUILD_FLOOR_GB` it stops the build and fails the stage with the free space, so the disk
+is never filled for the other threads' runs. `stop_tree()` stops the launcher's process and every process under it
+(`descendants()`, from `/proc`): the launcher starts `make_game` in a session of its own, which a signal to the
+launcher alone leaves running.
+
 ### `Smoke.game_run()`
 
 `tools/run_game.py` on a copy of the bench's profile with its newest save backup, `--boot-map` (`KokiriForest_Child` by
