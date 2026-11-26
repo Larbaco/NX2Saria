@@ -1,0 +1,6 @@
+run: telemetry: session header written to logs/session-start.json at
+run: foliage: distance factor 1 (the game's:
+run: mem: write watch on
+crash-launcher: a summary was made from its FATAL line, with the hardware and settings of logs/session-start.json
+update: Translate the Code: Unchanged
+run: pause_tab: off (NX2SARIA_PAUSE_SETTINGS_TAB
