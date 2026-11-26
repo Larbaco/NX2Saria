@@ -43,7 +43,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Staging, automatic checks and application, rebuild after update, handover and rollback remain open.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
-- [ ] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery.
+- [ ] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. Synthetic worker and Linux window tests exercise export, optional diagnostic attachments and the selected folder. Import still needs its own evidence.
 - [ ] Mods: add files/folders, enable/disable, ordering, rebuild and errors.
 - [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
@@ -309,6 +309,22 @@ metadata. Staging, automatic scheduling and activation retain their separate con
 Use a loopback feed and assert that a delayed metadata response leaves inspection responsive,
 only one manifest is requested, and the staged files and active app/runtime are unchanged. The Linux Electron window test
 opens the manual check and renders the release version and notes from a loopback feed.
+
+## Saves operations
+
+The first Saves operation is export. The worker uses the configured game and the same export
+directory preference and Downloads fallback as Tk. The player can choose an existing export
+folder and toggle Add Log and Settings. Save only the requested preference. Keep the lock for
+each launcher write and block export while a previous build has an unresolved marker. A running
+game alone does not block export because the existing export reads the newest complete save.
+
+Export calls Python's existing archive writer. It shows the filename and number of exported
+files, and reveals the ZIP. With the log option on, keep the current log-only fallback for a game
+that has not saved. With it off, report the existing no-save condition. The ZIP excludes key
+files and uses the existing settings scrubber for a report. Selection cancellation preserves
+the previous directory. The synthetic worker test verifies both variants, including redaction.
+The Linux Electron window test exercises the toggle, folder chooser and export against a
+stand-in save. Both export tests passed locally on Linux. Import will use the same Python validation and recovery as Tk in its own test.
 
 ## Provisioning and handover design
 

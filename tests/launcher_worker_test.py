@@ -337,6 +337,64 @@ class WorkerTest(unittest.TestCase):
         log = (data / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: check result=available version=999.0.0 notes=3', log)
 
+    def test_save_export_uses_existing_format_and_preserves_preferences(self):
+        from launcher import saves
+        import zipfile
+
+        base = Path(self.tmp.name)
+        game = base / 'game'
+        account = saves.account_dir(game)
+        (account / 'slot_00').mkdir(parents=True)
+        (account / 'slot_00' / 'progress.sav').write_bytes(b'synthetic progress')
+        (account / 'prod.keys').write_bytes(b'key material sentinel')
+        (game / 'logs').mkdir()
+        (game / 'logs' / 'nx2saria.log').write_text('synthetic game log')
+        (game / 'nx2saria.ini').write_text('coop_room=private-value\nfps_limit=60')
+        dest = base / 'exports'
+        dest.mkdir()
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(game), 'save_export_dir': str(dest),
+                                        'telemetry': 'off', 'future_option': 'kept'}))
+        script = ("import runpy,sys\n"
+                  "from unittest import mock\n"
+                  "from launcher import winsys\n"
+                  "sys.argv=['launcher.worker','--root',sys.argv[1]]\n"
+                  "with mock.patch.object(winsys,'reveal'):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        requests = [
+            {'method': 'hello', 'protocol': 1}, {'method': 'saves_info'},
+            {'method': 'save_preference', 'key': 'save_export_dir', 'value': 'relative'},
+            {'method': 'save_preference', 'key': 'export_with_log', 'value': False},
+            {'method': 'export_save'},
+            {'method': 'save_preference', 'key': 'export_with_log', 'value': True},
+            {'method': 'export_save'},
+        ]
+        response = subprocess.run(
+            [sys.executable, '-c', script, str(self.root)],
+            input=''.join(json.dumps({'id': i, **frame}) + '\n' for i, frame in enumerate(requests)),
+            cwd=ROOT, capture_output=True, text=True, timeout=15)
+        self.assertEqual(response.returncode, 0, response.stderr)
+        _, info, invalid, _, plain, _, report = [json.loads(line) for line in response.stdout.splitlines()]
+        self.assertEqual(info['result'], {'destination': str(dest), 'with_log': True})
+        self.assertIn('error', invalid)
+        self.assertEqual(plain['result']['files'], 1)
+        self.assertFalse(plain['result']['included_log'])
+        self.assertTrue(report['result']['included_log'])
+        with zipfile.ZipFile(dest / plain['result']['name']) as z:
+            self.assertEqual(sorted(z.namelist()), ['manifest.json', 'save/slot_00/progress.sav'])
+            self.assertEqual(z.read('save/slot_00/progress.sav'), b'synthetic progress')
+        with zipfile.ZipFile(dest / report['result']['name']) as z:
+            self.assertEqual(z.read('bug-report/nx2saria.log'), b'synthetic game log')
+            self.assertIn(b'fps_limit=60', z.read('bug-report/nx2saria.ini'))
+            self.assertNotIn(b'private-value', z.read('bug-report/nx2saria.ini'))
+            self.assertFalse(any('keys' in name for name in z.namelist()))
+        self.assertEqual((account / 'slot_00' / 'progress.sav').read_bytes(), b'synthetic progress')
+        self.assertEqual(json.loads(settings.read_text()), {
+            'telemetry': 'off', 'future_option': 'kept', 'game_dir': str(game),
+            'save_export_dir': str(dest), 'export_with_log': True})
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: saves export result=ok files=1 report=True', log)
+
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout
 

@@ -16,7 +16,7 @@ import sys
 import time
 from pathlib import Path
 from unittest import mock
-from launcher import feed, gamefiles, jobs, net, paths
+from launcher import feed, gamefiles, jobs, net, paths, winsys
 from launcher.platform import linux
 from launcher.platform import game_executable
 
@@ -48,6 +48,7 @@ def search_dirs(extra):
 with (mock.patch.object(jobs.InstallJob, 'run', install),
       mock.patch.object(feed, 'load', return_value={'type': 'url', 'url': os.environ['NX2SARIA_TEST_FEED']}),
       mock.patch.object(jobs.RebuildJob, 'run', rebuild),
+      mock.patch.object(winsys, 'reveal'),
       mock.patch.object(paths, 'free_gb', return_value=100),
       mock.patch.object(linux, 'mounted_drives', return_value=[]),
       mock.patch.object(linux, 'toolchain_missing', return_value='Missing synthetic header: opus/opus.h'),
@@ -259,6 +260,34 @@ async function main() {
     await page.getByText('A synthetic update note.', { exact: true }).waitFor({ timeout: 5000 });
     assert.deepEqual(feedRequests, ['/manifest.json']);
     assert.equal((await fs.readFile(path.join(root, 'app', 'current.txt'), 'utf8')).trim(), '0.0.1');
+
+    const game = path.join(folder, 'NX2Saria');
+    const slot = path.join(game, 'profile', 'save', '01'.repeat(16), 'slot_00');
+    await fs.mkdir(slot, { recursive: true });
+    await fs.writeFile(path.join(game, 'profile', 'account.uid'), Buffer.alloc(16, 1));
+    await fs.writeFile(path.join(slot, 'progress.sav'), 'synthetic save');
+    const exportFolder = path.join(base, 'saved-exports');
+    await fs.mkdir(exportFolder);
+    await page.getByRole('button', { name: 'Saves', exact: true }).click({ timeout: 5000 });
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, exportFolder);
+    await page.getByRole('button', { name: 'Escolher pasta de exportação' }).click();
+    await page.getByText(exportFolder, { exact: true }).waitFor({ timeout: 5000 });
+    await app.evaluate(({ dialog }) => {
+      dialog.showOpenDialog = async () => ({ canceled: true, filePaths: [] });
+    });
+    await page.getByRole('button', { name: 'Escolher pasta de exportação' }).click();
+    await page.waitForFunction(() => !document.querySelector('#choose-save-export').matches(':disabled'));
+    await page.getByRole('checkbox', { name: 'Incluir log e configurações' }).uncheck();
+    await page.getByRole('button', { name: 'Exportar save' }).click();
+    await page.getByText(/Save exportado/).waitFor({ timeout: 5000 });
+    const saved = await fs.readdir(exportFolder);
+    assert.equal(saved.length, 1);
+    assert.match(saved[0], /^NX2Saria-save-.*\.zip$/);
+    assert.doesNotMatch(saved[0], /bug-report/);
+    assert.equal(await fs.readFile(path.join(slot, 'progress.sav'), 'utf8'), 'synthetic save');
+    assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).save_export_dir, exportFolder);
   } finally {
     if (app) await app.close();
     server.close();

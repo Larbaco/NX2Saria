@@ -1435,8 +1435,7 @@ class App:
                    on=lambda: self.show('saves'), desc=desc)
 
     def export_dir(self):
-        d = self.settings.get('save_export_dir')
-        return Path(d) if d and Path(d).is_dir() else saves.default_export_dir()
+        return saves.export_destination(self.settings)
 
     def rows_saves(self):
         gd = self.settings.get('game_dir')

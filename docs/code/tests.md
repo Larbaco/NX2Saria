@@ -5906,6 +5906,11 @@ with a published app and runtime in a temporary installation. It exercises Play 
 marker, then recovers an invalid job marker and opens first run with a generated metadata-only
 dump. The saved synthetic dump keeps the automatic finder away from the host's drives.
 
+The save export test generates a scratch account and checks the exact ZIP members. It also
+tests the diagnostic attachments and redaction, rejection of a relative export directory
+and preservation of unrelated preferences. The Linux window test exercises folder choice,
+cancellation, the diagnostic toggle and export. Explorer is replaced by a stand-in.
+
 The manual update check test holds the loopback manifest response while requesting worker
 inspection and a duplicate check. It checks that the latter is coalesced and that only the
 manifest is fetched. It compares the selected app and staged file before and after. The Linux

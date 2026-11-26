@@ -1729,6 +1729,10 @@ Tk adapter owns the prompt, starting the existing rebuild job, select sound, win
 
 ## `launcher/saves.py`
 
+`export_destination()` shares the same preference and existing-directory check between Tk and
+the worker. A missing or invalid saved folder falls back to `default_export_dir()`.
+
+
 Importing a save into the built game, and the saves folder of the game folder
 ([launcher.md](../launcher.md#sharing-a-save), [launcher.md](../launcher.md#importing-a-save-folder)).
 
@@ -3716,6 +3720,13 @@ UTF-16 units, including characters outside the Basic Multilingual Plane, so the 
 escaped frame stays within the pipe limit. The Electron client applies that limit to individual
 frames even when the pipe delivers part of one frame and another frame together. A response from an earlier channel
 is discarded if the channel changes. The check event is independent of game and build sessions.
+
+
+`export_save()` keeps the existing ZIP writer and the selected destination. The protocol
+returns the generated filename, file count and whether there are diagnostic attachments.
+Setting changes require the lock and store only the chosen field. Read-only inspection
+does not create the export folder. The worker retains the original no-save and log-only
+behaviors and reveals a successfully written archive.
 
 
 For Play, a memory decision has an attempt number. The worker rejects a stale answer and checks for another

@@ -373,6 +373,11 @@ def default_export_dir():
     return Path.home()
 
 
+def export_destination(settings):
+    saved = settings.get('save_export_dir')
+    return Path(saved) if saved and Path(saved).is_dir() else default_export_dir()
+
+
 def _fresh_file(folder, stem, suffix):
     p, n = folder / f'{stem}{suffix}', 2
     while p.exists():

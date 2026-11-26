@@ -1,12 +1,14 @@
 type FirstRunPreferences = { channel: 'stable' | 'preview'; auto_check: boolean; desktop_shortcut: boolean | null };
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences; first_run_requirements?: { status: string; message?: string } };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
+type SaveOptions = { destination: string; with_log: boolean };
+type SaveExport = { status: string; name?: string; files?: number; included_log?: boolean };
 type UpdateView = { status: string; version?: string; notes?: string[] };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -14,6 +16,14 @@ const rebuildButton = document.querySelector<HTMLButtonElement>('#rebuild')!;
 const playButton = document.querySelector<HTMLButtonElement>('#play')!;
 const cancelJob = document.querySelector<HTMLButtonElement>('#cancel-job')!;
 const hideWhilePlaying = document.querySelector<HTMLInputElement>('#hide-while-playing')!;
+const savesControl = document.querySelector<HTMLElement>('#saves-control')!;
+const savesButton = document.querySelector<HTMLButtonElement>('#saves-button')!;
+const savesPanel = document.querySelector<HTMLElement>('#saves-panel')!;
+const saveDestination = document.querySelector<HTMLElement>('#save-export-destination')!;
+const chooseSaveExport = document.querySelector<HTMLButtonElement>('#choose-save-export')!;
+const includeSaveReport = document.querySelector<HTMLInputElement>('#include-save-report')!;
+const exportSaveButton = document.querySelector<HTMLButtonElement>('#export-save')!;
+const saveResult = document.querySelector<HTMLElement>('#save-result')!;
 const updateControl = document.querySelector<HTMLElement>('#update-control')!;
 const checkUpdatesButton = document.querySelector<HTMLButtonElement>('#check-updates')!;
 const updateResult = document.querySelector<HTMLElement>('#update-result')!;
@@ -43,6 +53,9 @@ const messages: Record<string, string> = { ready: 'Instalação encontrada', not
 let installation: Result | null = null;
 let selecting = false;
 let playing = false;
+let gameWindowReady = false;
+let savesBusy = false;
+let saveOptions: SaveOptions | null = null;
 let savingPreference = false;
 let playFailed = false;
 let choosingSource = false;
@@ -53,8 +66,18 @@ let proposedFolder: InstallDestination | null = null;
 let proposedDump: string | null = null;
 
 function updateControls() {
-  const busy = selecting || playing || savingPreference || choosingSource;
-  button.disabled = busy || askingRecovery;
+  const busy = selecting || playing || savingPreference || choosingSource || savesBusy;
+  button.disabled = busy || askingRecovery || savesBusy;
+  savesControl.hidden = installation?.status !== 'ready';
+  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy ||
+    (playing && !gameWindowReady) || installation?.job_marker_present === true;
+  savesButton.disabled = chooseSaveExport.disabled = includeSaveReport.disabled = exportSaveButton.disabled = savesDisabled;
+  savesPanel.hidden = !saveOptions;
+  savesButton.setAttribute('aria-expanded', String(!savesPanel.hidden));
+  if (saveOptions) {
+    saveDestination.textContent = saveOptions.destination;
+    includeSaveReport.checked = saveOptions.with_log;
+  }
   updateControl.hidden = installation?.status !== 'ready';
   checkUpdatesButton.disabled = checkingUpdates || busy || installation?.job_marker_present === true;
   const previousBuild = installation?.recovery?.state;
@@ -187,6 +210,8 @@ async function loadSelection(action: () => Promise<Result | null>) {
   selecting = true;
   installation = null;
   playFailed = false;
+  saveOptions = null;
+  saveResult.textContent = '';
   checkingUpdates = false;
   updateResult.textContent = updateNotes.textContent = '';
   updateNotes.hidden = true;
@@ -282,6 +307,53 @@ firstRunChannel.onchange = () => { void saveFirstRunPreference('channel', firstR
 firstRunAutoCheck.onchange = () => { void saveFirstRunPreference('auto_check', firstRunAutoCheck.checked); };
 firstRunDesktop.onchange = () => { void saveFirstRunPreference('desktop_shortcut', firstRunDesktop.checked); };
 
+async function runSaveAction(action: () => Promise<void>, error: string) {
+  savesBusy = true;
+  saveResult.textContent = '';
+  updateControls();
+  try { await action(); } catch { saveResult.textContent = error; }
+  finally { savesBusy = false; updateControls(); }
+}
+
+savesButton.onclick = () => {
+  if (saveOptions) {
+    saveOptions = null;
+    saveResult.textContent = '';
+    updateControls();
+    return;
+  }
+  void runSaveAction(async () => { saveOptions = await window.launcher.savesInfo(); }, 'Não foi possível abrir os saves.');
+};
+chooseSaveExport.onclick = () => {
+  const options = saveOptions;
+  if (!options) return;
+  void runSaveAction(async () => {
+    const destination = await window.launcher.chooseSaveExport();
+    if (destination) options.destination = destination;
+  }, 'Não foi possível salvar a pasta de exportação.');
+};
+includeSaveReport.onchange = () => {
+  const options = saveOptions;
+  if (!options) return;
+  const checked = includeSaveReport.checked;
+  void runSaveAction(async () => { options.with_log = await window.launcher.setSaveReport(checked); },
+    'Não foi possível salvar a opção de diagnóstico.');
+};
+exportSaveButton.onclick = () => {
+  void runSaveAction(async () => {
+    const result = await window.launcher.exportSave();
+    if (result.status === 'no_save') {
+      saveResult.textContent = 'O jogo ainda não tem um save. Jogue até salvar e tente novamente.';
+    } else if (result.status === 'ok') {
+      saveResult.textContent = result.files
+        ? `Save exportado em ${result.name} (${result.files} arquivo(s)).`
+        : `O jogo ainda não tem save. O diagnóstico foi exportado em ${result.name}.`;
+    } else {
+      saveResult.textContent = 'Não foi possível exportar o save. Confira o log do launcher.';
+    }
+  }, 'Não foi possível exportar o save.');
+};
+
 const updateMessages: Record<string, string> = {
   up_to_date: 'O launcher está atualizado.',
   no_release: 'Nenhuma versão encontrada para este canal.',
@@ -352,10 +424,13 @@ playButton.onclick = async () => {
   updateControls();
 };
 window.launcher.onGameWindowReady(() => {
+  gameWindowReady = true;
+  updateControls();
   statusElement.textContent = 'Jogo em execução';
   detail.textContent = '';
 });
 window.launcher.onPlayEnded(result => {
+  gameWindowReady = false;
   cancelJob.hidden = true;
   playing = false;
   installation = result.state ?? null;

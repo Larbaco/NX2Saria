@@ -221,6 +221,26 @@ def checked_update(ctx, check, counts, channel):
     return result
 
 
+def export_save(ctx, game, counts):
+    settings = ctx.settings
+    try:
+        result = saves.export_save(game, saves.export_destination(settings), bug_report=settings['export_with_log'],
+                                   version=versions.display(build.built_version(game) or ctx.version), log=ctx.log)
+    except (saves.SaveError, OSError) as e:
+        status = 'no_save' if isinstance(e, saves.SaveError) and str(e) == saves.NO_SAVE else 'failed'
+        if status == 'failed':
+            ctx.log(f'saves: export failed: {e}')
+        action_log(ctx, counts, 'saves', f'export result={status}')
+        return {'status': status}
+    with_extras = bool(result['extras'])
+    try:
+        winsys.reveal(result['path'])
+    except OSError:
+        action_log(ctx, counts, 'saves', 'reveal failed')
+    action_log(ctx, counts, 'saves', f'export result=ok files={result["files"]} report={with_extras}')
+    return {'status': 'ok', 'name': result['path'].name, 'files': result['files'], 'included_log': with_extras}
+
+
 def install_space(folder):
     complete = (Path(folder) / 'romfs' / 'romfs.bin').is_file()
     available = paths.free_gb(folder) + paths.partial_image_gb(folder)
@@ -391,7 +411,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves'], 'update_waiting': waiting}})
         counts = {}
         requests = queue.Queue(maxsize=64)
         input_closed = threading.Event()
@@ -781,6 +801,39 @@ def main(argv=None):
                         error(request['id'], 'preference_save_failed')
                     else:
                         emit({'id': request['id'], 'result': {'hide_while_playing': value}})
+            elif request.get('method') in ('saves_info', 'save_preference', 'export_save'):
+                method = request['method']
+                game = ctx.settings.get('game_dir')
+                if not game or not Path(game).is_dir():
+                    error(request['id'], 'saves_unavailable')
+                    continue
+                if method == 'saves_info':
+                    result = {'destination': str(saves.export_destination(ctx.settings)),
+                              'with_log': ctx.settings['export_with_log']}
+                elif lock_state != 'held' or job or build_recovery.blocked(layout):
+                    action_log(ctx, counts, 'saves', 'request refused')
+                    error(request['id'], 'saves_unavailable')
+                    continue
+                elif method == 'save_preference':
+                    key, value = request.get('key'), request.get('value')
+                    valid = (key == 'export_with_log' and type(value) is bool or
+                             key == 'save_export_dir' and isinstance(value, str) and '\0' not in value and
+                             Path(value).is_absolute() and Path(value).is_dir())
+                    if not valid:
+                        action_log(ctx, counts, 'saves', 'preference rejected')
+                        error(request['id'], 'invalid_preference')
+                        continue
+                    try:
+                        ctx.settings.save_preference(key, value)
+                    except (OSError, ValueError):
+                        action_log(ctx, counts, 'saves', 'preference save_failed')
+                        error(request['id'], 'preference_save_failed')
+                        continue
+                    action_log(ctx, counts, 'saves', f'preference key={key} result=saved')
+                    result = {'key': key, 'value': value}
+                else:
+                    result = export_save(ctx, game, counts)
+                emit({'id': request['id'], 'result': result})
             elif request.get('method') == 'check_updates':
                 if lock_state != 'held' or build_recovery.blocked(layout):
                     status = 'unavailable'

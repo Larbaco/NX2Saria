@@ -353,6 +353,58 @@ app.whenReady().then(() => {
     log?.write('recovery', `${action} result=${status}`);
     return status;
   });
+  function savesWorker(event: Electron.IpcMainInvokeEvent) {
+    if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('saves') ||
+        worker.handshake.lock !== 'held' || state?.status !== 'ready' || state.job_marker_present ||
+        (playing && !gameSpawned)) throw new Error('Saves unavailable');
+    return worker;
+  }
+  async function saveOptions(active: WorkerClient) {
+    const result = await active.request('saves_info');
+    if (active !== worker || typeof result?.destination !== 'string' || !path.isAbsolute(result.destination) ||
+        typeof result.with_log !== 'boolean') throw new Error('Saves unavailable');
+    return { destination: result.destination, with_log: result.with_log };
+  }
+  ipcMain.handle('saves-info', event => saveOptions(savesWorker(event)));
+  ipcMain.handle('choose-save-export', async event => {
+    const active = savesWorker(event);
+    const options = await saveOptions(active);
+    const picked = await dialog.showOpenDialog(window, { title: 'Escolher pasta de exportação',
+      properties: ['openDirectory'], defaultPath: options.destination });
+    const destination = picked.filePaths[0];
+    if (picked.canceled || !destination) return null;
+    if (savesWorker(event) !== active || !path.isAbsolute(destination)) throw new Error('Saves unavailable');
+    const changed = await active.request('save_preference', { key: 'save_export_dir', value: destination });
+    if (worker !== active || changed?.key !== 'save_export_dir' || changed?.value !== destination) {
+      throw new Error('Save unsuccessful');
+    }
+    log?.write('saves', 'destination saved');
+    return destination;
+  });
+  ipcMain.handle('set-save-report', async (event, value) => {
+    const active = savesWorker(event);
+    if (typeof value !== 'boolean') throw new Error('Invalid preference');
+    const changed = await active.request('save_preference', { key: 'export_with_log', value });
+    if (worker !== active || changed?.key !== 'export_with_log' || changed?.value !== value) throw new Error('Save unsuccessful');
+    log?.write('saves', `report=${value ? 'on' : 'off'}`);
+    return value;
+  });
+  ipcMain.handle('export-save', async event => {
+    const active = savesWorker(event);
+    const result = await active.request('export_save');
+    if (worker !== active) throw new Error('Saves unavailable');
+    if (result?.status === 'no_save' || result?.status === 'failed') {
+      log?.write('saves', `export result=${result.status}`);
+      return { status: result.status };
+    }
+    if (result?.status !== 'ok' || typeof result.name !== 'string' || path.basename(result.name) !== result.name ||
+        !/^NX2Saria-(?:save|log)-[0-9() _-]+(?:bug-report)?[0-9() _-]*\.zip$/.test(result.name) ||
+        !Number.isSafeInteger(result.files) || result.files < 0 || typeof result.included_log !== 'boolean') {
+      throw new Error('Export unsuccessful');
+    }
+    log?.write('saves', `export result=ok files=${result.files} report=${result.included_log}`);
+    return { status: 'ok', name: result.name, files: result.files, included_log: result.included_log };
+  });
   ipcMain.handle('check-updates', async event => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('check_updates') ||
         worker.handshake.lock !== 'held' || !state || state.job_marker_present) return 'unavailable';
