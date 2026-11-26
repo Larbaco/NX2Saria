@@ -14,7 +14,8 @@ input.c by its text, with stand-ins for the SDL calls, the clock and the log it 
   - a trigger counts only after one second at rest without a break: one reading at rest before it sticks (a 2.4 GHz
     receiver, a virtual pad) leaves it at 0, and a break in the rest starts the second again;
   - a trigger at rest from the start loses no press after its first second, and its release is logged once with the wait;
-  - a trigger that never rests is logged once per session with the value it reads;
+  - a trigger that has read held for 10 s without a break is logged once per session with the value it reads, counted
+    from its first held reading, not from when its gamepad opened;
   - each axis and each gamepad has its own state.
 
 No game files, no SDL. Usage: python tests/pad_rest_check.py [--cc <clang>]
@@ -124,7 +125,18 @@ int main(void) {
     for (int i = 0; i < 1300; i++, now_ns += 16 * MS) CHECK(pad_axis(&stuck, RT) == 0, "a trigger that never rests");
     CHECK(log_count("\"Pad E\"", "16384") == 1, "a trigger that never rests is logged once with its value");
     for (int i = 0; i < 1300; i++, now_ns += 16 * MS) pad_axis(&recv, LT);
-    CHECK(log_count("never", NULL) + log_count("has not rested", NULL) == 1, "the never-rests line is once per session");
+    CHECK(log_count("held for 10 s", NULL) == 1, "the held line is once per session");
+
+    SDL_Gamepad idle = {{0}, "Pad F"};
+    open_pad(&idle);
+    now_ns += 30000 * MS;
+    idle.axis[RT] = 32767;
+    trigger_stuck_logged = 0;
+    for (int i = 0; i < 600; i++, now_ns += 16 * MS) pad_axis(&idle, RT);
+    CHECK(log_count("\"Pad F\"", NULL) == 0,
+          "a trigger first read 30 s after its gamepad opened, held for 9.6 s of readings, is not yet called stuck");
+    for (int i = 0; i < 40; i++, now_ns += 16 * MS) pad_axis(&idle, RT);
+    CHECK(log_count("\"Pad F\"", "held for 10 s") == 1, "and is after 10 s of readings held");
 
     SDL_Gamepad stray = {{32767}, "Stray"};
     stray.axis[LT] = 32767;

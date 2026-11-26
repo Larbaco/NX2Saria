@@ -706,8 +706,8 @@ static int npads;
 enum { AXIS_REST = 8192, TRIGGER_LOGS = 16 };
 static const uint64_t TRIGGER_REST_NS = 1000000000u, TRIGGER_STUCK_NS = 10000000000u;
 static struct pad_state {
-    uint64_t opened, rest_since[2];
-    uint8_t rest, timing;
+    uint64_t opened, rest_since[2], held_since[2];
+    uint8_t rest, timing, holding;
 } pad_st[MAX_PADS];
 static int trigger_logs, trigger_stuck_logged;
 
@@ -733,14 +733,17 @@ static int16_t pad_axis(SDL_Gamepad *p, SDL_GamepadAxis a) {
         uint64_t now = plat_now_ns();
         if (!at_rest) {
             s->timing &= (uint8_t)~(1u << t);
-            if (!trigger_stuck_logged && now - s->opened >= TRIGGER_STUCK_NS) {
+            if (!(s->holding >> t & 1)) s->holding |= (uint8_t)(1u << t), s->held_since[t] = now;
+            if (!trigger_stuck_logged && now - s->held_since[t] >= TRIGGER_STUCK_NS) {
                 trigger_stuck_logged = 1;
-                rt_log("input: gamepad \"%s\": the %s trigger has not rested for 1 s in the %.0f s since the gamepad "
-                       "opened (it reads %d; at rest is below %d): it stays off until it does (logged once)",
-                       name ? name : "?", which, (now - s->opened) / 1e9, v, AXIS_REST);
+                rt_log("input: gamepad \"%s\": the %s trigger has read held for 10 s without a reading at rest (it "
+                       "reads %d; at rest is below %d; %.0f s since the gamepad opened): it stays off until it rests "
+                       "for 1 s (logged once)",
+                       name ? name : "?", which, v, AXIS_REST, (now - s->opened) / 1e9);
             }
             return 0;
         }
+        s->holding &= (uint8_t)~(1u << t);
         if (!(s->timing >> t & 1)) s->timing |= (uint8_t)(1u << t), s->rest_since[t] = now;
         if (now - s->rest_since[t] < TRIGGER_REST_NS) return 0;
         s->rest |= (uint8_t)(1u << a);

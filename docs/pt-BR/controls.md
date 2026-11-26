@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=7b7f8e1c71bc9a3a9d757d470c6dd0a27d6ff377 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=74aa6b347e9c1566a341434a7e1d7531ff7e00a2 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -36,11 +36,11 @@ O log informa o layout em vigor (`input: gamepad layout ...`) e o primeiro toque
 Switch, a menos que *Ícones de botões* diga outra coisa (abaixo).
 
 ZL e ZR passam a contar quando o controle informa o gatilho em repouso por um segundo inteiro, então no primeiro
-segundo depois que um controle se conecta os gatilhos ficam soltos. Um receptor sem fio ou um controle virtual que
+segundo, pelo menos, depois que um controle se conecta os gatilhos ficam soltos. Um receptor sem fio ou um controle virtual que
 informa um gatilho apertado desde o início, sem isso, seguraria ZL ou ZR a sessão inteira. O log nomeia cada gatilho
 quando ele passa a contar (`input: gamepad "...": the left trigger counts from now on, after 1.00 s at rest ...`) e,
-uma vez por sessão, um gatilho que não repousou dez segundos depois que o controle se conectou, com o valor lido
-(`input: gamepad "...": the right trigger has not rested for 1 s ...`).
+uma vez por sessão, um gatilho que ficou dez segundos lido como apertado sem repousar, com o valor lido
+(`input: gamepad "...": the right trigger has read held for 10 s ...`).
 
 O ícone de ação (canto superior direito) mostra os quatro botões frontais como um losango. O jogo o desenha nas posições
 do Switch (A à direita, B embaixo, X em cima, Y à esquerda), que `nintendo` mantém. Com `xbox`, `playstation` e `auto`, o

@@ -418,7 +418,8 @@ motion): the first one found, then whichever one the player presses (`pad_follow
 lists left the game deaf when that one was a device nobody holds: a virtual pad of Steam Input or DS4Windows, a wheel, a
 receiver's idle second slot, listed before the controller in the player's hands. `pad_st`, per open gamepad
 (`pad_state_open()` when it opens, moved with it when another closes): when it opened, bit `a` of `rest` set once axis
-`a` counts, and for each trigger whether it is at rest now (`timing`) and since when (`rest_since`). `trigger_logs`
+`a` counts, and for each trigger whether it is at rest now (`timing`) and since when (`rest_since`), and whether it
+reads held now (`holding`) and since when (`held_since`). `trigger_logs`
 and `trigger_stuck_logged` limit the trigger lines of `pad_axis()` per session. `pad_pressed_logged`: the primary's
 first press was logged (once per primary).
 
@@ -453,8 +454,10 @@ the second again. One reading at rest was not enough: a 2.4 GHz receiver or a vi
 Controller") can report a trigger at rest for an instant, or report 0 before its first real report, and then held for
 good, and the game read ZL or ZR pressed for the whole session. The price is the first second after a gamepad opens, in
 which its triggers read 0. Each release is logged with its wait and the time since the gamepad opened (`TRIGGER_LOGS`
-16 lines a session); a trigger still not released `TRIGGER_STUCK_NS` (10 s) after its gamepad opened is logged once a
-session with the value it reads (a receiver that rests near 16384 never counts). Sticks keep the single reading. The
+16 lines a session); a trigger not released that has read held for `TRIGGER_STUCK_NS` (10 s) without a reading at
+rest is logged once a session with the value it reads (a receiver that rests near 16384 never counts). The 10 s run
+from the first held reading, not from when the gamepad opened: a second gamepad nobody read for a while and then pressed
+in its first second is not called stuck. Sticks keep the single reading. The
 time between two readings at rest counts as rest: a gamepad nobody reads (not the primary, and the game not polling) is not watched meanwhile.
 `tests/pad_rest_check.py` builds the function with stand-ins for SDL, the clock and the log.
 
