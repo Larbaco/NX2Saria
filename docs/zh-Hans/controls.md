@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=74aa6b347e9c1566a341434a7e1d7531ff7e00a2 reviewed=no -->
+<!-- translation: lang=zh-Hans source=docs/controls.md source-hash=dc09f58a237a160e34e5226227de48eca0b769db reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · [Português (Brasil)](../pt-BR/controls.md) · [Русский](../ru/controls.md) · **简体中文**
 
@@ -41,9 +41,11 @@ ZL 和 ZR 要等控制器连续一整秒报告扳机处于静止后才开始生�
 
 A、B、X 和 Y 显示的是*按键布局*所按下的按键：使用 `nintendo`（按位置）时，Switch 的 A 是右侧正面按键，因此它的提示显示 B 或圆圈，B 显示 A 或叉，X 显示 Y 或三角，Y 显示 X 或方块；使用 `xbox`、`playstation` 和 `automatic`（按标注）时，A 显示 A 或叉，B 显示 B 或圆圈，X 显示 X 或方块，Y 显示 Y 或三角。
 
+重新映射到手柄另一个按键上的按键（带有 `pad:` 条目的 `bind_` 行，由操作标签页写入）会改为显示那个按键，在所有手柄样式和布局中都是如此：A 和 B 互换后，A 的提示显示 B 的按键，B 的提示显示 A 的按键。新按键是正面按键、L 或 R 时，陶笛的音符也会跟着变。背部拨片没有图片，因此映射到拨片上的按键保留它自己按键的提示。
+
 `pc` 显示每个 Switch 按键对应的第一个键盘按键（上表，或工具运行时 `nx2saria.ini` 中的 `bind_` 行）：E、Ctrl、Space，Y 显示鼠标及其左键，Q、R，ZL 显示鼠标及其右键，F、Tab、M，摇杆按下为 V 和 C，十字键为 1 到 4，移动为 W A S D，提示所指的方向按键盘上的排列给出。镜头的提示显示移动的鼠标。它不受*按键布局*影响。
 
-游戏在启动时读取一次字体和界面纹理，因此更改要在重启后才会显示（该行会这样提示；菜单的“重启”按钮会重启游戏）。在此标签页中重新映射的按键或键盘按键会保留旧的提示，直到重新生成这些文件夹。
+游戏在启动时读取一次字体和界面纹理，因此更改要在重启后才会显示（该行会这样提示；菜单的“重启”按钮会重启游戏）。在此标签页中重新映射的按键或键盘按键会保留旧的提示，直到重新生成这些文件夹（`bind_` 行改变后，重新构建游戏会重新生成它们）。日志中的 `button prompts:` 行会说明提示跟随了哪些重新映射的按键。
 
 按键提示位于 exe 旁边的覆盖文件夹中：`romfs-patches-xbox`、`romfs-patches-xbox-label`、`romfs-patches-playstation`、`romfs-patches-playstation-label`、`romfs-patches-steamdeck` 和 `romfs-patches-steamdeck-label`（按位置和按标注）以及 `romfs-patches-pc`，`runtime/hle/romfs.c` 会加载它们来代替游戏的文件。`tools/pad_prompts.py` 在玩家的机器上，根据玩家自己的 RomFS 和一个按键图片文件夹绘制它们。这些图片位于仓库的 `prompt-art` 文件夹中：来自一个 CC0 图包，其 `SOURCE.md` 写明了图包名称和来源。每个启动器发布版本、AppImage 和构建套件都带有这些图片（`tools/prompt_art.py`），`tools/make_game.py` 会在最后一步绘制所有文件夹，并在图片、工具或 `bind_` 行发生变化时再次绘制（因此重新绑定按键后重新构建，键盘提示就会更新）。手动生成：
 
@@ -95,6 +97,8 @@ Minus+Plus 组合键永远不会传给游戏。在菜单中，方向键、十字
 ## 音频输出
 
 声音在系统默认设备上播放，并在 Windows 默认设备改变时跟随它。`NX2SARIA_AUDIO_DEVICE`（`nx2saria.ini` 中 `[audio]` 部分的 `audio_device`）可以指定另一个设备：一个从 1 开始、按 `nx2saria.exe --list-audio-devices` 打印顺序计数的数字，或者设备名称的一部分（不区分大小写）。`--list-audio-devices` 会在不需要游戏文件的情况下打印每个播放设备的序号、名称、声道数和频率，标出系统默认设备，并显示该设置会选中哪个设备；`nx2saria.exe --audio-device <value>` 为单次运行设置 `NX2SARIA_AUDIO_DEVICE`，并优先于该文件。没有任何匹配或设备无法打开时，日志会列出所有播放设备，游戏在系统默认设备上播放；游戏运行时所选设备消失（虚拟输出被移除、耳机被拔出）也会把声音移到系统默认设备。`audio_channels = auto` 会询问所选设备有多少个声道。
+
+`background_mute = 1`（`[audio]` 部分，没有菜单行，实时生效；默认 0）会在游戏窗口没有焦点时（例如切换到其他程序时）让游戏静音，焦点回来后声音也会恢复。启动时日志中的 `input: cursor_hide = ..., background_mute = ...` 行说明它是否开启，`audio: background_mute: ...` 标出它第一次让游戏静音的时刻。
 
 ## 在菜单中应用更改
 
@@ -162,7 +166,9 @@ bind_Y = pad:north, key:mouse_l
 
 `NX2SARIA_MOUSE_MODE`（`mouse_mode`，操作标签页中的*鼠标视角*行，实时生效）在这种右摇杆偏移（`stick`）和鼠标直接视角（`direct`，默认）之间选择。在 `direct` 下，镜头的输入更新（`main+0x37c300`）会在游戏的摇杆死区、限幅和响应曲线之后，自己取用原始计数（`recomp/patches-v111.txt`，补丁集 `mouse_direct`；`runtime/input/mouse_direct.c` 的 `camera_input_oot`）。镜头按鼠标移动的距离转动，两个轴相同：在 `NX2SARIA_MOUSE_SENS` 为 1 时每个计数约 0.08 度，与帧率和 `NX2SARIA_STICK_SENS` 无关，没有死区，也没有最高速度。游戏自己的镜头灵敏度（在其 Options 中）会像缩放摇杆一样缩放鼠标。手柄的右摇杆和方向键仍然经过游戏的响应曲线，并与鼠标叠加。当游戏不接受镜头输入时（它关闭了镜头输入，或者镜头重置后的暂停正在进行），鼠标就像上面那样作为右摇杆。`NX2SARIA_MOUSE_DIRECT_PATCH=0` 会关闭该补丁集，此时无论模式如何，鼠标都作为右摇杆。`NX2SARIA_MOUSE_TRACE=1` 会记录每次镜头输入更新（摇杆、取用的计数以及它们增加的量），并且在 `dlaa` 开启时（DLAA、DLSS 或 FSR 3.1，它们会读取游戏的镜头），还会记录每帧镜头的方向，用于测量每个计数的转动量。
 
-`NX2SARIA_MOUSE_SENS`（*鼠标视角灵敏度*行，实时生效；0 到 10，默认 1；越高转得越快，0 会关闭鼠标视角和光标捕获，该行最低可调到 0.05）。当窗口是前台窗口时，光标会被隐藏并限制在客户区内。在失去焦点、最小化、F11 改变窗口期间、调整大小或移动窗口的过程中，以及文字输入框打开时，光标会被释放。Esc 可以手动释放它：光标显示出来，鼠标视角和鼠标按键停止工作，窗口可以被移动、最小化或关闭。在客户区内点击鼠标会再次捕获光标；这次点击不会传给游戏。点击标题栏或边框来激活窗口不会捕获光标，因此可以马上拖动或关闭窗口；Alt+Tab 或在客户区内点击会像之前一样捕获光标。`NX2SARIA_INPUT=none` 也会禁用捕获。
+`NX2SARIA_MOUSE_SENS`（*鼠标视角灵敏度*行，实时生效；0 到 10，默认 1；越高转得越快，0 会关闭鼠标视角和光标捕获，该行最低可调到 0.05）。有三个设置没有菜单行，只能在 `nx2saria.ini` 中设置（实时生效）：`mouse_invert_x = 1` 和 `mouse_invert_y = 1` 让鼠标视角在该轴上反向转动，`mouse_sens_y`（0.1 到 10，默认 1）让垂直转动等于水平转动乘以这个系数，因此 `mouse_sens_y = 0.5` 时上下看的速度是左右的一半。它们在两种模式下都生效，游戏自己的镜头反转（在其选项中）仍然叠加生效；道具轮盘和菜单收到的鼠标移动保持不变。它们不是默认值时，日志会在启动时列出（`input: mouse camera: mouse_invert_x = ...`）。当窗口是前台窗口时，光标会被隐藏并限制在客户区内。在失去焦点、最小化、F11 改变窗口期间、调整大小或移动窗口的过程中，以及文字输入框打开时，光标会被释放。Esc 可以手动释放它：光标显示出来，鼠标视角和鼠标按键停止工作，窗口可以被移动、最小化或关闭。在客户区内点击鼠标会再次捕获光标；这次点击不会传给游戏。点击标题栏或边框来激活窗口不会捕获光标，因此可以马上拖动或关闭窗口；Alt+Tab 或在客户区内点击会像之前一样捕获光标。`NX2SARIA_INPUT=none` 也会禁用捕获。
+
+光标显示时（已释放、在游戏菜单中、在设置菜单中），它在游戏窗口上静止 3 秒后会隐藏，鼠标一动就会重新出现。隐藏的光标仍然指向原处：点击会落在它所在的位置，在游戏菜单中它下方的按钮保持选中。`cursor_hide = 0`（`[input]` 部分，没有菜单行，实时生效；默认 1）让它一直显示。启动时的日志行会说明该设置（`input: cursor_hide = 1 ...`），`input: cursor_hide: the cursor hid after 3 s still over the window` 标出它第一次隐藏。
 
 `NX2SARIA_STICK_DEADZONE`（0 到 50，默认 8）是手柄摇杆的死区，以满偏移的百分比表示，两个摇杆相同。死区是圆形的：摇杆在圆内时读作居中，其余行程会被缩放为从圆的边缘处的 0 开始，因此满偏移仍能达到满值。如果摇杆漂移，请调高它。游戏自己的死区在它之后生效。`NX2SARIA_LSTICK_DEADZONE` 和 `NX2SARIA_RSTICK_DEADZONE`（操作标签页*摇杆*下的*左摇杆死区* / *右摇杆死区*行）各自设置一个摇杆，未设置时回退到 `NX2SARIA_STICK_DEADZONE`，因此磨损的摇杆可以获得比另一个更大的死区。连接手柄时，每一行都会显示其摇杆当前在死区之前的偏移（*当前摇杆*）：松开摇杆，把该行设为比它静止时的值高几个百分点。
 
