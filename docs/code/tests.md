@@ -5919,6 +5919,15 @@ a complete backup. The Linux window test uses the native dialog seams for the ex
 and the generated backup folder. A Node check verifies that a save transaction can finish
 after the ordinary request timeout.
 
+The Steam test uses a scratch account and the real VDF writer. It updates a
+legacy shortcut without changing its ID or an unrelated entry, checks image
+files and the backup, and substitutes running Steam and the Windows
+restart. Linux exercises refusal with Steam open or the wrapper missing,
+and detects a Flatpak-only setup. The close test holds the artwork response,
+checks that a duplicate request starts one operation and confirms the
+worker still owns the lock after EOF. The Linux window verifies detection,
+the result of adding the shortcut, and path-free action logs.
+
 The Reports tests use a loopback service. They exercise the first ready screen
 with a countdown, the no-countdown question after a job, timeout, deliberate close,
 explicit refusal and disconnection. The report preview matches the request bytes

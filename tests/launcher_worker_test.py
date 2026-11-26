@@ -861,6 +861,137 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse((game / 'logs' / telemetry.SUMMARY).exists())
         self.assertEqual(json.loads((game / 'logs' / telemetry.SENT).read_text())['session']['frames'], 2)
 
+    def test_steam_update_uses_existing_shortcut_and_leaves_other_entries_intact(self):
+        import struct
+        from launcher import steam
+        from launcher.platform import game_executable
+
+        base = Path(self.tmp.name)
+        config = base / 'steam' / 'userdata' / '123' / 'config'
+        config.mkdir(parents=True)
+        native = config.parents[2]
+        vdf = config / 'shortcuts.vdf'
+        old, unrelated = steam.add_shortcut(b'', '"independent program"', '"independent folder"', '', '', 'Other Game')
+        old, existing = steam.add_shortcut(old, '"prior launcher"', '"prior folder"', '--play', '', steam.LEGACY_NAMES[0])
+        vdf.write_bytes(old)
+        game = base / 'game'
+        game.mkdir()
+        game_executable(game).touch()
+        (self.root / 'data' / 'launcher.json').write_text(json.dumps({'game_dir': str(game)}))
+        running = base / 'steam-is-running'
+        running.touch()
+        script = ("import runpy,sys,subprocess,time\n"
+                  "from pathlib import Path\n"
+                  "from types import SimpleNamespace\n"
+                  "from unittest import mock\n"
+                  "from launcher import gameart,steam\n"
+                  "from launcher.ui import art\n"
+                  "root,native,base=map(Path,sys.argv[1:])\n"
+                  "running=base/'steam-is-running'\n"
+                  "flatpak=base/'flatpak'/'.var'/'app'/'com.valvesoftware.Steam'/'data'/'Steam'\n"
+                  "exe=native/'steam.exe'\n"
+                  "only_flatpak=base/'only-flatpak'\n"
+                  "def roots(home=None): return [flatpak] if only_flatpak.exists() else [native]\n"
+                  "def find(): return (roots()[0],exe)\n"
+                  "def close(_): running.unlink(); return True\n"
+                  "def restart(args,**kw): (base/'steam-restarted').write_text(Path(args[0]).name)\n"
+                  "pics=dict.fromkeys(('portrait','wide','hero','logo'), object())\n"
+                  "def artwork(*args):\n"
+                  " with (base/'steam-art-calls').open('a') as f: print('call', file=f)\n"
+                  " until=time.monotonic()+10\n"
+                  " while (base/'hold-steam-art').exists() and time.monotonic()<until: time.sleep(0.02)\n"
+                  " return pics\n"
+                  "sys.argv=['launcher.worker','--root',str(root)]\n"
+                  "with (mock.patch.object(steam,'find_steam',find), mock.patch.object(steam,'steam_roots',roots), "
+                  "mock.patch.object(steam,'steam_running',side_effect=running.exists), "
+                  "mock.patch.object(steam,'close_steam',close), "
+                  "mock.patch.object(steam,'subprocess',SimpleNamespace(Popen=restart,DEVNULL=subprocess.DEVNULL)), "
+                  "mock.patch.object(gameart,'make',artwork), mock.patch.object(art,'sprig_icon'), "
+                  "mock.patch.object(art,'png_bytes',return_value=b'Synthetic PNG')):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), str(native), str(base)], cwd=ROOT,
+                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.addCleanup(self.stop_worker, worker)
+        frames = queue.Queue()
+        serial = 0
+
+        def collect():
+            for line in worker.stdout:
+                frames.put(json.loads(line))
+            frames.put(None)
+
+        threading.Thread(target=collect, daemon=True).start()
+
+        def request(method, **fields):
+            nonlocal serial
+            serial += 1
+            worker.stdin.write(json.dumps({'id': serial, 'method': method, **fields}) + '\n')
+            worker.stdin.flush()
+            frame = frames.get(timeout=10)
+            if frame is None:
+                self.fail(worker.stderr.read())
+            self.assertEqual(frame['id'], serial)
+            self.assertIn('result', frame, frame)
+            return frame['result']
+
+        def add():
+            self.assertEqual(request('steam_add')['status'], 'adding')
+            until = time.monotonic() + 10
+            while time.monotonic() < until:
+                result = request('steam_result')
+                if result['status'] != 'adding':
+                    return result
+                time.sleep(0.05)
+            self.fail('Steam task did not finish')
+
+        self.assertIn('steam', request('hello', protocol=1)['capabilities'])
+        self.assertEqual(request('steam_info'), {'status': 'added', 'running': True})
+        if sys.platform.startswith('linux'):
+            self.assertEqual(add()['status'], 'failed')
+            self.assertEqual(vdf.read_bytes(), old)
+            running.unlink()
+            self.assertEqual(add()['status'], 'failed')
+            self.assertEqual(vdf.read_bytes(), old)
+            (self.root / 'nx2saria-launcher').touch()
+        outcome = add()
+        self.assertEqual(outcome['status'], 'ok', outcome)
+        table = steam.vdf_load(vdf.read_bytes())[0][2]
+        entries = [{key: value for _, key, value in row[2]} for row in table]
+        self.assertEqual([struct.unpack('<I', row['appid'])[0] for row in entries], [unrelated, existing])
+        other, updated = entries
+        self.assertEqual(updated['AppName'], steam.NAME)
+        self.assertEqual(other['AppName'], 'Other Game')
+        self.assertEqual(other['Exe'], '"independent program"')
+        self.assertEqual((config / 'grid' / f'{existing}p.png').read_bytes(), b'Synthetic PNG')
+        if sys.platform.startswith('linux'):
+            self.assertIn('nx2saria-launcher', updated['Exe'])
+            self.assertEqual(updated['LaunchOptions'], '--play')
+            self.assertEqual((config / 'shortcuts.vdf.nx2saria-bak').read_bytes(), old)
+            (base / 'only-flatpak').touch()
+            self.assertEqual(request('steam_info')['status'], 'flatpak_unsupported')
+            self.assertEqual(request('steam_add')['status'], 'flatpak_unsupported')
+            self.assertFalse((base / 'steam-restarted').exists())
+            (base / 'only-flatpak').unlink()
+        else:
+            self.assertEqual((base / 'steam-restarted').read_text(), 'steam.exe')
+            self.assertIn('pythonw.exe', updated['Exe'])
+            self.assertIn('steam_play.pyw', updated['LaunchOptions'])
+            self.assertEqual((config / 'shortcuts.vdf.nx2navi-backup').read_bytes(), old)
+        calls = base / 'steam-art-calls'
+        calls_before = len(calls.read_text().splitlines())
+        gate = base / 'hold-steam-art'
+        gate.touch()
+        self.assertEqual(request('steam_add')['status'], 'adding')
+        self.assertEqual(request('steam_add')['status'], 'adding')
+        worker.stdin.close()
+        competing = self.run_worker({'id': 1, 'method': 'hello', 'protocol': 1})
+        self.assertEqual(json.loads(competing.stdout)['error']['code'], 'busy')
+        gate.unlink()
+        self.assertEqual(worker.wait(timeout=15), 0)
+        self.assertEqual(len(calls.read_text().splitlines()), calls_before + 1)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: steam add result=ok', log)
+
     def test_crash_offer_uses_existing_marker_guard_and_exact_payload(self):
         import base64
         from launcher import crash_offer, telemetry

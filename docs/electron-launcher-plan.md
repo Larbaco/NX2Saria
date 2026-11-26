@@ -45,11 +45,11 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
 - [x] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. The synthetic worker passed in the Linux and Windows jobs of Electron launcher tests run `45759008861`. The Linux Electron window verifies picker cancellation, both source types and restoring the backup. The portable package `f53b2481` also passed export, import and backup creation with the published runtime. All automated scenarios use scratch saves.
 - [x] Mods: add files/folders, enable/disable, ordering, rebuild and errors. The Linux window verifies folder and archive selection, ordering, conflicts, toggling and invalid inputs. The worker tests passed on Linux and Windows in run `45759008861`, including resuming Play after the stand-in rebuild, refusing a mutation during Play and moving a mod across pages. The Linux portable package `f53b2481` verified folder addition with the published runtime. A real build still has its own acceptance item.
-- [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
+- [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction. The worker and Linux window tests use the existing VDF writer with scratch roots. They cover updating an existing ID, preserving other entries, artifact generation, open-Steam refusal on Linux, a Flatpak-only installation and completing an accepted write after the window closes. Native Steam Deck and Game Mode remain open.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
 - [ ] Settings: update behavior, hide on play, build cache, channels, paths, logs and uninstall; preserve existing settings. Electron reads and changes the same Hide Launcher While Playing preference through the lock-owning worker. A synthetic Linux window test covers both values, persistence and preservation of the other settings. The installed-game panel exposes the current channel, update flags, cache preference, folders, registered dump and the Windows memory warning. The settings worker tests passed on both runners in Electron launcher tests run `45760705928`. The Linux window test confirms picker cancellation, validation and preference persistence. Settings for reports, system features and uninstall remain open. Verify the hide control separately on real Linux and Windows installations.
-- [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. The Electron reports screen now uses the same question, choices, preview, comment and sending policy. Private packages require the test sending opt-in documented below. Loopback tests verify exact report bytes, the shared sent marker, the Off and disabled states, and a newer session finishing before a previous report is acknowledged. The report tests passed on Linux and Windows in Electron launcher tests run `45761803115`. The installed update must pass its post-update startup reason through the future activation handoff. The combined private package evidence follows when packaged.
-- [ ] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. The Electron window now shows and previews these offers using the active installation’s existing implementation. The worker test checks guarded input, stale logs, opt-out, the disabled switch and exact loopback transmission. The Linux window confirms that the session question precedes the offer, previews the prepared request and verifies marker removal on decline. The test opt-in still gates all sending.
+- [ ] Reports: preserve current consent, choices, preview, comments and unavailable-service behavior. The question appears the first time an installed game's home screen is shown, including after install or update jobs; after a job it has no countdown, while normal startup retains its current countdown. In the persistent-worker Play milestone, the new code neither asks nor sends reports: the game summary stays on disk for the installed launcher to process under its existing consent. Local crash-summary synthesis by `finish_game()` remains allowed when reports are enabled. The Electron reports screen now uses the same question, choices, preview, comment and sending policy. Private packages require the test sending opt-in documented below. Loopback tests verify exact report bytes, the shared sent marker, the Off and disabled states, and a newer session finishing before a previous report is acknowledged. The report tests passed on Linux and Windows in Electron launcher tests run `45761803115`. The installed update must pass its post-update startup reason through the future activation handoff. Private package evidence is recorded below.
+- [x] Crash-log offer parity: the installed launcher now offers to send a sanitized, bounded log after an abnormal end. The worker now leaves the existing pending marker when supported by the selected installation. The installed launcher can show the offer while the log still matches that session. Electron must match the eligibility and exclusion rules, the opt-out setting, the pending offer's log-identity check and deferred display after headless Play, the ordering after the session-report question, and the no-input guard. Preserve the four choices (send once, decline, exact preview, or comment with log attached), no automatic retry, and the rule that no log is sent without an explicit click. The preview and payload must use the existing privacy and size limits, including session-summary consent. The Electron window now shows and previews these offers using the active installation’s existing implementation. The worker test checks guarded input, stale logs, opt-out, the disabled switch and exact loopback transmission. The Linux window confirms that the session question precedes the offer, previews the prepared request and verifies marker removal on decline. The opt-in still gates all sending. Both worker jobs passed in run `45762522567`. The extracted Linux package `335a0ab0` showed and previewed an offer after a stand-in fatal exit and consumed the marker after a refusal.
 - [ ] Platform features: Windows setup, shortcuts, path constraints and diagnostics; Linux AppImage installation, wrapper, desktop entry, Steam variants and optional udmabuf fix with existing approval behavior.
 - [ ] Accessibility and input: keyboard, mouse, gamepad focus and navigation; scrolling, dialogs, resizing and readable layouts in the four languages.
 - [ ] CLI, locks and diagnostics: retain existing supported command-line use, concurrent-job rules, crash/interruption reporting and log privacy; explicitly evaluate how the new UI shares these resources.
@@ -477,6 +477,47 @@ frame, exact bytes at a local service, rechecking a changed log, opt-out,
 guarded input, a declined or consumed marker seen by the other launcher, and a
 server refusal. The Electron window verifies the order, preview and disabled
 action. Use published Linux app/runtime for portable validation.
+
+### Private Settings and Reports test packages
+
+Both private packages use commit `335a0ab0`. The LEIA-ME covers only Settings,
+Session Reports and the crash-log offer. The Windows and Linux worker jobs
+passed in run `45762522567`. The extracted Linux package passed under Xvfb
+with the published 0.27.0-rc.1 app and runtime, including a visible crash offer
+and its exact preview after a synthetic fatal exit. The Windows ZIP passed
+integrity, contents and checksum checks. Its native window test is for the
+owner. No real sessions or submissions were used.
+
+- Linux `NX2Saria-Electron-Worker-Linux-x64-335a0ab0.tar.gz`, 122,410,912 bytes.
+  SHA-256 `706fa674e3d5e245bc7e5797660da9d59ad23e1643a56b6eab103e0ac4912bf0`.
+- Windows `NX2Saria-Electron-Worker-Windows-x64-335a0ab0.zip`, 147,034,494 bytes.
+  SHA-256 `9e1295cc1c138ba44b5d0df1f42e337ae35ad9efc6122335563a41ab4d7b2245`.
+
+## Adding and updating a Steam shortcut
+
+Show the installed Steam status and whether the existing game shortcut is
+already present. An explicit Add to Steam request goes through the worker
+and the existing `steam.add()` code, including game artwork when available.
+Keep the headless Python entry point, the existing shortcut ID and the other
+shortcuts. Point Linux shortcuts at the installed wrapper and Windows
+shortcuts at the installed Python Play script. The private Electron binary
+is not a Steam target.
+
+On Linux, ask the player to close native Steam before continuing and leave
+it closed afterwards. An installation with only Flatpak Steam displays the
+existing unsupported message. On Windows, the action may close and restart
+Steam as it does in Tk. Show progress while the worker writes the shortcut,
+and prevent duplicate requests. An operation accepted before the window
+closes finishes under the worker lock. Track detection and result without
+Steam account identifiers in the Electron log. Leave the existing Windows
+and Linux headless Play and job-lock behavior intact.
+
+Exercise the worker on scratch Steam roots in both runners using the real
+VDF update and simulated Steam processes and artwork. Verify account or
+wrapper refusal, existing ID preservation, unaffected shortcuts, Linux
+open-Steam refusal, and the Windows restart path. The Linux window test
+uses synthetic Steam and a stand-in game. Native Steam Deck Game Mode
+remains a device check.
 
 ## Provisioning and handover design
 

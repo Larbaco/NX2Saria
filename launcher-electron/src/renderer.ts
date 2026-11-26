@@ -11,6 +11,7 @@ type ModRow = {
 };
 type ModPage = { page: number; pages: number; count: number; items: ModRow[] };
 type ModAction = { status: string; name?: string; problem?: string; detail?: string; page?: number };
+type SteamView = { status: string; running: boolean; linux: boolean };
 type InstalledKey = 'channel' | 'auto_check' | 'auto_install' | 'keep_cache' | 'warn_low_commit';
 type InstalledSettings = { game_dir: string; dump: string; channel: 'stable' | 'preview'; auto_check: boolean;
   auto_install: boolean; keep_cache: boolean; warn_low_commit: boolean | null; writable: boolean };
@@ -19,7 +20,7 @@ type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; settingsInfo(): Promise<InstalledSettings>; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; steamInfo(): Promise<SteamView>; steamAdd(): Promise<{ status: string; detail?: string; view: SteamView }>; settingsInfo(): Promise<InstalledSettings>; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -52,6 +53,13 @@ const previousModPage = document.querySelector<HTMLButtonElement>('#previous-mod
 const nextModPage = document.querySelector<HTMLButtonElement>('#next-mod-page')!;
 const modsPageNumber = document.querySelector<HTMLElement>('#mods-page-number')!;
 const modsResult = document.querySelector<HTMLElement>('#mods-result')!;
+const steamControl = document.querySelector<HTMLElement>('#steam-control')!;
+const steamButton = document.querySelector<HTMLButtonElement>('#steam-button')!;
+const steamPanel = document.querySelector<HTMLElement>('#steam-panel')!;
+const steamStatus = document.querySelector<HTMLElement>('#steam-status')!;
+const steamRequirement = document.querySelector<HTMLElement>('#steam-requirement')!;
+const steamAdd = document.querySelector<HTMLButtonElement>('#steam-add')!;
+const steamResult = document.querySelector<HTMLElement>('#steam-result')!;
 const settingsControl = document.querySelector<HTMLElement>('#settings-control')!;
 const settingsButton = document.querySelector<HTMLButtonElement>('#settings-button')!;
 const settingsPanel = document.querySelector<HTMLElement>('#settings-panel')!;
@@ -95,6 +103,14 @@ const firstRunAutoCheck = document.querySelector<HTMLInputElement>('#first-run-a
 const firstRunDesktop = document.querySelector<HTMLInputElement>('#first-run-desktop')!;
 const firstRunDesktopOption = document.querySelector<HTMLElement>('#first-run-desktop-option')!;
 const firstRunSettingsError = document.querySelector<HTMLElement>('#first-run-settings-error')!;
+const steamLabels: Record<string, string> = {
+  added: 'Atalho disponível na Steam',
+  available: 'Steam encontrada',
+  flatpak_unsupported: 'Use a Steam nativa. O sandbox padrão do Flatpak impede o acesso ao launcher.',
+  not_found: 'Steam não encontrada.',
+  not_built: 'O jogo precisa estar compilado para receber um atalho.',
+  unavailable: 'Não foi possível verificar a Steam.',
+};
 const messages: Record<string, string> = { ready: 'Instalação encontrada', not_ready: 'Jogo não está pronto', not_configured: 'Jogo não configurado', inspection_error: 'Não foi possível verificar' };
 let installation: Result | null = null;
 let selecting = false;
@@ -104,6 +120,8 @@ let savesBusy = false;
 let saveOptions: SaveOptions | null = null;
 let modPage: ModPage | null = null;
 let modsBusy = false;
+let steamView: SteamView | null = null;
+let steamBusy = false;
 let launcherSettings: InstalledSettings | null = null;
 let settingsBusy = false;
 let savingPreference = false;
@@ -116,10 +134,10 @@ let proposedFolder: InstallDestination | null = null;
 let proposedDump: string | null = null;
 
 function updateControls() {
-  const busy = selecting || playing || savingPreference || choosingSource || savesBusy || modsBusy || settingsBusy;
+  const busy = selecting || playing || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy || settingsBusy;
   button.disabled = busy || askingRecovery || savesBusy;
   savesControl.hidden = installation?.status !== 'ready';
-  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy || modsBusy || settingsBusy ||
+  const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy || modsBusy || steamBusy || settingsBusy ||
     (playing && !gameWindowReady) || installation?.job_marker_present === true;
   savesButton.disabled = chooseSaveExport.disabled = includeSaveReport.disabled = exportSaveButton.disabled = savesDisabled;
   openSavesDir.disabled = savesDisabled;
@@ -144,10 +162,22 @@ function updateControls() {
   for (const control of modsList.querySelectorAll<HTMLInputElement | HTMLButtonElement>('input, button')) {
     control.disabled = orderDisabled || control.hasAttribute('data-at-boundary');
   }
+  steamControl.hidden = installation?.status !== 'ready';
+  steamPanel.hidden = !steamView;
+  steamButton.setAttribute('aria-expanded', String(!steamPanel.hidden));
+  steamButton.disabled = savesDisabled || steamControl.hidden;
+  steamAdd.disabled = steamButton.disabled || (steamView?.status !== 'available' && steamView?.status !== 'added');
+  steamAdd.textContent = steamView?.status === 'added' ? 'Atualizar atalho da Steam' : 'Adicionar à Steam';
+  if (steamView) {
+    steamStatus.textContent = steamLabels[steamView.status] || steamLabels.unavailable;
+    steamRequirement.textContent = steamView.status === 'available' || steamView.status === 'added'
+      ? (steamView.linux ? 'Feche a Steam para alterar o atalho. Você pode reabri-la ao terminar.' :
+        'A Steam será reiniciada se estiver aberta.') : '';
+  }
   settingsControl.hidden = installation?.status !== 'ready';
   settingsPanel.hidden = !launcherSettings;
   settingsButton.setAttribute('aria-expanded', String(!settingsPanel.hidden));
-  const settingsOpeningDisabled = selecting || settingsBusy || savingPreference || choosingSource || savesBusy || modsBusy;
+  const settingsOpeningDisabled = selecting || settingsBusy || savingPreference || choosingSource || savesBusy || modsBusy || steamBusy;
   settingsButton.disabled = settingsOpeningDisabled;
   settingsOpenLogs.disabled = settingsOpeningDisabled;
   settingsOpenGame.disabled = settingsOpeningDisabled || !launcherSettings?.game_dir;
@@ -298,6 +328,8 @@ async function loadSelection(action: () => Promise<Result | null>) {
   modPage = null;
   modsList.replaceChildren();
   modsResult.textContent = '';
+  steamView = null;
+  steamResult.textContent = '';
   launcherSettings = null;
   settingsResult.textContent = '';
   resetReportScreen();
@@ -559,6 +591,35 @@ nextModPage.onclick = () => { if (modPage) void loadMods(modPage.page + 1); };
 openModsDir.onclick = () => { void runModAction(() => window.launcher.openModsDir()); };
 addModFolder.onclick = () => { void runModAction(() => window.launcher.modAdd('folder')); };
 addModArchive.onclick = () => { void runModAction(() => window.launcher.modAdd('archive')); };
+
+async function runSteamAction(action: () => Promise<void>, progress: string) {
+  steamBusy = true;
+  steamResult.textContent = progress;
+  updateControls();
+  try { await action(); }
+  catch { steamResult.textContent = 'Não foi possível concluir. Confira o log do launcher.'; }
+  finally { steamBusy = false; updateControls(); }
+}
+steamButton.onclick = () => {
+  if (steamView) {
+    steamView = null;
+    steamResult.textContent = '';
+    updateControls();
+    return;
+  }
+  void runSteamAction(async () => {
+    steamView = await window.launcher.steamInfo();
+    steamResult.textContent = '';
+  }, 'Verificando a Steam…');
+};
+steamAdd.onclick = () => {
+  void runSteamAction(async () => {
+    const result = await window.launcher.steamAdd();
+    steamView = result.view;
+    steamResult.textContent = result.status === 'ok'
+      ? 'Atalho salvo na Steam.' : result.detail || steamLabels[result.status] || steamLabels.unavailable;
+  }, 'Salvando o atalho na Steam…');
+};
 
 async function runSettingsAction(action: () => Promise<void>, failure: string) {
   settingsBusy = true;

@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld('launcher', {
   modEnabled: (name: string, value: boolean) => ipcRenderer.invoke('mod-enabled', name, value),
   modMove: (name: string, direction: number) => ipcRenderer.invoke('mod-move', name, direction),
   openModsDir: () => ipcRenderer.invoke('open-mods-dir'),
+  steamInfo: () => ipcRenderer.invoke('steam-info'),
+  steamAdd: () => ipcRenderer.invoke('steam-add'),
   settingsInfo: () => ipcRenderer.invoke('settings-info'),
   settingsPreference: (key: string, value: boolean | string) => ipcRenderer.invoke('settings-preference', key, value),
   settingsDump: () => ipcRenderer.invoke('settings-dump'),

@@ -2761,6 +2761,17 @@ Add to Steam: the game in the Steam library, started from there without the laun
 exception of the work is caught and logged with its traceback: a Steam folder in a state nobody expected must say so
 instead of ending the launcher.
 
+### Steam in Electron
+
+The worker uses the same Steam detection, binary VDF and art writer as Tk.
+The window reads availability and starts an explicit Add or Update request.
+One background task owns the request until the existing writer finishes or
+reports an error. Further requests observe the running task. The worker keeps
+its installation lock until an accepted task finishes, even when the window
+closes first. The existing headless shortcut still uses the installed wrapper
+on Linux or the installed Python script on Windows. The Electron log records
+detection and results without Steam account identifiers.
+
 ### Electron Session Reports
 
 `Reports` in `launcher/worker_reports.py` uses the existing `Reporter` and

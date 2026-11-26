@@ -7,10 +7,11 @@ import subprocess
 import sys
 import threading
 import time
+from concurrent.futures import Future
 from functools import partial
 from pathlib import Path
 
-from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods, mods_job, paths, play, saves, telemetry, updater, versions, winsys
+from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods, mods_job, paths, play, saves, steam, telemetry, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
@@ -338,6 +339,34 @@ def change_mod(ctx, game, run, counts, request):
     return result
 
 
+def steam_view():
+    try:
+        found = steam.find_steam()
+        if not found:
+            return {'status': 'not_found', 'running': False}
+        linux = sys.platform.startswith('linux')
+        if linux and steam.is_flatpak_root(found[0]):
+            return {'status': 'flatpak_unsupported', 'running': False}
+        added = steam.added(None if linux else found[0])
+        return {'status': 'added' if added else 'available', 'running': steam.steam_running()}
+    except OSError:
+        return {'status': 'unavailable', 'running': False}
+
+
+def add_to_steam(ctx, game, dump, request):
+    try:
+        detail = steam.add(ctx.layout, game, dump, ctx.log)
+    except (OSError, steam.SteamError) as e:
+        detail, status = str(e), 'failed'
+    except Exception as e:
+        detail, status = str(e) or 'Adding to Steam failed.', 'failed'
+    else:
+        status = 'ok'
+    detail = bounded_text(shorten_always(detail), 256)
+    ctx.log(f'steam: {detail}')
+    request.set_result({'status': status, 'detail': detail})
+
+
 def installed_settings(ctx):
     settings = ctx.settings
     return {**{key: settings[key] for key in SETTINGS_FLAGS},
@@ -524,7 +553,7 @@ def main(argv=None):
             parent.close()
         error(request['id'], 'busy')
         return 1
-    ctx = reports = run = None
+    ctx = reports = run = steam_work = None
     try:
         if args.app_version:
             try:
@@ -550,7 +579,7 @@ def main(argv=None):
         ctx.log(f'worker: started version={ctx.version} protocol={PROTOCOL} lock={lock_state} update_waiting={waiting}')
         ctx.log(f'worker: runtime={sys.executable} python={sys.version.split()[0]} app={layout.app}')
         emit({'id': request['id'], 'result': {'protocol': PROTOCOL, 'version': ctx.version, 'lock': lock_state,
-                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings', 'reports'], 'update_waiting': waiting}})
+                                              'capabilities': ['inspect', 'play', 'install', 'rebuild', 'recovery', 'check_updates', 'saves', 'mods', 'settings', 'reports', 'steam'], 'update_waiting': waiting}})
         counts = {}
         reports = Reports(ctx) if lock_state == 'held' else None
         requests = queue.Queue(maxsize=64)
@@ -576,7 +605,12 @@ def main(argv=None):
         check = None
         check_started = None
         check_channel = None
+        steam_result = {'status': 'idle'}
         while True:
+            if steam_work and steam_work.done():
+                steam_result = steam_work.result()
+                steam_work = None
+                action_log(ctx, counts, 'steam', f'add result={steam_result["status"]}')
             if reports:
                 reports.poll(game_active=run is not None)
                 if not disconnected:
@@ -1022,6 +1056,31 @@ def main(argv=None):
                 else:
                     result = change_mod(ctx, game, run, counts, request)
                 emit({'id': request['id'], 'result': result})
+            elif request.get('method') in ('steam_info', 'steam_add', 'steam_result'):
+                method = request['method']
+                if method == 'steam_info':
+                    result = steam_view()
+                    action_log(ctx, counts, 'steam', f'detection={result["status"]}')
+                elif method == 'steam_result':
+                    result = {'status': 'adding'} if steam_work else steam_result
+                elif steam_work:
+                    result = {'status': 'adding'}
+                elif lock_state != 'held' or job or pending or build_recovery.blocked(layout):
+                    result = {'status': 'unavailable'}
+                else:
+                    game = ctx.settings.get('game_dir')
+                    status = steam_view()['status']
+                    if status not in ('available', 'added'):
+                        result = {'status': status}
+                    elif not game or not steam.game_executable(game).is_file():
+                        result = {'status': 'not_built'}
+                    else:
+                        steam_work = Future()
+                        threading.Thread(target=add_to_steam,
+                                         args=(ctx, game, ctx.settings.get('dump'), steam_work), daemon=True).start()
+                        result = {'status': 'adding'}
+                    action_log(ctx, counts, 'steam', f'add request={result["status"]}')
+                emit({'id': request['id'], 'result': result})
             elif request.get('method') in ('settings_info', 'settings_preference', 'settings_dump', 'settings_open'):
                 method = request['method']
                 if method == 'settings_info':
@@ -1195,6 +1254,9 @@ def main(argv=None):
                 action_log(ctx, counts, 'unknown', 'method')
                 error(request['id'], 'unknown_method')
     finally:
+        if steam_work:
+            steam_result = steam_work.result()
+            action_log(ctx, counts, 'steam', f'add result={steam_result["status"]}')
         if reports and not run:
             reports.flush()
         if ctx and ctx._file:

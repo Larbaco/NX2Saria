@@ -359,7 +359,7 @@ app.whenReady().then(() => {
     log?.write('recovery', `${action} result=${status}`);
     return status;
   });
-  function gameWorker(event: Electron.IpcMainInvokeEvent, capability: 'saves' | 'mods') {
+  function gameWorker(event: Electron.IpcMainInvokeEvent, capability: 'saves' | 'mods' | 'steam') {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes(capability) ||
         worker.handshake.lock !== 'held' || state?.status !== 'ready' || state.job_marker_present ||
         (playing && !gameSpawned)) throw new Error('Game action unavailable');
@@ -491,6 +491,33 @@ app.whenReady().then(() => {
     return modAction(gameWorker(event, 'mods'), 'mod_move', { name, direction });
   });
   ipcMain.handle('open-mods-dir', event => modAction(gameWorker(event, 'mods'), 'open_mods_dir', {}));
+  const steamStatuses = ['added', 'available', 'not_found', 'flatpak_unsupported', 'unavailable'];
+  async function steamStatus(active: WorkerClient) {
+    const result = await active.request('steam_info');
+    if (worker !== active || !steamStatuses.includes(result?.status) || typeof result.running !== 'boolean') {
+      throw new Error('Steam unavailable');
+    }
+    return { status: result.status, running: result.running, linux: process.platform === 'linux' };
+  }
+  ipcMain.handle('steam-info', async event => {
+    const result = await steamStatus(gameWorker(event, 'steam'));
+    log?.write('steam', `detection=${result.status} running=${result.running}`);
+    return result;
+  });
+  ipcMain.handle('steam-add', async event => {
+    const active = gameWorker(event, 'steam');
+    let result = await active.request('steam_add');
+    while (worker === active && result?.status === 'adding') {
+      await new Promise(resolve => setTimeout(resolve, 200));
+      result = await active.request('steam_result');
+    }
+    if (worker !== active || !['ok', 'failed', 'not_built', ...steamStatuses].includes(result?.status)) {
+      throw new Error('Steam unavailable');
+    }
+    log?.write('steam', `add result=${result.status}`);
+    const detail = typeof result.detail === 'string' ? result.detail.slice(0, 256) : undefined;
+    return { status: result.status, detail, view: await steamStatus(active) };
+  });
   function settingsWorker(event: Electron.IpcMainInvokeEvent, write = false) {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('settings') ||
         state?.status !== 'ready' || (write && (worker.handshake.lock !== 'held' || playing || state.job_marker_present))) {
