@@ -9,6 +9,7 @@
 #include "cfg.h"
 #include "changebank_hold.h"
 #include "cheats.h"
+#include "foliage_distance.h"
 #include "fs.h"
 #include "kernel.h"
 #include "ipc.h"
@@ -377,6 +378,7 @@ void rt_boot(void) {
     frame_step_init();
     res_init();
     wide_init();
+    foliage_distance_init();
     cfg_log_unsupported();
     cheats_init();
     boot_map_init();

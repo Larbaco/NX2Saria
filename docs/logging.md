@@ -189,6 +189,7 @@ Files are under `runtime/`; the first three by number of lines, `...` when there
 | `floor scan:` | Floor scan snapshots | `frame_rate.c` |
 | `floor watch:` | Floor watch debug tool | `floor_watch.c` |
 | `folder_pick:` | The folder dialog | `folder_pick_win.cpp`, `folder_pick_sdl.c` |
+| `foliage:` | The foliage's draw distances (`foliage_distance`) at start | `foliage_distance.c` |
 | `fov:` | Field of view lens changes | `debug_tools.c`, `resolution.c` |
 | `fps:` | Frames and game time over a period | `frame_rate.c` |
 | `frame` | Per-frame GPU work counts (vk_exec trace), no colon | `vk_exec.c` |

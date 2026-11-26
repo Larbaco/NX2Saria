@@ -1,4 +1,4 @@
-<!-- translation: lang=zh-Hans source=README.md source-hash=7f5fe5edda1df34eee5eba813fc8b35ed6d2e15b reviewed=no -->
+<!-- translation: lang=zh-Hans source=README.md source-hash=eefcf0f022db1512fda509926dcdaccc32f13568 reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -52,6 +52,7 @@
 - **帧率**：默认 60 fps，也可以限制在 30 到 240 之间、使用显示器的刷新率或不限制。
 - **宽屏**：窗口的比例、21:9 或 32:9。过场动画保持 16:9；HUD 和菜单也可以保持 16:9。
 - **画质**：从 1080p 到 4K 及更高的分辨率、超分辨率、抗锯齿、帧生成和 HDR。
+- **植被距离**：`nx2saria.ini` 中的 `foliage_distance` 可以把草、灌木和低矮树木的绘制距离设为游戏原值的一半到三倍（游戏 1.1.1；重启后生效）。
 - **操作**：键盘、鼠标和手柄，按键重映射、振动和陀螺仪。
 - **游戏中**：按 **F1**（手柄上为 **Minus + Plus**）打开设置；按 **F10** 显示性能浮层。[操作与菜单 →](docs/zh-Hans/controls.md) · [所有设置 →](nx2saria.ini.example)（英文）
 

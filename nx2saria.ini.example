@@ -783,6 +783,14 @@
 # Sun shadow cascade range in percent of the game's (its cascades end at 20, 40, 80 and 160 m), 50 to 400: higher moves
 # the steps where shadows turn softer further away, and spreads the shadow map over more ground. Read at start.
 # shadow_range = 100
+# Foliage draw distance, a factor on the game's own (game 1.1.1 only), 0.5 to 3: how far out grass, bushes, flowers,
+# stones and low trees are drawn in the areas that use the game's defaults (Hyrule Field, Kakariko, Lake Hylia, the
+# Market and most others; the few areas with distances of their own keep them). The game's are 40 to 60 m for grass and
+# bushes, 35 m for ornaments and 135 m for low trees. Above 1 more is drawn further out and costs GPU time; below 1
+# less, with more pop-in. Ornaments stay at most 75 m and low trees' leaves at most 70 m: further out they were seen to
+# flicker. 1 changes nothing. The game takes the distances in once a run, so a change applies after a restart. The log's
+# "foliage:" line gives the distances before and after. Read at start.
+# foliage_distance = 1
 # Screen-space contact shadows, strength in percent (0 = off): after the game lights its scene, each pixel traces a
 # short way toward the sun through the depth buffer and darkens where something close blocks it, adding the small
 # shadows at feet, under stones and in grass that the shadow maps miss. Read at start.
