@@ -408,6 +408,25 @@ bool skin_tab_item(const char *id, const char *text, int flags, float s, ImFont 
     return shown;
 }
 
+void skin_header_tab(ImDrawList *dl, ImVec2 a, ImVec2 b, float s, bool current, const char *text, ImFont *font,
+                     float font_px, float alpha) {
+    alpha = alpha < 0 ? 0 : alpha > 1 ? 1 : alpha;
+    if (current) {
+        const float plate_h = (b.y - a.y) * 0.9f, cy = (a.y + b.y) * 0.5f;
+        ImVec2 pa(a.x, cy - plate_h * 0.5f), pb(b.x, cy + plate_h * 0.5f);
+        if (have_art({MENU_ART_TAB_SELECT}))
+            slice(dl, MENU_ART_TAB_SELECT, pa, pb, kTabL, kTabT, kTabR, kTabB, 30, (pb.y - pa.y) / (kTabB - kTabT),
+                  rgba(255, 236, 190, 0.95f * alpha));
+        else
+            skin_button(dl, pa, pb, s, 1.0f, false);
+    }
+    if (!font) font = ImGui::GetFont();
+    const ImVec2 ts = font->CalcTextSizeA(font_px, FLT_MAX, 0, text);
+    const ImVec2 at(floorf((a.x + b.x - ts.x) * 0.5f), floorf((a.y + b.y - ts.y) * 0.5f));
+    dl->AddText(font, font_px, ImVec2(at.x + 2 * s, at.y + 2 * s), rgba(0, 0, 0, 0.55f * alpha), text);
+    dl->AddText(font, font_px, at, rgba(255, 252, 198, (current ? 1.0f : 0.78f) * alpha), text);
+}
+
 void skin_boot_panel(ImDrawList *dl, ImFont *head, float head_px, ImFont *body, float body_px, const char *title,
                      const char *step, float frac, float sweep, float w, float h, float s) {
     const float pad = 38 * s, gap = 16 * s, bar_h = 12 * s, fh = skin_filigree_height(s);
