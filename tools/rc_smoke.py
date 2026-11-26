@@ -767,7 +767,8 @@ class Smoke:
         if bad:
             raise Failed('; '.join(bad))
         return (f'exit {res.get("code")}; {raw[:110]}; summary end crash, cpu/gpu/ram filled'
-                f'{"" if hardware else " (not checked before 0.27.0)"}; {made[-1][-60:]}')
+                f'{"" if hardware else " (not checked before 0.27.0)"}; launcher: summary made '
+                f'{made[-1].split("FATAL line, ", 1)[-1]}')
 
     def stage_update(self):
         stable = self.a.from_tag or self.previous_stable()
