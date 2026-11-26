@@ -148,8 +148,8 @@ when it is run as a script (the `# noqa` lines of those imports stay). The exit 
 `launcher/platform/linux.py` `write_watch_status()` (`AttributeError: module 'platform' has no attribute 'release'`),
 and with it the `continue-update` that every installed launcher's `update` starts without `-I`: the version changed and
 the game was not rebuilt. So `cli.py` takes its folder out of `sys.path` before anything else is imported, as
-`launcher/start.pyw` does, and `update` now starts the new version with `-I` too (the launchers already installed do
-not, which the first rule covers). The rule for the package: no module of `launcher/` imports a standard module by a
+`launcher/start.pyw` does. `update` still starts the new version without `-I`, as every installed launcher does:
+that is the call the test below guards. The rule for the package: no module of `launcher/` imports a standard module by a
 name that `launcher/` also has (today only `platform`; `launcher/platform/linux.py` reads the kernel's release and
 machine from `os.uname()`), and every entry point run as a file takes its own folder out of the path.
 `tests/launcher_script_path_test.py` runs `cli.py` as a script without `-I` with the test's Python and the system's,

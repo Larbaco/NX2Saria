@@ -104,7 +104,7 @@ def run(a, ctx, held):
         cli = new / 'launcher' / 'cli.py'
         print(f'finishing in {versions.display(check.release.version)}', flush=True)
         held.release()
-        return subprocess.call([ctx.layout.python_for_builds(), '-I', str(cli), '--root', str(ctx.layout.root),
+        return subprocess.call([ctx.layout.python_for_builds(), str(cli), '--root', str(ctx.layout.root),
                                 'continue-update', ctx.version])
 
     if a.cmd == 'continue-update':
