@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import sys
@@ -113,7 +114,8 @@ class Pieces(unittest.TestCase):
         self.assertNotIn('update', rc_smoke.chosen(args(quick=True)))
         self.assertEqual(rc_smoke.chosen(args(only='crash,install')), ['install', 'crash'])
         self.assertEqual(rc_smoke.chosen(args(quick=True, skip='window')),
-                         ['install', 'build', 'run', 'crash', 'privacy'])
+                         ['install', 'cli', 'build', 'run', 'crash', 'privacy'])
+        self.assertIn('cli', rc_smoke.QUICK)
         with self.assertRaises(SystemExit):
             rc_smoke.chosen(args(only='nope'))
 
@@ -136,6 +138,80 @@ class Pieces(unittest.TestCase):
             self.assertEqual(env['NX2SARIA_TELEMETRY_URL'], 'none')
             self.assertEqual(s.root('clean'), Path(d) / 'clean' / 'home' / '.local' / 'share' / 'nx2saria')
             self.assertEqual(json.loads(json.dumps(s.expect)), {})
+
+
+def smoke(d, **kw):
+    base = {'tag': 'v9.9.9-rc.1', 'root': d, 'bench': d, 'games': os.path.join(d, 'g'), 'logs': d,
+            'expect_file': None, 'expect': [], 'pin_url': False, 'lock_held': False, 'ini': [], 'run_env': []}
+    base.update(kw)
+    s = rc_smoke.Smoke(type('A', (), base)())
+    s.runs.mkdir(parents=True, exist_ok=True)
+    return s
+
+
+class Options(unittest.TestCase):
+    def test_ini_with(self):
+        text = '# kept\nfps_limit = 60\nfoliage_distance = 1\n  foliage_distance=3\n'
+        got = rc_smoke.ini_with(text, [('foliage_distance', '2'), ('pause_settings_tab', '1')])
+        self.assertEqual(got, '# kept\nfps_limit = 60\nfoliage_distance = 2\npause_settings_tab = 1\n')
+        self.assertEqual(rc_smoke.ini_with('', [('a', 'b')]), 'a = b\n')
+
+    def test_pairs(self):
+        self.assertEqual(rc_smoke.pairs(['A=1', ' b = two words '], '--ini'), [('A', '1'), ('b', 'two words')])
+        for bad in ('novalue', '=1', 'a b=1'):
+            with self.assertRaises(SystemExit):
+                rc_smoke.pairs([bad], '--ini')
+
+    def test_feed(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = smoke(d)
+            s._releases = [{'tag_name': 'v9.9.9-rc.2', 'assets': [{'name': rc_smoke.LINUX_MANIFEST}]},
+                           {'tag_name': 'v9.9.9-rc.1', 'assets': [{'name': rc_smoke.LINUX_MANIFEST}]}]
+            with self.assertRaises(rc_smoke.Failed) as e:
+                s.feed()
+            self.assertIn('v9.9.9-rc.2 is', str(e.exception))
+            s._releases.pop(0)
+            self.assertIn('real GitHub feed', s.feed())
+            s.a.pin_url = True
+            self.assertIn('pinned URL', s.feed())
+
+    def test_lock_held(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = smoke(d, lock_held=True)
+            self.assertFalse(s.take_lock())
+            with open(s.lock_path, 'a') as held:
+                fcntl.flock(held, fcntl.LOCK_EX)
+                self.assertTrue(s.take_lock())
+            self.assertIsNone(s.lock)
+            s.release_lock()
+            free = smoke(d)
+            self.assertTrue(free.take_lock())
+            free.release_lock()
+
+    def fake_install(self, d, shadow):
+        s = smoke(d)
+        root = s.root('clean')
+        launcher = root / 'app' / '9.9.9-rc.1' / 'launcher'
+        launcher.mkdir(parents=True)
+        (root / 'app' / 'current.txt').write_text('9.9.9-rc.1\n', encoding='utf-8')
+        (root / 'python' / 'bin').mkdir(parents=True)
+        os.symlink(sys.executable, root / 'python' / 'bin' / 'python3')
+        (launcher / 'cli.py').write_text('import platform, sys\nplatform.release()\n'
+                                         'print("up to date: 9.9.9-rc.1" if sys.argv[-1] == "check" else "ok")\n',
+                                         encoding='utf-8')
+        if shadow:
+            (launcher / 'platform').mkdir()
+            (launcher / 'platform' / '__init__.py').write_text('', encoding='utf-8')
+        return s
+
+    def test_cli_stage_runs_without_isolation(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn('check exit 0, tools exit 0', self.fake_install(d, False).stage_cli())
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(rc_smoke.Failed) as e:
+                self.fake_install(d, True).stage_cli()
+            self.assertIn('without -I', str(e.exception))
+            self.assertIn("no attribute 'release'", str(e.exception))
 
 
 if __name__ == '__main__':
