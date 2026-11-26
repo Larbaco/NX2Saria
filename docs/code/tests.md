@@ -5911,6 +5911,14 @@ tests the diagnostic attachments and redaction, rejection of a relative export d
 and preservation of unrelated preferences. The Linux window test exercises folder choice,
 cancellation, the diagnostic toggle and export. Explorer is replaced by a stand-in.
 
+The imports test refuses a running-game simulation and a malformed archive, then injects
+a failure between placing the old save in the journal and activating the new one. It checks
+that the save and pending import survive that error. A retry imports the waiting archive
+and moves it into the existing imported folder. The test also imports one slot and restores
+a complete backup. The Linux window test uses the native dialog seams for the exported ZIP
+and the generated backup folder. A Node check verifies that a save transaction can finish
+after the ordinary request timeout.
+
 The manual update check test holds the loopback manifest response while requesting worker
 inspection and a duplicate check. It checks that the latter is coalesced and that only the
 manifest is fetched. It compares the selected app and staged file before and after. The Linux

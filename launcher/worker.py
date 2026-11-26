@@ -13,7 +13,7 @@ from pathlib import Path
 
 from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
 from .build import game_log_path, game_log_paths
-from .context import Context
+from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
 from .paths import Layout, install_folder
 
@@ -239,6 +239,35 @@ def export_save(ctx, game, counts):
         action_log(ctx, counts, 'saves', 'reveal failed')
     action_log(ctx, counts, 'saves', f'export result=ok files={result["files"]} report={with_extras}')
     return {'status': 'ok', 'name': result['path'].name, 'files': result['files'], 'included_log': with_extras}
+
+
+def import_save(ctx, game, run, counts, request):
+    source = request.get('source')
+    raw = request.get('path')
+    folder = None
+    valid = source == 'waiting' and raw is None
+    if source in ('archive', 'folder') and isinstance(raw, str) and '\0' not in raw:
+        folder = Path(raw)
+        valid = folder.is_absolute() and (folder.is_file() if source == 'archive' else folder.is_dir())
+    if not valid:
+        action_log(ctx, counts, 'saves', 'import result=invalid_source')
+        return {'status': 'invalid_source'}
+    try:
+        if (run and run.alive()) or saves.game_running(game):
+            raise saves.SaveError(saves.RUNNING)
+        imported = saves.import_save(game, folder, log=ctx.log)
+    except (saves.SaveError, OSError) as e:
+        if isinstance(e, saves.SaveError):
+            status = 'game_running' if str(e) == saves.RUNNING else 'invalid_save'
+        else:
+            status = 'failed'
+        action_log(ctx, counts, 'saves', f'import result={status}')
+        ctx.log(f'saves: import refused: {e}')
+        detail = shorten_always(str(e)).splitlines()
+        return {'status': status, 'detail': detail[0][:260] if detail else ''}
+    backup = imported['backup'].name if imported['backup'] else None
+    action_log(ctx, counts, 'saves', f'import result=ok files={imported["files"]} backup={bool(backup)}')
+    return {'status': 'ok', 'files': imported['files'], 'slot': imported['slot'], 'backup': backup}
 
 
 def install_space(folder):
@@ -801,15 +830,21 @@ def main(argv=None):
                         error(request['id'], 'preference_save_failed')
                     else:
                         emit({'id': request['id'], 'result': {'hide_while_playing': value}})
-            elif request.get('method') in ('saves_info', 'save_preference', 'export_save'):
+            elif request.get('method') in ('saves_info', 'save_preference', 'export_save', 'import_save', 'open_saves_dir'):
                 method = request['method']
                 game = ctx.settings.get('game_dir')
                 if not game or not Path(game).is_dir():
                     error(request['id'], 'saves_unavailable')
                     continue
                 if method == 'saves_info':
-                    result = {'destination': str(saves.export_destination(ctx.settings)),
-                              'with_log': ctx.settings['export_with_log']}
+                    try:
+                        result = {'destination': str(saves.export_destination(ctx.settings)),
+                                  'with_log': ctx.settings['export_with_log'],
+                                  'waiting': saves.waiting(game)[0] is not None,
+                                  'pending': saves.pending_import(game) is not None}
+                    except OSError:
+                        error(request['id'], 'saves_unavailable')
+                        continue
                 elif lock_state != 'held' or job or build_recovery.blocked(layout):
                     action_log(ctx, counts, 'saves', 'request refused')
                     error(request['id'], 'saves_unavailable')
@@ -831,8 +866,18 @@ def main(argv=None):
                         continue
                     action_log(ctx, counts, 'saves', f'preference key={key} result=saved')
                     result = {'key': key, 'value': value}
-                else:
+                elif method == 'export_save':
                     result = export_save(ctx, game, counts)
+                elif method == 'import_save':
+                    result = import_save(ctx, game, run, counts, request)
+                else:
+                    try:
+                        winsys.open_path(saves.ensure_saves_dir(game))
+                    except OSError:
+                        result = {'status': 'failed'}
+                    else:
+                        result = {'status': 'ok'}
+                    action_log(ctx, counts, 'saves', f'open result={result["status"]}')
                 emit({'id': request['id'], 'result': result})
             elif request.get('method') == 'check_updates':
                 if lock_state != 'held' or build_recovery.blocked(layout):

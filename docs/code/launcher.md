@@ -3728,6 +3728,14 @@ Setting changes require the lock and store only the chosen field. Read-only insp
 does not create the export folder. The worker retains the original no-save and log-only
 behaviors and reveals a successfully written archive.
 
+`import_save()` accepts a waiting entry or an absolute path from the selected picker.
+It rechecks whether the game is running before entering the existing Python import.
+The existing profile lock, archive validation, backup, and replacement or rollback paths
+remain responsible for the files. The protocol identifies the imported slot or whole
+save, file count and backup basename. The window can reopen a backup through folder
+import and can open the game saves folder through the existing platform function.
+Import and export wait for the copy result rather than using the short request deadline.
+
 
 For Play, a memory decision has an attempt number. The worker rejects a stale answer and checks for another
 game before resuming. Mod rebuilds use the shared completion policy and wait for `finished` before resuming

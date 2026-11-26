@@ -49,6 +49,7 @@ with (mock.patch.object(jobs.InstallJob, 'run', install),
       mock.patch.object(feed, 'load', return_value={'type': 'url', 'url': os.environ['NX2SARIA_TEST_FEED']}),
       mock.patch.object(jobs.RebuildJob, 'run', rebuild),
       mock.patch.object(winsys, 'reveal'),
+      mock.patch.object(winsys, 'open_path'),
       mock.patch.object(paths, 'free_gb', return_value=100),
       mock.patch.object(linux, 'mounted_drives', return_value=[]),
       mock.patch.object(linux, 'toolchain_missing', return_value='Missing synthetic header: opus/opus.h'),
@@ -288,6 +289,26 @@ async function main() {
     assert.doesNotMatch(saved[0], /bug-report/);
     assert.equal(await fs.readFile(path.join(slot, 'progress.sav'), 'utf8'), 'synthetic save');
     assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).save_export_dir, exportFolder);
+
+    const currentSave = path.join(slot, 'progress.sav');
+    await fs.writeFile(currentSave, 'newer local save');
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, path.join(exportFolder, saved[0]));
+    await page.getByRole('button', { name: 'Importar save', exact: true }).click({ timeout: 5000 });
+    await page.getByText(/Save importado/).waitFor({ timeout: 5000 });
+    assert.equal(await fs.readFile(currentSave, 'utf8'), 'synthetic save');
+    const inbox = path.join(game, 'saves');
+    const backup = (await fs.readdir(inbox)).find(name => name.startsWith('backup '));
+    assert.ok(backup);
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, path.join(inbox, backup));
+    await page.getByRole('button', { name: 'Importar pasta do save' }).click();
+    await page.getByText(/Save importado/).waitFor({ timeout: 5000 });
+    assert.equal(await fs.readFile(currentSave, 'utf8'), 'newer local save');
+    await page.getByRole('button', { name: 'Abrir pasta dos saves' }).click();
+    await page.getByText('Pasta dos saves aberta.', { exact: true }).waitFor({ timeout: 5000 });
   } finally {
     if (app) await app.close();
     server.close();

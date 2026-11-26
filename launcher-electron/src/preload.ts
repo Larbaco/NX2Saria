@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('launcher', {
   chooseSaveExport: () => ipcRenderer.invoke('choose-save-export'),
   setSaveReport: (value: boolean) => ipcRenderer.invoke('set-save-report', value),
   exportSave: () => ipcRenderer.invoke('export-save'),
+  importSave: (source: string) => ipcRenderer.invoke('import-save', source),
+  openSavesDir: () => ipcRenderer.invoke('open-saves-dir'),
   checkUpdates: () => ipcRenderer.invoke('check-updates'),
   onUpdateChecked: (callback: (result: unknown) => void) => ipcRenderer.on('update-checked', (_event, result) => callback(result)),
   play: () => ipcRenderer.invoke('play'),

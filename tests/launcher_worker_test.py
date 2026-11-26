@@ -375,7 +375,7 @@ class WorkerTest(unittest.TestCase):
             cwd=ROOT, capture_output=True, text=True, timeout=15)
         self.assertEqual(response.returncode, 0, response.stderr)
         _, info, invalid, _, plain, _, report = [json.loads(line) for line in response.stdout.splitlines()]
-        self.assertEqual(info['result'], {'destination': str(dest), 'with_log': True})
+        self.assertEqual(info['result'], {'destination': str(dest), 'with_log': True, 'waiting': False, 'pending': False})
         self.assertIn('error', invalid)
         self.assertEqual(plain['result']['files'], 1)
         self.assertFalse(plain['result']['included_log'])
@@ -394,6 +394,97 @@ class WorkerTest(unittest.TestCase):
             'save_export_dir': str(dest), 'export_with_log': True})
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: saves export result=ok files=1 report=True', log)
+
+    def test_save_import_validates_backs_up_rolls_back_and_restores(self):
+        from launcher import saves
+
+        base = Path(self.tmp.name)
+        game = base / 'game'
+        account = saves.account_dir(game)
+        slot = account / 'slot_00'
+        slot.mkdir(parents=True)
+        progress = slot / 'progress.sav'
+        progress.write_text('original')
+        (account / 'option.sav').write_text('original options')
+        pending = game / 'profile' / 'save-import'
+        pending.mkdir()
+        (pending / 'unfinished').write_text('keep until a successful import')
+        source = base / 'new-game'
+        incoming = saves.account_dir(source) / 'slot_00'
+        incoming.mkdir(parents=True)
+        (incoming / 'progress.sav').write_text('archive data')
+        inbox = game / 'saves'
+        archive = saves.export_save(source, inbox, log=lambda _: None)['path']
+        invalid = base / 'invalid.zip'
+        invalid.write_bytes(b'not a zip')
+        selected = base / 'slot_01'
+        selected.mkdir()
+        (selected / 'progress.sav').write_text('one slot')
+        active, fail = base / 'game-active', base / 'fail-swap'
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(game), 'save_export_dir': str(base)}))
+        script = ("import runpy,sys\n"
+                  "from pathlib import Path\n"
+                  "from unittest import mock\n"
+                  "from launcher import saves,winsys\n"
+                  "root,active,fail=map(Path,sys.argv[1:])\n"
+                  "replace=saves.os.replace\n"
+                  "def swap(src,dest):\n"
+                  " if Path(src).name=='import' and fail.exists(): raise OSError('synthetic failed swap')\n"
+                  " return replace(src,dest)\n"
+                  "sys.argv=['launcher.worker','--root',str(root)]\n"
+                  "with (mock.patch.object(saves,'game_running',side_effect=lambda _:active.exists()), "
+                  "mock.patch.object(saves.os,'replace',swap), mock.patch.object(winsys,'open_path')):\n"
+                  " runpy.run_module('launcher.worker',run_name='__main__')\n")
+        worker = subprocess.Popen([sys.executable, '-c', script, str(self.root), str(active), str(fail)],
+                                  cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                  text=True)
+        self.addCleanup(self.stop_worker, worker)
+
+        def request(request_id, method, **fields):
+            worker.stdin.write(json.dumps({'id': request_id, 'method': method, **fields}) + '\n')
+            worker.stdin.flush()
+            response = json.loads(worker.stdout.readline())
+            self.assertEqual(response['id'], request_id)
+            return response['result']
+
+        self.assertEqual(request(1, 'hello', protocol=1)['lock'], 'held')
+        info = request(2, 'saves_info')
+        self.assertTrue(info['waiting'])
+        self.assertTrue(info['pending'])
+        active.touch()
+        self.assertEqual(request(3, 'import_save', source='waiting')['status'], 'game_running')
+        active.unlink()
+        self.assertEqual(request(4, 'import_save', source='archive', path=str(invalid))['status'], 'invalid_save')
+        self.assertEqual(progress.read_text(), 'original')
+        self.assertTrue(pending.exists())
+        self.assertFalse(list(inbox.glob('backup *')))
+        fail.touch()
+        self.assertEqual(request(5, 'import_save', source='waiting')['status'], 'failed')
+        self.assertEqual(progress.read_text(), 'original')
+        self.assertTrue(archive.is_file())
+        self.assertTrue(pending.exists())
+        fail.unlink()
+        imported = request(6, 'import_save', source='waiting')
+        self.assertEqual((imported['status'], imported['files']), ('ok', 1))
+        backup = inbox / imported['backup']
+        self.assertEqual((backup / 'slot_00' / 'progress.sav').read_text(), 'original')
+        self.assertEqual(progress.read_text(), 'archive data')
+        self.assertFalse(archive.exists())
+        self.assertTrue(list(inbox.glob('imported */*.zip')))
+        self.assertFalse(pending.exists())
+        self.assertEqual(request(7, 'import_save', source='folder', path=str(selected))['slot'], 'slot_01')
+        self.assertEqual((account / 'slot_01' / 'progress.sav').read_text(), 'one slot')
+        self.assertEqual(progress.read_text(), 'archive data')
+        self.assertEqual(request(8, 'import_save', source='folder', path=str(backup))['status'], 'ok')
+        self.assertEqual(progress.read_text(), 'original')
+        self.assertFalse((account / 'slot_01').exists())
+        self.assertEqual((account / 'option.sav').read_text(), 'original options')
+        self.assertEqual(request(9, 'open_saves_dir')['status'], 'ok')
+        worker.stdin.close()
+        self.assertEqual(worker.wait(timeout=10), 0)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: saves import result=ok files=1 backup=True', log)
 
     def test_first_run_destination_proposal_does_not_save_settings_or_create_a_folder(self):
         from launcher.paths import Layout

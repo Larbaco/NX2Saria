@@ -43,7 +43,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Staging, automatic checks and application, rebuild after update, handover and rollback remain open.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
-- [ ] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. Synthetic worker and Linux window tests exercise export, optional diagnostic attachments and the selected folder. Import still needs its own evidence.
+- [ ] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. Synthetic worker and Linux window tests exercise export, optional diagnostic attachments and the selected folder. Synthetic imports cover validation, ZIP and folder selection, a single-slot replacement, backup restoration, and rollback on a failed swap. This flow uses synthetic saves only.
 - [ ] Mods: add files/folders, enable/disable, ordering, rebuild and errors.
 - [ ] Steam: add/update shortcut and artwork where supported, preserve existing shortcuts, Game Mode and Steam Deck interaction.
 - [ ] Customization: themes, custom colors, background and dimming, animations, sounds and assets derived from the player's own game.
@@ -325,6 +325,21 @@ files and uses the existing settings scrubber for a report. Selection cancellati
 the previous directory. The synthetic worker test verifies both variants, including redaction.
 The Linux Electron window test exercises the toggle, folder chooser and export against a
 stand-in save. Both export tests passed locally on Linux. Import will use the same Python validation and recovery as Tk in its own test.
+
+A ZIP import uses the newest waiting entry in the game saves folder when one is available,
+and otherwise opens the native file picker. Folder import uses the native folder picker and
+allows a whole save or one slot. Cancelling a picker leaves all files intact. Show a waiting
+in-game import when present and provide the existing Open Saves Folder action. The worker
+rechecks for a running game and relies on the existing profile lock before changing saves.
+
+Use the existing Python ZIP validation, transactional replacement and backups. An invalid
+archive leaves the active save and pending import intact. A successful import reports the
+file count, slot where applicable and backup name. The same saved backup can be selected
+again from the folder picker. Save import and export wait for the final response even
+when a backup or copy exceeds the normal worker request timeout. Prove this with synthetic folders. Interrupt the replacement
+after the old folder moves and verify recovery returns it to the active path. Test archive and
+folder selection in the Linux window and exercise the worker on Linux and Windows. The Linux tests passed for archive and folder import,
+validation, backups and rollback after a simulated filesystem error.
 
 ## Provisioning and handover design
 

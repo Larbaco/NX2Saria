@@ -1,14 +1,15 @@
 type FirstRunPreferences = { channel: 'stable' | 'preview'; auto_check: boolean; desktop_shortcut: boolean | null };
 type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string }; first_run_preferences?: FirstRunPreferences; first_run_requirements?: { status: string; message?: string } };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
-type SaveOptions = { destination: string; with_log: boolean };
+type SaveOptions = { destination: string; with_log: boolean; waiting: boolean; pending: boolean };
+type SaveImport = { status: string; files?: number; slot?: string | null; backup?: string | null; detail?: string };
 type SaveExport = { status: string; name?: string; files?: number; included_log?: boolean };
 type UpdateView = { status: string; version?: string; notes?: string[] };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -24,6 +25,10 @@ const chooseSaveExport = document.querySelector<HTMLButtonElement>('#choose-save
 const includeSaveReport = document.querySelector<HTMLInputElement>('#include-save-report')!;
 const exportSaveButton = document.querySelector<HTMLButtonElement>('#export-save')!;
 const saveResult = document.querySelector<HTMLElement>('#save-result')!;
+const importSaveButton = document.querySelector<HTMLButtonElement>('#import-save')!;
+const importSaveFolder = document.querySelector<HTMLButtonElement>('#import-save-folder')!;
+const openSavesDir = document.querySelector<HTMLButtonElement>('#open-saves-dir')!;
+const pendingSaveImport = document.querySelector<HTMLElement>('#pending-save-import')!;
 const updateControl = document.querySelector<HTMLElement>('#update-control')!;
 const checkUpdatesButton = document.querySelector<HTMLButtonElement>('#check-updates')!;
 const updateResult = document.querySelector<HTMLElement>('#update-result')!;
@@ -72,11 +77,15 @@ function updateControls() {
   const savesDisabled = selecting || savingPreference || choosingSource || askingRecovery || savesBusy ||
     (playing && !gameWindowReady) || installation?.job_marker_present === true;
   savesButton.disabled = chooseSaveExport.disabled = includeSaveReport.disabled = exportSaveButton.disabled = savesDisabled;
+  openSavesDir.disabled = savesDisabled;
+  importSaveButton.disabled = importSaveFolder.disabled = savesDisabled || playing || installation?.game_running === true;
   savesPanel.hidden = !saveOptions;
   savesButton.setAttribute('aria-expanded', String(!savesPanel.hidden));
   if (saveOptions) {
     saveDestination.textContent = saveOptions.destination;
     includeSaveReport.checked = saveOptions.with_log;
+    pendingSaveImport.hidden = !saveOptions.pending;
+    importSaveButton.textContent = saveOptions.waiting ? 'Importar save da pasta' : 'Importar save';
   }
   updateControl.hidden = installation?.status !== 'ready';
   checkUpdatesButton.disabled = checkingUpdates || busy || installation?.job_marker_present === true;
@@ -352,6 +361,33 @@ exportSaveButton.onclick = () => {
       saveResult.textContent = 'Não foi possível exportar o save. Confira o log do launcher.';
     }
   }, 'Não foi possível exportar o save.');
+};
+
+function importSave(source: 'archive' | 'folder') {
+  void runSaveAction(async () => {
+    const result = await window.launcher.importSave(source);
+    if (!result) return;
+    if (result.status === 'ok') {
+      const imported = result.slot ? `no slot ${result.slot.slice(-2)}` : `(${result.files} arquivo(s))`;
+      const backup = result.backup ? ` O save anterior está em ${result.backup}, na pasta dos saves.` : '';
+      saveResult.textContent = `Save importado ${imported}.${backup}`;
+      saveOptions = await window.launcher.savesInfo();
+    } else if (result.status === 'game_running') {
+      saveResult.textContent = 'Feche o jogo antes de importar um save.';
+    } else if (result.detail) {
+      saveResult.textContent = `Não foi possível importar o save. ${result.detail}`;
+    } else {
+      saveResult.textContent = 'Não foi possível importar o save. Confira o log do launcher.';
+    }
+  }, 'Não foi possível importar o save.');
+}
+importSaveButton.onclick = () => importSave('archive');
+importSaveFolder.onclick = () => importSave('folder');
+openSavesDir.onclick = () => {
+  void runSaveAction(async () => {
+    await window.launcher.openSavesDir();
+    saveResult.textContent = 'Pasta dos saves aberta.';
+  }, 'Não foi possível abrir a pasta dos saves.');
 };
 
 const updateMessages: Record<string, string> = {

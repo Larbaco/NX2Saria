@@ -125,3 +125,14 @@ test('applies the frame limit to each message when pipes combine messages', asyn
   await worker.close();
   assert.deepEqual(seen, [1, 2]);
 });
+
+test('waits for a save transaction beyond the ordinary request timeout', async () => {
+  const { spawn } = require('node:child_process');
+  const { WorkerClient } = require('../dist/worker-client.js');
+  const reply = JSON.stringify(JSON.stringify({ id: 1, result: { status: 'ok' } }) + '\n');
+  const script = `process.stdin.once('data', () => setTimeout(() => process.stdout.write(${reply}), 50)); process.stdin.resume()`;
+  const worker = new WorkerClient(spawn(process.execPath, ['-e', script]), 20);
+  try {
+    assert.deepEqual(await worker.request('import_save', {}, null), { status: 'ok' });
+  } finally { await worker.close(); }
+});

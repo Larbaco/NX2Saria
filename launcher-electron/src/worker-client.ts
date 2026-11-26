@@ -9,7 +9,7 @@ export class WorkerRequestError extends Error {
   constructor(readonly code: 'busy' | 'request_failed' | 'runtime_incompatible') { super('Worker request failed'); }
 }
 
-type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
+type Pending = { resolve: (value: any) => void; reject: (error: Error) => void; timer?: NodeJS.Timeout };
 
 export class WorkerClient extends EventEmitter {
   handshake!: WorkerHandshake;
@@ -111,16 +111,16 @@ export class WorkerClient extends EventEmitter {
     }
   }
 
-  request(method: string, args: Record<string, unknown> = {}): Promise<any> {
+  request(method: string, args: Record<string, unknown> = {}, timeoutMs: number | null = this.timeoutMs): Promise<any> {
     if (this.ended) return Promise.reject(new Error('Worker disconnected'));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = timeoutMs === null ? undefined : setTimeout(() => {
         this.pending.delete(id);
         reject(new Error('Worker request timed out'));
         this.fail();
         this.child.stdin.end();
-      }, this.timeoutMs);
+      }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
       this.child.stdin.write(JSON.stringify({ ...args, id, method }) + '\n', error => {
         if (error) this.fail();

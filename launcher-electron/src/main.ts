@@ -362,8 +362,9 @@ app.whenReady().then(() => {
   async function saveOptions(active: WorkerClient) {
     const result = await active.request('saves_info');
     if (active !== worker || typeof result?.destination !== 'string' || !path.isAbsolute(result.destination) ||
-        typeof result.with_log !== 'boolean') throw new Error('Saves unavailable');
-    return { destination: result.destination, with_log: result.with_log };
+        typeof result.with_log !== 'boolean' || typeof result.waiting !== 'boolean' ||
+        typeof result.pending !== 'boolean') throw new Error('Saves unavailable');
+    return { destination: result.destination, with_log: result.with_log, waiting: result.waiting, pending: result.pending };
   }
   ipcMain.handle('saves-info', event => saveOptions(savesWorker(event)));
   ipcMain.handle('choose-save-export', async event => {
@@ -391,7 +392,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('export-save', async event => {
     const active = savesWorker(event);
-    const result = await active.request('export_save');
+    const result = await active.request('export_save', {}, null);
     if (worker !== active) throw new Error('Saves unavailable');
     if (result?.status === 'no_save' || result?.status === 'failed') {
       log?.write('saves', `export result=${result.status}`);
@@ -404,6 +405,46 @@ app.whenReady().then(() => {
     }
     log?.write('saves', `export result=ok files=${result.files} report=${result.included_log}`);
     return { status: 'ok', name: result.name, files: result.files, included_log: result.included_log };
+  });
+  ipcMain.handle('import-save', async (event, kind) => {
+    const active = savesWorker(event);
+    if (playing || state?.game_running || (kind !== 'archive' && kind !== 'folder')) throw new Error('Import unavailable');
+    const options = await saveOptions(active);
+    let choice: { source: string; path?: string } = { source: 'waiting' };
+    if (kind === 'folder' || !options.waiting) {
+      const picked = await dialog.showOpenDialog(window, {
+        title: kind === 'folder' ? 'Escolher pasta do save' : 'Escolher o save',
+        defaultPath: options.destination,
+        properties: kind === 'folder' ? ['openDirectory'] : ['openFile'],
+        ...(kind === 'archive' ? { filters: [{ name: 'Save do NX2Saria', extensions: ['zip'] },
+          { name: 'Todos os arquivos', extensions: ['*'] }] } : {}),
+      });
+      const selected = picked.filePaths[0];
+      if (picked.canceled || !selected) return null;
+      if (!path.isAbsolute(selected)) throw new Error('Import unavailable');
+      choice = { source: kind, path: selected };
+    }
+    if (savesWorker(event) !== active || playing) throw new Error('Import unavailable');
+    const result = await active.request('import_save', choice, null);
+    if (worker !== active) throw new Error('Import unavailable');
+    if (['game_running', 'invalid_source', 'invalid_save', 'failed'].includes(result?.status) &&
+        (result.detail === undefined || (typeof result.detail === 'string' && result.detail.length <= 520))) {
+      log?.write('saves', `import result=${result.status}`);
+      return { status: result.status, detail: result.detail };
+    }
+    if (result?.status !== 'ok' || !Number.isSafeInteger(result.files) || result.files < 1 ||
+        !(result.slot === null || (typeof result.slot === 'string' && /^slot_[0-9]{2}$/.test(result.slot))) ||
+        !(result.backup === null || (typeof result.backup === 'string' && /^backup [0-9 .()-]+$/.test(result.backup)))) {
+      throw new Error('Invalid import result');
+    }
+    log?.write('saves', `import result=ok files=${result.files} backup=${Boolean(result.backup)}`);
+    return { status: 'ok', files: result.files, slot: result.slot, backup: result.backup };
+  });
+  ipcMain.handle('open-saves-dir', async event => {
+    const active = savesWorker(event);
+    const result = await active.request('open_saves_dir');
+    if (worker !== active || result?.status !== 'ok') throw new Error('Could not open saves folder');
+    log?.write('saves', 'folder opened');
   });
   ipcMain.handle('check-updates', async event => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('check_updates') ||
