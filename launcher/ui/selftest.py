@@ -79,6 +79,9 @@ def ahead_of(version):
     return f'{nums[0]}.{nums[1] + 1}.0'
 
 
+LONG_VERSIONS = ('0.27.0-rc.1', '0.127.10-rc.12')
+
+
 def fake_release(version='0.3.11'):
     m = {'format': 1, 'version': version, 'app': {'name': f'NX2Saria-app-{version}.zip', 'size': 1, 'sha256': '0'}}
     notes = ('- Each program module comes from the .nup package that holds it whole.\n'
@@ -113,6 +116,21 @@ def states(app):
     def home():
         app.release, app.checked_at, app.check, app.check_error, app.message = None, time.time() - 5, None, '', ''
         app.show('home', 0)
+
+    def home_long_versions():
+        layout, kind = app.layout, type(app.layout)
+        try:
+            for version in LONG_VERSIONS:
+                layout.__class__ = type('LongVersion', (kind,), {'version': version})
+                home()
+                app.root.update()
+                row = next(r for r in app.rows if r.label == 'Updates')
+                if not row.shown or '…' in row.shown or row.shown not in (row.value,) + row.short:
+                    raise AssertionError(f'Updates of {version} shows {row.shown!r}, cut')
+                app.ctx.log(f'selftest: Updates of {version} shows {row.shown!r}')
+        finally:
+            layout.__class__ = kind
+        home()
 
     def rc2_release():
         source = Path(__file__).resolve().parents[2] / 'docs' / 'releases' / 'v0.19.0-rc.2.md'
@@ -291,7 +309,8 @@ def states(app):
     def crash_offer_screen():
         app.open_crash_offer_preview()
 
-    result = [('1-first-run', first_run), ('2-installing', installing), ('3-home', home),
+    result = [('1-first-run', first_run), ('2-installing', installing), ('3a-home-long-versions', home_long_versions),
+            ('3-home', home),
             ('4a-whats-new-before', whats_new_before), ('4-update-ready', update_ready),
             ('4b-whats-new-end', whats_new_end), ('5-updating', updating), ('6-settings', settings),
             ('7-build-failed', failed), ('8-uninstall', uninstall),

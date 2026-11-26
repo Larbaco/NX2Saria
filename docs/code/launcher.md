@@ -2497,7 +2497,16 @@ All in logical pixels unless said otherwise.
 
 ### `Row`
 
-`parts`, for a row of kind `pair`, is `[(rect, label, callback)]`.
+`parts`, for a row of kind `pair`, is `[(rect, label, callback)]`. `short` holds shorter forms of the value, longest
+first, and `shown` the text the last drawing put on screen (`App.value_text()`).
+
+### `App.value_text()`
+
+The value of a row with a value cell, as it fits the cell: the value, or the first of its shorter forms (`Row.short`)
+that fits at the font `App.fit_font()` gives it, down to 0.8 of its size; only when none fits is the last one cut in the
+middle (`fit()`). A middle cut suits a path; it broke a version: with the game's font, "Up to Date · 0.27.0-rc.1" in the
+Updates cell came out as "Up to Dat…27.0-rc.1". The Updates row offers "Latest · <version>" and then "Up to Date",
+"Ready", "Downloading…" or the version alone.
 
 ### `measure()` and `fit()`
 
@@ -3235,6 +3244,11 @@ update screens show "Up to Date" instead (a fixed 0.3.11 did from 0.4.0 on).
 
 The made-up states, one inner function each. The ones with notes:
 
+- `home_long_versions`: the home screen of launchers with long version names (`LONG_VERSIONS`, given to the layout
+  through a subclass whose `version` is fixed), up to date: the Updates cell must show one of its forms whole, never one
+  cut in the middle, and the log says which (`selftest: Updates of ... shows ...`). The fonts of a selftest without the
+  game's are narrower, so 0.27.0-rc.1 fits there in full; 0.127.10-rc.12 does not, and it showed
+  "Up to Date ·…127.10-rc.12" before `App.value_text()`.
 - `rc2_release`: a release with the notes of a real release file, kept newer than the installed launcher without
   editing its `VERSION` file.
 - `shaders`: the counts and the wording that `tools/make_game.py` `shader_progress()` sends.
