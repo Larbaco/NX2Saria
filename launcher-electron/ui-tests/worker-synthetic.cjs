@@ -182,7 +182,8 @@ exit 2
     assert.ok(electronLog.includes(`electron: root picked origin=default brand=NX2Saria installed_version=${version} `));
     assert.ok(electronLog.includes(`electron: root picked origin=manual brand=NX2Saria installed_version=${version} `));
     assert.doesNotMatch(electronLog, /electron: start version=/);
-    assert.match(electronLog, /electron: inspection result=ready/);
+    assert.match(electronLog, /electron: inspection result=ready source=default/);
+    assert.match(electronLog, /electron: inspection selection_cancelled source=picked/);
     assert.match(electronLog, /electron: window shown/);
     assert.equal((electronLog.match(/electron: window hidden_for_game/g) || []).length, 3);
     assert.equal((electronLog.match(/electron: window restored/g) || []).length, 2);
@@ -190,7 +191,7 @@ exit 2
     assert.match(electronLog, /electron: settings hide_while_playing=on/);
     assert.match(electronLog, /electron: settings hide_while_playing=save_failed/);
     assert.equal((electronLog.match(/electron: play window_ready/g) || []).length, 4);
-    assert.equal((electronLog.match(/electron: play requested/g) || []).length, 7);
+    assert.equal((electronLog.match(/electron: play requested/g) || []).length, 6);
     assert.equal((electronLog.match(/electron: play result=started/g) || []).length, 5);
     assert.equal((electronLog.match(/electron: play game_ended code=0 alarm=false/g) || []).length, 2);
     assert.match(electronLog, /electron: play game_ended code=71 alarm=true[^\n]*\n[^\n]*electron: window message_shown kind=ended_with_error/);
