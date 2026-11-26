@@ -8,6 +8,7 @@ docs:
 - [controls.md](../controls.md): the menu, its tabs, the draft and Apply, the bindings.
 - [menu-mouse.md](../menu-mouse.md): the mouse in the game's own menus, how the game's objects were found.
 - [quit-menu.md](../quit-menu.md): Quit Game in the game's own menus.
+- [pause-settings-tab.md](../pause-settings-tab.md): the settings tab in the game's pause menu.
 - [amiibo.md](../amiibo.md): the Amiibo tab, the picker, the keys and write-back.
 - [performance.md](../performance.md): the performance overlay.
 - [presets.md](../presets.md): the quality preset the menu stages.
@@ -178,8 +179,13 @@ while open, logged per 600 frames. `kGold` is the gold of the title and its Trif
 
 ### `change_open()`
 
-`want` 0 or 1 sets the state; -1 flips it. Returns the new state. The window events queued before the change go with
+`want` 0 or 1 sets the state; -1 flips it; 2 opens the menu as the pause menu's settings tab, unless it is already open
+(then it returns 0 and nothing changes), so the mode and the open state change together under `open_lock`. Returns the new state. The window events queued before the change go with
 it: keys pressed just before a close would otherwise reach the menu when it next opens.
+
+`g_pause_tab`: the menu is open as the pause menu's settings tab (`runtime/ui/pause_tab.c`). The change tells
+`pause_tab_set_open()` with `g_pause_why`, the reason it closed, plays the tab sounds instead of the open and close
+ones, and a close ends the tab mode.
 
 ### `menu_toggle()`
 
@@ -841,6 +847,12 @@ The step after an Apply (`from_keep`: after the keep box). Display keys applied 
 revert the picture; then the restart box; else the menu closes. `gfx_window_apply_settings()` wakes the window: the
 window thread follows `FULLSCREEN` / `WINDOW_SIZE`, and `VK_PRESENT` follows at the next present.
 
+### `pad_events()`
+
+In the tab mode the buttons of `NX2SARIA_INPUT_SCRIPT` are added (`runtime/input/input.c` `input_script_buttons()`), so a
+test run reaches the tab's rows; Plus, which has no ImGui key, is kept as a press in `g_pad_plus`, only in the tab
+mode and dropped on a reset, so a Plus from another menu never closes the tab.
+
 ### `apply_confirm()`
 
 - With no lines left, something else (F11) took every change away while the box was open.
@@ -860,6 +872,9 @@ window thread follows `FULLSCREEN` / `WINDOW_SIZE`, and `VK_PRESENT` follows at 
 - The restart lines are read before Apply empties the draft.
 - A failed write keeps the menu (its bottom row says so), unless display keys wait for their answer.
 
+
+In the tab mode an Apply logs its changes through `runtime/ui/pause_tab.c` `pause_tab_applied()`, and Apply or
+Discard is the reason the tab closed.
 ### `preset_confirm()`
 
 The box `row_preset()` asks for: the keys set by hand and the values the preset gives them; Cancel (the default, Esc /
@@ -907,6 +922,38 @@ cursor on another item, another tab by a click (L, R, Q and E play theirs where 
 tab they asked for, its sound played). The first frame after opening only records: the open sound has played, and the
 cursor going to the first row is part of it. `g_sound_fresh` marks that frame, as the frame count alone does not when
 nothing was laid out while the menu was closed.
+
+### `pause_tab_close()`
+
+Ends the tab without asking: the box and any confirmation are closed, the draft is dropped and the menu closes with the
+reason, so `runtime/ui/pause_tab.c` shows the System page again.
+
+### `pause_tab_rows()`
+
+The tab's page: the Picture rows of `tab_screen()` that a player looks for in a pause menu, with the same row functions,
+so their notes ("after restart", the disabled sharpening) are the settings menu's.
+
+### `pause_tab_label()`
+
+The tab's name: "NX2Saria", or `UI_MENU_PAUSE_TAB` with `pause_settings_tab_name = settings`.
+
+### `pause_tab_header()`
+
+The tab's name in the pause menu's header, on the background list, at the box `runtime/ui/pause_tab.c` `header_tick()`
+works out, in picture fractions turned into the window's pixels with `gfx_picture_rect()`. The plate runs from the
+picture's top down to 0.545 of the box's height below its centre (y 878 in layout units, where the game's plate ends),
+as wide as the box. The text is in the menu's first font, the game's own text face with the system's CJK glyphs
+merged (the title face drew "设置" thin and small), at 0.28 of the box's height, the game's category text size, and
+shrinks to fit 0.92 of the box's width ("Configurações").
+
+### `layout_pause_tab()`
+
+The open tab: one window over the page box of `runtime/ui/pause_tab.c` `plus_tick()`, with the rows, the box "Apply your
+changes?" and the boxes after an Apply. The first row takes the cursor on the first frame. `g_modal` is cleared at the
+start of each frame, as `restart_confirm()` does for the settings menu: the boxes set it while they are up. L (or Q), B (or Esc) and
+Plus leave it as Continue leaves the settings menu (`leave_menu()`), unless a box is open. It closes by itself when the
+pause menu's page has not been seen for `SEEN_MS` (the pause menu closed under it), and with
+`NX2SARIA_PAUSE_SETTINGS_TAB_TEST=fail` 30 frames after it opened.
 
 ### `layout_menu()`
 
@@ -1085,6 +1132,9 @@ in the menu's look. It shows once the capture is written, so the capture's own p
 - When the menu closed while the keep box was up (F1, a failure), the old display settings return, unsaved. When it
   closed some other way than the box with a draft (the menu failed), the previews go back.
 - With `NX2SARIA_MENU_TEST_DEBUG` set the test shoots the debug menu's tabs instead.
+- The pause menu's settings tab: its request opens the menu in the tab mode (`g_pause_tab`); while the menu is closed
+  the overlay is drawn as long as the tab's name shows in the pause menu's header (`pause_tab_view()`), and the name is
+  drawn on every frame the tab is on, selected while the tab is open.
 - When the game started waiting for an amiibo, its list opens over the game.
 - `g_open` is read again after taking the reset: the menu may have opened since the first read (F1 on the window
   thread while the overlay alone was drawn), and that frame's reset would be spent on an overlay frame, so the first
@@ -1773,6 +1823,11 @@ One tab of the bar: `ImGui::BeginTabItem` drawn as the rows' button, with the ga
 lines and its text in gold. `id`: `BeginTabItem`'s label (it sizes the tab); `text`: what is shown. `font`: the
 label's font, NULL for the current one. True when selected: call `ImGui::EndTabItem` then.
 
+### `skin_header_tab()`
+
+A tab's name in the game's pause menu header, drawn without a widget: the selected category's plate (`a` to `b`)
+behind it when `current`, the text centred on `text_at` with a soft shadow, in `font` at `font_px`, all at `alpha`.
+
 ## `runtime/ui/menu_skin.cpp`
 
 With the game's textures (`runtime/ui/menu_art.cpp`) each piece is those textures tinted and laid over each other in
@@ -1914,6 +1969,12 @@ made invisible; the button and the text go over its rectangle here. The button's
 ### `skin_boot_panel()`
 
 The bar is a sunken track with the frames' brown edge, filled in gold from the left.
+
+### `skin_header_tab()`
+
+The plate is the one the game draws behind its selected category, measured on a bench capture: a dark brown band from
+the top of the picture down past the header's edge, (63, 34, 13) at the top to (104, 76, 42) at the bottom, with a
+darker line at each side; the text is the categories' cream, (254, 252, 225).
 
 ## `runtime/ui/menu_art.h`
 
@@ -2826,6 +2887,136 @@ SARC) with the three labels of [quit-menu.md](../quit-menu.md) ("The texts") add
 (`runtime/hle/sarc.c` `sarc_rebuild()`). `quit_menu_build()`: the same on the compressed file, with the dictionary
 its zstd frame names. Each returns 1 when made, 0 when the archive has the labels already, -1 with why.
 
+## `runtime/ui/pause_tab.h`, `runtime/ui/pause_tab.c`
+
+The settings tab in the game's pause menu, 1.1.1: what the game has, why the tab is drawn and not laid out, when R is
+taken and the log: [pause-settings-tab.md](../pause-settings-tab.md). The menu side is `runtime/ui/menu.cpp`
+`layout_pause_tab()`.
+
+The runtime calls no game code and changes no file. The readers of the game's objects (`ok_at()`, `game_object()`,
+`pane_parent()`, `pane_shown()`, the offsets) are those of `runtime/ui/menu_mouse.c` and `runtime/ui/quit_menu.c`, whose
+notes name each field; they are repeated here so that no file needs another. Its own: the header's +0x328, the number
+of categories, and +0x330, their objects (`HDR_COUNT`, `HDR_CATS`), each with its layout's holder at +0x20 (`CAT_LAYOUT`);
+a layout's name at +0xf8 (`LYT_NAME`).
+
+`PauseTabView`: the tab's box in the header and the page's box, as fractions of the picture (x0, y0, x1, y1, from the
+top left), the name's alpha, and whether each was seen lately (`header` within 100 ms, `page_ok` within `SEEN_MS`,
+1500: a shader compile can hold the game's interface for a moment without the pause menu having closed).
+
+State between the game's interface thread, the pad read and the present thread: `g_armed_ms`, the last time the System
+tab was ready for R (taken as true for `ARMED_MS`, 250, so a screen that stops updating lets go by itself); `g_req`, a
+request to open; `g_open`, the tab is open (the menu tells); `g_view` under `g_lock`. The two hidden panes
+(`g_inout_hidden`, `g_bg_hidden`) and the System page's layout (`g_sys_lyt`) are the interface thread's alone: the
+bits are written on the thread that draws the panes.
+
+### `pause_tab_test()`
+
+A word of `NX2SARIA_PAUSE_SETTINGS_TAB_TEST`.
+
+### `sites_on()`, `wanted()`, `pause_tab_on()`
+
+The tab needs the screens' site, whose sets are `menu_mouse` and `quit_menu`, game 1.1.1, and
+`NX2SARIA_PAUSE_SETTINGS_TAB` set to other than 0. Read once: a settings reload that turned it off while the tab was
+open would stop the updates that give the System page back.
+
+### `pause_tab_name_kind()`, `start_line()`
+
+The name setting, and the start line, written at the first pad read.
+
+### `layout_of()`, `layout_named()`, `pane_at()`, `tree_ok()`
+
+A screen's layout, a layout's name, a pane by its index (which must belong to that layout), and the shape check: the
+parents of the panes the tab uses, against `runtime/ui/pause_tab_core.h` `PT_SYSTEM_TREE` and `PT_CATEGORY_TREE`.
+
+### `pane_box()`, `to_picture()`
+
+A pane's box in layout units (`runtime/ui/menu_mouse_geom.h` `mm_pane_box()`), and a box turned into fractions of the
+picture with the screen's projection (`mm_units()`; 16:9 taken when it cannot be read).
+
+### `screens_seen()`
+
+The line of `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=screens`: each screen the site runs for, by its layout's name (48 at most).
+
+### `trace()`
+
+The line of `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=log`: why R is or is not taken, when that changes.
+
+### `screen_takes_input()`, `focused_entry()`, `system_layout_of()`
+
+The pause menu is open, shown, not blocked and its controller takes input; the focused entry of player 1; the
+`PaSystemMenu_00` layout above the focused button, if any (the walk stops at the pause menu's own layout).
+
+### `drop_system()`
+
+Lets go of the System page's layout. A page it hid gets its shown bit back first, if the pane still belongs to that
+layout and the layout is still `PaSystemMenu_00`.
+
+### `plus_tick()`
+
+At the pause menu's update. Arms R when the focus is on a System page button and the page stands in the middle: its
+part pane `Pa_System_00` (the host of the `PaSystemMenu_00` layout) at x within 2 units of 0 and where it was the
+update before (`pt_settled()`); at 21:9 with the wide menus the page that shows is also in the middle. While the tab is
+open it clears the shown bit of the page's `N_InOut_00`, if it was set, and sets it again once the tab closes; the
+layout found when arming is kept, checked against the pause menu's layout each update, so the bit is put back on the
+page it was taken from. The page box (`runtime/ui/pause_tab_core.h` `pt_page_box()`) goes to the picture with this
+screen's projection.
+
+### `static_header()`
+
+The tab's box when the header was not read lately (200 ms): the layout's own categories (`pt_header_boxes()`) through
+the pause menu's projection, shown while the pause menu is open and not hidden. Measured on the bench, the System
+category's text is at y 1000, where `MenuOverlay_00` puts it.
+
+### `category_layout()`
+
+A category's layout: its +0x20 holds the layout's holder, whose +0x80 is the layout, as a screen's +0x28 does.
+
+### `header_tick()`
+
+At the header's update (`MenuOverlay_00`). True when it could read the categories' boxes. A header with other than four categories gets no tab (one line). The tab's box follows the
+third and fourth categories' part panes (`pt_tab_box()`) and shows only while the fourth is shown with all its parents:
+the Plus menu's header, faded in. While the tab is open the fourth category's plate `N_Bg_00` loses its shown bit (the
+category is drawn as not selected), and gets it back when it closes.
+
+### `pause_tab_screen_host()`
+
+Called by `runtime/patches/patches.c` `screens_host()` for every interface screen's update; picks the pause menu and its header by their layouts' names.
+
+### `pause_tab_view()`, `pause_tab_request_take()`, `pause_tab_set_open()`, `pause_tab_applied()`
+
+For `runtime/ui/menu.cpp`: the boxes, the request to open (taken once), the open state with the reason it closed and
+the time it was open, and the Apply line. A close drops a request still waiting, so the tab never opens again by
+itself.
+
+### `pause_tab_poll()`
+
+Once per pad read, with the polls of the mouse in the menus and Quit Game (`runtime/input/input.c` `input_poll()`). A
+new R while armed is taken away from the game and asks the menu to open the tab; it stays taken while held
+(`runtime/ui/pause_tab_core.h` `pt_press()`). A new left click on the tab's name while armed asks the same; clicks counted while the poll did not run (the menu
+open, the poll skipped) are not new. No request is made while one waits. The pad is
+read on more than one thread: one at a time decides (`busy`), the others drop R while it is held taken.
+
+## `runtime/ui/pause_tab_core.h`
+
+The parts of the tab that need neither the game's memory nor the runtime, so `tests/pause_tab_check.c` runs them.
+
+- `pt_press()`: the R that opens the tab. R held from before the arming goes to the game; a new R while armed is taken
+  and stays taken until let go.
+- `pt_tab_box()`: the tab's box from the boxes of the last two categories: as high as the last and `PT_TAB_HALF`
+  (0.325) of its width each side of a centre `PT_TAB_STEP` (1.075) of their spacing past it, which at 16:9 is
+  1054..1314: between the game's R icon (`T_BtnR_00`, 936..1044) and the rupee counter's icon (1324..1468). The game's
+  own plate is 450 wide; there is no room for that much there.
+- `pt_settled()`: the page's x in the middle and still.
+- `PT_SYSTEM_TREE`, `PT_CATEGORY_TREE`, `pt_tree_ok()`: the parents of the panes the tab relies on, as the game's
+  `PaSystemMenu_00` (1 `N_All_00`, 2 `N_InOut_00` under it, the controller picture, the ornament and the buttons
+  under that) and `PaMenuCategory_00` (3 `N_Bg_00` under `N_BgIn_00`, with the two plates under it) have them;
+  `PT_SYSTEM_INOUT` and `PT_CATEGORY_BG` are the panes written.
+- `pt_name_kind()`: `product` (and unset) or `settings`; anything else is the product's name, said in the start line.
+- `pt_header_boxes()`: the third and fourth categories of `MenuOverlay_00` in layout units (x 30..430 and 490..890,
+  y 888..1112), for the tab's place when the header object is not found.
+- `pt_page_box()`: the page's box in layout units, under the header's plate and over the footer: x -1560..1560,
+  y -780..430 (the System page's buttons run from 428 down to -606).
+
 ## `runtime/ui/binds_page.h`
 
 The remapping rows of the menu's Controls tab (`runtime/ui/binds_page.cpp`). Present path only (ImGui). What the player
@@ -3333,6 +3524,7 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_PROMPTS_MISSING`, `UI_MENU_PROMPTS_FAILED`, `UI_MENU_PROMPTS_RESTART`, `UI_MENU_PROMPTS_OFF_SHAPE`, `UI_MENU_PROMPTS_OFF_MODS`, `UI_MENU_PROMPTS_OFF_PATCHES` | the notes under the prompts: their files are missing or damaged, they change after restart, or why they are off |
 | `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | the confirmation of the bar's Restart and Quit (its Cancel is `UI_MENU_RESET_NO`) |
 | `UI_MENU_RESTART_COUNT` | the bar's Restart with the count of settings waiting for it (printf: `%d`) |
+| `UI_MENU_PAUSE_TAB` | the pause menu's settings tab's name with `pause_settings_tab_name = settings` (`runtime/ui/menu.cpp` `pause_tab_label()`); also in the title face's glyphs |
 | `UI_MENU_DRAFT_TITLE`, `UI_MENU_DRAFT_APPLY`, `UI_MENU_DRAFT_DISCARD`, `UI_MENU_DRAFT_KEEP`, `UI_MENU_DRAFT_RESTART_NOTE`, `UI_MENU_DRAFT_QUIT_NOTE` | the box that asks about the changes made in the menu when it is left (`runtime/ui/menu.cpp` `apply_confirm()`), and the lines restarting and quitting add to their confirmation while there are such changes |
 | `UI_MENU_KEEP_TITLE`, `UI_MENU_KEEP_COUNTDOWN`, `UI_MENU_KEEP_YES`, `UI_MENU_KEEP_REVERT`, `UI_MENU_RESTART_NOW_TITLE`, `UI_MENU_RESTART_NOW`, `UI_MENU_RESTART_LATER` | after Apply: the "keep these display settings?" box with its countdown (`UI_MENU_KEEP_COUNTDOWN`, a printf format with one `%d`), and the "restart now / later" box for settings read at start |
 | `UI_MENU_RELOAD_NONE`, `UI_MENU_RELOAD_DONE`, `UI_MENU_RELOAD_REJECTED`, `UI_MENU_RELOAD_FAILED`, `UI_MENU_RELOAD_BUSY` | the notice Ctrl+F5 shows after reading the settings file again (printf formats: changed / after restart [/ rejected]) |

@@ -1501,7 +1501,8 @@ lines are a licence notice and stay in the code.
 Every region is a plain reservation; pages are committed and decommitted at 4 KiB granularity. Decommitted pages come
 back zeroed, so no stale-page bookkeeping is needed. The stack and heap block and the alias region are reserved
 write-watched (`runtime/platform/platform.h` `plat_mem_reserve()`): `mem_written_pages()` reports the pages the CPU
-wrote, which the Vulkan back end uploads again.
+wrote, which the Vulkan back end uploads again. `reserve_at()` logs, after the first watched reservation, whether
+the platform tracks writes (`runtime/platform/platform.h` `plat_write_watch_note()`; `write_watch_logged`).
 
 ### Constants and state
 

@@ -35,6 +35,16 @@ two configuration files again. Nothing runs with elevated privileges unless the 
 without `pkexec` do not offer the change. The launcher records the detected access, limit and result in
 `data/logs/launcher.log`.
 
+### Linux kernel
+
+The game needs Linux 6.7 or later: it tracks the memory it wrote with the kernel's asynchronous userfaultfd write
+protection, and without it runs much slower (about 1 fps where its memory is copied to the GPU rather than shared
+through udmabuf, above). At start the launcher makes
+the same check the game makes; when it fails, the home screen shows a *Linux Kernel* row under *Play* (*Kernel Too
+Old*, or *Memory Tracking Off* on a newer kernel built without userfaultfd or in a sandbox that blocks it) and Play's
+text says why before you start. `data/logs/launcher.log` has the result in a `write watch:` line, and the game's log
+in a `mem: write watch` line. See [Known issues](known-issues.md#linux-kernel).
+
 ## Look
 
 The window follows the game's options menu, with colours sampled from it: a wooden band across the whole top with

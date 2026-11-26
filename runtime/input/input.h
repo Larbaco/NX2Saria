@@ -30,6 +30,7 @@ void input_menu(int open);
 int input_menu_gate(int *held, int menu_open, uint64_t *buttons, int32_t sticks[4]);
 int input_overlay_gate(int *held, uint64_t *buttons);
 int input_pad_read(uint64_t *buttons, int32_t *lx, int32_t *ly);
+void input_script_buttons(uint64_t *buttons);
 int input_pad_layout(void);
 int input_pad_stick_percent(double pct[2]);
 enum { PAD_LABEL_NONE, PAD_LABEL_A, PAD_LABEL_B, PAD_LABEL_X, PAD_LABEL_Y, PAD_LABEL_CROSS, PAD_LABEL_CIRCLE,

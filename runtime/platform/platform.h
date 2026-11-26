@@ -175,6 +175,7 @@ int plat_mem_reserve(uint64_t addr, uint64_t n, int watch);
 void *plat_mem_alloc(size_t n);
 int plat_mem_commit(uint64_t addr, size_t n, uint32_t *error);
 void plat_mem_commit_error(uint32_t error, char *out, size_t cap);
+int plat_write_watch_note(char *out, size_t cap);
 int plat_mem_decommit(uint64_t addr, uint64_t n);
 int plat_mem_protect(uint64_t addr, uint64_t n, int prot);
 int plat_mem_state(uint64_t addr, uint64_t limit, uint64_t *end);

@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=README.md source-hash=7f5fe5edda1df34eee5eba813fc8b35ed6d2e15b reviewed=no -->
+<!-- translation: lang=pt-BR source=README.md source-hash=eefcf0f022db1512fda509926dcdaccc32f13568 reviewed=no -->
 <h1 align="center">
   <img src="docs/images/nx2saria-banner.png" alt="NX2Saria" width="1200">
 </h1>
@@ -54,6 +54,8 @@ Ele é para quem tem o jogo e pode fazer o dump dele a partir do próprio consol
 - **Taxa de quadros:** 60 fps por padrão, ou um limite de 30 a 240, a taxa de atualização da tela ou sem limite.
 - **Widescreen:** o formato da janela, 21:9 ou 32:9. Os vídeos ficam em 16:9; o HUD e os menus também podem ficar.
 - **Qualidade de imagem:** resoluções de 1080p até 4K e além, upscaling, anti-aliasing, geração de quadros e HDR.
+- **Distância da folhagem:** `foliage_distance` no `nx2saria.ini` desenha grama, arbustos e árvores baixas de metade a
+  três vezes a distância do jogo (jogo 1.1.1; depois de reiniciar).
 - **Controles:** teclado, mouse e controles, remapeamento, vibração e giroscópio.
 - **No jogo:** **F1**, ou **Minus + Plus** no controle, abre as configurações; **F10** mostra o overlay de desempenho. [Controles e menu →](docs/pt-BR/controls.md) · [Todas as configurações →](nx2saria.ini.example) (em inglês)
 

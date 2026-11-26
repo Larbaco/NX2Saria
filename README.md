@@ -75,6 +75,8 @@ date.
 - **Frame rate:** 60 fps by default, or a limit from 30 to 240, the display's refresh rate or unlimited.
 - **Widescreen:** the window's shape, 21:9 or 32:9. Movies stay at 16:9; the HUD and menus can too.
 - **Image quality:** resolutions from 1080p through 4K and beyond, upscaling, anti-aliasing, frame generation and HDR.
+- **Foliage distance:** `foliage_distance` in `nx2saria.ini` draws grass, bushes and low trees from half to three times
+  the game's distance (game 1.1.1; after a restart).
 - **Controls:** keyboard, mouse and gamepads, remapping, rumble and gyro.
 - **In game:** **F1**, or **Minus + Plus** on a gamepad, opens the settings; **F10** shows the performance overlay.
   [Controls and menu →](docs/controls.md) · [Every setting →](nx2saria.ini.example)

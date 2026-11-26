@@ -72,11 +72,14 @@ class Context:
         self.log(f'--- NX2Saria launcher {self.version} ({kind}) in {self.layout.root}; '
                  f'platform {sys.platform}; {system_text()}; {describe()}')
         if sys.platform.startswith('linux'):
-            from .platform.linux import udmabuf_log_line, udmabuf_status
+            from .platform.linux import udmabuf_log_line, udmabuf_status, write_watch_log_line, write_watch_status
             self.udmabuf = udmabuf_status()
             self.log(udmabuf_log_line(self.udmabuf))
+            self.write_watch = write_watch_status()
+            self.log(write_watch_log_line(self.write_watch))
         else:
             self.udmabuf = None
+            self.write_watch = None
         from .toolchain import zstd_missing
         self.zstd_missing = zstd_missing(self.layout)
         if self.zstd_missing:
