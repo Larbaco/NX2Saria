@@ -34,6 +34,11 @@ int ikb_foreground(void) { return foreground; }
 int input_cursor_allowed(void) { return allowed; }
 int input_direct_mouse_selector_active(void) { return selecting; }
 void ikb_mouse_take(int32_t *x, int32_t *y) { ++takes; *x=raw_x; *y=raw_y; raw_x=raw_y=0; }
+static int invert_x, invert_y;
+static float sens_y=1;
+void input_mouse_turned(int32_t dx, int32_t dy, float out[2]) {
+    out[0]=invert_x ? -(float)dx : (float)dx; out[1]=(invert_y ? -(float)dy : (float)dy)*sens_y;
+}
 void input_direct_mouse_sample(int enabled, int32_t *x, int32_t *y) {
     *x=*y=0;
     if(enabled && captured && foreground && allowed) ikb_mouse_take(x,y);
@@ -80,6 +85,10 @@ int main(void) {
     }
     // One count is not discarded by a dead zone.
     ratio=0.5f; raw_x=1; raw_y=0; c.v[9]=c.v[10]=0; hook(&c); assert(scalar(c.v[9])>0);
+    // The counts go through input_mouse_turned.
+    invert_x=1; invert_y=1; sens_y=2; raw_x=100; raw_y=-50; c.v[9]=c.v[10]=0; hook(&c);
+    assert(fabsf(scalar(c.v[9])+2)<1e-6f && fabsf(scalar(c.v[10])+2)<1e-6f);
+    invert_x=invert_y=0; sens_y=1;
     uint64_t stack[4]={0,0x123456789abcdef0ull,0x456789abcdef0123ull,0}; c.sp=(uintptr_t)stack;
     // The flags are in w8 at the site: the game's next instruction stores w8 to +0x418, so memory is not touched.
     uint32_t inactive=0x28, mem=0x77; memcpy(target+0x418,&mem,4);
@@ -254,6 +263,12 @@ int main(void) {
     float one=scalar(c.v[1]);
     sens=2.5; raw_x=1; c.v[1]=c.v[0]=0; hook(&c); assert(fabsf(scalar(c.v[1])-2.5f*one)<1e-6f);
     sens=0; raw_x=1; c.v[1]=c.v[0]=0; hook(&c); assert(c.v[1]==0 && c.v[0]==0); sens=1;
+    // The counts go through input_mouse_turned: each axis inverted on its own, the vertical scaled by its factor.
+    invert_x=1; raw_x=100; raw_y=-50; c.v[1]=c.v[0]=0; hook(&c);
+    assert(fabsf(scalar(c.v[1])+100*(float)INPUT_OOT_COUNT_X)<1e-5f && fabsf(scalar(c.v[0])-50*(float)INPUT_OOT_COUNT_Y)<1e-5f);
+    invert_x=0; invert_y=1; sens_y=0.5f; raw_x=100; raw_y=-50; c.v[1]=c.v[0]=0; hook(&c);
+    assert(fabsf(scalar(c.v[1])-100*(float)INPUT_OOT_COUNT_X)<1e-5f && fabsf(scalar(c.v[0])+25*(float)INPUT_OOT_COUNT_Y)<1e-5f);
+    invert_y=0; sens_y=1;
     // The stick's own processed value stays and the mouse adds to it.
     { float px=0.25f, py=-0.5f; uint32_t b; memcpy(&b,&px,4); c.v[1]=b; memcpy(&b,&py,4); c.v[0]=b; }
     raw_x=10; raw_y=0; hook(&c);
@@ -291,6 +306,7 @@ int main(void) {
     now+=150000001; assert(!input_direct_mouse_active());
     puts("direct mouse 1.1.1: register contract, displaced store and load, equal turn at every frame rate and stick speed passed");
     puts("direct mouse 1.1.1: single count, sensitivity, stick kept, idle bit, reset pause, capture and mode checks passed");
+    puts("direct mouse 1.1.1: inverted x, inverted y and the vertical factor reach the camera passed");
 }
 '''
 

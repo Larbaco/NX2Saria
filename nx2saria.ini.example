@@ -1147,6 +1147,14 @@
 # turns the camera about 0.08 degrees at 1; the game's own camera sensitivity (Options) scales it as it scales the
 # stick. The Controls tab changes this while the game runs.
 # mouse_sens = 1
+# 1 turns the mouse camera the other way round: mouse_invert_x left and right, mouse_invert_y up and down (moving the
+# mouse forward then looks down). Both modes; the item wheels and the menus keep the mouse as it is. Default 0; no menu
+# row, changes while the game runs take effect at once.
+# mouse_invert_x = 0
+# mouse_invert_y = 0
+# The mouse camera's vertical turn as a factor of its horizontal one (0.1 to 10): 0.5 turns up and down half as fast as
+# left and right, mouse_sens still sets both. Default 1; no menu row, changes take effect at once.
+# mouse_sens_y = 1
 # The mouse in the game's own menus (game 1.1.1 and 1.4.3): the button under the pointer is selected, left click is A,
 # right click is B, the wheel scrolls. Only while the mouse or a key was used last; a gamepad sees the menus unchanged.
 # 0 turns it off. The Controls tab changes this while the game runs.

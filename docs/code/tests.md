@@ -2184,11 +2184,11 @@ The prompts step, the settings file and what goes beside the game:
   nor the prompts); a kit without art skips it, the folders an earlier build drew stay, and the record says there is
   no art. The game folder's record of where the prompts came from ("drawn from Test pack 2 (CC0 1.0)"), which the
   game's log repeats, is written again when the step is skipped. A setting that is no key binding changes nothing.
-  When the tool fails the build fails and the record says why there are no new prompts.
-- The rebuild an update ends with (`make_game.py --rebuild` under a newer kit, with another lifter and another
   A `bind_` line adds the remapped buttons to the record ("; the keyboard prompts follow 1 remapped button (A: f)",
   with a pad remap "the gamepad prompts follow 1 remapped button (B: north), the keyboard prompts 1 (A: f)"), also
   when the step is skipped.
+  When the tool fails the build fails and the record says why there are no new prompts.
+- The rebuild an update ends with (`make_game.py --rebuild` under a newer kit, with another lifter and another
   version: the lift, the compile, the shaders step and the button prompts all run again) leaves the game folder's
   settings file as the player has it, byte for byte, with no copy, backup or temporary file beside it. The build reads
   the file (the `bind_` lines for the prompts, `shader_carry` for the shaders step) and never writes it, nor makes one
@@ -3523,7 +3523,9 @@ truly still (60 s, no bias).
 Checks the direct camera hook's register contract and raw-count routing without game data
 (`python tests/mouse_direct_check.py --cc <clang>`; the `--help` text is the string `DESCRIPTION`). One block of
 stand-ins for the rest of the runtime serves both harnesses. The sites are Ocarina 1.1.1's
-(`recomp/patches-v111.txt`, set `mouse_direct`): the two sites of `camera_input_oot` and `camera_activity_oot`.
+(`recomp/patches-v111.txt`, set `mouse_direct`): the two sites of `camera_input_oot` and `camera_activity_oot`. The
+stand-in of `input_mouse_turned()` applies `invert_x`, `invert_y` and `sens_y` as `input_mouse_turn()` does: both
+harnesses check that the counts reach the camera through it (inverted x, inverted y, half and double vertical).
 
 ## `tests/mouse_stick_check.c`
 
@@ -3539,6 +3541,9 @@ factor in it. `tests/mouse_stick_check.py` builds and runs it with `runtime/inpu
 - A fast flick reaches full tilt at every camera speed, in each direction. The case that was wrong: at camera speed 1.5
   a flick stopped at two thirds of full tilt, the top speed of camera speed 1.
 - Nothing to divide by: no deflection.
+- `input_mouse_turn()`: with the defaults the counts come out unchanged (up to `INT32_MIN` and `INT32_MAX`); each
+  inversion negates its axis alone; the vertical factor scales y alone, held to 0.1..10, and one that is not a number
+  is 1. The stick deflection of turned counts is that of the counts turned by hand.
 
 ## `tests/movie_timeline_check.py`
 

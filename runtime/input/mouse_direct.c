@@ -160,15 +160,17 @@ static void camera_input(Cpu *c) {
         }
         if (isfinite(ratio) && ratio > 0 && sensitivity > 0 && (dx || dy)) {
             if (accept) mouse_input_object = c->x[20];
+            float t[2];
+            input_mouse_turned(dx, dy, t);
             float x, y;
             memcpy(&x, &c->v[9], sizeof x);
             memcpy(&y, &c->v[10], sizeof y);
             float scale = 0.01f * sensitivity / ratio;
-            next.motion[0] = dx * scale * (flags & 2 ? -1 : 1);
-            next.motion[1] = -dy * scale * (flags & 4 ? -1 : 1);
-            next.angle[0] = -dx * 0.08f * sensitivity * (flags & 2 ? -1 : 1);
-            next.angle[1] = dy * 0.08f * sensitivity * (flags & 4 ? -1 : 1);
-            if (accept) { x += dx * scale; y -= dy * scale; }
+            next.motion[0] = t[0] * scale * (flags & 2 ? -1 : 1);
+            next.motion[1] = -t[1] * scale * (flags & 4 ? -1 : 1);
+            next.angle[0] = -t[0] * 0.08f * sensitivity * (flags & 2 ? -1 : 1);
+            next.angle[1] = t[1] * 0.08f * sensitivity * (flags & 4 ? -1 : 1);
+            if (accept) { x += t[0] * scale; y -= t[1] * scale; }
             uint32_t xb, yb;
             memcpy(&xb, &x, sizeof xb);
             memcpy(&yb, &y, sizeof yb);
@@ -329,8 +331,10 @@ static void camera_input_oot(Cpu *c) {
         float per = frames * cam_speed_applied();
         if (accept && sensitivity > 0 && isfinite(per) && per > 0 && (dx || dy)) {
             mouse_input_object = object;
-            add[0] = dx * (float)INPUT_OOT_COUNT_X * sensitivity / per;
-            add[1] = -dy * (float)INPUT_OOT_COUNT_Y * sensitivity / per;
+            float t[2];
+            input_mouse_turned(dx, dy, t);
+            add[0] = t[0] * (float)INPUT_OOT_COUNT_X * sensitivity / per;
+            add[1] = -t[1] * (float)INPUT_OOT_COUNT_Y * sensitivity / per;
             float nx = x + add[0], ny = y + add[1];
             uint32_t xb, yb;
             memcpy(&xb, &nx, sizeof xb);

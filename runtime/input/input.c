@@ -310,6 +310,27 @@ static float mouse_sens_get(void) {
     return mouse_sens;
 }
 
+void input_mouse_turned(int32_t dx, int32_t dy, float out[2]) {
+    input_mouse_turn(dx, dy, cfg_bool("NX2SARIA_MOUSE_INVERT_X"), cfg_bool("NX2SARIA_MOUSE_INVERT_Y"),
+                     (float)cfg_double("NX2SARIA_MOUSE_SENS_Y"), out);
+}
+
+static unsigned mouse_turn_seen = ~0u;
+static int mouse_turn_logged[2];
+static float mouse_turn_y = 1;
+
+static void mouse_turn_log(void) {
+    unsigned ver = cfg_version();
+    if (ver == mouse_turn_seen) return;
+    mouse_turn_seen = ver;
+    float one[2];
+    input_mouse_turn(0, 1, 0, 0, (float)cfg_double("NX2SARIA_MOUSE_SENS_Y"), one);
+    int ix = cfg_bool("NX2SARIA_MOUSE_INVERT_X"), iy = cfg_bool("NX2SARIA_MOUSE_INVERT_Y");
+    if (ix == mouse_turn_logged[0] && iy == mouse_turn_logged[1] && one[1] == mouse_turn_y) return;
+    mouse_turn_logged[0] = ix, mouse_turn_logged[1] = iy, mouse_turn_y = one[1];
+    rt_log("input: mouse camera: mouse_invert_x = %d, mouse_invert_y = %d, mouse_sens_y = %.2f (the vertical turn is "
+           "%.2f times the horizontal; the default is 0, 0, 1)", ix, iy, one[1], one[1]);
+}
 
 static int walk_key = KEY_NONE;
 static float walk_scale = 0.51f;
@@ -391,7 +412,9 @@ static void mouse_camera(int32_t out[2], int selector) {
         if (fr != frame) {
             double dt = age < 0.004 ? 0.004 : age > 0.1 ? 0.1 : age;
             ikb_mouse_take(&dx, &dy);
-            input_mouse_stick(dx, dy, dt, mouse_sens_get(), cam_speed_applied(), held);
+            float turned[2];
+            input_mouse_turned(dx, dy, turned);
+            input_mouse_stick(turned[0], turned[1], dt, mouse_sens_get(), cam_speed_applied(), held);
             frame = fr;
             t0 = now;
         } else if (age > 0.1) {
@@ -1242,6 +1265,7 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
             b |= input_map_buttons(down);
             int32_t k[2];
             walk_get();
+            mouse_turn_log();
             int walk = walk_key != KEY_NONE && down[walk_key];
             input_map_stick(down, 0, k);
             if (walk) k[0] = (int32_t)(k[0] * walk_scale), k[1] = (int32_t)(k[1] * walk_scale);

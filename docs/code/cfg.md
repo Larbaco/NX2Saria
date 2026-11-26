@@ -40,6 +40,8 @@ Cfg_reload_file: the file's lines as a list of (key, value), a repeated key keep
 - `BOOT_MAP`, `BOOT_MAP_SLOT`, `BOOT_MAP_AGE`, `BOOT_MAP_TIME`: the game started in an area from a save (`boot_map.c`)
 - `MOTION_GUARD_DEGREES`, `MOTION_POLICY_TRACE`, `SELECTIVE_MOTION`, `SELECTIVE_MOTION_RAW`: `motion_owner.c`, `vk_fg_pose.inc`
 - `SKIN_MOTION`: `vk_skin_motion.inc`
+- `MOUSE_INVERT_X`, `MOUSE_INVERT_Y`, `MOUSE_SENS_Y`: `input.c` `input_mouse_turned()` and `mouse_turn_log()`: the mouse
+  camera's inversions and vertical factor, in the ini only (no menu row).
 - `GYRO_CALIBRATION`, `GYRO_DEADZONE`, `GYRO_TURN_SENS`, `GYRO_TILT_SENS`, `GYRO_TURN_INVERT`, `GYRO_TILT_INVERT`, `TEST_PAD_GYRO`: `input.c` motion_options_refresh and test_pad_make (TEST_PAD_GYRO): the gyro
 - `TRACKER_API`, `TRACKER_API_PORT`: the read-only view of the game's memory for a map tracker (`tracker_api.c`)
 - `TEXUP_LOG_MS`, `DYN_RES`, `DYN_RES_TARGET`, `DYN_RES_STEP`, `DYN_RES_MIN`, `TEXTURE_DETAIL`, `VRAM_USE`: vram_use: the removed Video memory use row, read by nothing

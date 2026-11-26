@@ -219,6 +219,7 @@ State:
 - `pad_sdl`: the SDL buttons of the gamepad inputs (`PAD_*` of `input_map.h`), by position; `PAD_ZL` and `PAD_ZR` are
   the triggers (axes).
 - `mouse_sens`: `NX2SARIA_MOUSE_SENS`, 0 = mouse camera off, live (`cfg_version`); clamped to 0..10.
+- `mouse_turn_seen`, `mouse_turn_logged`, `mouse_turn_y`: what `mouse_turn_log()` last said.
 - `stick_dead`: `input_pad_deadzone()` of the left and right stick, live (`cfg_version`).
 
 ### `script_load()`, `script_apply()`
@@ -285,6 +286,19 @@ The ini takes the key names the Controls tab writes; a hand-written line may spe
 The default scale is 0.51 rather than 0.5: a keyboard sample is 32767, and 32767 * 0.5 = 16383 falls one short of
 `stick_bits()`' `STICK_DIR` (16384), which would leave the game's stick-direction bits clear while the walk key is held.
 The value in the settings table carries that default; this code only rejects what the table's range does not allow.
+
+### `input_mouse_turned()`, `mouse_turn_log()`
+
+`input_mouse_turned()`: the mouse's counts with `NX2SARIA_MOUSE_INVERT_X`, `NX2SARIA_MOUSE_INVERT_Y` and
+`NX2SARIA_MOUSE_SENS_Y` applied (`input_mouse_turn()`), for the camera in both mouse modes: the stick mode here
+(`mouse_camera()`) and the direct mode in `runtime/input/mouse_direct.c`. Read at every call, so a change is live. The
+selectors (the wheel and the quick lists) and the menus' pointer take the counts as they are: inverting them would turn
+a wheel the wrong way round. An input recording (`input_record`) keeps the counts as they are too, and a replay goes
+through the same settings.
+
+`mouse_turn_log()`: from the poll, one line `input: mouse camera: mouse_invert_x = ..., mouse_invert_y = ...,
+mouse_sens_y = ...` when the three differ from the defaults at start, and again when they change while the game runs.
+With the defaults nothing is said.
 
 ### `mouse_camera()`
 
@@ -924,9 +938,16 @@ folder made by hand) or its first line is empty.
 table, presses. `input_map_held()`: 1 when a key of `action` is held. `input_map_stick()`: x and y of the stick (0
 left, 1 right) from its four direction actions; up is +y; a diagonal is scaled to the unit circle.
 
+### `input_mouse_turn()`
+
+The mouse's counts for the camera: x negated with `invert_x`, y negated with `invert_y` and then multiplied by
+`sens_y`, held to 0.1..10 (a value that is not a number is 1). The defaults (0, 0, 1) give the counts as floats,
+unchanged. A factor on the vertical alone keeps `NX2SARIA_MOUSE_SENS` the one speed of both axes. In floats, so a
+fraction of a count is not lost to rounding before the camera scales it. `tests/mouse_stick_check.c` checks it.
+
 ### `input_mouse_stick()`
 
-Mouse motion in raw counts over `dt_s` seconds to right-stick deflection: full deflection at 3000 / `sens` counts a
+Mouse motion in counts (`input_mouse_turn()`'s, so floats) over `dt_s` seconds to right-stick deflection: full deflection at 3000 / `sens` counts a
 second. `cam` is the factor the game multiplies the right stick's turn rates by (`cam_speed_applied`). The deflection is
 divided by it, so the turn per count stays what `sens` says, and only then clamped: a clamp taken first would hold the
 mouse's fastest turn at the game's unmultiplied top speed, however high the factor. Clamped to the unit circle; up
@@ -1548,6 +1569,9 @@ camera input by its 30 Hz frame ratio later. The mouse is divided by that exact 
 an equal distance of mouse motion gives equal input at every frame rate. Frame generation's frames are not the game's
 (`frame_step_game_hz`).
 
+The counts go through `runtime/input/input.c` `input_mouse_turned()` (the player's inversions and vertical factor) before
+the motion, the angles and the stick values are made from them.
+
 ### `orbit_begin()`
 
 Free camera has another signed-square curve for its vertical axis, plus mode-dependent velocity filters. Only this mouse
@@ -1595,7 +1619,9 @@ gives degrees per count.
 `camera_input_oot()`: the game multiplies the processed stick by the frames it steps and by its camera speeds, which
 `NX2SARIA_STICK_SENS` scales (`runtime/input/camera_speed.c`): divided by both, a count turns the camera by the same
 angle at every frame rate and stick speed. Nothing after the site clamps the sum, so a fast flick is not cut short. The
-displaced instruction is `str s1, [x20, #0x538]`.
+displaced instruction is `str s1, [x20, #0x538]`. The counts go through `input_mouse_turned()` first, as in
+`camera_input()`: the player's inversions and vertical factor come before the game's own inversion of the flags, which
+the player sets in the game's options.
 
 `camera_activity_oot()`: the idle test follows the first site and already counts the mouse's part, but one slow count
 adds less than the game's 10% threshold: an update the mouse moved in is not idle. The site is the displaced

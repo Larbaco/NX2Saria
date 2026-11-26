@@ -16,6 +16,7 @@ typedef struct { float distance; uint64_t pulse_until, neutral_until; int direct
 void input_direct_mouse_row(int32_t dx, float sensitivity, uint64_t now, InputMouseRow *row, int32_t out[2]);
 int input_direct_mouse_selector_active(void);
 void input_direct_mouse_sample(int enabled, int32_t *dx, int32_t *dy);
+void input_mouse_turned(int32_t dx, int32_t dy, float out[2]);
 void menu_cursor_poll(uint64_t *buttons);
 int menu_cursor_pointer(void);
 void menu_mouse_poll(uint64_t *buttons);
