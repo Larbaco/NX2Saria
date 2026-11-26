@@ -2258,7 +2258,9 @@ static void pause_tab_header(uint32_t w, uint32_t h, float scale, bool current) 
     ImFontAtlas *atlas = ImGui::GetIO().Fonts;
     ImFont *font = atlas->Fonts.Size ? atlas->Fonts[0] : ImGui::GetFont();
     const char *label = pause_tab_label();
-    float px = bh * 0.28f;
+    bool cjk = false;
+    for (const unsigned char *c = (const unsigned char *)label; *c; c++) cjk |= *c >= 0xe3 && *c <= 0xe9;
+    float px = bh * (cjk ? 0.38f : 0.28f);
     float wide = font->CalcTextSizeA(px, FLT_MAX, 0, label).x;
     if (wide > bw * 0.94f) px *= bw * 0.94f / wide, wide = bw * 0.94f;
     const float plate = fminf(bw, wide + bh * 0.5f), top = r[1] * h, bottom = cy + bh * 0.545f;
