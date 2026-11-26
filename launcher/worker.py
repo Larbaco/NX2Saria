@@ -11,7 +11,7 @@ from concurrent.futures import Future
 from functools import partial
 from pathlib import Path
 
-from . import build, build_recovery, commit, feed, game_session, gamefiles, jobs, locks, mods, mods_job, paths, play, saves, steam, telemetry, updater, versions, winsys
+from . import build, build_recovery, commit, feed, game_session, gamefiles, gameini, jobs, locks, mods, mods_job, paths, play, saves, steam, telemetry, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context, shorten_always
 from .inspect_installation import inspect_installation
@@ -370,11 +370,31 @@ def add_to_steam(ctx, game, dump, request):
 
 def installed_settings(ctx):
     settings = ctx.settings
+    game = settings['game_dir']
+    discord = None
+    if game and Path(game).is_dir():
+        try:
+            discord = gameini.get(game, 'discord_rpc', migrate=False) != '0'
+        except OSError:
+            discord = True
     return {**{key: settings[key] for key in SETTINGS_FLAGS},
             'game_dir': settings['game_dir'], 'dump': settings['dump'],
             'channel': 'preview' if settings['channel'] == 'preview' else 'stable',
             'warn_low_commit': settings['warn_low_commit'] if os.name == 'nt' else None,
-            'uninstall_available': winsys.uninstall_available(ctx.layout)}
+            'uninstall_available': winsys.uninstall_available(ctx.layout), 'discord_status': discord}
+
+
+def write_discord_setting(ctx, value):
+    game = ctx.settings['game_dir']
+    if type(value) is not bool:
+        return None, 'invalid_preference'
+    if not game or not Path(game).is_dir() or saves.game_running(game):
+        return None, 'settings_unavailable'
+    try:
+        gameini.put(game, 'discord', 'discord_rpc', '1' if value else '0')
+    except OSError:
+        return None, 'write_failed'
+    return {'enabled': value}, None
 
 
 def write_installed_setting(ctx, request):
@@ -1206,7 +1226,7 @@ def main(argv=None):
                 emit({'id': request['id'], 'result': {'status': status}})
                 if status == 'scheduled':
                     return 0
-            elif request.get('method') in ('settings_info', 'settings_preference', 'settings_dump', 'settings_open'):
+            elif request.get('method') in ('settings_info', 'settings_preference', 'settings_dump', 'settings_open', 'settings_discord'):
                 method = request['method']
                 if method == 'settings_info':
                     emit({'id': request['id'], 'result': installed_settings(ctx)})
@@ -1217,6 +1237,10 @@ def main(argv=None):
                     action = f'open target={target}' if target in ('game', 'logs') else 'open'
                 elif lock_state != 'held' or run or job or pending or build_recovery.blocked(layout):
                     action, result, refusal = 'change', None, 'settings_unavailable'
+                elif method == 'settings_discord':
+                    value = request.get('value')
+                    result, refusal = write_discord_setting(ctx, value)
+                    action = f'discord enabled={value}' if type(value) is bool else 'discord'
                 elif method == 'settings_dump':
                     action = 'dump'
                     result, refusal = write_installed_dump(ctx, request)

@@ -6,11 +6,11 @@ PREFIXES = ('NX2SARIA_', 'NX2NAVI_')
 BOM = '﻿'
 
 
-def _path(game_dir):
+def _path(game_dir, migrate=True):
     folder = Path(game_dir)
     current, legacy = folder / 'nx2saria.ini', folder / 'nx2navi.ini'
     if not current.exists() and legacy.exists():
-        if not legacy.is_file():
+        if not migrate or not legacy.is_file():
             return legacy
         try:
             if os.name == 'nt':
@@ -30,9 +30,9 @@ def _key(text):
     return k
 
 
-def _text(game_dir):
+def _text(game_dir, migrate=True):
     try:
-        with open(_path(game_dir), encoding='utf-8', errors='surrogateescape', newline='') as f:
+        with open(_path(game_dir, migrate), encoding='utf-8', errors='surrogateescape', newline='') as f:
             return f.read()
     except FileNotFoundError:
         return ''
@@ -54,9 +54,9 @@ def _setting(line, choices=False):
     return _key(k), v
 
 
-def get(game_dir, key, choices=False):
+def get(game_dir, key, choices=False, *, migrate=True):
     want, value = _key(key), ''
-    for line in _text(game_dir).splitlines():
+    for line in _text(game_dir, migrate).splitlines():
         kv = _setting(line, choices)
         if kv and kv[0] == want and kv[1]:
             value = kv[1]

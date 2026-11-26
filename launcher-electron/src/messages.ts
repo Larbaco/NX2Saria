@@ -294,6 +294,9 @@ const catalogue: ReadonlyArray<readonly [string, string, string, string]> = [
   ["Feche o jogo ou aguarde a tarefa atual terminar.", "Close the game or wait for the current task to finish.", "Закройте игру или дождитесь завершения текущей задачи.", "请关闭游戏或等待当前任务结束。"],
   ["A pasta selecionada não pode ser removida com segurança. Desinstale mantendo o jogo.", "The selected folder cannot be safely removed. Uninstall while keeping the game.", "Выбранную папку нельзя безопасно удалить. Удалите лаунчер, сохранив игру.", "无法安全移除所选文件夹。请卸载启动器并保留游戏。"],
   ["Não foi possível desinstalar o NX2Saria.", "Could not uninstall NX2Saria.", "Не удалось удалить NX2Saria.", "无法卸载 NX2Saria。"],
+  ["Atividade no Discord", "Discord activity", "Активность в Discord", "Discord 活动状态"],
+  ["O jogo mostra o tempo de sessão no Discord quando você configura seu próprio ID de aplicativo. Você também pode mudar essa opção no menu do jogo.", "The game shows play time in Discord when you configure your own application ID. You can also change this option in the game's menu.", "Если вы укажете свой ID приложения, игра покажет в Discord время сеанса. Этот параметр можно изменить и в меню игры.", "配置自己的应用 ID 后，游戏会在 Discord 中显示游玩时长。你也可以在游戏菜单中更改此选项。"],
+  ["Não foi possível mudar a atividade no Discord. Feche o jogo e tente novamente.", "Could not change Discord activity. Close the game and try again.", "Не удалось изменить активность в Discord. Закройте игру и попробуйте снова.", "无法更改 Discord 活动状态。请关闭游戏后重试。"],
 ];
 
 export const messageTables: Record<Locale, Messages> = {

@@ -694,6 +694,19 @@ app.whenReady().then(() => {
       throw new Error('Save unsuccessful');
     }
   });
+  ipcMain.handle('settings-discord', async (event, value) => {
+    const active = settingsWorker(event, true);
+    if (typeof value !== 'boolean') throw new Error('Invalid game preference');
+    try {
+      const result = await active.request('settings_discord', { value });
+      if (active !== worker || result?.enabled !== value) throw new Error('Save unsuccessful');
+      log?.write('settings', `discord enabled=${value} result=saved`);
+      return value;
+    } catch {
+      log?.write('settings', `discord enabled=${value} result=save_failed`);
+      throw new Error('Save unsuccessful');
+    }
+  });
   ipcMain.handle('settings-dump', async event => {
     const active = settingsWorker(event, true);
     const current = parseInstalledSettings(await active.request('settings_info'));

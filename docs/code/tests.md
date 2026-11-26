@@ -5996,6 +5996,12 @@ loopback service. HTTP 400 suppresses future offers in that worker. The Linux
 window reads the preview and declines, and the portable test repeats the flow
 with the extracted package and published app.
 
+The Discord worker test reads a legacy INI without moving it, refuses to
+write during an interrupted job, and changes one value while preserving
+CRLF, the configured ID, and the launcher settings. The Linux locale
+window switches the preference and compares the game INI and launcher
+settings.
+
 The installed settings test changes the update channel, check and install flags,
 and cache preference while keeping unrelated keys. Windows also exercises the
 low-commit warning setting. An invalid dump leaves the stored choice unchanged;

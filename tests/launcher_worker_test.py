@@ -1463,6 +1463,45 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(worker.wait(timeout=15), 0)
         self.assertEqual(len(payloads), 2)
 
+    def test_discord_preference_preserves_the_game_ini_and_refuses_running_work(self):
+        game = self.root / 'game'
+        game.mkdir()
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(game), 'telemetry': 'off'}))
+        before = settings.read_bytes()
+        legacy = game / 'nx2navi.ini'
+        current = game / 'nx2saria.ini'
+        original = b'[game]\r\nother = 5\r\n[discord]\r\ndiscord_rpc = 0\r\ndiscord_app_id = synthetic\r\n'
+        legacy.write_bytes(original)
+        worker, _ = self.start_worker()
+
+        def request(request_id, **fields):
+            worker.stdin.write(json.dumps({'id': request_id, **fields}) + '\n')
+            worker.stdin.flush()
+            return json.loads(worker.stdout.readline())
+
+        self.assertIs(request(2, method='settings_info')['result']['discord_status'], False)
+        self.assertEqual(legacy.read_bytes(), original)
+        self.assertFalse(current.exists())
+        self.assertEqual(request(3, method='settings_discord', value='on')['error']['code'], 'invalid_preference')
+        marker = settings.with_name('job-running.json')
+        marker.write_text('{}')
+        self.assertEqual(request(4, method='settings_discord', value=True)['error']['code'], 'settings_unavailable')
+        self.assertEqual(legacy.read_bytes(), original)
+        marker.unlink()
+        self.assertEqual(request(5, method='settings_discord', value=True)['result'], {'enabled': True})
+        self.assertEqual(current.read_bytes(), original.replace(b'discord_rpc = 0', b'discord_rpc = 1'))
+        self.assertEqual(settings.read_bytes(), before)
+        log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
+        self.assertIn('worker: settings discord enabled=True result=saved', log)
+        self.assertNotIn('discord_app_id', log)
+        from types import SimpleNamespace
+        from launcher import saves, worker as worker_module
+        with patch.object(saves, 'game_running', return_value=True):
+            self.assertEqual(worker_module.write_discord_setting(SimpleNamespace(settings={'game_dir': str(game)}), False),
+                             (None, 'settings_unavailable'))
+        self.assertEqual(current.read_bytes(), original.replace(b'discord_rpc = 0', b'discord_rpc = 1'))
+
     def test_installed_settings_write_only_allowed_fields_and_open_known_folders(self):
         from fixtures.worker_install_dump import write_dump
         from launcher.platform import game_executable
@@ -1517,7 +1556,7 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('settings', hello['result']['capabilities'])
         self.assertEqual(view['result'], {key: initial[key] for key in (
             'game_dir', 'dump', 'channel', 'auto_check', 'auto_install', 'keep_cache')} |
-            {'warn_low_commit': True if os.name == 'nt' else None, 'uninstall_available': False})
+            {'warn_low_commit': True if os.name == 'nt' else None, 'uninstall_available': False, 'discord_status': True})
         self.assertEqual([frame['result']['key'] for frame in [channel, auto_install, auto_check, keep_cache]],
                          ['channel', 'auto_install', 'auto_check', 'keep_cache'])
         if os.name == 'nt':

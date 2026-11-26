@@ -36,6 +36,7 @@ contextBridge.exposeInMainWorld('launcher', {
   uninstall: (removeGame: boolean) => ipcRenderer.invoke('uninstall', removeGame),
   uninstallCancelled: () => ipcRenderer.send('uninstall-cancelled'),
   settingsInfo: () => ipcRenderer.invoke('settings-info'),
+  settingsDiscord: (value: boolean) => ipcRenderer.invoke('settings-discord', value),
   settingsPreference: (key: string, value: boolean | string) => ipcRenderer.invoke('settings-preference', key, value),
   settingsDump: () => ipcRenderer.invoke('settings-dump'),
   settingsOpen: (target: string) => ipcRenderer.invoke('settings-open', target),

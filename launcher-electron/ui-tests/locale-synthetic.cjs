@@ -65,6 +65,11 @@ async function main() {
     await layout('en-US', 'Installation found', 'Settings');
     await language.selectOption('pt-BR');
     await layout('pt-BR', 'Instalação encontrada', 'Configurações');
+    const discord = page.getByRole('checkbox', { name: 'Atividade no Discord' });
+    assert.equal(await discord.isChecked(), true);
+    await discord.uncheck();
+    await page.waitForFunction(() => !document.querySelector('#settings-discord').matches(':disabled'));
+    assert.match(await fs.readFile(path.join(game, 'nx2saria.ini'), 'utf8'), /discord_rpc = 0/);
     assert.equal(await fs.readFile(settings, 'utf8'), initial);
     assert.equal(JSON.parse(await fs.readFile(preferences, 'utf8')).locale, 'pt-BR');
     await app.close();

@@ -2923,6 +2923,12 @@ manual check reads the selected channel. Opening the game or log folder accepts 
 named target, resolved in Python with the existing desktop opener. This is
 available in read-only Settings during game or job recovery.
 
+The Discord activity control reads `discord_rpc` without writing the old
+INI name. `launcher/gameini.py` `get()` accepts that read-only path choice.
+An explicit change enters `launcher/worker.py` `write_discord_setting()`,
+which refuses if the game is running and uses the same INI-format writer
+as Tk. The application ID is neither read for display nor logged.
+
 ### Electron Mods
 
 The worker reads the ordered list with `mods.scan()` and the same conflict winners as Tk.
