@@ -179,7 +179,8 @@ while open, logged per 600 frames. `kGold` is the gold of the title and its Trif
 
 ### `change_open()`
 
-`want` 0 or 1 sets the state; -1 flips it. Returns the new state. The window events queued before the change go with
+`want` 0 or 1 sets the state; -1 flips it; 2 opens the menu as the pause menu's settings tab, unless it is already open
+(then it returns 0 and nothing changes), so the mode and the open state change together under `open_lock`. Returns the new state. The window events queued before the change go with
 it: keys pressed just before a close would otherwise reach the menu when it next opens.
 
 `g_pause_tab`: the menu is open as the pause menu's settings tab (`runtime/ui/pause_tab.c`). The change tells
@@ -849,7 +850,8 @@ window thread follows `FULLSCREEN` / `WINDOW_SIZE`, and `VK_PRESENT` follows at 
 ### `pad_events()`
 
 In the tab mode the buttons of `NX2SARIA_INPUT_SCRIPT` are added (`runtime/input/input.c` `input_script_buttons()`), so a
-test run reaches the tab's rows; Plus, which has no ImGui key, is kept as a press in `g_pad_plus`.
+test run reaches the tab's rows; Plus, which has no ImGui key, is kept as a press in `g_pad_plus`, only in the tab
+mode and dropped on a reset, so a Plus from another menu never closes the tab.
 
 ### `apply_confirm()`
 
@@ -944,7 +946,8 @@ category's width and 0.72 times its height, and the text a quarter of its height
 ### `layout_pause_tab()`
 
 The open tab: one window over the page box of `runtime/ui/pause_tab.c` `plus_tick()`, with the rows, the box "Apply your
-changes?" and the boxes after an Apply. The first row takes the cursor on the first frame. L (or Q), B (or Esc) and
+changes?" and the boxes after an Apply. The first row takes the cursor on the first frame. `g_modal` is cleared at the
+start of each frame, as `restart_confirm()` does for the settings menu: the boxes set it while they are up. L (or Q), B (or Esc) and
 Plus leave it as Continue leaves the settings menu (`leave_menu()`), unless a box is open. It closes by itself when the
 pause menu's page has not been seen for `SEEN_MS` (the pause menu closed under it), and with
 `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=fail` 30 frames after it opened.
@@ -2894,7 +2897,8 @@ of categories, and +0x330, their objects (`HDR_COUNT`, `HDR_CATS`), each with it
 a layout's name at +0xf8 (`LYT_NAME`).
 
 `PauseTabView`: the tab's box in the header and the page's box, as fractions of the picture (x0, y0, x1, y1, from the
-top left), the name's alpha, and whether each was seen lately (`header` within 100 ms, `page_ok` within `SEEN_MS`, 400).
+top left), the name's alpha, and whether each was seen lately (`header` within 100 ms, `page_ok` within `SEEN_MS`,
+1500: a shader compile can hold the game's interface for a moment without the pause menu having closed).
 
 State between the game's interface thread, the pad read and the present thread: `g_armed_ms`, the last time the System
 tab was ready for R (taken as true for `ARMED_MS`, 250, so a screen that stops updating lets go by itself); `g_req`, a
@@ -2909,7 +2913,8 @@ A word of `NX2SARIA_PAUSE_SETTINGS_TAB_TEST`.
 ### `sites_on()`, `wanted()`, `pause_tab_on()`
 
 The tab needs the screens' site, whose sets are `menu_mouse` and `quit_menu`, game 1.1.1, and
-`NX2SARIA_PAUSE_SETTINGS_TAB` set to other than 0.
+`NX2SARIA_PAUSE_SETTINGS_TAB` set to other than 0. Read once: a settings reload that turned it off while the tab was
+open would stop the updates that give the System page back.
 
 ### `pause_tab_name_kind()`, `start_line()`
 
@@ -2933,6 +2938,11 @@ The line of `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=log`: why R is or is not taken, wh
 
 The pause menu is open, shown, not blocked and its controller takes input; the focused entry of player 1; the
 `PaSystemMenu_00` layout above the focused button, if any (the walk stops at the pause menu's own layout).
+
+### `drop_system()`
+
+Lets go of the System page's layout. A page it hid gets its shown bit back first, if the pane still belongs to that
+layout and the layout is still `PaSystemMenu_00`.
 
 ### `plus_tick()`
 
@@ -2959,13 +2969,15 @@ header by their layouts' names.
 ### `pause_tab_view()`, `pause_tab_request_take()`, `pause_tab_set_open()`, `pause_tab_applied()`
 
 For `runtime/ui/menu.cpp`: the boxes, the request to open (taken once), the open state with the reason it closed and
-the time it was open, and the Apply line.
+the time it was open, and the Apply line. A close drops a request still waiting, so the tab never opens again by
+itself.
 
 ### `pause_tab_poll()`
 
 Once per pad read, with the polls of the mouse in the menus and Quit Game (`runtime/input/input.c` `input_poll()`). A
 new R while armed is taken away from the game and asks the menu to open the tab; it stays taken while held
-(`runtime/ui/pause_tab_core.h` `pt_press()`). A new left click on the tab's name while armed asks the same. The pad is
+(`runtime/ui/pause_tab_core.h` `pt_press()`). A new left click on the tab's name while armed asks the same; clicks counted while the poll did not run (the menu
+open, the poll skipped) are not new. No request is made while one waits. The pad is
 read on more than one thread: one at a time decides (`busy`), the others drop R while it is held taken.
 
 ## `runtime/ui/pause_tab_core.h`
