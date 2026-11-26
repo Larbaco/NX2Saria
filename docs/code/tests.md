@@ -4058,6 +4058,20 @@ cannot drift apart. No game files, no GPU.
 - Version 1: records right after the 16 bytes, and nothing about where they came from.
 - Another version, record size or magic: not read.
 
+## `tests/pause_tab_check.c`
+
+The settings tab in the game's pause menu without the game (`runtime/ui/pause_tab_core.h`); `tests/pause_tab_check.py`
+builds and runs it, and with `--romfs <folder>` reads the game's own layouts (`tools/layout_dump.py`) and checks that
+the panes the tab writes and the parents it relies on are as `PT_SYSTEM_TREE` and `PT_CATEGORY_TREE` say, and that
+`MenuOverlay_00` has four categories.
+
+- R: held from before the arming goes to the game; a new R while armed opens and is taken until let go.
+- The tab's box: past the game's R icon at 16:9 and with the categories spread, as large as a category; none from
+  categories in the wrong order or empty.
+- The page is settled only in the middle and still.
+- The panes' shapes, a changed shape refused, too few panes refused.
+- The name setting: unset and `product`, `settings`, an unknown value.
+
 ## `tests/quit_menu_check.c`
 
 Quit Game in the game's own menus without the game: the message file edit, the window's labels and the press
