@@ -8,6 +8,7 @@
 #include "host.h"
 #include "input.h"
 #include "lib_origin.h"
+#include "log_line.h"
 #include "log_privacy.h"
 #include "log_stall.h"
 #include "logq.h"
@@ -17,6 +18,7 @@
 #include "sha256.h"
 
 #define MAX_MODULES 16
+#define CRASH_LINE_MAX 1024
 
 unsigned rt_trace;
 
@@ -35,8 +37,26 @@ static PlatMutex g_err_lock = PLAT_MUTEX_INIT;
 static volatile int32_t g_log_final;
 static volatile int32_t g_log_ending;
 static uint64_t g_log_tail;
+static volatile int32_t g_err_given_up;
+
+#define ERR_LOCK_WAIT_MS 100
 
 void rt_log_ending(void) { __atomic_store_n(&g_log_ending, 1, __ATOMIC_RELEASE); }
+
+static int err_lock_final(void) {
+    if (__atomic_load_n(&g_err_given_up, __ATOMIC_ACQUIRE)) return 0;
+    for (int i = 0; i < ERR_LOCK_WAIT_MS; i++) {
+        if (plat_mutex_trylock(&g_err_lock)) return 1;
+        plat_sleep_ms(1);
+    }
+    if (!plat_xchg32(&g_err_given_up, 1)) {
+        static const char note[] = "[host] log: the lock of the stderr writes was still held after 100 ms at the end "
+                                   "of the run, perhaps by the thread that failed; the lines from here on are written "
+                                   "without it\n";
+        plat_stderr_write(note, sizeof note - 1);
+    }
+    return 0;
+}
 
 static void log_sink(const char *p, size_t n) {
     int file = __atomic_load_n(&g_log_state, __ATOMIC_ACQUIRE) == LOG_FILE;
@@ -61,10 +81,14 @@ static void log_sink(const char *p, size_t n) {
             }
         }
     }
-    if (file && __atomic_load_n(&g_log_final, __ATOMIC_ACQUIRE)) {
+    int final = __atomic_load_n(&g_log_final, __ATOMIC_ACQUIRE);
+    if (file && final) {
         if (!plat_mutex_trylock(&g_err_lock)) return;
-    } else {
+    } else if (!final) {
         plat_mutex_lock(&g_err_lock);
+    } else if (!err_lock_final()) {
+        plat_stderr_write(p, n);
+        return;
     }
     plat_stderr_write(p, n);
     plat_mutex_unlock(&g_err_lock);
@@ -305,13 +329,15 @@ static void crash_handler(const PlatCrash *x) {
     rt_log_sync();
     char d[160];
     uintptr_t rip = x->rip;
-    rt_logf("FATAL: %s (%#x) at host %p (", x->what, x->code, (void *)rip);
-    if (x->module && !*x->module) rt_logf("outside every module)");
-    else rt_logf("%s+%#llx)", x->module ? x->module : "nx2saria", (unsigned long long)x->offset);
+    static char line_buf[CRASH_LINE_MAX];
+    LogLine line = {line_buf, sizeof line_buf, 0, 0};
+    log_line_add(&line, "FATAL: %s (%#x) at host %p (", x->what, x->code, (void *)rip);
+    if (x->module && !*x->module) log_line_add(&line, "outside every module)");
+    else log_line_add(&line, "%s+%#llx)", x->module ? x->module : "nx2saria", (unsigned long long)x->offset);
     if (x->access >= 0)
-        rt_logf(", %s address %#llx", x->access == 1 ? "writing" : x->access == 8 ? "executing" : "reading",
-                (unsigned long long)x->addr);
-    rt_log_raw("\n", 1);
+        log_line_add(&line, ", %s address %#llx",
+                     x->access == 1 ? "writing" : x->access == 8 ? "executing" : "reading", (unsigned long long)x->addr);
+    rt_log_raw(line_buf, log_line_end(&line));
     const char *thread = plat_thread_name();
     int on_rtss = thread && !strcmp(thread, "rtss");
     int module_note = crash_module_note(x->module, on_rtss);
@@ -329,16 +355,19 @@ static void crash_handler(const PlatCrash *x) {
     uintptr_t exe = plat_exe_base();
     for (int i = 0; i < x->nframes; i++) {
         uint64_t g = lifted_function(x->frames[i]);
-        rt_logf("  host frame %2d: nx2saria+%#llx", i, (unsigned long long)(x->frames[i] - exe));
-        if (g) rt_logf(" in lifted function f_%llx", (unsigned long long)g);
-        rt_log_raw("\n", 1);
+        log_line_add(&line, "  host frame %2d: nx2saria+%#llx", i, (unsigned long long)(x->frames[i] - exe));
+        if (g) log_line_add(&line, " in lifted function f_%llx", (unsigned long long)g);
+        rt_log_raw(line_buf, log_line_end(&line));
     }
     Cpu *c = kern_cpu();
     if (c) {
-        for (int i = 0; i < 31; i++)
-            rt_logf("  x%-2d %016llx%s", i, (unsigned long long)c->x[i], i % 4 == 3 ? "\n" : "");
-        rt_logf("  sp  %016llx\n  pc  %016llx  lr %s\n", (unsigned long long)c->sp, (unsigned long long)c->pc,
-                ldr_describe(c->x[30], d, sizeof d));
+        for (int i = 0; i < 31; i++) {
+            log_line_add(&line, "  x%-2d %016llx", i, (unsigned long long)c->x[i]);
+            if (i % 4 == 3) rt_log_raw(line_buf, log_line_end(&line));
+        }
+        log_line_add(&line, "  sp  %016llx", (unsigned long long)c->sp);
+        rt_log_raw(line_buf, log_line_end(&line));
+        rt_logf("  pc  %016llx  lr %s\n", (unsigned long long)c->pc, ldr_describe(c->x[30], d, sizeof d));
         uint64_t fp = c->x[29];
         for (int n = 0; n < 32 && fp && !(fp & 7) && plat_mem_readable(fp, 16); n++) {
             uint64_t next = LD64(fp), lr = LD64(fp + 8);
@@ -556,6 +585,51 @@ static int probe_crash(int null) {
     return 1;
 }
 
+#define PROBE_BUSY_THREADS 4
+#define PROBE_BUSY_LINES 200
+static volatile int32_t probe_busy_lines[PROBE_BUSY_THREADS];
+
+static void probe_busy_main(void *arg) {
+    int me = (int)(intptr_t)arg;
+    for (int32_t i = 0;; i++) {
+        rt_log("probe: busy line %d of thread %d, logged while another thread fails", i, me);
+        __atomic_store_n(&probe_busy_lines[me], i + 1, __ATOMIC_RELEASE);
+    }
+}
+
+static int probe_busy(int fatal) {
+    for (int i = 0; i < PROBE_BUSY_THREADS; i++)
+        if (!plat_thread_spawn(probe_busy_main, (void *)(intptr_t)i, "probe busy", 0)) {
+            printf("probe-busy: thread %d could not be started\n", i);
+            return 1;
+        }
+    for (int i = 0; i < PROBE_BUSY_THREADS; i++)
+        while (__atomic_load_n(&probe_busy_lines[i], __ATOMIC_ACQUIRE) < PROBE_BUSY_LINES) plat_sleep_ms(1);
+    if (fatal) rt_fatal("probe-fatal-busy: a fatal error while %d threads log", PROBE_BUSY_THREADS);
+    printf("%zu\n", probe_strlen((const char *)(uintptr_t)8));
+    printf("probe-crash-busy: still running, the crash did not happen\n");
+    return 1;
+}
+
+static volatile int32_t probe_stuck_held;
+static void probe_stuck_main(void *arg) {
+    (void)arg;
+    plat_mutex_lock(&g_err_lock);
+    __atomic_store_n(&probe_stuck_held, 1, __ATOMIC_RELEASE);
+    for (;;) plat_sleep_ms(1000);
+}
+
+static int probe_crash_stuck(void) {
+    if (!plat_thread_spawn(probe_stuck_main, NULL, "probe stuck", 0)) {
+        printf("probe-crash-stuck: the thread could not be started\n");
+        return 1;
+    }
+    while (!__atomic_load_n(&probe_stuck_held, __ATOMIC_ACQUIRE)) plat_sleep_ms(1);
+    printf("%zu\n", probe_strlen((const char *)(uintptr_t)8));
+    printf("probe-crash-stuck: still running, the crash did not happen\n");
+    return 1;
+}
+
 #define PROBE_EXIT_CODE 3
 static void probe_exit_fault(void) { printf("%zu\n", probe_strlen((const char *)(uintptr_t)8)); }
 
@@ -569,7 +643,7 @@ static int usage(const char *argv0) {
     fprintf(stderr, "usage: %s [--exefs DIR] [--romfs DIR] [--profile DIR] [--audio-device VALUE] [--monitor VALUE] [--list-audio-devices | --list-monitors | --selftest | --probe-loader | "
                     "--probe-cfg | --probe-dpi | --probe-mods | --probe-kernel | --probe-ipc | --probe-services | --probe-fs | --probe-gfx-abi | "
                     "--probe-nvn | --probe-nvn-tex | --probe-window | --probe-shader | --probe-vkmem | "
-                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-fsr3 | --probe-fsr3fg | --probe-zstd | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-discord | "
+                    "--probe-vkexec | --probe-meshfb | --probe-astc | --probe-fsr3 | --probe-fsr3fg | --probe-zstd | --probe-input | --probe-movie | --probe-crash-call | --probe-crash-null | --probe-crash-exit | --probe-crash-busy | --probe-fatal-busy | --probe-crash-stuck | --probe-discord | "
                     "--prepare-shaders | --warm-shaders | --prepare-pipelines | --probe-prewarm | --probe-buildgate | --probe-ffx-cache | --probe-memneed | --probe-devlost | --boot |--seconds S [--shot PNG]]\n", argv0);
     return 2;
 }
@@ -747,6 +821,9 @@ static int main_run(int argc, char **argv) {
     if (!strcmp(mode, "--probe-crash-call")) return probe_crash(0);
     if (!strcmp(mode, "--probe-crash-null")) return probe_crash(1);
     if (!strcmp(mode, "--probe-crash-exit")) return probe_crash_exit();
+    if (!strcmp(mode, "--probe-crash-busy")) return probe_busy(0);
+    if (!strcmp(mode, "--probe-fatal-busy")) return probe_busy(1);
+    if (!strcmp(mode, "--probe-crash-stuck")) return probe_crash_stuck();
     if (!strcmp(mode, "--probe-cfg")) return probe_cfg();
 #ifdef _WIN32
     if (!strcmp(mode, "--probe-dpi")) return probe_dpi();

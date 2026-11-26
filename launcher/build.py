@@ -1,6 +1,7 @@
 import json
 import os
 import queue
+import re
 import shutil
 import signal
 import stat
@@ -332,9 +333,25 @@ def last_fatal(game_dir):
             lines = f.read().decode('utf-8', 'replace').splitlines()
     except OSError:
         return ''
-    for line in reversed(lines):
-        if line.startswith('[launcher] the game ended'):
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith('[launcher] the game ended'):
             return ''
-        if line.startswith('FATAL: '):
-            return line[len('FATAL: '):].strip()
+        if lines[i].startswith('FATAL: '):
+            return fatal_whole(lines[i][len('FATAL: '):], lines[i + 1] if i + 1 < len(lines) else '').strip()
     return ''
+
+
+FATAL_INTRUDER = re.compile(r'\[(?:host|launcher)\] ')
+FATAL_HEX = r'(?:0x[0-9a-f]+|0)'
+FATAL_ADDRESS_TAIL = re.compile(r', (?:reading|writing|executing) address ' + FATAL_HEX)
+FATAL_MODULE_TAIL = re.compile(r'(?:outside every module|[^()\[\]]+\+' + FATAL_HEX + r')\)(?:' +
+                               FATAL_ADDRESS_TAIL.pattern + ')?')
+
+
+def fatal_whole(text, after):
+    cut = FATAL_INTRUDER.search(text)
+    if not cut or not cut.start():
+        return text
+    head, after = text[:cut.start()], after.strip()
+    tail = FATAL_MODULE_TAIL if head.endswith(' (') else FATAL_ADDRESS_TAIL if head.endswith(')') else None
+    return head + after if tail and tail.fullmatch(after) else head

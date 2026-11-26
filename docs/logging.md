@@ -24,13 +24,19 @@ The functions are declared in `runtime/host.h` and `runtime/dispatch.h`.
 | Function | Writes | Use it for |
 |---|---|---|
 | `rt_log(fmt, ...)` | `[host] ` + the formatted text + a newline, in one write | Every ordinary line. Start the text with the prefix of your part of the runtime (below). |
-| `rt_logf(fmt, ...)` | The formatted text as it is: no `[host] `, no newline | A line made of several pieces, or a block: the crash report, the boot steps, a dump of an IPC message. |
+| `rt_logf(fmt, ...)` | The formatted text as it is: no `[host] `, no newline | A block of whole lines in one call: the boot steps, a dump of an IPC message. |
 | `rt_vlogf(fmt, ap)` | As `rt_logf`, from a `va_list` | A function of your own that takes a format. |
-| `rt_log_raw(p, n)` | `n` bytes as they are | Text that is not a format: the game's own debug output (`svc.c`), the pieces of the FATAL line. |
+| `rt_log_raw(p, n)` | `n` bytes as they are | Text that is not a format: the game's own debug output (`svc.c`), a line built with `runtime/log_line.h`. |
 | `rt_fatal(fmt, ...)`, `rt_fatal_code(code, fmt, ...)` | `FATAL: ` + the text, then the notes (`fatal:` lines), and ends the process | An error the run cannot go on from. The launcher reads the FATAL line. |
 | `rt_log_sync()` | Everything queued, now, and turns the queue off for the rest of the run | The end of the process, a fatal error, a crash report, a bug capture. Not for ordinary lines. |
 
 A line is limited to 2 KiB (2048 bytes with the `[host] ` and the newline); a longer one is cut.
+
+Each call is one write (a line with a personal folder in it, as long as its short form fits `rt_log_raw()`'s
+2560-byte copy), and a write is never split by another thread's. A line written in several calls is not: another
+thread's whole line can land between two of its pieces. A line made of pieces is built first with `runtime/log_line.h`
+(`log_line_add()`, then `log_line_end()`) and written in one `rt_log_raw()`; one longer than its buffer comes out cut,
+ending in ` [line cut]`. The crash report and the FATAL line of a fatal error are written this way.
 
 Lines that only help while debugging one part go behind `NX2SARIA_TRACE` (`rt_trace & RT_TRACE_<X>`; the items are
 `svc`, `host`, `ipc`, `fs`, `gfx`, `perf`, `sched`, `audio`, `present` and `all`), or behind a setting of their own,
@@ -216,7 +222,7 @@ Files are under `runtime/` unless stated otherwise; the first three by number of
 | `libs:` | Libraries loaded into the process | `main.c` |
 | `loaded` | Each module loaded (loader), no colon | `loader.c` |
 | `loader:` | Module loader: relocations, imports | `loader.c` |
-| `log:` | The log itself: path, log thread, slow writes, personal folders written short | `main.c`, `log_privacy.c`, `logq.c` |
+| `log:` | The log itself: path, log thread, slow writes, personal folders written short, a stderr lock given up at the end | `main.c`, `log_privacy.c`, `logq.c` |
 | `longjmp` | Guest longjmp debug lines, no colon | `guest_setjmp.c` |
 | `lowlat:` | Low latency mode (Reflex, anti-lag) | `vk_lowlat.c` |
 | `MapPhysicalMemory` | A failed physical memory map (memory), no colon | `memory.c` |
@@ -259,6 +265,7 @@ Files are under `runtime/` unless stated otherwise; the first three by number of
 | `platform:` | Memory commit note from the platform layer | `vk_texture.c` |
 | `power:` | Power and timer settings | `main.c` |
 | `prepo:` | Play reports (kept local) | `ov_system.c` |
+| `probe:` | The lines the busy crash probes' threads log while the main thread fails (`--probe-crash-busy`) | `main.c` |
 | `present:` | Present intervals (NX2SARIA_TRACE=present) | `vk_backend.c` |
 | `preset:` | Graphics presets and the hardware detection behind them | `cfg.c`, `hw_detect.c` |
 | `prof:` | Sampling profiler (NX2SARIA_PROFILE) | `prof_win.c`, `perf.c` |

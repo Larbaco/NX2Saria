@@ -108,6 +108,21 @@ it exits with 70 (`runtime/dispatch.c` `rt_fatal()`), 71 (`runtime/main.c` `cras
 `logs/nx2navi.log`). A line this launcher added for an earlier run's end (`launcher/game_session.py`
 `note_exit_in_log()`) ends the search: what stands before it is not this run's.
 
+### `fatal_whole()`
+
+In a log of a game from before each line of the crash report was one write (`runtime/main.c` `crash_handler()`),
+another thread's line can sit inside the FATAL line, with the rest of it on the next line:
+`FATAL: access violation (0xb) at host 0x7f00 (libc.so.6+0x98e31)[host] input: ...` and then
+`, reading address 0x3e80010beb5`. `last_fatal()` hands the line and the next one to `fatal_whole()`. The line is cut
+where a second log prefix starts (`FATAL_INTRUDER`: the game's `[host] ` or the launcher's `[launcher] `); a `[word] `
+of the line's own text, as in a mod's folder name, is no prefix. The next line is joined back only when it is the tail
+the crash report writes after what was cut: after `(`, the module and `)` with an optional address
+(`FATAL_MODULE_TAIL`); after `)`, the address alone (`FATAL_ADDRESS_TAIL`). `%#llx` writes zero as `0`, not `0x0`
+(`FATAL_HEX`), and a Windows module's name can hold spaces. Any other next line is left out, and only the cut stays. A
+line whose prefix comes at its very start has no head to keep, and stays as it is, so the crash is still counted. The
+session report (`launcher/telemetry.py` `synthesize_crash()`) and the window's message read the line through
+`last_fatal()`, so the server groups such a crash with its whole twins.
+
 ## `launcher/cli.py`
 
 The launcher without its window, for scripts, tests and anyone who prefers a console

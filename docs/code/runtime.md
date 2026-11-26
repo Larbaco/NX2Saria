@@ -94,7 +94,11 @@ exit and FATAL lines still reach the file. stderr goes through `plat_stderr_writ
 runtime's stderr stream, so `fflush(stderr)` and `plat_exit()`'s `fflush(NULL)` do not wait for a stuck write either.
 
 The first write past the cap says so, once. Without the file stderr is the log (`run_game.py`, `2> file`), and it is
-waited for.
+waited for, but at the end only for `ERR_LOCK_WAIT_MS` (100 ms, `err_lock_final()`): a thread that failed inside its own
+write to stderr holds `g_err_lock` for good, and the report of its crash waited for it forever. After that wait one
+line says the lock was given up, and every later line of the end goes to stderr without it and without another wait.
+A line of another thread still in its write can then mix with one of these; the run is ending, and the report gets
+out. `tests/log_cap_check.py` (`stuck`) and `--probe-crash-stuck` (`tests/fatal_line_check.py`) check it.
 
 ### `log_sync_ending()`
 
@@ -191,6 +195,17 @@ The steps, in order:
 - `rt_log_ending()`: the report reaches the log file past its cap (`log_sink()`).
 - `vk_pipeline_crash_note()` first: the next start tells a crash in the boot's builds from a stopped start by it.
 - `rt_log_sync()`: the lines before the crash, then the report, each written as it is made.
+- Each line of the report goes out in one `rt_log_raw()` call (`runtime/log_line.h`): the FATAL line, the host frames
+  and the rows of registers. The other threads go on logging, and after `rt_log_sync()` each of their lines is a write
+  of its own straight to the file; a line written in pieces let one of theirs in between (one of four crashes forced
+  on the bench: `...(libc.so.6+0x98e31)[host] input: ...` and then `, reading address ...` on the next line), and the
+  launcher and the session summary took that text for the crash. Their lines can still come between two lines of the
+  report, never inside one. The buffer is static (`CRASH_LINE_MAX`, 1024 bytes, a longer line cut with ` [line cut]`):
+  the handler already takes about 4.6 KiB of stack in `rt_vlogf()` (2048) and `rt_log_raw()` (2560), on a signal
+  stack of 64 KiB on Linux (`runtime/platform/linux.c` `alt_stack()`) and with a stack overflow on Windows only the
+  32 KiB `PLAT_STACK_GUARANTEE` keeps, and only the thread `rt_ending_enter()` let through gets here. `rt_log_raw()`
+  writes a line with a personal folder from a 2560-byte copy: one write unless the short forms make the line more than
+  2.5 times longer (a form such as `%COMPUTERNAME%` stands for a name of 3 bytes or more), which a crash line does not.
 - What the thread was doing (a pipeline build names its shaders, `plat_crash_context_get()`): the stderr note the
   platform's exception handler writes misses the log.
 - For abort and invalid parameter: where the host code called it; for a fault in another module: the host calls that led
@@ -235,6 +250,14 @@ is.
 `call`: `strlen` in the C runtime library (`ucrtbase.dll`, `libc.so.6`) reads address 8, the way a driver faults inside
 a call the host made; the report names the library and the host frames that called it. `null`: a call through a null
 function pointer, which leaves rip at 0, outside every module. Both end with exit code 71 and a FATAL line in the log.
+
+`--probe-crash-busy` and `--probe-fatal-busy` (`probe_busy()`): `PROBE_BUSY_THREADS` (4) threads log a line after
+another without a pause, and once each has logged `PROBE_BUSY_LINES` (200) the main thread faults in `strlen` as
+`--probe-crash-call` does, or ends through `rt_fatal()`. The FATAL line must come out whole, alone on its line.
+`--probe-crash-stuck` (`probe_crash_stuck()`): a thread holds stderr's lock (`g_err_lock`) for good, the way a thread
+that failed inside its write would, and the main thread faults; the report must still come out (`err_lock_final()`).
+A probe opens no log file and arms no session summary (`main()`: only a game run does), so they write nothing into the
+folder they run in. `tests/fatal_line_check.py` runs them.
 
 `--probe-crash-exit` is the fault of `--probe-crash-call`, made by an atexit handler after the mode has returned, the
 way a library another program put into the process faults in its detach. The process must end with the mode's own code
@@ -1134,7 +1157,9 @@ The fatal line, the report's notes and what has to be flushed, then the exit wit
   lines queued for the log thread, then these, written here.
 - The line's text is formatted once more for the session summary: `rt_vlogf()` uses up `ap`, so a copy of it. The buffer
   (1024 bytes) is static: only the thread `rt_ending_enter()` let through gets here.
-- The FATAL line itself stays as the launcher reads it; the time goes on a line of its own.
+- The FATAL line itself stays as the launcher reads it; the time goes on a line of its own. It is built in a second
+  static buffer of 1040 bytes and written in one `rt_log_raw()` call, as the crash report's (`runtime/main.c`
+  `crash_handler()`): other threads still log, and in three writes one of their lines could land inside it.
 - The memory numbers: when an allocation fails, they help distinguish high commit in this process from system-wide
   pressure.
 - `fs_save_crash_wait()`: a save the game already reported as done finishes first (bounded).
@@ -2361,6 +2386,14 @@ thread once `cfg_start()` has returned.
   A probing mark the state file kept from an earlier start (`runtime/cfg/cfg.c` `preset_init()`) is taken out, and the
   next start probes again. Logs "preset: the game's Vulkan device is chosen: ..." when it does; nothing without the
   mark.
+
+## `runtime/log_line.h`
+
+One log line built from pieces in a buffer the caller owns, then written in one call. `log_line_add()` and
+`log_line_vadd()` add to it; a piece that does not fit is cut where the buffer ends and the line takes no more.
+`log_line_end()` puts ` [line cut]` over the last bytes of a cut line, adds the newline and gives the length to write,
+and the line starts empty again. A line is never split into two writes: another thread's line would land between
+them. Users: `runtime/main.c` `crash_handler()`, `runtime/dispatch.c` `fatal_end()`. `tests/log_line_check.py`.
 
 ## `runtime/logq.h`
 
