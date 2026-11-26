@@ -602,6 +602,11 @@ class WorkerTest(unittest.TestCase):
         self.assertFalse(result.exists())
         reopened, hello = self.start_worker()
         self.assertEqual(hello['result']['lock'], 'held')
+        reopened.stdin.write('{"id":5,"method":"inspect"}\n')
+        reopened.stdin.flush()
+        inspection = json.loads(reopened.stdout.readline())['result']
+        self.assertEqual(inspection['recovery']['state'], 'alive')
+        self.assertTrue(inspection['job_marker_present'])
         reopened.stdin.write('{"id":2,"method":"play"}\n')
         reopened.stdin.flush()
         self.assertEqual(json.loads(reopened.stdout.readline())['error']['code'], 'job_running')
@@ -618,6 +623,42 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(recovered['task'], 'the rebuild of the game')
         self.assertEqual(recovered['game_dir'], str(game))
         self.assertFalse(marker.exists())
+
+        marker.write_text(json.dumps(captured))
+        recovered_worker, _ = self.start_worker()
+        recovered_worker.stdin.write('{"id":5,"method":"inspect"}\n')
+        recovered_worker.stdin.flush()
+        inspection = json.loads(recovered_worker.stdout.readline())['result']
+        self.assertEqual(inspection['recovery']['state'], 'interrupted')
+        self.assertEqual(inspection['recovery']['kind'], 'rebuild')
+        self.assertFalse(inspection['job_marker_present'])
+        recovered_worker.stdin.close()
+        self.assertEqual(recovered_worker.wait(timeout=10), 0)
+
+
+        identity = {**identity, 'pid': os.getpid(), 'start': 1}
+        if sys.platform.startswith('linux'):
+            identity.update(session=os.getpid(), group=os.getpid())
+        else:
+            identity['kind'] = 'windows_pid'
+        marker.write_text(json.dumps({**captured, 'build': identity}))
+        reused, _ = self.start_worker()
+        reused.stdin.write('{"id":6,"method":"inspect"}\n')
+        reused.stdin.flush()
+        inspection = json.loads(reused.stdout.readline())['result']
+        self.assertEqual(inspection['recovery']['reason'], 'pid_reused')
+        self.assertFalse(marker.exists())
+        invalid = b'{broken marker'
+        marker.write_bytes(invalid)
+        reused.stdin.write('{"id":7,"method":"inspect"}\n')
+        reused.stdin.flush()
+        inspection = json.loads(reused.stdout.readline())['result']
+        self.assertEqual(inspection['recovery']['state'], 'unverified')
+        self.assertTrue(inspection['job_marker_present'])
+        self.assertEqual(marker.read_bytes(), invalid)
+        reused.stdin.close()
+        self.assertEqual(reused.wait(timeout=10), 0)
+
 
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'

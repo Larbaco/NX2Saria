@@ -3602,6 +3602,15 @@ progress parser. A cancel request is a flag in the private run directory. If the
 observe a terminal result, the job keeps its marker for recovery. A completed job clears its
 marker and removes the supervisor's temporary files. Tk and CLI still create the usual `Run`.
 
+## `launcher/build_recovery.py`
+
+`inspect_marker()` classifies an interrupted build without clearing its marker. On Linux it
+checks the boot, supervisor start tick and live session membership. On Windows it reopens the
+named job or checks process creation time and the terminal record. It treats invalid, legacy and
+inaccessible markers as unverified. The worker consumes only a verified finished marker through
+the existing job recovery function. The renderer receives the normalized state and kind. The
+log also records a reason, with no process information from the marker.
+
 ## `launcher/build_supervisor.py`
 
 `supervise()` reports the identity of its Linux session or Windows build group. It waits for a

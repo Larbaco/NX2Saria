@@ -1,4 +1,4 @@
-type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null };
+type Result = { status: string; root?: string; game_dir?: string | null; reason?: string; job_marker_present?: boolean; game_running?: true | null; hide_while_playing?: boolean | null; recovery?: { state: 'alive' | 'interrupted' | 'unverified'; kind: string } };
 type PlayFeedback = { messageId?: number; outcome?: 'game_ended' | 'monitor_lost'; code?: number | null; alarm?: boolean; message?: string; state?: Result };
 type BuildAction = 'install' | 'rebuild';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
@@ -52,6 +52,22 @@ function showResult(result: Result | null) {
   if (result.reason === 'worker_busy') { detail.textContent = 'Outra instância está usando a instalação. Se o jogo ainda estiver aberto, aguarde ele terminar.'; return; }
   if (result.reason === 'installation_required') { detail.textContent = 'Use o instalador atual do NX2Saria e selecione a pasta da instalação.'; return; }
   if (result.reason === 'runtime_incompatible') { detail.textContent = 'Atualize ou repare esta instalação pelo launcher atual do NX2Saria e tente novamente.'; return; }
+  if (result.recovery?.state === 'alive') {
+    statusElement.textContent = 'Uma compilação anterior ainda está rodando';
+    detail.textContent = 'Aguarde a compilação terminar antes de jogar, instalar ou recompilar.';
+    return;
+  }
+  if (result.recovery?.state === 'unverified') {
+    statusElement.textContent = 'Não foi possível verificar a compilação anterior';
+    detail.textContent = 'Há um registro de um trabalho interrompido. A instalação fica bloqueada enquanto esse trabalho puder estar em andamento.';
+    return;
+  }
+  if (result.recovery?.state === 'interrupted') {
+    detail.textContent = result.status === 'ready'
+      ? 'A compilação anterior não terminou. Jogar abre a última versão pronta. Recompilar retoma o trabalho.'
+      : 'A instalação anterior não terminou. Iniciar instalação retoma o trabalho das etapas concluídas.';
+    return;
+  }
   detail.textContent = (result.game_dir || result.root || 'Confira a instalação e tente novamente.') + (result.job_marker_present ? ' Há um registro de trabalho: ele pode estar em andamento ou ter sido interrompido.' : '') + (result.game_running === true ? ' O jogo já está em execução.' : '');
 }
 async function showInstallDestination(pick: boolean) {

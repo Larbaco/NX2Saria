@@ -148,6 +148,16 @@ async function main() {
     assert.match(log, /electron: rebuild requested/);
     assert.match(log, /electron: rebuild ended outcome=complete/);
     assert.doesNotMatch(log, /electron: play requested/);
+
+    const oldMarker = path.join(root, 'data', 'job-running.json');
+    await fs.writeFile(oldMarker, '{broken marker');
+    await app.evaluate(({ dialog }, selected) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [selected] });
+    }, root);
+    await page.getByRole('button', { name: 'Selecionar instalação' }).click();
+    await page.getByText('Não foi possível verificar a compilação anterior', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: 'Jogar' }).isDisabled(), true);
+    assert.equal(await fs.readFile(oldMarker, 'utf8'), '{broken marker');
   } finally {
     if (app) await app.close();
     await fs.rm(base, { recursive: true, force: true });

@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from . import build, commit, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
+from . import build, build_recovery, commit, game_session, gamefiles, jobs, locks, mods_job, paths, play, saves, updater, versions, winsys
 from .build import game_log_path, game_log_paths
 from .context import Context
 from .inspect_installation import inspect_installation
@@ -318,6 +318,7 @@ def main(argv=None):
         sequence = 0
         disconnected = False
         shutdown_status = 0
+        recovery = None
         while True:
             if _output_disconnected:
                 disconnected = True
@@ -475,7 +476,7 @@ def main(argv=None):
                     emit({'id': request['id'], 'result': {'status': 'cancelling'}})
                 continue
             if request.get('method') in ('play', 'memory_response'):
-                if job or (layout.data / jobs.MARKER).exists():
+                if job or build_recovery.blocked(layout):
                     action_log(ctx, counts, 'play', 'refused status=job_running')
                     error(request['id'], 'job_running')
                     continue
@@ -586,7 +587,7 @@ def main(argv=None):
                 selected_job = None
                 status = 'unavailable'
                 try:
-                    if lock_state == 'held' and not (run or job or pending or (layout.data / jobs.MARKER).exists()):
+                    if lock_state == 'held' and not (run or job or pending or build_recovery.blocked(layout)):
                         if action == 'install':
                             status = prepare_install(ctx, install_choices)
                             if status == 'ready':
@@ -610,6 +611,7 @@ def main(argv=None):
                     action_log(ctx, counts, action, f'refused status={status}')
                     emit({'id': request['id'], 'result': {'status': status}})
                     continue
+                recovery = None
                 job = selected_job
                 job_action = action
                 job_revision = -1
@@ -624,7 +626,7 @@ def main(argv=None):
                 value = request.get('value')
                 if type(value) is not bool:
                     error(request['id'], 'invalid_preference')
-                elif lock_state != 'held' or run or job or pending or (layout.data / jobs.MARKER).exists():
+                elif lock_state != 'held' or run or job or pending or build_recovery.blocked(layout):
                     error(request['id'], 'preference_unavailable')
                 else:
                     try:
@@ -636,7 +638,26 @@ def main(argv=None):
                         emit({'id': request['id'], 'result': {'hide_while_playing': value}})
             elif request.get('method') == 'inspect':
                 try:
+                    if not job and lock_state == 'held':
+                        observed = build_recovery.inspect_marker(layout)
+                        if observed.state == 'gone':
+                            jobs.interrupted(ctx)
+                            remaining_marker = build_recovery.blocked(layout)
+                            observed = build_recovery.Recovery(
+                                'unverified' if remaining_marker else 'interrupted',
+                                'marker_remove_failed' if remaining_marker else observed.reason, observed.kind)
+                        if observed.state != 'none':
+                            if not recovery or observed.view() != recovery.view():
+                                action_log(ctx, counts, 'recovery',
+                                           f'state={observed.state} reason={observed.reason} kind={observed.kind}')
+                            recovery = observed
+                        elif recovery and recovery.state != 'interrupted':
+                            recovery = None
                     result = inspect_installation(root)
+                    if recovery:
+                        result['recovery'] = recovery.view()
+                        if recovery.state in ('alive', 'unverified'):
+                            result['job_marker_present'] = True
                 except (OSError, ValueError, RuntimeError):
                     action_log(ctx, counts, 'inspect', 'failed')
                     error(request['id'], 'inspection_failed')

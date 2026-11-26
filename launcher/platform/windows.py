@@ -1,4 +1,6 @@
 import ctypes
+import hashlib
+import re
 import os
 import subprocess
 from ctypes import wintypes
@@ -83,6 +85,10 @@ def build_group_kernel():
     k = ctypes.WinDLL('kernel32', use_last_error=True)
     k.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     k.CreateJobObjectW.restype = wintypes.HANDLE
+    k.OpenJobObjectW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+    k.OpenJobObjectW.restype = wintypes.HANDLE
+    k.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    k.WaitForSingleObject.restype = wintypes.DWORD
     k.GetCurrentProcess.restype = wintypes.HANDLE
     filetime = ctypes.POINTER(wintypes.FILETIME)
     k.GetProcessTimes.argtypes = [wintypes.HANDLE, filetime, filetime, filetime, filetime]
@@ -105,14 +111,58 @@ def creation_time(kernel, process):
     return (created.dwHighDateTime << 32) | created.dwLowDateTime
 
 
+def build_job_name(root, token):
+    if not re.fullmatch(r'[a-f0-9]{32}', token):
+        raise ValueError('invalid build token')
+    digest = hashlib.sha256(os.fsencode(os.path.normcase(str(root.resolve())))).hexdigest()[:24]
+    return f'Local\\NX2Saria-build-{digest}-{token}'
+
+
+def active_build_members(kernel, job):
+    accounting = JobAccounting()
+    if not kernel.QueryInformationJobObject(job, 1, ctypes.byref(accounting), ctypes.sizeof(accounting), None):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return accounting.active
+
+
+def active_build_job(name):
+    k = build_group_kernel()
+    job = k.OpenJobObjectW(4, False, name)
+    if not job:
+        error = ctypes.get_last_error()
+        if error == 2:
+            return 0
+        raise ctypes.WinError(error)
+    try:
+        return active_build_members(k, job)
+    finally:
+        k.CloseHandle(job)
+
+
+def build_process_status(pid, start):
+    k = build_group_kernel()
+    process = k.OpenProcess(0x101000, False, pid)
+    if not process:
+        error = ctypes.get_last_error()
+        if error == 87:
+            return 'gone'
+        raise ctypes.WinError(error)
+    try:
+        if creation_time(k, process) != start:
+            return 'reused'
+        status = k.WaitForSingleObject(process, 0)
+        if status == 0:
+            return 'gone'
+        if status == 258:
+            return 'alive'
+        raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        k.CloseHandle(process)
+
+
 class BuildJobGroup:
     def __init__(self, root, token):
-        import hashlib
-        import re
-        if not re.fullmatch(r'[a-f0-9]{32}', token):
-            raise ValueError('invalid build token')
-        digest = hashlib.sha256(os.fsencode(os.path.normcase(str(root.resolve())))).hexdigest()[:24]
-        name = f'Local\\NX2Saria-build-{digest}-{token}'
+        name = build_job_name(root, token)
         self.kernel = k = build_group_kernel()
         process = k.GetCurrentProcess()
         self.identity = {'kind': 'windows_pid', 'pid': os.getpid(), 'start': creation_time(k, process)}
@@ -135,11 +185,7 @@ class BuildJobGroup:
     def active_members(self):
         if not self.handle:
             return 0
-        accounting = JobAccounting()
-        if not self.kernel.QueryInformationJobObject(self.handle, 1, ctypes.byref(accounting),
-                                                      ctypes.sizeof(accounting), None):
-            raise ctypes.WinError(ctypes.get_last_error())
-        return max(0, accounting.active - 1)
+        return max(0, active_build_members(self.kernel, self.handle) - 1)
 
     def stop(self, primary_pid):
         if not self.handle:

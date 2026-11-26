@@ -185,6 +185,18 @@ watch it by handle, and stop only proven members. When the fallback has no termi
 cannot account for descendants, treat it as unverified. See [Microsoft job
 objects](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects).
 
+### Inspect an interrupted build
+
+Inspection classifies the marker under the worker lock, before returning the Play controls.
+Only a verified empty build group, boot change for a valid Linux group identity, or replaced
+process identity with the original group confirmed gone allows automatic recovery. Unreadable,
+legacy, inaccessible or ambiguous identities stay in place. Inspect reports a short reason and
+a normalized job kind, without sending the marker, PID or path to the window. A second worker
+must report the synthetic compiler as alive after a killed first worker, then report the
+interruption after the build finishes. A test with a reused PID leaves the unrelated process
+running and a test with a corrupt marker keeps its bytes intact. These scenarios passed
+locally on Linux. The Linux window test shows the unverified state with Play disabled.
+
 ### Wait, stop or recover
 
 The window shows when the earlier build is still running. The player can wait while keeping the

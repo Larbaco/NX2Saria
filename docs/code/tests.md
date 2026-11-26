@@ -5992,7 +5992,10 @@ acknowledgement, loses its control pipe, and still produces command output and a
 in a separate temporary run directory. It repeats the test with a cancellation flag and a running command.
 The worker integration test inspects the mark from inside the stand-in compiler, kills the
 worker, checks that a new worker refuses Play while the compiler is alive, and releases the
-compiler to finish. Finally the existing Tk marker reader consumes the extended marker.
+compiler to finish. Inspection reports a still-live builder and recovers it after it disappears.
+The existing Tk marker reader consumes the same extended record. A reused PID and an
+unparseable record verify that recovery neither signals an unrelated process nor removes a
+record without verification. The Electron window test keeps Play disabled on the latter.
 
 
 ## `tests/launcher_mods_job_characterization_test.py`
