@@ -1122,7 +1122,8 @@
 # pad_layout = nintendo
 # The buttons the game's prompts show: nintendo (the game's own), xbox (LB RB LT RT, Menu, View), playstation (L1 R1
 # L2 R2, Options, Create) or steamdeck (the Deck's A B X Y, L1 R1 L2 R2, Menu, View), with A B X Y as the button
-# pad_layout presses is labelled: with nintendo, A shows as B or circle and X as Y or triangle. pc: the key each
+# pad_layout presses is labelled: with nintendo, A shows as B or circle and X as Y or triangle; a button the bind_ lines
+# below put on another pad button shows that one (when the files are made). pc: the key each
 # button has (the bind_ lines below when the files are made), WASD
 # and the mouse. Read at start; their files come from tools/pad_prompts.py (docs/controls.md, "Button prompts").
 # prompts = nintendo

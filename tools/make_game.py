@@ -42,7 +42,7 @@ PROMPT_PACKAGES = {'zstandard': 'zstandard', 'fonttools': 'fontTools', 'pillow':
 PROMPTS_WRITTEN = re.compile(r'^.+: \d+ files, the font grew by -?\d+ bytes$')
 SCAN_CHECKED = re.compile(r'^checked (\d+) of (\d+)$')
 SCAN_TOOL = '55ea0c150aaf9dac93a2e6fd3b4ca11e1c572b5eee8b6bd74960535964384634'
-PROMPT_TOOLS = 'ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249'
+PROMPT_TOOLS = 'd65e5ed91e94f72b4623eb41b6dbdbaf42ae0dde20ab73254c0387f5f0e8fe7e'
 
 LIFT_FIXES = [
     ('sdk', 'void f_700579a430(Cpu *c) {\n    FN_ENTER(0x700579a430ull);\n',
@@ -2437,8 +2437,9 @@ def record_prompts(out, line):
         say(f'prompts: could not write {out / PROMPTS_RECORD} ({error_text(e)})')
 
 
-def prompts_drawn():
-    return f'drawn from {prompt_art.source_of(prompt_art_dir())}'
+def prompts_drawn(out):
+    followed = prompt_art.binds_followed('\n'.join(bind_lines(out)))
+    return f'drawn from {prompt_art.source_of(prompt_art_dir())}' + (f'; {followed}' if followed else '')
 
 
 def prompts_none():
@@ -2481,7 +2482,7 @@ def step_prompts(out):
         record_prompts(out, 'not drawn: drawing them failed (the build log says why)')
         fail('drawing the button prompts failed (the lines above say why); the game still runs. Run the build again '
              'to retry this step')
-    record_prompts(out, prompts_drawn())
+    record_prompts(out, prompts_drawn(out))
 
 
 AWAKE = None
@@ -2774,7 +2775,7 @@ def build_main():
             elif state['steps'].get(name) == step_key(name, src.identity, out) and not lift_gone(name):
                 say(f'{name}: done before')
                 if name == 'prompts':
-                    record_prompts(out, prompts_drawn())
+                    record_prompts(out, prompts_drawn(out))
                 emit('step', step=name, state='skip')
             else:
                 with state_lock:

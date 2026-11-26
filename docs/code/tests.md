@@ -2184,6 +2184,9 @@ The prompts step, the settings file and what goes beside the game:
   game's log repeats, is written again when the step is skipped. A setting that is no key binding changes nothing.
   When the tool fails the build fails and the record says why there are no new prompts.
 - The rebuild an update ends with (`make_game.py --rebuild` under a newer kit, with another lifter and another
+  A `bind_` line adds the remapped buttons to the record ("; the keyboard prompts follow 1 remapped button (A: f)",
+  with a pad remap "the gamepad prompts follow 1 remapped button (B: north), the keyboard prompts 1 (A: f)"), also
+  when the step is skipped.
   version: the lift, the compile, the shaders step and the button prompts all run again) leaves the game folder's
   settings file as the player has it, byte for byte, with no copy, backup or temporary file beside it. The build reads
   the file (the `bind_` lines for the prompts, `shader_carry` for the shaders step) and never writes it, nor makes one
@@ -2246,15 +2249,24 @@ dictionary the game lacks is not judged.
   same effective bindings, and `step_key` already includes those bindings, so the rename recorded the digest without
   forcing all prompts to redraw; and `REPO_ART`, `release_art`, `source_of` and the `SOURCE.md` copy of
   `tools/prompt_art.py` (issue #15) choose and record the art, while the pictures it names, which the step's key
-  holds, are the same, so the prompts drawn from them are too.
+  holds, are the same, so the prompts drawn from them are too. The pad prompts that follow the `bind_` lines gave it a
+  new value: an install with a pad remap draws other pictures.
 - `load_pad_prompts()` loads `tools/pad_prompts.py` as a module. Where fontTools is not installed, the names the tool
   and `tools/button_icons.py` import from it get empty stand-ins for the import: the tests use the tool's reading of
   the game files only, which needs none of them. The module is not left in `sys.modules`.
 - `PromptToolsTest`: `tools/pad_prompts.py` reads the game's files in pieces: the same bytes as in one call (on 24 MiB
   that pack to several pieces), without the minutes one call took on the 244 MB texture archive; its reader of
   extracted game files takes plain files, packed ones, and one packed with a dictionary of the game's dictionary
-  archive. The prompts step's key no longer follows the scripts' bytes: it is the one installs have (the scripts of
-  0.7.1, `ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249`).
+  archive. The prompts step's key no longer follows the scripts' bytes: it is the one installs have (`PROMPT_TOOLS`,
+  last changed when the pad prompts began to follow the `bind_` lines; the scripts of 0.7.1 had
+  `ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249`).
+- `PromptToolsTest.test_pad_prompts_follow_the_pad_binds`: the `bind_` lines a settings file can hold (a comment, a
+  line after a `;`, `pad:default`, a back paddle before a button with a picture, `none`, keys only) give the pad
+  buttons and keys `tools/prompt_art.py` reads; for every pad style and layout, no remap draws the pictures of before
+  (the `FACE` formula), A and B swapped swap their glyphs and notes and nothing else, and the remaps of the file move
+  exactly their buttons. A d-pad picture on a face button is traced lit and a face picture on the d-pad is not, and the
+  font's scale stays the layout's A when A is remapped to a shoulder. The record's text and `pc_keys()` follow the
+  same lines.
 
 ### Jobs and locks
 
