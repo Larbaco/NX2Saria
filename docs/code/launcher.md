@@ -142,6 +142,19 @@ folder on `sys.path` itself, as `launcher/start.pyw` does, and sets `__package__
 when it is run as a script (the `# noqa` lines of those imports stay). The exit code is 0 on success, 1 on failure and
 3 when cancelled.
 
+**The script's own folder leaves `sys.path`.** Run as a file without `-I`, Python puts the script's folder,
+`launcher/`, first on `sys.path`, and `launcher/platform` then stands in for the standard `platform` module for every
+`import platform`: ours and the standard library's own. In 0.27.0-rc.2 and rc.3 that ended `cli.py` in
+`launcher/platform/linux.py` `write_watch_status()` (`AttributeError: module 'platform' has no attribute 'release'`),
+and with it the `continue-update` that every installed launcher's `update` starts without `-I`: the version changed and
+the game was not rebuilt. So `cli.py` takes its folder out of `sys.path` before anything else is imported, as
+`launcher/start.pyw` does, and `update` now starts the new version with `-I` too (the launchers already installed do
+not, which the first rule covers). The rule for the package: no module of `launcher/` imports a standard module by a
+name that `launcher/` also has (today only `platform`; `launcher/platform/linux.py` reads the kernel's release and
+machine from `os.uname()`), and every entry point run as a file takes its own folder out of the path.
+`tests/launcher_script_path_test.py` runs `cli.py` as a script without `-I` with the test's Python and the system's,
+checks that its folder is gone from `sys.path`, and fails on an import of such a name anywhere in `launcher/`.
+
 ### `follow()`
 
 Runs a job in the console and prints each step's state as it changes. The steps are read under the job's lock

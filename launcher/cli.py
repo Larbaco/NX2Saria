@@ -1,12 +1,15 @@
-import argparse
 import os
-import subprocess
 import sys
-import time
 
 if __name__ == '__main__' and not __package__:
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    HERE = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:] = [p for p in sys.path if os.path.abspath(p or os.curdir) != HERE]
+    sys.path.insert(0, os.path.dirname(HERE))
     __package__ = 'launcher'   # noqa: A001 — lets the relative imports below work when run as a script
+
+import argparse  # noqa: E402
+import subprocess  # noqa: E402
+import time  # noqa: E402
 
 from . import build, gamefiles, jobs, locks, versions  # noqa: E402
 from .context import Context  # noqa: E402
@@ -101,7 +104,7 @@ def run(a, ctx, held):
         cli = new / 'launcher' / 'cli.py'
         print(f'finishing in {versions.display(check.release.version)}', flush=True)
         held.release()
-        return subprocess.call([ctx.layout.python_for_builds(), str(cli), '--root', str(ctx.layout.root),
+        return subprocess.call([ctx.layout.python_for_builds(), '-I', str(cli), '--root', str(ctx.layout.root),
                                 'continue-update', ctx.version])
 
     if a.cmd == 'continue-update':
