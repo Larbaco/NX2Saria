@@ -3578,6 +3578,24 @@ The detached Windows worker holds a handle with synchronization and query access
 rejects an already ended or reused PID. The worker checks the handle every 200 ms while waiting for a request
 and treats parent exit like EOF.
 
+## `launcher/build_supervisor.py`
+
+`supervise()` reports the identity of its Linux session or Windows build group. It waits for a
+single start acknowledgement; EOF before that line exits without creating a build log or
+starting the command. The build receives a file for its output so losing the worker pipe does
+not change how the compiler finishes. The supervisor waits for the main command and remaining
+members, replaces the terminal result file atomically and exits. This seam is tested independently
+while the worker still uses the existing job path.
+
+`launcher/platform/linux.py` `process_identity()` reads the process group, session and creation
+tick from procfs. `session_members()` is used to drain the build session after the main command
+exits, excluding the supervisor and zombies.
+
+`launcher/platform/windows.py` `BuildJobGroup` identifies the supervisor by process creation
+time and attempts to assign it to a named job. The job name contains a digest of the install
+root and a unique token. If assignment is refused the build can still run with the PID identity.
+The named job counts remaining processes without killing them when a handle closes.
+
 ## `launcher/worker.py`
 
 `main()` accepts newline-delimited UTF-8 JSON over pipes. It checks the exact integer protocol version

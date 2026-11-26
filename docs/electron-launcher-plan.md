@@ -144,7 +144,11 @@ before sending the start acknowledgement. EOF before acknowledgement means the s
 without starting a build. The supervisor holds the build process handle, the launch control channel until acknowledgement,
 and the files for build output and terminal status. The worker reads output independently so a
 broken UI or worker pipe cannot abort a useful compile. A normal worker close still cancels
-through the current path. Only the supervisor records the builder's terminal result after the
+through the current path. The initial supervisor test runs an inert command in a scratch run
+directory. It verifies that worker EOF before approval leaves the command unstarted. After
+approval the output and terminal result must survive the disappearance of the control channel.
+This standalone test passes locally on Linux. Wiring the supervisor into builds and verifying
+recovery after killing the worker are separate steps. Only the supervisor records the builder's terminal result after the
 verified group drains, then exits as soon as that record is written. Missing terminal status
 means the supervisor may have died and live group ownership must be checked.
 

@@ -620,3 +620,28 @@ def toolchain_missing(which=shutil.which, run=subprocess.run):
             'Debian, Ubuntu, Linux Mint: sudo apt install clang lld libopus-dev libvpx-dev libdav1d-dev libzstd-dev '
             'libvulkan-dev. SDL3 is carried by the build kit when the distribution has no SDL3 package.\n'
             'NX2Saria will not install system packages for you.')
+
+
+def boot_identity():
+    return Path('/proc/sys/kernel/random/boot_id').read_text().strip()
+
+
+def process_identity(pid):
+    stat = (Path('/proc') / str(pid) / 'stat').read_text(encoding='utf-8', errors='replace')
+    fields = stat[stat.rindex(')') + 1:].split()
+    return {'pid': int(pid), 'state': fields[0], 'group': int(fields[2]), 'session': int(fields[3]),
+            'start': int(fields[19])}
+
+
+def session_members(session, exclude=None):
+    members = []
+    for item in Path('/proc').iterdir():
+        if not item.name.isdigit() or int(item.name) == exclude:
+            continue
+        try:
+            identity = process_identity(int(item.name))
+        except (FileNotFoundError, ProcessLookupError, PermissionError):
+            continue
+        if identity['session'] == session and identity['state'] != 'Z':
+            members.append(identity)
+    return members

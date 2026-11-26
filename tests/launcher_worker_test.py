@@ -464,6 +464,57 @@ class WorkerTest(unittest.TestCase):
         self.assertIn('worker: rebuild started', log)
         self.assertNotIn('worker: spawn started', log)
 
+    def test_build_supervisor_requires_acknowledgement_and_keeps_output_without_control(self):
+        scratch = Path(self.tmp.name)
+        child_started = scratch / 'builder-started'
+        child_release = scratch / 'builder-release'
+        child = ("import pathlib,sys,time\n"
+                 "started,release=map(pathlib.Path,sys.argv[1:])\n"
+                 "started.touch()\n"
+                 "print('synthetic output',flush=True)\n"
+                 "until=time.monotonic()+10\n"
+                 "while not release.exists() and time.monotonic()<until: time.sleep(.02)\n"
+                 "sys.exit(0 if release.exists() else 2)\n")
+
+        def supervise(run_dir):
+            run_dir.mkdir()
+            supervisor = subprocess.Popen(
+                [sys.executable, '-m', 'launcher.build_supervisor', '--install-root', str(self.root),
+                 '--run-dir', str(run_dir), '--', sys.executable, '-c', child, str(child_started), str(child_release)],
+                cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                start_new_session=sys.platform.startswith('linux'))
+            self.addCleanup(self.stop_worker, supervisor)
+            ready = queue.Queue()
+            threading.Thread(target=lambda: ready.put(supervisor.stdout.readline()), daemon=True).start()
+            greeting = ready.get(timeout=10)
+            self.assertTrue(greeting, supervisor.stderr.read() if not greeting else None)
+            identity = json.loads(greeting)
+            self.assertEqual(identity['pid'], supervisor.pid)
+            self.assertIn(identity['kind'], ('linux_group', 'windows_job', 'windows_pid'))
+            return supervisor
+
+        abandoned = scratch / '78a4f94fdd6d427381b4d5347e625ce0'
+        supervisor = supervise(abandoned)
+        supervisor.stdin.close()
+        self.assertEqual(supervisor.wait(timeout=10), 0)
+        self.assertFalse(child_started.exists())
+        self.assertFalse((abandoned / 'result.json').exists())
+
+        allowed = scratch / '53e981a6529b41c7b8482685990e477e'
+        supervisor = supervise(allowed)
+        supervisor.stdin.write('start\n')
+        supervisor.stdin.flush()
+        supervisor.stdin.close()
+        deadline = time.monotonic() + 10
+        while not child_started.exists() and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertTrue(child_started.is_file())
+        self.assertIsNone(supervisor.poll())
+        child_release.touch()
+        self.assertEqual(supervisor.wait(timeout=15), 0)
+        self.assertEqual((allowed / 'output.log').read_text().strip(), 'synthetic output')
+        self.assertEqual(json.loads((allowed / 'result.json').read_text())['code'], 0)
+
     def test_play_emits_confirmed_start_and_end_without_another_request(self):
         game = Path(self.tmp.name) / 'game'
         game.mkdir()

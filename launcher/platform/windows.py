@@ -69,3 +69,73 @@ def game_running(executable, owner_pid=None):
     except (OSError, AttributeError, ValueError):
         return False
     return False
+
+
+class JobAccounting(ctypes.Structure):
+    _fields_ = [('user_time', ctypes.c_longlong), ('kernel_time', ctypes.c_longlong),
+                ('period_user_time', ctypes.c_longlong), ('period_kernel_time', ctypes.c_longlong),
+                ('page_faults', wintypes.DWORD), ('total', wintypes.DWORD),
+                ('active', wintypes.DWORD), ('terminated', wintypes.DWORD)]
+
+
+def build_group_kernel():
+    k = ctypes.WinDLL('kernel32', use_last_error=True)
+    k.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    k.CreateJobObjectW.restype = wintypes.HANDLE
+    k.GetCurrentProcess.restype = wintypes.HANDLE
+    filetime = ctypes.POINTER(wintypes.FILETIME)
+    k.GetProcessTimes.argtypes = [wintypes.HANDLE, filetime, filetime, filetime, filetime]
+    k.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    k.CloseHandle.argtypes = [wintypes.HANDLE]
+    k.QueryInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                              wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    return k
+
+
+def creation_time(kernel, process):
+    created, exited, system, user = (wintypes.FILETIME() for _ in range(4))
+    if not kernel.GetProcessTimes(process, ctypes.byref(created), ctypes.byref(exited),
+                                  ctypes.byref(system), ctypes.byref(user)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    return (created.dwHighDateTime << 32) | created.dwLowDateTime
+
+
+class BuildJobGroup:
+    def __init__(self, root, token):
+        import hashlib
+        import re
+        if not re.fullmatch(r'[a-f0-9]{32}', token):
+            raise ValueError('invalid build token')
+        digest = hashlib.sha256(os.fsencode(os.path.normcase(str(root.resolve())))).hexdigest()[:24]
+        name = f'Local\\NX2Saria-build-{digest}-{token}'
+        self.kernel = k = build_group_kernel()
+        process = k.GetCurrentProcess()
+        self.identity = {'kind': 'windows_pid', 'pid': os.getpid(), 'start': creation_time(k, process)}
+        self.handle = k.CreateJobObjectW(None, name)
+        if self.handle:
+            existing = ctypes.get_last_error() == 183
+            if existing or not k.AssignProcessToJobObject(self.handle, process):
+                k.CloseHandle(self.handle)
+                self.handle = None
+            else:
+                self.identity.update(kind='windows_job', name=name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        if self.handle:
+            self.kernel.CloseHandle(self.handle)
+
+    def drain(self):
+        import time
+        if not self.handle:
+            return
+        accounting = JobAccounting()
+        while True:
+            if not self.kernel.QueryInformationJobObject(self.handle, 1, ctypes.byref(accounting),
+                                                          ctypes.sizeof(accounting), None):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if accounting.active <= 1:
+                return
+            time.sleep(0.1)

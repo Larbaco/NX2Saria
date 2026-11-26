@@ -5969,6 +5969,11 @@ starting, a clean request retains the saved dump, completion follows job cleanup
 cache retention drops the build objects. The first-run Electron test completes a stand-in
 rebuild and observes the ready screen and rebuild log without a Play request.
 
+The supervisor test verifies that process identity is available before the start acknowledgement.
+It closes the first supervisor's input without starting the command. A second run receives the
+acknowledgement, loses its control pipe, and still produces command output and a terminal result
+in a separate temporary run directory.
+
 
 ## `tests/launcher_mods_job_characterization_test.py`
 
