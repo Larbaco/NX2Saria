@@ -269,6 +269,18 @@ class Options(unittest.TestCase):
         finally:
             rc_smoke.WATCH_EVERY = old
 
+    def test_root_deleted_only_after_a_pass(self):
+        for results, keep, kept in (([('a', True, '', 0)], False, False), ([('a', True, '', 0), ('b', False, '', 0)],
+                                    False, True), ([('a', True, '', 0)], True, True), ([], False, True)):
+            with tempfile.TemporaryDirectory() as d:
+                s = smoke(d, keep_root=keep, keep_game=False)
+                s.base = Path(d) / 'root'
+                (s.base / 'clean').mkdir(parents=True)
+                s.results = results
+                s.cleanup()
+                self.assertEqual(s.base.exists(), kept, (results, keep))
+                self.assertEqual(bool(s.notes), kept, (results, keep))
+
     def fake_install(self, d, shadow):
         s = smoke(d)
         root = s.root('clean')

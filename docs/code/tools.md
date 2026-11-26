@@ -4913,7 +4913,7 @@ the runs copy): `--bench` or `NX2SARIA_BENCH`. The dump is the game's `.nup` or 
 .venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --quick --detach
 .venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --only update --from v0.26.0 --detach
 .venv/bin/python tools/rc_smoke.py v0.27.0-rc.1 --only crash,privacy --keep-game
-flock <bench>/xbuild/.build.lock sh -c 'tools/rc_smoke.py v0.27.0-rc.3 --quick --keep-game --lock-held &&
+flock <bench>/xbuild/.build.lock sh -c 'tools/rc_smoke.py v0.27.0-rc.3 --quick --keep-game --keep-root --lock-held &&
     tools/rc_smoke.py v0.27.0-rc.3 --only run --lock-held --ini foliage_distance=2 --expect-file <file> \
         --logs <bench>/xbuild/runs/<date>-rc-smoke-v0.27.0-rc.3-foliage2'
 ```
@@ -4948,7 +4948,9 @@ memory through RAM, and the dump says nothing, since it leaves the shared mappin
 
 - The launcher's root is a throwaway `HOME` on ext4, `/var/tmp/rc-smoke-<tag>/{clean,update,winupd}/home`, with every `XDG_`
   folder inside it: the AppImage installer and the launcher find the root through `XDG_DATA_HOME`, so a player's own
-  installation is never touched. `--clean` deletes it at the end.
+  installation is never touched. It is deleted at the end of a run whose stages all passed (`cleanup()`), and kept
+  after a failure for its diagnosis or with `--keep-root`, which a chain of `--lock-held` invocations that
+  reuse it passes to all but the last; `summary.md` says when it is kept.
 - The game folders are under the bench, `xbuild/tmp-rc-smoke/<tag>/{clean,update,winupd}`, with the build's `TMPDIR`
   beside them; they are deleted before the bench lock is let go, unless `--keep-game`. Two of them do not fit on the
   bench's disk together, so each build deletes the others first (`ROOTS`), unless `--keep-game`.

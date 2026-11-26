@@ -1106,9 +1106,13 @@ class Smoke:
                 self.games.rmdir()
             except OSError:
                 pass
-        if self.a.clean:
+        if self.a.keep_root:
+            self.notes.append(f'The launcher root {self.base} is kept (--keep-root).')
+        elif self.results and all(r[1] for r in self.results):
             shutil.rmtree(self.base, ignore_errors=True)
             self.say(f'deleted {self.base}')
+        elif self.base.exists():
+            self.notes.append(f'The launcher root {self.base} is kept for the failure\'s diagnosis: delete it after.')
 
     def summary(self, stages, started):
         ok = all(r[1] for r in self.results)
@@ -1218,7 +1222,7 @@ def main(argv=None):
     ap.add_argument('--logs')
     ap.add_argument('--disk-wait', type=float, default=1800)
     ap.add_argument('--keep-game', action='store_true')
-    ap.add_argument('--clean', action='store_true')
+    ap.add_argument('--keep-root', action='store_true')
     ap.add_argument('--detach', action='store_true')
     ap.add_argument('--lock-held', action='store_true')
     ap.add_argument('--ini', action='append', default=[])
