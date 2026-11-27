@@ -1,8 +1,8 @@
 # A settings tab in the game's pause menu (1.1.1, experimental)
 
 `pause_settings_tab = 1` in `nx2saria.ini` (`NX2SARIA_PAUSE_SETTINGS_TAB`; default 0, read at start) puts a fifth tab
-after the pause menu's System tab, for a player who has only a gamepad in hand. It shows the menu's Picture rows in
-the pause menu itself, with the same draft and Apply as the settings menu. The settings menu and its shortcut stay as
+after the pause menu's System tab, for a player who has only a gamepad in hand. It shows the menu's rows (Picture,
+Sound, Controls, Game) in the pause menu itself, with the same draft and Apply as the settings menu. The settings menu and its shortcut stay as
 they are. The implementation notes: [code/ui.md](code/ui.md), `runtime/ui/pause_tab.c`.
 
 ## What the player sees
@@ -16,15 +16,19 @@ they are. The implementation notes: [code/ui.md](code/ui.md), `runtime/ui/pause_
   translation). It shows only while the pause menu's header shows its four categories, so never in the Minus menu.
 - R on the System tab opens it, and so does a click on its name: from the System tab at once, from another tab after
   the mouse in the menus walked there. The System tab's page
-  is hidden and the Picture rows are drawn in its place; the name gets the selected tab's plate and the System
+  is hidden and the rows are drawn in its place; the name gets the selected tab's plate and the System
   category gives up its own.
 - L, B or Plus closes it. With changes in the draft the box "Apply your changes?" asks first, as the settings menu
   does when it is left. The System tab's page comes back.
+- The tab's name fades in with the game's names.
 - The rows are the settings menu's own, in groups: Picture (the frame limit, VSync, the upscaler, frame generation,
   sharpening, anisotropic filtering) Sound (the volume, the menu sounds' volume, the channels) and Controls (the mouse, the gamepad's layout and prompts, sprint,
   vibration, the gyro, the sticks; the button bindings stay in the settings menu) and Game (the language, the operation
   mode, playing in the background, the message speed, the amiibo daily limit, Discord; the saves, the testing rows and
-  the debug menu stay in the settings menu). A row whose setting takes a restart says so, as in the settings menu.
+  the debug menu stay in the settings menu). Picture also has the quality preset (with its confirmation),
+  anti-aliasing, HDR where the display offers it, and the picture's shape and the HUD's place (after a restart).
+- *More settings…*, the last row, opens the whole settings menu over the paused game, on its Controls tab; leaving it
+  lands back in the pause menu. A row whose setting takes a restart says so, as in the settings menu.
 
 ## What the game has (1.1.1)
 
@@ -94,6 +98,12 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
 - `pause_tab: R on the System tab: the tab opens` (or `a click on the tab`), `pause_tab: the tab opened`,
   `pause_tab: the System tab's page hidden (N_InOut_00 flags ... -> ...)`.
 - `pause_tab: Apply from the tab: 1 change(s): VSync: On -> Off`.
+- `pause_tab: more settings: the settings menu opens on its Controls tab over the paused game; ...`, then `pause_tab:
+  more settings: the settings menu closed after 8120 ms; the pause menu is still open under it, the game still
+  paused`.
+- At the end of the session: `pause_tab: session: the tab opened 3 time(s) (R 2, a click 1); closed by L 1, B 0,
+  Plus 0, Apply 1, Discard 0, More settings 1, other 0; 1 Apply with 2 change(s); More settings 1; the header in five
+  places`.
 - `pause_tab: the tab closed (L) after 5230 ms` (or `B`, `Plus`, `Apply`, `Discard`, a failure), then `pause_tab: the
   System tab's page shown again (...)`.
 

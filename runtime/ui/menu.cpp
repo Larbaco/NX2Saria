@@ -68,6 +68,7 @@ void wide_picture(unsigned *w, unsigned *h);
 int ov_movie_live(void);
 int wide_menu_open(void);
 int gfx_picture_rect(float out[4]);
+int gfx_surface_hdr10(void);
 int wide_loading_open(void);
 int64_t frame_step_world_us(void);
 double wide_scene_share(void);
@@ -124,6 +125,7 @@ static int ev_n;
 
 static std::atomic<int> g_pause_tab{0};
 static const char *g_pause_why = "closed";
+static uint64_t g_more_open;
 
 static int change_open(int want) {
     plat_mutex_lock(&open_lock);
@@ -148,6 +150,7 @@ static int change_open(int want) {
         rt_log("menu: %s%s", open ? "open" : "closed", g_pause_tab.load() ? " (the pause menu's tab)" : "");
         if (g_pause_tab.load()) pause_tab_set_open(open, g_pause_why);
         if (!open) g_pause_tab.store(0);
+        if (!open && g_more_open) pause_tab_more(0, (plat_now_ns() - g_more_open) / 1000000ull), g_more_open = 0;
     }
     plat_mutex_unlock(&open_lock);
     return open;
@@ -2224,23 +2227,36 @@ static void pause_tab_close(const char *why) {
     set_open(0);
 }
 
+static bool g_more_req;
+
 static void pause_tab_rows(void) {
     opt_group(UI_MENU_GRAPHICS);
+    row_preset();
     row_fps_limit();
     opt_toggle_value("NX2SARIA_VK_PRESENT", UI_MENU_PRESENT_VSYNC, UI_MENU_PRESENT_DESC, "mailbox", "immediate", vsync_note());
     row_upscaling();
+    row_aa();
     row_framegen();
+    if (gfx_surface_hdr10() || opt_bool("NX2SARIA_HDR")) row_hdr();
     int dl = opt_bool("NX2SARIA_DLAA"), fsr3 = dl && !strcmp(opt_value("NX2SARIA_TAA"), "fsr3") && vk_ffx_available();
     if (!fsr3 && (strcmp(opt_value("NX2SARIA_UPSCALER"), "fsr") || dl)) opt_disable_next(UI_MENU_SHARPNESS_NEEDS_FSR);
     opt_slider("NX2SARIA_SHARPNESS", UI_MENU_SHARPNESS, 0, 100, UI_MENU_SHARPNESS_DESC, 5, "%.0f %%");
     static const char *const aniso[] = {"game", "2", "4", "8", "16"};
     const char *aniso_names[] = {menu_text(UI_MENU_ANISO_GAME), "2x", "4x", "8x", "16x"};
     opt_choice_list("NX2SARIA_ANISO", UI_MENU_ANISO, aniso, aniso_names, 5, UI_MENU_ANISO_DESC);
+    if (wide_available()) {
+        static const UiTextId wide[] = {UI_MENU_GAME_ASPECT_16_9, UI_MENU_GAME_ASPECT_WINDOW, UI_MENU_GAME_ASPECT_16_10,
+                                        UI_MENU_GAME_ASPECT_3_2, UI_MENU_GAME_ASPECT_21_9, UI_MENU_GAME_ASPECT_32_9};
+        opt_choice("NX2SARIA_GAME_ASPECT", UI_MENU_GAME_ASPECT, wide, 6, UI_MENU_GAME_ASPECT_DESC);
+        row_wide_placement();
+    }
     opt_group(UI_MENU_TAB_SOUND);
     rows_sound();
     opt_group(UI_MENU_TAB_CONTROLS);
-    rows_controls();    opt_group(UI_MENU_TAB_GAME);
+    rows_controls();
+    opt_group(UI_MENU_TAB_GAME);
     rows_game();
+    if (opt_button("##more", UI_MENU_MORE_SETTINGS, UI_MENU_MORE_SETTINGS_DESC)) g_more_req = true;
 }
 
 static const char *pause_tab_label(void) {
@@ -2295,9 +2311,21 @@ static void layout_pause_tab(uint32_t w, uint32_t h, float scale) {
     pause_tab_rows();
     opt_end();
     apply_confirm(scale);
+    preset_confirm(scale);
     post_confirm(scale);
     menu_sounds_frame();
     const bool was_modal = g_modal || g_post != POST_NONE || ImGui::GetIO().WantTextInput;
+    if (g_more_req && !was_modal) {
+        g_more_req = false;
+        g_pause_tab.store(0);
+        g_more_open = plat_now_ns();
+        g_tab_request = TAB_CONTROLS;
+        pause_tab_set_open(0, "More settings");
+        pause_tab_more(1, 0);
+        ImGui::End();
+        return;
+    }
+    g_more_req = false;
     const bool plus = g_pad_plus != 0;
     g_pad_plus = 0;
     const char *key = ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false) ? "L"
@@ -2855,7 +2883,8 @@ static int overlay_frame(uint64_t frame, const MenuTarget *t, const char **shot)
     } else if (open) {
         layout_menu(t->width, t->height, scale);
     }
-    if (pause_tab_on()) pause_tab_header(t->width, t->height, scale, open && g_pause_tab.load(std::memory_order_relaxed));
+    const bool tab_mode = g_pause_tab.load(std::memory_order_relaxed) != 0;
+    if (pause_tab_on() && (!open || tab_mode)) pause_tab_header(t->width, t->height, scale, open && tab_mode);
     perf_draw(t, scale);
     capture_note(t, scale);
     amiibo_note_draw(t->width, scale);

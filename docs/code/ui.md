@@ -930,11 +930,14 @@ reason, so `runtime/ui/pause_tab.c` shows the System page again.
 
 ### `pause_tab_rows()`
 
-The tab's page: the Picture rows of `tab_screen()` that a player looks for in a pause menu, with the same row functions,
-so their notes ("after restart", the disabled sharpening) are the settings menu's; then the Sound tab's rows
-(`rows_sound()`) the Controls tab's without the bindings (`rows_controls()`) and the Game tab's (`rows_game()`), each under its
-tab's name as a group.
-
+The tab's page: the Picture rows of `tab_screen()` a player looks for in a pause menu (the quality preset with its
+confirmation, the frame limit, VSync, the upscaler, anti-aliasing, frame generation, HDR where the window's surface
+offers HDR10 or it is on, sharpening, anisotropic filtering, and with the widescreen patches the picture's shape and
+the HUD's place, whose notes say "after restart"), then Sound (`rows_sound()`), Controls without the bindings
+(`rows_controls()`) and Game (`rows_game()`), each under its tab's name as a group, with the same row functions as the
+settings menu. Last, "More settings…" (`g_more_req`). Left out: the bindings (their cells wait for a press, and L, B
+and Plus close the tab), the saves (a file dialog), the testing rows, the debug menu, Cheats and Amiibo, the window
+and the GPU: all in the settings menu, which More settings opens.
 ### `rows_sound()`
 
 The Sound tab's rows, for the tab and for `tab_sound()`.
@@ -968,7 +971,10 @@ shrinks to fit 0.94 of the box's width ("Configurações").
 ### `layout_pause_tab()`
 
 The open tab: one window over the page box of `runtime/ui/pause_tab.c` `plus_tick()`, with the rows, the box "Apply your
-changes?" and the boxes after an Apply. The first row takes the cursor on the first frame. `g_modal` is cleared at the
+changes?", the preset's confirmation and the boxes after an Apply. The first row takes the cursor on the first frame.
+More settings, with no box up, ends the tab mode without closing the menu: `g_pause_tab` cleared, the settings menu
+asked for its Controls tab, `runtime/ui/pause_tab.c` told (`pause_tab_set_open()`, `pause_tab_more()`), and
+`g_more_open` keeps the time, so the menu's close logs how long it was open. `g_modal` is cleared at the
 start of each frame, as `restart_confirm()` does for the settings menu: the boxes set it while they are up. L (or Q), B (or Esc) and
 Plus leave it as Continue leaves the settings menu (`leave_menu()`), unless a box is open. It closes by itself when the
 pause menu's page has not been seen for `SEEN_MS` (the pause menu closed under it), and with
@@ -1153,7 +1159,8 @@ in the menu's look. It shows once the capture is written, so the capture's own p
 - With `NX2SARIA_MENU_TEST_DEBUG` set the test shoots the debug menu's tabs instead.
 - The pause menu's settings tab: its request opens the menu in the tab mode (`g_pause_tab`); while the menu is closed
   the overlay is drawn as long as the tab's name shows in the pause menu's header (`pause_tab_view()`), and the name is
-  drawn on every frame the tab is on, selected while the tab is open.
+  drawn on every frame the tab is on, selected while the tab is open, and not while the settings menu itself is open
+over the pause menu (its dimmed backdrop would have the name over it).
 - When the game started waiting for an amiibo, its list opens over the game.
 - `g_open` is read again after taking the reset: the menu may have opened since the first read (F1 on the window
   thread while the overlay alone was drawn), and that frame's reset would be spent on an overlay frame, so the first
@@ -2956,6 +2963,12 @@ The name setting, and the start line, written at the first pad read.
 A screen's layout, a layout's name, a pane by its index (which must belong to that layout), and the shape check: the
 parents of the panes the tab uses, against `runtime/ui/pause_tab_core.h` `PT_SYSTEM_TREE` and `PT_CATEGORY_TREE`.
 
+### `pane_chain_alpha()`
+
+The opacity a pane is drawn at: its own alpha times that of each parent that passes its alpha on (flag 8), 0 when it
+or a parent is not shown (`runtime/ui/pause_tab_core.h` `pt_chain_alpha()`). The tab's name and plate take the fourth
+category's, so they fade in with the header instead of standing at full alpha while the game's names come up.
+
 ### `pane_box()`, `to_picture()`
 
 A pane's box in layout units (`runtime/ui/menu_mouse_geom.h` `mm_pane_box()`), and a box turned into fractions of the
@@ -3040,6 +3053,20 @@ For `runtime/ui/menu.cpp`: the boxes, the request to open (taken once), the open
 the time it was open, and the Apply line. A close drops a request still waiting, so the tab never opens again by
 itself.
 
+### `pause_tab_more()`
+
+"More settings…": the line when the tab gives way to the settings menu, and when that menu closes, whether the pause
+menu is still seen under it (`g_page_ms` within `SEEN_MS`). The settings menu blocks the game's input while it is open,
+so the game stays in its pause menu, and the buttons that close it are held from the game for a second after
+(`runtime/input/input.c` `blocked()`): closing it lands back in the pause menu.
+
+### `pause_tab_exit_log()`
+
+At the orderly end (`runtime/gfx/gfx_present.c` `rt_exit_steps()`), with the tab on: one line with the session's
+openings (by R, by a click), closings by reason (`CLOSE_WHY`, the reasons `runtime/ui/menu.cpp` passes; anything else
+is "other"), Applies and their changes, More settings, and the header's state (`g_five_state`: never shown, in five
+places, put back, or left alone and why).
+
 ### `pause_tab_poll()`
 
 Once per pad read, with the polls of the mouse in the menus and Quit Game (`runtime/input/input.c` `input_poll()`). A
@@ -3063,6 +3090,7 @@ The parts of the tab that need neither the game's memory nor the runtime, so `te
   `PaSystemMenu_00` (1 `N_All_00`, 2 `N_InOut_00` under it, the controller picture, the ornament and the buttons
   under that) and `PaMenuCategory_00` (3 `N_Bg_00` under `N_BgIn_00`, with the two plates under it) have them;
   `PT_SYSTEM_INOUT` and `PT_CATEGORY_BG` are the panes written.
+- `pt_alpha_clamp()`, `pt_chain_alpha()`: a pane's opacity through its parents (see `pane_chain_alpha()`).
 - `pt_name_kind()`: `product` (and unset) or `settings`; anything else is the product's name, said in the start line.
 - `pt_header_boxes()`: the third and fourth categories of `MenuOverlay_00` in layout units (x 30..430 and 490..890,
   y 888..1112), for the tab's place when the header object is not found.
@@ -3582,6 +3610,7 @@ For a translator, what a text is for and what its printf arguments take:
 | `UI_MENU_PROMPTS_MISSING`, `UI_MENU_PROMPTS_FAILED`, `UI_MENU_PROMPTS_RESTART`, `UI_MENU_PROMPTS_OFF_SHAPE`, `UI_MENU_PROMPTS_OFF_MODS`, `UI_MENU_PROMPTS_OFF_PATCHES` | the notes under the prompts: their files are missing or damaged, they change after restart, or why they are off |
 | `UI_MENU_RESTART_CONFIRM`, `UI_MENU_QUIT_CONFIRM`, `UI_MENU_RESTART_YES`, `UI_MENU_RESTART_SAVING` | the confirmation of the bar's Restart and Quit (its Cancel is `UI_MENU_RESET_NO`) |
 | `UI_MENU_RESTART_COUNT` | the bar's Restart with the count of settings waiting for it (printf: `%d`) |
+| `UI_MENU_MORE_SETTINGS`, `UI_MENU_MORE_SETTINGS_DESC` | the pause menu's settings tab's last row, which opens the settings menu in its place (`runtime/ui/menu.cpp` `pause_tab_rows()`); the Russian, Portuguese and Chinese texts are new and wait for a speaker's review |
 | `UI_MENU_PAUSE_TAB` | the pause menu's settings tab's name with `pause_settings_tab_name = settings` (`runtime/ui/menu.cpp` `pause_tab_label()`); also in the title face's glyphs |
 | `UI_MENU_DRAFT_TITLE`, `UI_MENU_DRAFT_APPLY`, `UI_MENU_DRAFT_DISCARD`, `UI_MENU_DRAFT_KEEP`, `UI_MENU_DRAFT_RESTART_NOTE`, `UI_MENU_DRAFT_QUIT_NOTE` | the box that asks about the changes made in the menu when it is left (`runtime/ui/menu.cpp` `apply_confirm()`), and the lines restarting and quitting add to their confirmation while there are such changes |
 | `UI_MENU_KEEP_TITLE`, `UI_MENU_KEEP_COUNTDOWN`, `UI_MENU_KEEP_YES`, `UI_MENU_KEEP_REVERT`, `UI_MENU_RESTART_NOW_TITLE`, `UI_MENU_RESTART_NOW`, `UI_MENU_RESTART_LATER` | after Apply: the "keep these display settings?" box with its countdown (`UI_MENU_KEEP_COUNTDOWN`, a printf format with one `%d`), and the "restart now / later" box for settings read at start |

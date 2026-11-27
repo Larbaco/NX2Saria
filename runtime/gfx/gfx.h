@@ -27,6 +27,7 @@ void gfx_lock_holders(GfxLockHolders *h);
 int gfx_window_in_front(void);
 int vk_hdr_native(void);
 int gfx_picture_rect(float out[4]);
+int gfx_surface_hdr10(void);
 
 enum { GFX_STAGE_VS, GFX_STAGE_TCS, GFX_STAGE_TES, GFX_STAGE_GS, GFX_STAGE_FS, GFX_STAGE_CS,
        GFX_STAGE_TS, GFX_STAGE_MS };

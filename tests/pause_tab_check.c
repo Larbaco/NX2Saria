@@ -99,6 +99,20 @@ static void trans(void) {
     CHECK(pt_find_trans(rows, 44, 10, 22) == -2, "two places with the game's values: none taken");
 }
 
+static void alpha(void) {
+    float a[4] = {1.0f, 1.0f, 0.5f, 0.4f};
+    uint32_t f[4] = {1, 1 | 8, 1 | 8, 1};
+    CHECK(fabsf(pt_chain_alpha(a, f, 4) - 0.5f) < 1e-6f, "the parents that pass their alpha on multiply it: %.3f",
+          (double)pt_chain_alpha(a, f, 4));
+    f[3] = 1 | 8;
+    CHECK(fabsf(pt_chain_alpha(a, f, 4) - 0.2f) < 1e-6f, "the header fading in at 0.4 takes the name with it");
+    f[2] = 8;
+    CHECK(pt_chain_alpha(a, f, 4) == 0.0f, "a parent not shown hides it");
+    f[2] = 1 | 8, a[0] = 3.0f, a[1] = -1.0f;
+    CHECK(pt_chain_alpha(a, f, 2) == 0.0f, "out of range: clamped");
+    CHECK(pt_chain_alpha(a, f, 0) == 0.0f, "no pane: nothing");
+}
+
 static void page(void) {
     PtBox b;
     pt_page_box(&b, 1920.0f, 1);
@@ -124,6 +138,7 @@ int main(void) {
     trees();
     five();
     trans();
+    alpha();
     page();
     names();
     printf("pause_tab_check: %s\n", fails ? "FAILED" : "passed");
