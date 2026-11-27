@@ -7161,7 +7161,8 @@ destroyed" errors left at `vkDestroyDevice`.
 It takes the first and the ordinary queues whole, in their order (the first queue's entries before the others', as
 `completion_main()` runs them), and runs them whatever their value: nothing will be submitted again, and they only give
 back what the GPU no longer uses. The results queue is left as it is: its callbacks read results of GPU work, which a
-value never submitted has not got. One line counts them (`vk: sync teardown:`). `vk_exec_draw_shutdown()` calls it
+value never submitted has not got. One line gives how many it ran from each queue, how many were for values past the
+last submitted, and how many result callbacks it left (`vk: sync teardown:`). `vk_exec_draw_shutdown()` calls it
 before it releases anything, and `vk_sync_shutdown()` again; a game run never reaches either.
 
 ### `vk_sync_shutdown()`

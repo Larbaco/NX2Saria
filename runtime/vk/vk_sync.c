@@ -1571,12 +1571,14 @@ uint32_t vk_completion_flush_idle(void) {
         return 0;
     vk_sync_finish();
     plat_mutex_lock(&st_lock);
-    int k = 0, n = fqn + qn;
-    Pending *run = n ? malloc(sizeof *run * (size_t)n) : NULL;
+    int nf = fqn, nq = qn, left = rqn, k = 0;
+    Pending *run = nf + nq ? malloc(sizeof *run * (size_t)(nf + nq)) : NULL;
     if (run) {
-        for (int i = 0; i < fqn; i++) run[k++] = fqueue[fqhead + i];
-        for (int i = 0; i < qn; i++) run[k++] = queue[qhead + i];
+        for (int i = 0; i < nf; i++) run[k++] = fqueue[fqhead + i];
+        for (int i = 0; i < nq; i++) run[k++] = queue[qhead + i];
         fqhead = fqn = qhead = qn = 0;
+    } else {
+        nf = nq = 0;
     }
     uint64_t reached = done, newest = 0;
     plat_mutex_unlock(&st_lock);
@@ -1587,10 +1589,10 @@ uint32_t vk_completion_flush_idle(void) {
         run[i].fn(run[i].arg);
     }
     free(run);
-    if (k)
-        rt_log("vk: sync teardown: %d completion callbacks still queued after the last submission ran, on this thread (%u "
-               "for values past it, %llu; the newest %llu)", k, ahead, (unsigned long long)reached,
-               (unsigned long long)newest);
+    if (k || left)
+        rt_log("vk: sync teardown: ran %d callbacks still queued after the last submission finished, on this thread (%d "
+               "first, %d ordinary; %u for values past the last one, %llu, the newest %llu); %d result callbacks left",
+               k, nf, nq, ahead, (unsigned long long)reached, (unsigned long long)newest, left);
     return (uint32_t)k;
 }
 
