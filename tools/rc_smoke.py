@@ -513,13 +513,11 @@ class Smoke:
             self._releases = json.loads(http_get(f'{GITHUB_API}/repos/{REPO}/releases?per_page=30'))
         return self._releases
 
-    def newest_preview(self):
-        for r in self.releases():
-            if r.get('draft'):
-                continue
-            if any(a.get('name') == LINUX_MANIFEST for a in r.get('assets', [])):
-                return r.get('tag_name')
-        return None
+    def newest(self, channel):
+        tags = [r.get('tag_name', '') for r in self.releases()
+                if not r.get('draft') and (channel == 'preview' or not r.get('prerelease'))
+                and any(a.get('name') == LINUX_MANIFEST for a in r.get('assets', []))]
+        return max(tags, key=lambda t: version_key(tag_version(t)), default=None)
 
     def previous_stable(self):
         mine = version_key(self.version)
@@ -581,9 +579,9 @@ class Smoke:
         return image, want
 
     def prepare_settings(self, which, game):
-        self.settings(which, channel='preview', telemetry='off', telemetry_asked='', crash_log_offer='off',
+        self.settings(which, channel=self.a.channel, telemetry='off', telemetry_asked='', crash_log_offer='off',
                       auto_check=True, auto_install=False, desktop_shortcut=False, sounds='off',
-                      dump=str(self.dump()), game_dir=str(game))
+                      dump=str(self.a.dump or ''), game_dir=str(game))
 
     def pin_feed(self, which, tag):
         _, _, _, app = self.installed(which)
@@ -600,11 +598,11 @@ class Smoke:
             del self._releases
         if self.a.pin_url:
             return f'pinned URL {DOWNLOAD}/{self.tag}/{LINUX_MANIFEST}'
-        newest = self.newest_preview()
+        newest = self.newest(self.a.channel)
         if newest != self.tag:
-            raise Failed(f'{self.tag} is not the newest release on the Preview channel ({newest} is): '
+            raise Failed(f'{self.tag} is not the newest release on the {self.a.channel} channel ({newest} is): '
                          'give --pin-url to test it from its own manifest')
-        return 'the real GitHub feed, Preview channel'
+        return f'the real GitHub feed, {self.a.channel} channel'
 
     def stage_install(self):
         self.feed_used = self.feed()
@@ -1212,6 +1210,7 @@ def main(argv=None):
     ap.add_argument('--pin-url', action='store_true')
     ap.add_argument('--bench', default=os.environ.get('NX2SARIA_BENCH', ''))
     ap.add_argument('--dump', default=os.environ.get('NX2SARIA_DUMP', ''))
+    ap.add_argument('--channel', choices=('preview', 'stable'), default='preview')
     ap.add_argument('--area', default=DEFAULT_AREA)
     ap.add_argument('--seconds', type=float, default=40)
     ap.add_argument('--wall', type=float, default=300)
