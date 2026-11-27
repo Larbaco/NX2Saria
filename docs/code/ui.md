@@ -959,7 +959,8 @@ The tab's name: "NX2Saria", or `UI_MENU_PAUSE_TAB` with `pause_settings_tab_name
 The tab's name in the pause menu's header, on the background list, at the box `runtime/ui/pause_tab.c` `header_tick()`
 works out, in picture fractions turned into the window's pixels with `gfx_picture_rect()`. The plate runs from the
 picture's top down to 0.545 of the box's height below its centre (y 878 in layout units, where the game's plate ends),
-as wide as the text and a margin of half the box's height, at most the box. The text is in the menu's first font, the game's own text face with the system's CJK glyphs
+as wide as the text and a margin of half the box's height, at most the box. The text's centre is 0.06 of the box's
+height below the box's: on the bench the game's category names sit about 13 units lower than the box's centre. The text is in the menu's first font, the game's own text face with the system's CJK glyphs
 merged (the title face drew "设置" thin and small), at 0.28 of the box's height, the game's category text size (0.38 for a name with CJK characters, the UTF-8 lead
 bytes 0xe3 to 0xe9: on the bench the system's CJK face drew "设置" at two thirds of the game's "系统" at the same size), and
 shrinks to fit 0.94 of the box's width ("Configurações").
