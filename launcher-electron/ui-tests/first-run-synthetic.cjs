@@ -88,13 +88,14 @@ async function main() {
     execFileSync('python3', [fixture, found], { cwd: repository, env: { ...process.env, PYTHONPATH: repository } });
     const python = path.join(base, 'test-python');
     await fs.writeFile(python, '#!/bin/sh\nexec "$NX2SARIA_TEST_PYTHON" -c "$NX2SARIA_TEST_INSTALL" "$@"\n', { mode: 0o755 });
-    app = await _electron.launch({
+    const launchOptions = {
       args: ['--no-sandbox', '.'],
       cwd: path.resolve(__dirname, '..'),
       env: { ...process.env, XDG_DATA_HOME: base, NX2SARIA_TEST_LOCALE: 'pt-BR', NX2SARIA_TELEMETRY_URL: 'none', NX2SARIA_ELECTRON_TEST_SEND_REPORTS: '0', NX2SARIA_PYTHON: python,
         NX2SARIA_TEST_PYTHON: process.env.NX2SARIA_PYTHON || 'python3', NX2SARIA_TEST_INSTALL: standInInstall,
         NX2SARIA_TEST_FEED: `http://127.0.0.1:${server.address().port}/manifest.json` }
-    });
+    };
+    app = await _electron.launch(launchOptions);
     const page = await app.firstWindow();
     const location = page.locator('#game-folder-proposal');
     const install = page.getByRole('button', { name: 'Iniciar instalação' });
@@ -357,6 +358,21 @@ async function main() {
     assert.match(workerLog, /worker: settings dump result=saved/);
     assert.match(electronLog, /electron: settings open target=logs result=ok/);
     assert.doesNotMatch(electronLog, /replacement\.nup|nx2-first-run-ui-/);
+
+    await panel.getByLabel('Procurar atualizações ao abrir').check();
+    await page.waitForFunction(() => !document.querySelector('#settings-auto-check').disabled);
+    assert.equal(JSON.parse(await fs.readFile(settings, 'utf8')).auto_check, true);
+    assert.deepEqual(feedRequests, ['/manifest.json']);
+    await app.close();
+    app = await _electron.launch(launchOptions);
+    const reopened = await app.firstWindow();
+    await reopened.getByText('Versão 999.0.0 disponível', { exact: true }).waitFor({ timeout: 5000 });
+    const notes = reopened.getByText('A synthetic update note.', { exact: true });
+    assert.equal(await notes.isVisible(), false);
+    await reopened.getByRole('button', { name: 'Ver atualização', exact: true }).click();
+    await notes.waitFor({ timeout: 5000 });
+    assert.deepEqual(feedRequests, ['/manifest.json', '/manifest.json']);
+    assert.equal((await fs.readFile(path.join(root, 'app', 'current.txt'), 'utf8')).trim(), '0.0.1');
   } finally {
     if (app) await app.close();
     server.close();

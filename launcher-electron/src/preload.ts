@@ -52,7 +52,7 @@ contextBridge.exposeInMainWorld('launcher', {
   reportsCrashPreference: (value: boolean) => ipcRenderer.invoke('reports-crash-preference', value),
   reportsCrashAnswer: (answer: string) => ipcRenderer.invoke('reports-crash-answer', answer),
   reportsComment: (text: string, attach: boolean) => ipcRenderer.invoke('reports-comment', text, attach),
-  checkUpdates: () => ipcRenderer.invoke('check-updates'),
+  checkUpdates: (automatic?: 'home' | 'installed' | 'minute') => ipcRenderer.invoke('check-updates', automatic),
   onUpdateChecked: (callback: (result: unknown) => void) => ipcRenderer.on('update-checked', (_event, result) => callback(result)),
   play: () => ipcRenderer.invoke('play'),
   cancelJob: () => ipcRenderer.invoke('cancel-job'),

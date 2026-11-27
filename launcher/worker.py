@@ -235,6 +235,7 @@ def checked_update(ctx, check, counts, channel):
     if channel != ctx.settings.get('channel'):
         result = {'status': 'superseded'}
     elif check.result != 'ok':
+        ctx.log(f'update check: {check.error or "cancelled"}')
         result = {'status': 'failed'}
     else:
         release = check.release
@@ -249,7 +250,9 @@ def checked_update(ctx, check, counts, channel):
             else:
                 result = {'status': 'no_release'}
             ctx.settings.record_update_check(time.time(), release.version if release else None)
+            ctx.log(f'update check: {release.version if release else "no release"}')
         except (OSError, ValueError, TypeError):
+            ctx.log('update check: could not record the result')
             result = {'status': 'failed'}
     detail = f'result={result["status"]}'
     if 'version' in result:
@@ -714,7 +717,9 @@ def main(argv=None):
         stopping = None
         check = None
         check_started = None
+        check_started_at = 0.0
         check_channel = None
+        home_check_started = False
         steam_result = {'status': 'idle'}
         background_image = None
         appearance_source = None
@@ -1434,18 +1439,38 @@ def main(argv=None):
                 else:
                     emit({'id': request['id'], 'result': result})
             elif request.get('method') == 'check_updates':
-                if lock_state != 'held' or build_recovery.blocked(layout):
+                automatic = request.get('automatic')
+                if automatic not in (None, 'home', 'installed', 'minute'):
+                    error(request['id'], 'invalid_request')
+                    continue
+                now = time.time()
+                last = max(ctx.settings['last_check'], check_started_at)
+                game = ctx.settings['game_dir']
+                if lock_state != 'held' or job or build_recovery.blocked(layout):
                     status = 'unavailable'
+                elif automatic and (not ctx.settings['auto_check'] or not build.installed(game)):
+                    status = 'idle'
                 elif check:
                     status = 'checking'
-                elif check_started is not None and time.monotonic() - check_started < jobs.FORCED_CHECK_PAUSE:
+                elif automatic in ('home', 'installed') and home_check_started:
+                    status = 'idle'
+                elif (automatic == 'home' and waiting and not layout.dev and ctx.settings['auto_install']
+                      and not build.game_running(game)):
+                    home_check_started = True
+                    status = 'idle'
+                elif automatic == 'minute' and now - last < jobs.RECHECK:
+                    status = 'idle'
+                elif not automatic and check_started is not None and time.monotonic() - check_started < jobs.FORCED_CHECK_PAUSE:
                     status = 'recent_check'
                 else:
+                    if automatic in ('home', 'installed'):
+                        home_check_started = True
                     check_started = time.monotonic()
-                    check_channel = ctx.settings.get('channel')
+                    check_started_at = now
+                    check_channel = ctx.settings['channel']
+                    action_log(ctx, counts, 'check', f'started automatic={automatic}' if automatic else 'started')
                     check = jobs.CheckJob(ctx).start()
                     status = 'checking'
-                    action_log(ctx, counts, 'check', 'started')
                 emit({'id': request['id'], 'result': {'status': status}})
             elif request.get('method') == 'recover_build':
                 action = request.get('action')

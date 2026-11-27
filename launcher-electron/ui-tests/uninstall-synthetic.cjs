@@ -16,7 +16,7 @@ async function main() {
   const dump = path.join(base, 'original.synthetic');
   const save = path.join(game, 'progress.sav');
   const entry = path.join(root, 'nx2saria-launcher');
-  const initial = JSON.stringify({ game_dir: game, dump, telemetry: 'off' });
+  const initial = JSON.stringify({ auto_check: false, game_dir: game, dump, telemetry: 'off' });
   let app;
   try {
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });

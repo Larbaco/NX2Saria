@@ -75,7 +75,7 @@ async function main() {
     await fs.writeFile(path.join(root, 'data', 'electron-preferences.json'), '{"locale":"pt-BR"}');
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
-    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: true, warn_low_commit: false }));
+    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ auto_check: false, game_dir: game, hide_while_playing: true, warn_low_commit: false }));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), '0.25.0');
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: 'test', steps: { compile: {} } }));
     if (windows) {

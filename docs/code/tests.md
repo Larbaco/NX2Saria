@@ -6058,6 +6058,13 @@ manifest is fetched. It compares the selected app and staged file before and aft
 window test drives the manual check and displays the release version and bounded plain notes.
 The worker bounds a note containing supplementary Unicode characters. The Node test delivers
 two individually valid frames in a combined pipe read larger than one frame.
+The automatic check test varies the wall clock seen by the worker loop, uses an out-of-order
+loopback feed and verifies the one-hour threshold, a single initial check, the saved off switch,
+the CLI lock, a running synthetic rebuild and an unresolved marker. A failed attempt leaves
+inspection available and prevents a retry at successive pulses. The Linux window test reopens
+an installed root with automatic checks enabled, sees the notice and opens the existing
+release notes without fetching again. Other synthetic windows disable automatic checks in
+their scratch settings to avoid reaching the public feed.
 
 The first-run preference case switches the channel and update check, rejects an invalid
 channel and keeps existing fields including telemetry and an unrelated key. On Windows

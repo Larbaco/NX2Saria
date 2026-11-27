@@ -40,7 +40,7 @@ async function testRelease(version) {
   await fs.writeFile(path.join(root, 'data', 'electron-preferences.json'), '{"locale":"pt-BR"}');
   await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
   assert.equal((await fs.readFile(path.join(root, 'app', 'current.txt'), 'utf8')).trim(), version);
-  await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: false, warn_low_commit: false }));
+  await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ auto_check: false, game_dir: game, hide_while_playing: false, warn_low_commit: false }));
   await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: version, steps: { compile: {} } }));
   await fs.copyFile(process.env.NX2_TEST_FAKE_GAME, path.join(game, 'ocarina.exe'));
   execFileSync(python, ['-I', '-B', '-c', privacyCheck, resources, publishedApp, game], { env: privacyEnv, timeout: 15000 });

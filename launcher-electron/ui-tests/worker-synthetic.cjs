@@ -15,7 +15,7 @@ const assert = require('node:assert/strict');
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
     await fs.mkdir(path.join(game, 'logs'), { recursive: true });
     const settingsFile = path.join(root, 'data', 'launcher.json');
-    const initialSettings = { game_dir: game, hide_while_playing: true, telemetry: 'off', future_option: 'keep' };
+    const initialSettings = { auto_check: false, game_dir: game, hide_while_playing: true, telemetry: 'off', future_option: 'keep' };
     await fs.writeFile(settingsFile, JSON.stringify(initialSettings));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), 'v1');
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: 'test', steps: { compile: {} } }));

@@ -31,7 +31,7 @@ async function main() {
     const installed = path.join(root, 'app', '0.0.1', 'launcher');
     await fs.mkdir(installed, { recursive: true });
     await fs.copyFile(path.join(repo, 'launcher', 'crash_offer.py'), path.join(installed, 'crash_offer.py'));
-    await fs.writeFile(settings, JSON.stringify({ game_dir: game }));
+    await fs.writeFile(settings, JSON.stringify({ auto_check: false, game_dir: game }));
     await fs.writeFile(path.join(game, 'ocarina'), 'synthetic executable marker');
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), '{"kit":"0.0.1","steps":{"compile":{}}}');
     const fixture = execFileSync('python3', ['-c', `

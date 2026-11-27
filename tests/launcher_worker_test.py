@@ -331,14 +331,25 @@ class WorkerTest(unittest.TestCase):
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         self.assertIn('worker: install requirements status=runtime_zstd_missing', log)
 
-    def test_worker_update_check_offers_newest_release_and_logs_feed_order(self):
+    def test_automatic_update_check_follows_tk_schedule_and_logs_feed_order(self):
         from launcher import feed
+        from launcher.platform import game_executable
 
         app = self.root / 'app' / '0.0.1'
         (app / 'tools').mkdir(parents=True)
         (app / 'tools' / 'make_game.py').touch()
         (app / 'VERSION').write_text('0.0.1')
-        (self.root / 'data' / 'launcher.json').write_text('{"channel":"preview","telemetry":"off"}')
+        game = self.root / 'game'
+        (game / 'build-cache').mkdir(parents=True)
+        (game / 'build-cache' / 'state.json').write_text('{"kit":"0.0.1","steps":{"compile":{}}}')
+        game_executable(game).touch()
+        clock = self.root / 'clock'
+        clock.write_text('10000')
+        release_build = self.root / 'release-build'
+        marker = self.root / 'data' / 'job-running.json'
+        settings = self.root / 'data' / 'launcher.json'
+        settings.write_text(json.dumps({'game_dir': str(game), 'channel': 'preview', 'telemetry': 'off',
+                                        'auto_check': False, 'last_check': 9999.0}))
         manifest_name = (feed.LINUX_MANIFEST if sys.platform.startswith('linux') else feed.MANIFEST)
         requests = []
 
@@ -346,6 +357,9 @@ class WorkerTest(unittest.TestCase):
             def do_GET(self):
                 requests.append(self.path)
                 if self.path == '/repos/synthetic/project/releases?per_page=20':
+                    if clock.read_text() == '13600':
+                        self.send_error(404)
+                        return
                     url = f'http://127.0.0.1:{self.server.server_port}'
                     body = [{'tag_name': 'v0.25.0', 'assets': [
                                 {'name': manifest_name, 'browser_download_url': url + '/older.json'}]},
@@ -371,8 +385,37 @@ class WorkerTest(unittest.TestCase):
             try:
                 (app / 'feed.json').write_text(json.dumps({'type': 'github', 'repo': 'synthetic/project',
                                                            'api': f'http://127.0.0.1:{server.server_port}'}))
-                worker, hello = self.start_worker('0.0.1')
-                self.assertEqual(hello['result']['lock'], 'held')
+                script = (
+                    "import sys,time\n"
+                    "from pathlib import Path\n"
+                    "from types import SimpleNamespace\n"
+                    "from launcher import jobs,winsys,worker\n"
+                    "def rebuild(job):\n"
+                    " end=time.monotonic()+5\n"
+                    " release=Path(sys.argv[1],'release-build')\n"
+                    " while not release.exists() and not job.cancelled() and time.monotonic()<end:\n"
+                    "  time.sleep(.02)\n"
+                    " assert release.exists()\n"
+                    "jobs.RebuildJob.run=rebuild\n"
+                    "winsys.keep_awake=lambda *args: None\n"
+                    "clock=Path(sys.argv[2])\n"
+                    "worker.time=SimpleNamespace(time=lambda: float(clock.read_text()), monotonic=time.monotonic)\n"
+                    "sys.exit(worker.main(['--root',sys.argv[1],'--app-version','0.0.1']))\n"
+                )
+                args = [sys.executable, '-c', script, str(self.root), str(clock)]
+                cli = self.start_cli_holding_lock()
+                blocked = subprocess.run(
+                    args, cwd=ROOT, input='{"id":1,"method":"hello","protocol":1}\n'
+                                         '{"id":2,"method":"check_updates","automatic":"home"}\n',
+                    capture_output=True, text=True, timeout=15)
+                self.assertEqual(json.loads(blocked.stdout)['error']['code'], 'busy')
+                self.assertEqual(requests, [])
+                cli.stdin.close()
+                self.assertEqual(cli.wait(timeout=10), 0)
+
+                worker = subprocess.Popen(args, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                          stderr=subprocess.PIPE, text=True)
+                self.addCleanup(self.stop_worker, worker)
                 frames = queue.Queue()
 
                 def collect():
@@ -380,21 +423,64 @@ class WorkerTest(unittest.TestCase):
                         frames.put(json.loads(line))
 
                 threading.Thread(target=collect, daemon=True).start()
-                worker.stdin.write('{"id":2,"method":"check_updates"}\n')
-                worker.stdin.flush()
-                self.assertEqual(frames.get(timeout=5)['result']['status'], 'checking')
+                def request(method, **fields):
+                    worker.stdin.write(json.dumps({'id': 1, 'method': method, **fields}) + '\n')
+                    worker.stdin.flush()
+                    frame = frames.get(timeout=5)
+                    while frame.get('event') == 'job_progress':
+                        frame = frames.get(timeout=5)
+                    self.assertEqual(frame['id'], 1)
+                    return frame['result']
+
+                self.assertEqual(request('hello', protocol=1)['lock'], 'held')
+                self.assertEqual(request('check_updates', automatic='home')['status'], 'idle')
+                self.assertEqual(request('check_updates', automatic='minute')['status'], 'idle')
+                self.assertEqual(requests, [])
+                request('settings_preference', key='auto_check', value=True)
+                marker.write_text('{}')
+                self.assertEqual(request('check_updates', automatic='home')['status'], 'unavailable')
+                self.assertEqual(request('check_updates', automatic='minute')['status'], 'unavailable')
+                self.assertEqual(requests, [])
+                marker.unlink()
+
+                self.assertEqual(request('rebuild')['status'], 'building')
+                self.assertEqual(frames.get(timeout=5)['event'], 'job_started')
+                self.assertEqual(request('check_updates', automatic='home')['status'], 'unavailable')
+                self.assertEqual(request('check_updates', automatic='minute')['status'], 'unavailable')
+                self.assertEqual(requests, [])
+                release_build.touch()
+                job = frames.get(timeout=5)
+                while job['event'] == 'job_progress':
+                    job = frames.get(timeout=5)
+                self.assertEqual((job['event'], job['outcome']), ('job_ended', 'complete'))
+
+                self.assertEqual(request('check_updates', automatic='home')['status'], 'checking')
                 event = frames.get(timeout=5)
                 self.assertEqual(event['event'], 'update_checked')
                 self.assertEqual(event['update'], {'status': 'available', 'version': '0.27.0-rc.4', 'notes': []})
+                self.assertEqual(request('check_updates', automatic='home')['status'], 'idle')
+                clock.write_text('13599')
+                self.assertEqual(request('check_updates', automatic='minute')['status'], 'idle')
+                self.assertEqual(len(requests), 2)
+                clock.write_text('13600')
+                self.assertEqual(request('check_updates', automatic='minute')['status'], 'checking')
+                self.assertEqual(frames.get(timeout=5)['update'], {'status': 'failed'})
+                self.assertEqual(request('inspect')['status'], 'ready')
+                for _ in range(3):
+                    self.assertEqual(request('check_updates', automatic='minute')['status'], 'idle')
+                self.assertEqual(json.loads(settings.read_text())['last_check'], 10000)
                 worker.stdin.close()
                 self.assertEqual(worker.wait(timeout=10), 0)
             finally:
                 server.shutdown()
                 thread.join()
-        self.assertEqual(requests, ['/repos/synthetic/project/releases?per_page=20', '/newest.json'])
+        api = '/repos/synthetic/project/releases?per_page=20'
+        self.assertEqual(requests, [api, '/newest.json', api])
         log = (self.root / 'data' / 'logs' / 'launcher.log').read_text()
         expected = 'update check: the feed lists v0.25.0 first; v0.27.0-rc.4 is the newest and is the one offered'
         self.assertEqual(log.count(expected), 1)
+        self.assertIn('update check: 0.27.0-rc.4', log)
+        self.assertIn('update check: no releases found for synthetic/project', log)
         self.assertEqual((app.parent / 'current.txt').read_text(), '0.0.1')
 
     def test_manual_update_check_reads_only_the_manifest_and_leaves_inspection_responsive(self):
@@ -3618,7 +3704,7 @@ class WorkerTest(unittest.TestCase):
         successor = self.run_worker({'id': 4, 'method': 'hello', 'protocol': 1})
         self.assertEqual(json.loads(successor.stdout)['result']['lock'], 'held')
 
-    def test_worker_refuses_busy_cli_then_acquires_the_same_lock(self):
+    def start_cli_holding_lock(self):
         script = (
             "import sys\n"
             "from launcher import cli\n"
@@ -3636,6 +3722,10 @@ class WorkerTest(unittest.TestCase):
         opened = queue.Queue()
         threading.Thread(target=lambda: opened.put(cli.stdout.readline()), daemon=True).start()
         self.assertEqual(opened.get(timeout=10).strip(), 'synthetic CLI job holding lock')
+        return cli
+
+    def test_worker_refuses_busy_cli_then_acquires_the_same_lock(self):
+        cli = self.start_cli_holding_lock()
         before = self.tree()
         denied = self.run_worker({'id': 1, 'method': 'hello', 'protocol': 1})
         self.assertNotEqual(denied.returncode, 0)

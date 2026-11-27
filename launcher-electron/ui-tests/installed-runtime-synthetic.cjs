@@ -61,7 +61,7 @@ async function main() {
     await fs.writeFile(file('app', 'current.txt'), '0.25.0');
     await fs.mkdir(file('data'), { recursive: true });
     await fs.writeFile(file('data', 'electron-preferences.json'), '{"locale":"pt-BR"}');
-    await fs.writeFile(file('data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: false, warn_low_commit: false }));
+    await fs.writeFile(file('data', 'launcher.json'), JSON.stringify({ auto_check: false, game_dir: game, hide_while_playing: false, warn_low_commit: false }));
     app = await _electron.launch(options);
     page = await app.firstWindow();
     await page.getByText('Atualize ou repare esta instalação', { exact: false }).waitFor({ timeout: 15000 });

@@ -13,7 +13,7 @@ const assert = require('node:assert/strict');
     await fs.mkdir(path.join(root, 'data'), { recursive: true });
     await fs.mkdir(path.join(root, 'app'), { recursive: true });
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
-    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, hide_while_playing: false }));
+    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ auto_check: false, game_dir: game, hide_while_playing: false }));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), 'v1');
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), JSON.stringify({ kit: 'test', steps: { compile: {} } }));
     await fs.writeFile(path.join(game, 'ocarina'), '#!/bin/sh\nsleep 1\n', { mode: 0o755 });

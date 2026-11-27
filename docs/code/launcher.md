@@ -3941,8 +3941,15 @@ screen. After a successful mod rebuild, the worker resumes Play instead.
 
 `checked_update()` completes the existing `launcher/jobs.py` `CheckJob` on the main worker loop.
 The worker accepts a single manual check at a time and uses the same one-minute start throttle
-as Tk. The job only reads the feed; the main loop records the existing settings metadata and
-exports the availability, version and bounded plain notes. Each note line is limited in
+as Tk. The renderer requests an automatic check on the installed home or after a successful
+first install, and sends minute pulses from the home and Settings. The worker uses the saved
+check preference and channel, requires a held lock and no build or unresolved job marker, and
+times the next check one hour from the later of `last_check` and the last attempt, including
+failures. A complete staged update that takes precedence at Tk startup defers the initial
+automatic check. The job reads the releases API and selected manifest. The main loop logs
+`update check:`, records the existing settings metadata and exports the availability, version
+and bounded plain notes. A new release appears on the home page; selecting it shows the same
+notes as a manual check. Each note line is limited in
 UTF-16 units, including characters outside the Basic Multilingual Plane, so the complete ASCII-
 escaped frame stays within the pipe limit. The Electron client applies that limit to individual
 frames even when the pipe delivers part of one frame and another frame together. A response from an earlier channel

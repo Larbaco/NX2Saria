@@ -34,7 +34,7 @@ async function main() {
     await fs.mkdir(path.join(root, 'app'));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), '0.0.1');
     await fs.writeFile(path.join(root, 'nx2saria-launcher'), 'synthetic wrapper');
-    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game }));
+    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ auto_check: false, game_dir: game }));
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), '{"kit":"0.0.1","steps":{"compile":{}}}');
     await fs.writeFile(path.join(game, 'ocarina'), 'synthetic executable marker');

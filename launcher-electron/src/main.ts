@@ -888,18 +888,19 @@ app.whenReady().then(() => {
     log?.write('reports', `crash answer=${answer} result=${result.status}`);
     return { status: result.status, reason: typeof result.reason === 'string' ? result.reason.slice(0, 240) : undefined };
   });
-  ipcMain.handle('check-updates', async event => {
+  ipcMain.handle('check-updates', async (event, automatic: unknown) => {
     if (event.sender !== window.webContents || !worker?.handshake.capabilities.includes('check_updates') ||
         worker.handshake.lock !== 'held' || !state || state.job_marker_present) return 'unavailable';
+    if (automatic !== undefined && automatic !== 'home' && automatic !== 'installed' && automatic !== 'minute') return 'unavailable';
     let status = 'unavailable';
     try {
       const active = worker;
-      const response = await active.request('check_updates');
-      if (worker === active && (response?.status === 'checking' || response?.status === 'recent_check')) {
+      const response = await active.request('check_updates', { automatic });
+      if (worker === active && (response?.status === 'checking' || response?.status === 'recent_check' || response?.status === 'idle')) {
         status = response.status;
       }
     } catch {}
-    log?.write('update', `check request=${status}`);
+    if (!automatic || status === 'checking') log?.write('update', `check request=${status}`);
     return status;
   });
   ipcMain.handle('play', async event => {

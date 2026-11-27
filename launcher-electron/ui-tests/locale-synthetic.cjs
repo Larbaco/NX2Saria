@@ -15,7 +15,7 @@ async function main() {
     await fs.mkdir(path.join(root, 'data'), { recursive: true });
     await fs.mkdir(path.join(root, 'app'));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), '0.0.1');
-    const initial = JSON.stringify({ game_dir: game, channel: 'preview' });
+    const initial = JSON.stringify({ auto_check: false, game_dir: game, channel: 'preview' });
     await fs.writeFile(settings, initial);
     await fs.mkdir(path.join(game, 'build-cache'), { recursive: true });
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), '{"kit":"0.0.1","steps":{"compile":{}}}');

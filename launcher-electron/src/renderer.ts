@@ -16,12 +16,13 @@ type InstalledKey = 'channel' | 'auto_check' | 'auto_install' | 'keep_cache' | '
 type UdmabufAction = 'apply' | 'remove';
 type InstalledSettings = { game_dir: string; dump: string; channel: 'stable' | 'preview'; auto_check: boolean;
   auto_install: boolean; keep_cache: boolean; warn_low_commit: boolean | null; writable: boolean; uninstall_available: boolean; discord_status: boolean | null; udmabuf_action: UdmabufAction | null; system: string };
+type AutomaticUpdateCheck = 'home' | 'installed' | 'minute';
 type UpdateView = { status: string; version?: string; notes?: string[] };
 type BuildAction = 'install' | 'rebuild';
 type RecoveryAction = 'wait' | 'stop' | 'confirm';
 type BuildFeedback = { action: BuildAction; outcome: string; state: Result | null };
 type InstallDestination = { folder: string; available: number; required: number; completeImage: boolean; pathTooLong: boolean };
-interface Window { launcher: { languageInfo(): Promise<LanguageView>; languagePreference(value: string): Promise<LanguageView | null>; controllerUsed(): void; discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number; state?: Result | null }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; appearanceInfo(): Promise<AppearanceState | null>; appearancePreference(key: string, value: string | number | boolean): Promise<AppearanceState | null>; appearanceImage(): Promise<string | null>; appearanceAssets(): Promise<{ title: string | null; select: string | null; back: string | null } | null>; appearanceBackground(choose: boolean): Promise<{ status: string; appearance: AppearanceState | null } | null>; steamInfo(): Promise<SteamView>; steamAdd(): Promise<{ status: string; detail?: string; view: SteamView }>; settingsInfo(): Promise<InstalledSettings>; settingsDiscord(value: boolean): Promise<boolean>; settingsUdmabuf(action: UdmabufAction): Promise<{ status: string; action: UdmabufAction | null }>; uninstall(removeGame: boolean): Promise<string>; uninstallCancelled(): void; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
+interface Window { launcher: { languageInfo(): Promise<LanguageView>; languagePreference(value: string): Promise<LanguageView | null>; controllerUsed(): void; discoverInstallation(): Promise<Result | null>; selectInstallation(): Promise<Result | null>; installDestination(pick: boolean): Promise<InstallDestination | null>; installDump(pick: boolean): Promise<string | null>; searchInstallDump(): Promise<{ status: 'searching' | 'complete'; file: string | null }>; install(): Promise<string>; rebuild(): Promise<string>; recoverBuild(action: RecoveryAction): Promise<string>; onRecoveryChanged(callback: (state: Result | null) => void): void; onBuildEnded(callback: (result: BuildFeedback) => void): void; setFirstRunPreference(key: keyof FirstRunPreferences, value: string | boolean): Promise<string | boolean>; setHideWhilePlaying(value: boolean): Promise<boolean>; play(): Promise<{ started?: boolean; building?: boolean; error?: string; messageId?: number; state?: Result | null }>; cancelJob(): Promise<unknown>; onJobStatus(callback: (result: { status: string; task?: BuildAction | 'mods'; fraction?: number }) => void): void; onGameWindowReady(callback: () => void): void; savesInfo(): Promise<SaveOptions>; chooseSaveExport(): Promise<string | null>; setSaveReport(value: boolean): Promise<boolean>; exportSave(): Promise<SaveExport>; importSave(source: 'archive' | 'folder'): Promise<SaveImport | null>; openSavesDir(): Promise<void>; modsList(page: number): Promise<ModPage>; modAdd(kind: 'archive' | 'folder'): Promise<ModAction | null>; modEnabled(name: string, value: boolean): Promise<ModAction>; modMove(name: string, direction: -1 | 1): Promise<ModAction>; openModsDir(): Promise<ModAction>; appearanceInfo(): Promise<AppearanceState | null>; appearancePreference(key: string, value: string | number | boolean): Promise<AppearanceState | null>; appearanceImage(): Promise<string | null>; appearanceAssets(): Promise<{ title: string | null; select: string | null; back: string | null } | null>; appearanceBackground(choose: boolean): Promise<{ status: string; appearance: AppearanceState | null } | null>; steamInfo(): Promise<SteamView>; steamAdd(): Promise<{ status: string; detail?: string; view: SteamView }>; settingsInfo(): Promise<InstalledSettings>; settingsDiscord(value: boolean): Promise<boolean>; settingsUdmabuf(action: UdmabufAction): Promise<{ status: string; action: UdmabufAction | null }>; uninstall(removeGame: boolean): Promise<string>; uninstallCancelled(): void; settingsPreference(key: InstalledKey, value: string | boolean): Promise<string | boolean>; settingsDump(): Promise<{ status: string; name?: string } | null>; settingsOpen(target: 'game' | 'logs'): Promise<void>; reportsHome(after: string): Promise<ReportsState | null>; reportsStatus(): Promise<ReportsState | null>; reportsTouch(): Promise<ReportsState | null>; reportsAnswer(answer: string): Promise<ReportsState | null>; reportsConsent(value: boolean): Promise<ReportsState | null>; reportsPreview(): Promise<{ text: string; example: boolean } | null>; reportsComment(text: string, attach: boolean): Promise<{ status: string; reason?: string }>; reportsCrashOpen(): Promise<CrashOffer | null>; reportsCrashPreview(): Promise<{ text: string; example: boolean } | null>; reportsCrashPreference(value: boolean): Promise<ReportsState | null>; reportsCrashAnswer(answer: string): Promise<{ status: string; reason?: string }>; checkUpdates(automatic?: AutomaticUpdateCheck): Promise<string>; onUpdateChecked(callback: (update: UpdateView) => void): void; onPlayEnded(callback: (result: PlayFeedback) => void): void; playMessageShown(id: number, kind: string): void } }
 const statusElement = document.querySelector<HTMLElement>('#status')!;
 const detail = document.querySelector<HTMLElement>('#detail')!;
 const button = document.querySelector<HTMLButtonElement>('#select')!;
@@ -140,6 +141,8 @@ let savingPreference = false;
 let playFailed = false;
 let choosingSource = false;
 let checkingUpdates = false;
+let availableUpdate: UpdateView | null = null;
+let updateOpened = false;
 let recoveryAction: 'wait' | 'stop' | null = null;
 let askingRecovery = false;
 let proposedFolder: InstallDestination | null = null;
@@ -219,6 +222,7 @@ function updateControls() {
     }
   }
   updateControl.hidden = installation?.status !== 'ready';
+  checkUpdatesButton.textContent = tr(availableUpdate && !updateOpened ? 'Ver atualização' : 'Buscar atualizações');
   checkUpdatesButton.disabled = checkingUpdates || busy || installation?.job_marker_present === true;
   const previousBuild = installation?.recovery?.state;
   recoveryControls.hidden = previousBuild !== 'alive' && previousBuild !== 'unverified';
@@ -366,7 +370,7 @@ async function searchForDump(selected: Result) {
   }
 }
 
-async function loadSelection(action: () => Promise<Result | null>) {
+async function loadSelection(action: () => Promise<Result | null>, keepUpdate = false) {
   selecting = true;
   installation = null;
   playFailed = false;
@@ -382,8 +386,7 @@ async function loadSelection(action: () => Promise<Result | null>) {
   resetReportScreen();
   resetAppearance();
   checkingUpdates = false;
-  updateResult.textContent = updateNotes.textContent = '';
-  updateNotes.hidden = true;
+  if (!keepUpdate) clearUpdateResult();
   recoveryAction = null;
   settingError.textContent = firstRunSettingsError.textContent = '';
   proposedFolder = proposedDump = null;
@@ -396,6 +399,8 @@ async function loadSelection(action: () => Promise<Result | null>) {
     await loadLanguage();
     updateControls();
     showResult(installation);
+    if (!keepUpdate) checkAutomatically('home');
+    else if (availableUpdate) showUpdate(availableUpdate, updateOpened);
     if (installation) await loadAppearance();
     if (installation?.status === 'ready' && !installation.job_marker_present) await loadReportsHome('');
     if (installation?.status === 'not_configured' || installation?.status === 'not_ready') {
@@ -751,8 +756,7 @@ function changeInstalledSetting(key: InstalledKey, value: boolean | string) {
     if (key === 'channel') {
       if (saved !== 'stable' && saved !== 'preview') throw new Error('Canal inválido');
       options.channel = saved;
-      updateResult.textContent = updateNotes.textContent = '';
-      updateNotes.hidden = true;
+      clearUpdateResult();
     } else {
       if (typeof saved !== 'boolean') throw new Error('Preferência inválida');
       options[key] = saved;
@@ -766,7 +770,7 @@ languageSelect.onchange = () => {
     const applied = await window.launcher.languagePreference(requested);
     if (!applied || selected !== installation) throw new Error('Language unavailable');
     applyLanguage(applied);
-    await loadSelection(() => Promise.resolve(selected));
+    await loadSelection(() => Promise.resolve(selected), true);
   }, tr('Não foi possível salvar o idioma.'));
 };
 const udmabufResults: Record<string, string> = {
@@ -836,7 +840,30 @@ const updateMessages: Record<string, string> = {
   unavailable: 'A busca por atualizações está indisponível agora.',
 };
 
+function clearUpdateResult() {
+  availableUpdate = null;
+  updateOpened = false;
+  updateResult.textContent = updateNotes.textContent = '';
+  updateNotes.hidden = true;
+}
+
+function checkAutomatically(when: AutomaticUpdateCheck) {
+  if ((when !== 'minute' || !selecting) && installation?.status === 'ready' && !installation.job_marker_present && cancelJob.hidden) {
+    void window.launcher.checkUpdates(when).catch(() => {});
+  }
+}
+
+setInterval(() => {
+  if (!saveOptions && !modPage && !appearanceOpen && !steamView && !activeDialog()) {
+    checkAutomatically('minute');
+  }
+}, 60_000);
+
 checkUpdatesButton.onclick = async () => {
+  if (availableUpdate && !updateOpened) {
+    showUpdate(availableUpdate, true);
+    return;
+  }
   const selected = installation;
   checkingUpdates = true;
   updateResult.textContent = tr("Buscando atualizações…");
@@ -849,13 +876,20 @@ checkUpdatesButton.onclick = async () => {
   updateResult.textContent = tr(updateMessages[status] || updateMessages.unavailable);
   updateControls();
 };
-window.launcher.onUpdateChecked(update => {
-  checkingUpdates = false;
+function showUpdate(update: UpdateView, open: boolean) {
+  availableUpdate = update.status === 'available' ? update : null;
+  updateOpened = Boolean(availableUpdate && open);
   updateResult.textContent = update.status === 'available'
     ? tr("Versão {value1} disponível", { value1: update.version }) : tr(updateMessages[update.status] || updateMessages.unavailable);
   updateNotes.textContent = update.notes?.join('\n') ?? '';
-  updateNotes.hidden = !updateNotes.textContent;
+  updateNotes.hidden = !open || !updateNotes.textContent;
   updateControls();
+}
+
+window.launcher.onUpdateChecked(update => {
+  const open = checkingUpdates || updateOpened;
+  checkingUpdates = false;
+  showUpdate(update.status === 'failed' && availableUpdate ? availableUpdate : update, open);
 });
 
 function showPlayFeedback(result: PlayFeedback) {
@@ -976,6 +1010,7 @@ window.launcher.onBuildEnded(({ action, outcome, state }) => {
     if (state?.build_version) detail.textContent += ' ' + buildVersionNotice(state);
   }
   if (outcome === 'complete' && state?.status === 'ready') {
+    if (action === 'install') checkAutomatically('installed');
     void loadAppearanceAssets();
     void loadReportsHome(action === 'install' ? 'installation' : '');
   }

@@ -17,7 +17,7 @@ async function main() {
     await fs.mkdir(path.join(root, 'app'));
     await fs.mkdir(path.join(root, 'data'));
     await fs.writeFile(path.join(root, 'app', 'current.txt'), '0.0.1');
-    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ game_dir: game, telemetry: 'off' }));
+    await fs.writeFile(path.join(root, 'data', 'launcher.json'), JSON.stringify({ auto_check: false, game_dir: game, telemetry: 'off' }));
     await fs.writeFile(path.join(game, 'build-cache', 'state.json'), '{"kit":"0.0.1","steps":{"compile":{}}}');
     await fs.writeFile(path.join(game, 'ocarina'), 'not an executable');
     await fs.writeFile(python,
