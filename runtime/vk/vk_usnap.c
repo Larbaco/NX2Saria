@@ -519,7 +519,13 @@ const uint8_t *vk_usnap_bytes(uint64_t addr, uint64_t n) {
 }
 
 void vk_usnap_shutdown(void) {
-    vk_completion_drain();
+    plat_mutex_lock(&tq_lock);
+    Taken *t = tq_head;
+    tq_head = tq_tail = NULL;
+    plat_mutex_unlock(&tq_lock);
+    uint32_t taken = 0, held = 0;
+    for (Taken *next; t; t = next, taken++) next = t->next, held += t->arena != NULL, taken_free(t);
+    if (U.arena) arena_done(U.arena), U.arena = NULL, held++;
     free(U.owners), U.owners = NULL;
     plat_mutex_lock(&free_lock);
     uint32_t n = 0;
@@ -527,7 +533,9 @@ void vk_usnap_shutdown(void) {
         next = a->next, vmaDestroyBuffer(vk_ctx()->vma, a->buf, a->alloc), free(a->cpu), free(a);
     free_arenas = NULL;
     plat_mutex_unlock(&free_lock);
-    if (n) rt_log("vk_usnap: teardown: %u arenas released", n);
+    if (n || taken)
+        rt_log("vk_usnap: teardown: %u arenas released, %u of them held by the %u submissions taken and never replayed or "
+               "by the current one", n, held, taken);
 }
 
 void vk_usnap_sizes(PerfSizes *s) {

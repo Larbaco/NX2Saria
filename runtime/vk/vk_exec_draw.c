@@ -516,10 +516,6 @@ static void pool_set_release(VkCtx *c);
 static void pose_shutdown(void);
 static void skin_shutdown(void);
 void vk_exec_draw_shutdown(void) {
-    uint32_t waits = vk_completion_drain();
-    if (waits)
-        rt_log("vk_exec: teardown: %u waits of up to 1 ms for the callbacks of finished submissions (vk_completion_drain)",
-               waits);
     pose_shutdown();
     skin_shutdown();
     vk_meshfb_shutdown();
