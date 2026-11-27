@@ -1,0 +1,6 @@
+run: telemetry: session header written to logs/session-start.json at
+run: input: cursor_hide = 1
+run: input: cursor_hide: the cursor hid after 3 s still over the window
+run: pause_tab: off (NX2SARIA_PAUSE_SETTINGS_TAB
+crash-launcher: a summary was made from its FATAL line, with the hardware and settings of logs/session-start.json
+update: Translate the Code: Unchanged
