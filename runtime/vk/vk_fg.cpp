@@ -207,11 +207,12 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     if (!F.sc || F.failed) return;
     vk_dlaa_hudless_wanted = 1;
     const VkCtx *c = vk_ctx();
-    VkFfxImage depth, mv;
-    float jx = 0, jy = 0;
-    int reset = 0;
+    VkDlaaFgSet in = {};
     const int menu = menu_is_open();
-    const int got = !menu && vk_dlaa_fg_inputs(&depth, &mv, &jx, &jy, &reset);
+    const int got = !menu && vk_dlaa_fg_take(&in);
+    const VkFfxImage depth = in.depth, mv = in.mv;
+    const float jx = in.jx, jy = in.jy;
+    const int reset = in.reset;
     int have = got;
     unsigned pw, ph;
     wide_picture(&pw, &ph);
@@ -269,7 +270,9 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     fgr_note(&F.cuts, F.frame, cut);
     F.prepared = on;
     uint64_t presents = vk_fg_presents(sc), t_now = plat_now_ns();
-    fgs_count(&F.st, fgs_classify(menu, vk_dlaa_fg_scene(), got, fits, hudless != VK_NULL_HANDLE, cut), presents, t_now);
+    const FgsOutcome outcome = fgs_classify(menu, vk_dlaa_fg_scene(), got, fits, hudless != VK_NULL_HANDLE, cut);
+    fgs_count(&F.st, outcome, presents, t_now);
+    fgs_inputs(&F.st, outcome, in.age, vk_dlaa_fg_overlaps());
     double ms[16];
     for (int i = 0, n = fgt_poll(F.frame, ms, 16); i < n; i++) fgs_gpu(&F.st, ms[i]);
     char line[1024];
@@ -305,7 +308,7 @@ extern "C" void vk_fg_frame(VkCommandBuffer cb, VkSwapchainKHR sc, VkFormat fmt,
     last_ns = now;
     p.frameTimeDelta = dt > 0 && dt < 100 ? (float)dt : 16.67f;
     VkFfxCamera cam;
-    if (!vk_dlaa_ffx_camera(&cam)) memset(&cam, 0, sizeof cam);
+    if (!vk_dlaa_fg_ffx_camera(&in, &cam)) memset(&cam, 0, sizeof cam);
     p.cameraNear = cam.znear > 0 ? cam.znear : 0.1f;
     p.cameraFar = cam.zfar > 0 ? cam.zfar : 1e8f;
     p.cameraFovAngleVertical = cam.fov_y > 0 ? cam.fov_y : 1.0f;

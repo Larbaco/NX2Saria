@@ -320,9 +320,9 @@ through AMD's library (`runtime/vk/vk_fg.cpp`).
   same without it (NULL: none this frame, bb stands in for it); rect: the picture's rectangle in bb {x, y, w, h} (black
   bars around it); in: the frame's depth and motion. Every image in GENERAL. Returns 1 when out holds a frame to show, 0
   when not (a history that starts at this frame shows no generated frame; a failure, as logged).
-- `vk_fsr3fg_evaluate()`: the same with this frame's inputs from `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()`,
-  `vk_dlaa_fg_views()` and `vk_dlaa_ffx_camera()`; a frame without them generates nothing and the next one starts a new
-  history.
+- `vk_fsr3fg_evaluate()`: the same with this frame's inputs from `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_take()` (their
+  camera through `vk_dlaa_fg_ffx_camera()`); a frame without them generates nothing and the next one starts a new
+  history. The periodic line counts how old the generated frames' inputs were (`runtime/vk/vk_fg_stats.h`).
 - `vk_fsr3fg_presents()`, `vk_fsr3fg_paused()`: for the periodic line both FSR 3.1 paths write
   (`runtime/vk/vk_fg_stats.h`): the presenter's presents so far, given before each frame, and a frame the presenter does
   not generate from (menu: the settings menu is open; else the game gave no picture for it), counted as
@@ -1190,7 +1190,7 @@ replaces.
   later ones (window resizes) its swapchain again. Non-success from the first: the plain swapchain path stays. The
   present is on the game's queue, its lock held by the caller.
 - `vk_fg_frame()`: each present, before its command buffer is submitted: configures generation for this frame and
-  records its preparation (the frame's depth and motion vectors, `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()`) into cb.
+  records its preparation (the frame's depth and motion vectors, `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_take()`) into cb.
   hudless: this frame's picture without the HUD at the swapchain's size and format, in GENERAL (`VK_NULL_HANDLE`: none),
   from which generation tells the HUD apart and keeps it out of the generated frames. pic: the picture's rectangle in
   the swapchain {x, y, w, h} (black bars around it when the window has another shape); frames are generated inside it
@@ -1344,7 +1344,7 @@ generation off for the run.
 - The context's memory is asked for the memory report (`vk_fg_vram()`); 0 when the provider does not say.
 - Only with the picture without the HUD: generated from the presented picture alone, the HUD would be warped along with
   the scene behind it and trail when the camera turns. A frame without that picture is shown as it is.
-- A cut: DLSS started a new history, or without an upscaler the same cases did (`vk_dlaa_fg_inputs()`), or the frame
+- A cut: DLSS started a new history, or without an upscaler the same cases did (`vk_dlaa_fg_take()`), or the frame
   before was not prepared (generation off for the menu, no inputs), so the frame between the two would be made from a
   stale depth and motion.
 - Each frame by the game's state (`runtime/vk/vk_fg_stats.h`): the menu first, then a frame without a scene (the title,
@@ -1408,7 +1408,7 @@ nothing in the dispatch it is given, and a cut reaches the library as the prepar
 - `sc_desc` to `fg_pin`: what the contexts were made from: the API asks that it stays until the
   context is destroyed.
 - `prepared`: the last frame was prepared. A frame after one that was not is a cut (`vk_fg4_frame()`): its preparation
-  has `reset`, as one the inputs ask for (`runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()`), and it counts as a cut in the
+  has `reset`, as one the inputs ask for (`runtime/vk/vk_dlaa.c` `vk_dlaa_fg_take()`), and it counts as a cut in the
   periodic line. Up to 0.26.0, `reset` was the inputs' alone, while the FSR 3.1 path resets on both
   (`runtime/vk/vk_fg.cpp`, its ring of cuts): after the menu, a load or a frame without the picture without the HUD, the
   first frame generated would blend the frame before the gap with this one. Changed by reading the SDK
@@ -1517,8 +1517,8 @@ near plane, far plane and metres are constants here, not the frame's (`runtime/v
 - The motion vector scale is 1: render pixels, current to previous (`runtime/vk/vk_dlaa.c` `mv_pass()`), as FSR takes
   them.
 - The camera's planes are constants: near 0.1 and far 1e8 (the game's projection taken as near 0.1, far at infinity),
-  whatever the frame's projection is. The vertical field of view is the camera's when `runtime/vk/vk_dlaa.c`
-  `vk_dlaa_fg_camera()` gives one, else 1 radian.
+  whatever the frame's projection is. The vertical field of view is the camera's when the frame's set from
+  `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_take()` has one, else 1 radian.
 - `viewSpaceToMetersFactor` is 1: the game's world is taken to be in metres (its near plane is at 0.1). With 0.01 here,
   the value `runtime/vk/vk_fg.cpp` gives the FSR 3.1 library, frame generation 3.1.6 drew grey translucent shapes into
   the sky of its frames while the camera turned, and with 0 it smeared them; with 1 its frames were clean in the same
@@ -1605,7 +1605,7 @@ skinned draws (`runtime/vk/vk_skin_motion.inc` `skin_status()`).
 ## `runtime/vk/vk_fg_reset.h`
 
 Camera cuts for FSR 3.1 frame generation (`runtime/vk/vk_fg.cpp`). DLSS starts a new history on a cut, another scene
-size or another target, and `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()` hands that out with the frame's depth and
+size or another target, and `runtime/vk/vk_dlaa.c` `vk_dlaa_fg_take()` hands that out with the frame's depth and
 motion vectors. FSR 3.1 takes it only in the generation callback (`ffxDispatchDescFrameGeneration.reset`), which its
 swapchain calls later, on its own present thread, for the frame id the configuration gave. So `runtime/vk/vk_fg.cpp`
 `vk_fg_frame()` notes each frame's cut here under its id, and the callback looks it up. Without it every generated frame
@@ -1618,6 +1618,31 @@ Own header so `tests/fg_reset_check.c` checks it without a GPU.
 
 `FgrRing`: a `slot` is (frame id << 1) | cut, written by `vk_fg_frame()`; 0 never matches (ids start at 1). Frame ids
 above `FGR_MAX_ID` do not fit beside the cut bit; they always count as a cut.
+
+## `runtime/vk/vk_fg_set.h`
+
+What the present thread gets for frame generation (`runtime/vk/vk_dlaa.h`), apart so `runtime/vk/vk_fg_inputs.h` and its
+test need only the Vulkan headers: `VkDlaaCamera`, `VkDlaaFgSet` and `VkDlaaFgHudless` (`runtime/vk/vk_dlaa.c`
+`vk_dlaa_fg_take()`, `vk_dlaa_fg_hudless()`).
+
+## `runtime/vk/vk_fg_inputs.h`
+
+The box `runtime/vk/vk_dlaa.c` hands frame generation's inputs over in, from the replay to the present thread (`FGI`,
+`fg_publish()`): the last set published and the last HUD-less picture, each whole, under one lock. A put copies one
+in, a take one out: the present thread never waits for more than one copy.
+
+Own header so `tests/fg_inputs_check.c` checks it without a GPU.
+
+- `fgi_put()`, `fgi_put_hudless()`: the replay's: the newest replaces the one before, taken or not. `made` is
+  `D.presents` when it was made.
+- `fgi_take()`, `fgi_take_hudless()`: the present thread's, with `D.presents` now: the last one put, once (`set_seq`
+  against `set_taken`, both under the lock; `set_taken` written only by the taker). One more than `FGI_MAX_AGE`
+  presents old counts as taken and is not handed out, as `fg_current()` did. `age`: presents between the one it was
+  made before and this one, 0 for the presented frame's own. Sets and HUD-less pictures are taken apart, as the HUD-less
+  picture can come later in the frame than the set (before the bloom, `runtime/vk/vk_dlaa.c` `vk_dlaa_upscaler()`).
+- `fgi_withdraw()`: the replay's or the frame bookkeeping's: the set, the HUD-less picture or both are not handed out
+  after it.
+- `fgi_camera()`: the last set's camera, taking nothing.
 
 ## `runtime/vk/vk_fg_stats.h`
 
@@ -1668,6 +1693,12 @@ Own header so `tests/fg_stats_check.c` checks it without a GPU.
 - `gpu_ms`: GPU time of the generated frames timed in this period, and how many.
 - `periods`: periods ended.
 - `lines`: lines written.
+- `age`: how old the inputs of the period's generated frames were (`fgs_inputs()`).
+
+`FgsAge`, also kept by `runtime/vk/vk_dlaa.c` `vk_ngxfg_evaluate()` and `runtime/vk/vk_dlssg.c` for their own lines:
+generated frames whose set was the presented frame's own (`own`), an older one (`older`), the oldest in presents, and
+the run's `vk_dlaa_fg_overlaps()` as last given (`overlaps`). `fgs_age_text()` writes it and starts the period's counts
+again; `overlaps` is the run's and stays.
 
 ### `fgs_classify()`
 
@@ -2736,8 +2767,9 @@ the first hand-over, a movie) uses them up.
 ### `stats()`
 
 One line after the first 600 blits of a game frame and every 3600 after that (600 with `NX2SARIA_TRACE=perf`), on the
-present thread outside the queue lock (`vk_dlssg_frame()`): who holds the frame limit, and how many frame starts
-Reflex's sleep held and for how long.
+present thread outside the queue lock (`vk_dlssg_frame()`): who holds the frame limit, how many frame starts
+Reflex's sleep held and for how long, and how old the inputs of the frames generated since the last line were (`ages`,
+`runtime/vk/vk_fg_stats.h` `FgsAge`).
 
 ### `vk_dlssg_present()`
 
@@ -2789,8 +2821,8 @@ apart (the pacer keeps the limit for the run). `DLSSG_HOLD_IDLE_NS` is 200 ms.
 On the present thread, under the present lock, before the present's command buffer is submitted. In the order of the
 function:
 
-1. The frame's inputs (`runtime/vk/vk_dlaa.c` `vk_dlaa_fg_inputs()`, `vk_dlaa_fg_views()`, `vk_dlaa_fg_camera()`): all
-   three, or the frame has none. Generation is wanted with inputs and the menu closed.
+1. The frame's inputs (`runtime/vk/vk_dlaa.c` `vk_dlaa_fg_take()`): one set with both views and a camera, or the frame
+   has none. Generation is wanted with inputs and the menu closed.
 2. A change of generation waits (`FG_SETTLE_FRAMES`): the state the driver has is held until the new one stays.
 3. `shown_mult` is the pacer's divisor (`runtime/pacing/frame_rate.c`): the multiplier while generation is on, 1 while
    it is off.
@@ -2805,7 +2837,7 @@ function:
 7. The jitter, in render pixels, and the vectors' scale, 1 over the depth's width and height: the vectors are in render
    pixels of the scene's size, which is the output's or smaller (an upscaling mode, or the game's own scale without an
    upscaler); Streamline takes the depth and the vectors at their own size and the output at ext. The reset flag is the
-   inputs' (`vk_dlaa_fg_inputs()`).
+   inputs' (`vk_dlaa_fg_take()`).
 8. `nx2sl_frame` gets the command buffer, the images and the camera (NULL for each on a frame without inputs), the
    swapchain's extent, the frames to generate between two rendered ones (the multiplier less the rendered one, 0 off)
    and the frame's number (`S.cur`). While a change is settling, a frame without inputs can still ask for generated
@@ -3352,25 +3384,34 @@ DLSS Frame Generation through NGX itself (the `vk_ngxfg_*` functions, for `runti
 What frame generation takes (`runtime/vk/vk_fg.cpp`, `runtime/vk/vk_fg4.cpp`, `runtime/vk/vk_fsr3fg.c`,
 `runtime/vk/vk_dlssg.c`):
 
-- `vk_dlaa_fg_inputs()`: the depth and motion vectors of the frame DLSS or FSR 3.1 last ran on, with its jitter and
-  whether its history reset; 1 once per evaluation (0: none since the last call, one made more than
-  `FG_INPUT_PRESENTS` presents ago, or the upscaler failed in this run). The images stay valid until the next
+- `vk_dlaa_fg_take()`: the last set the replay published (`VkDlaaFgSet`, `runtime/vk/vk_fg_set.h`), copied whole:
+  the depth and motion vectors DLSS or FSR 3.1 ran on with their views, the jitter, whether the history reset, and the
+  camera of the same frame (`cam`, valid with `cam_ok`). 1 once per set (0: none since the last call, one made more than
+  `FGI_MAX_AGE` presents ago, or the upscaler failed in this run). `made`: `D.presents` when it was made; `age`: 0 when
+  it was made for the frame being presented, else how many presents older. The images stay valid until the next
   frame's scene draws over them, after this present. Without an upscaler, while frame generation runs, the same of the
-  last frame armed for it alone (`runtime/vk/vk_dlaa.c` `fg_only_frame()`): the scene's size, a jitter of 0.
+  last frame armed for it alone (`runtime/vk/vk_dlaa.c` `fg_only_frame()`): the scene's size, a jitter of 0. Present
+  thread only.
+- `vk_dlaa_present_reads()`: the present thread is in its blit, where frame generation reads its inputs
+  (`runtime/vk/vk_backend.c` `present_main()`, around `vk_present_blit()`), for the count of `vk_dlaa_fg_overlaps()`.
+- `vk_dlaa_fg_overlaps()`: writes of the inputs (the camera, a set, a HUD-less picture, a withdrawal) made while the
+  present thread was in its blit, this run. Any thread.
 - `vk_dlaa_fg_only()`: 1 while frame generation runs without an upscaler and the frame is armed for its inputs alone
   (`fg_only_frame()`): the motion passes run as for the upscaler (`runtime/vk/vk_usnap.c`, `runtime/vk/vk_exec_draw.c`,
   `runtime/vk/vk_mvprev.c`), nothing is jittered. Read at each present.
-- `vk_dlaa_fg_views()`: their views.
-- `vk_dlaa_fg_camera()`: this frame's camera for DLSS Frame Generation (`runtime/vk/vk_dlssg.c`), a `VkDlaaCamera`:
+- `VkDlaaCamera`, the set's camera, as DLSS Frame Generation takes it (`runtime/vk/vk_dlssg.c`):
   matrices for row vectors (v \* M, the rows stored in order), as Streamline takes them; 0 without a camera that frame.
   `znear` and `zfar`: the view distances the depth buffer holds as 0 and 1 (1 and 0 when inverted), from the frame's own
   projection and the device's depth mode (`runtime/vk/vk_dlaa.c` `proj_planes()`); with an infinite far plane
   (`infinite`) `zfar` is `VK_DLAA_FAR_INFINITE` (1e8), a distance no surface reaches.
-- `vk_dlaa_ffx_camera()`: the same camera as FSR takes it (`runtime/vk/vk_ffx.h`); 0 without one that frame.
-- `vk_dlaa_fg_hudless()`: the picture without the HUD at the size of the game's picture, in `*fmt`: RGBA8 UNORM bytes
-  like it (sRGB-encoded), or RGBA16F linear with HDR on; made at each evaluation while `vk_dlaa_hudless_wanted` (frame
-  generation sets it), from the upscaler's picture or, without an upscaler, from the game's own scaled picture; 1 once
-  per evaluation.
+- `vk_dlaa_fg_ffx_camera()`: a set's camera as FSR takes it (`runtime/vk/vk_ffx.h`); 0 when the set has none.
+- `vk_dlaa_fg_camera()`: the newest camera handed to the present, for the bug capture (`runtime/diag/bugcap.c`); takes
+  nothing. Any thread.
+- `vk_dlaa_fg_hudless()`: the last picture without the HUD (`VkDlaaFgHudless`), copied whole, at the size of
+  the game's picture, in `fmt`: RGBA8 UNORM bytes like it (sRGB-encoded), or RGBA16F linear with HDR on; made at each
+  evaluation while `vk_dlaa_hudless_wanted` (frame generation sets it), from the upscaler's picture or, without an
+  upscaler, from the game's own scaled picture; 1 once per picture, by the same rules as `vk_dlaa_fg_take()` and apart
+  from it. Present thread only.
 - `vk_dlaa_fg_scene()`: the frame that ended last drew a scene (a light target armed, or draws into a scene-size depth):
   0 on the title, a movie, a load or a fade, which frame generation's log counts apart from gameplay
   (`runtime/vk/vk_fg_stats.h`). Any thread.
@@ -3703,12 +3744,12 @@ The present, the settings and frame generation:
 - `ids`: this frame's G-buffer target 0 (object classes in green), valid with `ids_ok`.
 - `cfg_seen`: `cfg_version` when preset was read.
 - `last_eval_ns`: `plat_now_ns` of the previous evaluation (FrameTimeDeltaInMsec).
-- `fg_depth`, `fg_mv`: the last evaluation's depth and motion vectors, for frame generation.
-- `fg_cam`: this frame's camera (`mv_pass()`), `fg_cam_ok` when known.
-- `fg_fresh`: not handed out yet (`vk_dlaa_fg_inputs()`).
+- `fg_cam`: this frame's camera (`mv_pass()`), `fg_cam_ok` when known. The replay's own: the present gets a copy in the
+  frame's set (`fg_publish()`).
+- `fg_reset`: this frame's history starts anew, for the frame's set.
 - `scene_last`: the last frame that ended drew a scene (`vk_dlaa_fg_scene()`).
 - `presents`: `vk_dlaa_frame()` calls so far.
-- `fg_at`, `hl_at`: presents when the inputs and the HUD-less picture were made (`fg_current()`).
+- `hl_at`: presents when the HUD-less picture was last made (`idle_release()`).
 - `hl`, `hl_srgb`: the picture without the HUD for frame generation (`vk_dlaa_fg_hudless()`): DLSS's output encoded to
   sRGB as the game's last pass encodes its picture, then copied bit for bit into an RGBA8 UNORM image, the format the
   present reads; with HDR on, DLSS's output as RGBA16F, as the game's float picture the present encodes (`hl_srgb`
@@ -3736,17 +3777,67 @@ line a frame without a camera logs (`cam_note()`); cleared at each present (`vk_
 - `one_n`, `one_w`, `one_h`: after arming: passes with one colour target and no depth (`vk_dlaa_pass()`), the last's.
 - `one_fmt`: its format; size and format are for a frame without the DLAA point (`vk_dlaa_frame()`).
 - `second`: after DLSS ran: passes shaped like the light target's (another scene).
-`FG_INPUT_PRESENTS` (4): an evaluation is taken at its own present, or the one after when the present thread is behind.
+### `FGI`, `fg_publish()`, `hl_publish()`, `fg_overlap()`
 
-### `fg_current()`
+What frame generation gets goes from the replay to the present thread through `FGI` (`runtime/vk/vk_fg_inputs.h`), one
+whole set at a time. The replay writes the frame's set at the end of `evaluate()` or `fg_only_frame()` (`fg_publish()`:
+the images, views, jitter, reset and the camera `mv_pass()` read for this frame), and the HUD-less picture where it is
+made (`hl_publish()`); the present thread takes a copy (`vk_dlaa_fg_take()`, `vk_dlaa_fg_hudless()`). Up to 0.28.0 these
+were fields of `D` that the present thread read one by one, and it wrote `fg_fresh` and `hl_fresh` back.
 
-What an evaluation left for frame generation is for the present of its own frame. Frame generation takes it only while
-its swapchain is in place, so with frame generation off the last evaluation's images stayed marked fresh for as long as
-it was off. Among them is the game's own depth target, which the game replaces when the scene's size changes: switching
-the upscaler off and on again with frame generation set (the menu's Upscaling row passes through its choices without
-one) handed that destroyed image to frame generation's preparation, and AMD's driver ended the process. Images made more
-than `FG_INPUT_PRESENTS` presents ago are therefore never handed out, and `vk_dlaa_frame()` drops them when the upscaler
-goes off or on.
+Where the replay and the present thread could meet:
+
+- Not on the main path. Every submission of the game goes through `runtime/vk/vk_backend.c` `submit_sync()`, which calls
+  `vk_present_drain()` before `vk_sync_submit()` replays it; `vk_present_drain()` waits while a present job is
+  `pending` or `busy`, and `present_main()` clears `busy` only after `vk_present_blit()` (where every frame generator
+  reads its inputs) and the blit's own `vk_sync_submit()`. With the asynchronous replay (one replay thread,
+  `replay_main()`) or with one game thread submitting, the replay never records `mv_pass()`, `evaluate()` or
+  `hudless_from()` while a present reads.
+- With the replay on the submitting threads (`NX2SARIA_REPLAY_ASYNC` 0, the default) and two of the game's threads at
+  once: one thread can pass its drain, and replay, while another makes the present call and hands the present thread
+  its job. `docs/code/nvn.md` says of the game's threads: "which threads submit and present, and whether two of these
+  calls run at once, which happens in play (at area changes)". There the present could read the next frame's camera
+  (`mv_pass()` writes it before the frame's images are marked) with this frame's depth and motion, a camera half
+  written, or clear `fg_fresh` after the replay set it for the next frame. The set is now copied whole: it can be the
+  next frame's, but never part of two. The images themselves are one per size (`e->mv`, `D.hl`, the game's depth), so
+  their contents are whatever the GPU wrote last either way.
+- The frame's bookkeeping (`vk_dlaa_frame()`, from `frame_end()`) runs at `present_image()` with no drain, on the
+  thread that presents, while the present thread can still be in the previous job's blit: the withdrawals at a switch
+  of the upscaler (`fg_fresh = 0` before) and `idle_release()` meet the present's reads on every path. The withdrawals
+  now go through the lock.
+
+`fg_overlap()` counts each such write made while the present thread is in its blit (`fg_reading`,
+`vk_dlaa_present_reads()`), in the periodic lines below: how often that window opens in play.
+
+`tests/fg_inputs_check.py` runs both cases over the fields as they were and over `FGI`, with the drain: with one game
+thread, no set mixed two frames over the old fields either; with two, about 360 of 2000 presents read a set mixed of
+two frames over the fields, none over `FGI`.
+
+`FGI_MAX_AGE` (4) presents, what `FG_INPUT_PRESENTS` was. Frame generation takes the inputs only while its swapchain is
+in place, so with frame generation off the last evaluation's images stayed marked fresh for as long as it was off.
+Among them is the game's own depth target, which the game replaces when the scene's size changes: switching the
+upscaler off and on again with frame generation set (the menu's Upscaling row passes through its choices without one)
+handed that destroyed image to frame generation's preparation, and AMD's driver ended the process. Sets made more than
+`FGI_MAX_AGE` presents ago are therefore never handed out, and `vk_dlaa_frame()` withdraws them when the upscaler goes
+off or on.
+
+What a set names stays alive while the present can take and record it. The drain does not cover this: the bookkeeping
+that frees things (`idle_release()`) runs without it, as above. The age limit does:
+
+- A size's motion images and the HUD-less picture that are let go of go behind `FG_LATE_PRESENTS` (8) presents
+  (`retire_size()`, `retire_hl()`), more than the `FGI_MAX_AGE` a set can be handed out for.
+- What is destroyed at once (`idle_release()`: a size, the HUD-less picture) has gone unused for `IDLE_FREE_PRESENTS`
+  (600) presents, so no set young enough to be handed out names it. It is withdrawn from `FGI` before it is destroyed
+  all the same (`hl_destroy()`, `idle_release()`), under the lock a take holds while it copies.
+- A failure withdraws the set (`dl_fail()`, `retire_idle()`, `fg_only_frame()`), as `vk_dlaa_fg_take()` answered 0
+  after one before.
+
+The game's depth target's views come from `runtime/vk/vk_exec_draw.c` `vk_exec_target_view()`, as before.
+
+One line at start (`vk_dlaa_init()`) says the inputs go as one copied set. Each generator's periodic line counts how
+many generated frames had the presented frame's own set and how many an older one, the oldest, and the run's
+`vk_dlaa_fg_overlaps()` (`runtime/vk/vk_fg_stats.h` `fgs_age_text()`): fg, fg4 and fsr3fg in their period line, ngxfg
+in its line of 3600 frames, dlssg in its line every 3600 presents.
 
 ### `vk_dlaa_fg_scene()`
 
@@ -3754,13 +3845,14 @@ Whether the frame that ended last drew a scene: a light target armed, or draws i
 without one (the title, a movie, a load, the file menu, a fade) has nothing for frame generation, and its log line
 counts it apart from the gameplay frames (`runtime/vk/vk_fg_stats.h`). Read on the present thread a frame late at most.
 
-### `vk_dlaa_ffx_camera()`
+### `ffx_camera()`, `vk_dlaa_fg_ffx_camera()`
 
-Metres in one unit of the game's view space, for FSR's distance heuristics: one. Measured in Hyrule Field, the camera
+The camera as FSR takes it: `ffx_camera()` the replay's own for the upscaler (`evaluate()`), `vk_dlaa_fg_ffx_camera()`
+a set's for frame generation. Metres in one unit of the game's view space, for FSR's distance heuristics: one. Measured in Hyrule Field, the camera
 orbits Link about 4 units behind him (the nearest scene depth, 0.975, is 1 - 0.1 / 4) at about 3 units a second, and
 travels about 4.7 units a second while he runs; in centimetres (the 0.01 FSR had) he would be 4 cm from the camera.
 
-### `vk_dlaa_fg_inputs()`
+### `vk_dlaa_fg_take()`
 
 `reset`: DLSS started a new history on this frame (`evaluate()`; `fg_only_frame()` by the same rules without an
 upscaler). `jx`, `jy`: 0 without an upscaler, whose frames are not jittered. Handed out as 0 before, so frame generation
@@ -4047,7 +4139,7 @@ distance gives, is "infinite": `zfar` is then that constant and `infinite` is se
 
 ### `fg_camera()`
 
-Frame generation's camera (`vk_dlaa_fg_camera()`, `D.fg_cam`) from the game's block: the projection is rows 7-10, the
+Frame generation's camera (`D.fg_cam`, handed out with the frame's set by `fg_publish()`) from the game's block: the projection is rows 7-10, the
 view rows 0-2 (rows: right, up, back; the camera looks down -z), m the reprojection from this frame's clip space to last
 frame's. Four matrices are handed out, each transposed (`fg_store()`): view to clip (the projection) and its inverse,
 clip to last frame's clip (m) and its inverse. If either inverse cannot be made, the camera is left as it was and
@@ -4085,7 +4177,7 @@ in and why the evaluating one lacks it (`usnap_why`, the texts for `vk_usnap_why
 ### Camera cuts
 
 `NX2SARIA_DLAA_CUT` (default 1; 0: off). Only a lost camera (`mv_pass()`), another scene size or another target started
-a new history, so DLSS and frame generation (`vk_dlaa_fg_inputs()`) carried their history across a camera that jumped:
+a new history, so DLSS and frame generation (`vk_dlaa_fg_take()`) carried their history across a camera that jumped:
 an area load or a spawn moves it 5 to 180 m in one frame. Such a frame now starts a new history, as NVIDIA's DLSS guide
 asks for a camera cut. The rule was first a move over 5 m, or a turn over 10 degrees together with a move over 0.5 m,
 both per 60 Hz frame and scaled by the time since the last camera; the code's turn threshold is now `CUT_TURN`, 30
@@ -4619,7 +4711,7 @@ In the order of the function:
   its own feature from here on, as with `NX2SARIA_DLSS_RANGE=0`, and this frame runs again on its own, which starts a
   new history.
 - The timing's mark after DLSS goes through the recorder, after NGX's own commands.
-- Frame generation gets the same new start with this frame's inputs (`vk_dlaa_fg_inputs()`): a frame DLSS starts a new
+- Frame generation gets the same new start with this frame's inputs (`vk_dlaa_fg_take()`): a frame DLSS starts a new
   history on (a camera cut, another scene size or target) has no motion from the frame before that holds. Another scene
   size is one for frame generation also where DLSS's own history stayed (`D.stepped`): the depth and the motion vectors
   it reads are of that other size.
@@ -4635,7 +4727,7 @@ In the order of the function:
 - Frame generation keeps the HUD out of its generated frames; before the bloom, DLSS's output is not yet the picture and
   the HUD-less one is taken at the game's upscaler (`vk_dlaa_upscaler()`).
 - NGX bound pipelines and descriptor sets of its own: the next draw binds everything again (`vk_exec_draw_new_cb()`).
-- The depth and the motion vectors are kept for frame generation at this frame's present (`vk_dlaa_fg_inputs()`).
+- The depth and the motion vectors are kept for frame generation at this frame's present (`vk_dlaa_fg_take()`).
 - The status line is written at the first evaluation, at the 300th (one early line with the frames counted) and every
   3600.
 
@@ -4930,7 +5022,8 @@ evaluation that used them is
 that many presents back, and the CPU is never more than a few ahead. A feature made later is made with none alive, the
 case `release_kept()` leaves clean. What it costs: switching DLSS on again more than `IDLE_FREE_PRESENTS` presents after
 switching it off makes the size's images and feature again, which its first evaluation waits for, as at the first frame
-DLSS ran in a run.
+DLSS ran in a run. The HUD-less picture goes `IDLE_FREE_PRESENTS` presents after it was last made, whether the present
+took it or not; up to 0.28.0 one the present never took stayed for the rest of the run.
 
 - The images of the upscaler before the bloom go when that was off, or nothing was upscaled, for that long.
 - Frame generation without an upscaler (`fg_only_frame()`) makes its motion images in the size of the scene's size at
@@ -4938,7 +5031,8 @@ DLSS ran in a run.
   evaluations may still be in flight, and `destroy_size()` does not wait for the GPU. Such a size stays, and so does the
   last one; a DLSS feature made for the same sizes (DLAA) goes, since the upscaler that used it has been off for that
   long.
-- Frame generation's motion vectors were a size's (`evaluate()`); none is handed out this late (`fg_current()`). Without
+- Frame generation's motion vectors were a size's (`evaluate()`); none is handed out this late (`FGI_MAX_AGE`), and the
+  sets are withdrawn before a size is destroyed while frame generation does not run without an upscaler. Without
   an upscaler they are the kept size's, which this frame's inputs may still be.
 
 ### Frame generation without an upscaler
@@ -5024,7 +5118,7 @@ spec's required formats; anything else is asked once per format.
   direction starts anew as switching the upscaler does, and the frame before gets nothing to frame generation.
 - When the upscaler goes off, `off_at` is set: `idle_release()` counts the upscaler's sizes as unused from there.
 - Either way the next DLAA frame starts a new history from an unjittered frame.
-- Frame generation gets nothing made before the switch (`fg_current()`).
+- Frame generation gets nothing made before the switch: the sets are withdrawn (`fgi_withdraw()`).
 - After a failure nothing is armed or counted any more (`inputs_on()`): those frames are gameplay without inputs.
 - A frame armed that missed DLSS: `vk_dlaa_pass()` picks the output pass without the mode's share for 120 frames.
 - The first few after DLSS first ran: what the frame drew, to tell a frame drawn another way from a loading screen.
@@ -5080,7 +5174,7 @@ replay thread (`runtime/vk/ngx_lock.h`). In the order of the function:
 
 1. Nothing without `vk_ngxfg_max()` (NGX up with DLSS available, frame generation available, no failure so far);
    `count` is cut to `FG.max`.
-2. A frame without its inputs (`vk_dlaa_fg_inputs()`, `vk_dlaa_fg_views()`, `vk_dlaa_fg_camera()`): nothing is
+2. A frame without its inputs (`vk_dlaa_fg_take()`: none, or one without both views or a camera): nothing is
    generated, and the next generation has no valid previous frame (`FG.reset`).
 3. The parameter object (`FG.p`) is allocated once and reused. A failed allocation sets `FG.failed`: frame generation
    is off for the run.
@@ -5098,7 +5192,7 @@ replay thread (`runtime/vk/ngx_lock.h`). In the order of the function:
    motion image's size: the vectors are in render pixels.
 8. The flags: "DLSSG.ColorBuffersHDR" 0, always; "DLSSG.DepthInverted" from `proj_planes()`;
    "DLSSG.CameraMotionIncluded" 1 (the vectors hold the camera's motion); "DLSSG.Reset" when the inputs ask for one
-   (`vk_dlaa_fg_inputs()`) or `FG.reset` is set (`vk_ngxfg_reset()`, a frame without inputs, a new feature);
+   (`vk_dlaa_fg_take()`) or `FG.reset` is set (`vk_ngxfg_reset()`, a frame without inputs, a new feature);
    "DLSSG.AutomodeOverrideReset", "DLSSG.NotRenderingGameFrames", "DLSSG.OrthoProjection", "DLSSG.MvecDilated" and
    "DLSSG.MenuDetectionEnabled" 0.
 9. Each image's rectangle starts at 0, 0: the motion vectors' and the depth's are their own sizes, the HUD-less
@@ -5108,4 +5202,5 @@ replay thread (`runtime/vk/ngx_lock.h`). In the order of the function:
     fails ends the loop (logged for the first 5): the frames made before it are returned, nothing is switched off, and
     the next present tries again.
 11. `FG.reset` is cleared, also when no frame was made. One line at the first frame with generation and every 3600,
-    with the NGX lock's line after it.
+    with how old the inputs of the frames generated since the last line were (`FG.age`) and the NGX lock's line after
+    it.

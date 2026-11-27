@@ -91,7 +91,9 @@ static void present_main(void *arg) {
         if (flight_on || vk_dump_white) vk_thumbs_frame(j.frame);
         vk_dlssg_present_frame(j.frame);
         vk_lowlat_present_frame(j.frame);
+        vk_dlaa_present_reads(1);
         vk_present_blit(j.image, VK_IMAGE_LAYOUT_GENERAL, j.format, j.w, j.h, j.has_crop ? j.crop : NULL);
+        vk_dlaa_present_reads(0);
         uint64_t f = vk_sync_submit(NULL, 0);
         if (j.value && f != j.value)
             rt_fatal("vk: the present of frame %llu signalled %llu, queued as %llu", (unsigned long long)j.frame,

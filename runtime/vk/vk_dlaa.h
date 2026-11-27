@@ -1,6 +1,7 @@
 #pragma once
 #include "vk.h"
 #include "vk_ffx.h"
+#include "vk_fg_set.h"
 
 #define DLAA_SCENE_MIN_W 320u
 
@@ -14,22 +15,15 @@ int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage
                       const VkNgxImage *real);
 int vk_dlaa_fsr3(void);
 int vk_dlaa_needs_restart(void);
-int vk_dlaa_fg_inputs(VkFfxImage *depth, VkFfxImage *mv, float *jx, float *jy, int *reset);
 int vk_dlaa_fg_only(void);
-#define VK_DLAA_FAR_INFINITE 1e8f
-typedef struct {
-    float view_to_clip[16], clip_to_view[16], clip_to_prev_clip[16], prev_clip_to_clip[16];
-    float pos[3], up[3], right[3], fwd[3];
-    float fov_y, aspect;
-    float znear, zfar;
-    int infinite, inverted;
-} VkDlaaCamera;
-int vk_dlaa_fg_views(VkImageView *depth, VkImageView *mv);
+void vk_dlaa_present_reads(int on);
+uint64_t vk_dlaa_fg_overlaps(void);
+int vk_dlaa_fg_take(VkDlaaFgSet *s);
+int vk_dlaa_fg_ffx_camera(const VkDlaaFgSet *s, VkFfxCamera *c);
 extern int vk_dlaa_hudless_wanted;
-int vk_dlaa_fg_hudless(VkImage *img, VkImageView *view, uint32_t *w, uint32_t *h, VkFormat *fmt);
+int vk_dlaa_fg_hudless(VkDlaaFgHudless *h);
 int vk_dlaa_fg_scene(void);
 int vk_dlaa_fg_camera(VkDlaaCamera *c);
-int vk_dlaa_ffx_camera(VkFfxCamera *c);
 void vk_dlaa_instance_exts(const char **ext, uint32_t *n, uint32_t max);
 void vk_dlaa_device_exts(const VkExtensionProperties *have, uint32_t nhave, const char **ext, uint32_t *n, uint32_t max);
 void vk_dlaa_init(void);

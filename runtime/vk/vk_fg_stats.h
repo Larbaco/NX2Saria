@@ -22,6 +22,28 @@ typedef enum {
 } FgsOutcome;
 
 typedef struct {
+    uint64_t own, older, oldest, overlaps;
+} FgsAge;
+
+static inline void fgs_age_note(FgsAge *a, uint64_t age, uint64_t overlaps) {
+    if (age) a->older++;
+    else a->own++;
+    if (age > a->oldest) a->oldest = age;
+    a->overlaps = overlaps;
+}
+
+static inline void fgs_age_text(FgsAge *a, char *out, size_t size) {
+    snprintf(out, size,
+             "inputs: %llu generated frames had the presented frame's, %llu older ones (up to %llu presents back); %llu "
+             "writes of the inputs while a present read them in this run",
+             (unsigned long long)a->own, (unsigned long long)a->older, (unsigned long long)a->oldest,
+             (unsigned long long)a->overlaps);
+    const uint64_t overlaps = a->overlaps;
+    memset(a, 0, sizeof *a);
+    a->overlaps = overlaps;
+}
+
+typedef struct {
     uint64_t n[FGS_N];
     uint64_t total[FGS_N];
     uint64_t presents0;
@@ -33,6 +55,7 @@ typedef struct {
     uint64_t periods;
     uint64_t lines;
     int started;
+    FgsAge age;
 } FgStats;
 
 static inline int fgs_gameplay(FgsOutcome o) { return o <= FGS_TOO_LARGE; }
@@ -58,6 +81,11 @@ static inline void fgs_count(FgStats *s, FgsOutcome o, uint64_t presents, uint64
     s->n[o]++, s->total[o]++;
 }
 
+static inline void fgs_inputs(FgStats *s, FgsOutcome o, uint64_t age, uint64_t overlaps) {
+    if (o == FGS_GENERATED) fgs_age_note(&s->age, age, overlaps);
+    else s->age.overlaps = overlaps;
+}
+
 static inline void fgs_gpu(FgStats *s, double ms) {
     if (!(ms > 0) || ms > 1000) return;
     s->gpu_ms += ms, s->gpu_n++, s->gpu_ms_total += ms, s->gpu_n_total++;
@@ -80,23 +108,26 @@ static inline int fgs_line(FgStats *s, const char *name, uint64_t presents, uint
         char gpu[64] = "no generated frame timed";
         if (s->gpu_n) snprintf(gpu, sizeof gpu, "%.2f ms a generated frame (%llu timed)", s->gpu_ms / (double)s->gpu_n,
                                 (unsigned long long)s->gpu_n);
+        char age[256];
+        fgs_age_text(&s->age, age, sizeof age);
         snprintf(out, size,
                  "%s: %llu gameplay frames: %llu generated (%.1f%%), %llu history starts, %llu without depth and motion, "
                  "%llu without the picture without the HUD, %llu larger than the context; besides them %llu with the menu "
                  "open, %llu without a scene (title, movie, load); %llu presents in %.1f s (%.1f a second on screen, %.1f "
-                 "rendered); GPU %s; the run: %llu gameplay frames, %llu generated (%.1f%%), %llu menu, %llu without a "
+                 "rendered); GPU %s; %s; the run: %llu gameplay frames, %llu generated (%.1f%%), %llu menu, %llu without a "
                  "scene%s",
                  name, (unsigned long long)play, (unsigned long long)n[FGS_GENERATED], fgs_pct(n[FGS_GENERATED], play),
                  (unsigned long long)n[FGS_CUT], (unsigned long long)n[FGS_NO_INPUTS], (unsigned long long)n[FGS_NO_HUDLESS],
                  (unsigned long long)n[FGS_TOO_LARGE], (unsigned long long)n[FGS_MENU], (unsigned long long)n[FGS_NO_SCENE],
                  (unsigned long long)shown, secs, secs > 0 ? (double)shown / secs : 0.0, secs > 0 ? (double)all / secs : 0.0,
-                 gpu, (unsigned long long)tplay, (unsigned long long)t[FGS_GENERATED], fgs_pct(t[FGS_GENERATED], tplay),
+                 gpu, age, (unsigned long long)tplay, (unsigned long long)t[FGS_GENERATED], fgs_pct(t[FGS_GENERATED], tplay),
                  (unsigned long long)t[FGS_MENU], (unsigned long long)t[FGS_NO_SCENE],
                  s->lines + 1 == FGS_LINES ? "; from here one line in " FGS_STR(FGS_EVERY) " periods" : "");
     }
     s->periods++;
     if (write) s->lines++;
     memset(s->n, 0, sizeof s->n);
+    s->age.own = s->age.older = s->age.oldest = 0;
     s->gpu_ms = 0, s->gpu_n = 0;
     s->presents0 = presents, s->t0_ns = now_ns;
     return write;

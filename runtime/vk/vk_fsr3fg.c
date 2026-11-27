@@ -747,16 +747,17 @@ int vk_fsr3fg_pass_ms(int i, const char **name, double *ms, uint64_t *count) {
 static FgStats S;
 static uint64_t S_presents;
 
-static void stats_frame(FgsOutcome o) {
+static void stats_frame(FgsOutcome o, uint64_t age) {
     uint64_t now = plat_now_ns();
     fgs_count(&S, o, S_presents, now);
+    fgs_inputs(&S, o, age, vk_dlaa_fg_overlaps());
     char line[1024];
     if (fgs_line(&S, "fsr3fg", S_presents, now, line, sizeof line) == 1) rt_log("%s", line);
 }
 
 void vk_fsr3fg_presents(uint64_t n) { S_presents = n; }
 
-void vk_fsr3fg_paused(int menu) { stats_frame(menu ? FGS_MENU : FGS_NO_SCENE); }
+void vk_fsr3fg_paused(int menu) { stats_frame(menu ? FGS_MENU : FGS_NO_SCENE, 0); }
 
 static void ts_collect(uint32_t slot) {
     if (!G.ts_on || !G.ts_written[slot]) return;
@@ -987,20 +988,21 @@ int vk_fsr3fg_record(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage 
 int vk_fsr3fg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage *hudless, const VkNgxImage *out,
                        const int rect[4]) {
     VkFsr3fgInputs in = {0};
-    VkImageView dv, mvv;
+    VkDlaaFgSet s;
     uint64_t now = plat_now_ns();
     in.dt_ms = G.last_ns ? (float)((now - G.last_ns) / 1e6) : 16.67f;
     G.last_ns = now;
-    if (!vk_dlaa_fg_inputs(&in.depth, &in.mv, &in.jx, &in.jy, &in.reset) || !vk_dlaa_fg_views(&dv, &mvv)) {
+    if (!vk_dlaa_fg_take(&s) || !s.depth_view || !s.mv_view) {
         G.st.no_inputs++;
         G.want_reset = 1;
-        stats_frame(fgs_classify(0, vk_dlaa_fg_scene(), 0, 1, 1, 0));
+        stats_frame(fgs_classify(0, vk_dlaa_fg_scene(), 0, 1, 1, 0), 0);
         return 0;
     }
-    in.depth.view = dv, in.mv.view = mvv;
-    if (!vk_dlaa_ffx_camera(&in.cam)) memset(&in.cam, 0, sizeof in.cam);
+    in.depth = s.depth, in.mv = s.mv, in.jx = s.jx, in.jy = s.jy, in.reset = s.reset;
+    in.depth.view = s.depth_view, in.mv.view = s.mv_view;
+    if (!vk_dlaa_fg_ffx_camera(&s, &in.cam)) memset(&in.cam, 0, sizeof in.cam);
     const uint64_t cuts = G.st.cuts;
     int made = vk_fsr3fg_record(cb, bb, hudless, out, rect, &in);
-    stats_frame(made ? FGS_GENERATED : G.st.cuts != cuts ? FGS_CUT : FGS_NO_INPUTS);
+    stats_frame(made ? FGS_GENERATED : G.st.cuts != cuts ? FGS_CUT : FGS_NO_INPUTS, s.age);
     return made;
 }
