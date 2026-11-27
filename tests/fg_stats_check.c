@@ -50,6 +50,29 @@ int main(void) {
     CHECK(fgs_line(&s, "fg", 0, 0, buf, sizeof buf) == -1, "the next period starts empty");
 
     memset(&s, 0, sizeof s);
+    for (int i = 0; i < FGS_PERIOD; i++) {
+        const FgsOutcome o = i % 100 == 0 ? FGS_NO_INPUTS : FGS_GENERATED;
+        fgs_count(&s, o, (uint64_t)i, (uint64_t)i * 16 * MS);
+        fgs_inputs(&s, o, i % 50 == 1 ? (uint64_t)(1 + i % 3) : 0, (uint64_t)i / 100);
+    }
+    CHECK(fgs_line(&s, "fg4", FGS_PERIOD, 10000 * MS, buf, sizeof buf) == 1, "a line at %d gameplay frames", FGS_PERIOD);
+    CHECK(strstr(buf, "inputs: 582 generated frames had the presented frame's, 12 older ones (up to 3 presents back); 5 "
+                      "writes of the inputs while a present read them in this run"),
+          "the inputs' age, generated frames only, and the run's overlaps: %s", buf);
+    for (int i = 0; i < FGS_PERIOD; i++) fgs_count(&s, FGS_GENERATED, (uint64_t)i, (uint64_t)i * 16 * MS),
+                                         fgs_inputs(&s, FGS_GENERATED, 0, 7);
+    CHECK(fgs_line(&s, "fg4", FGS_PERIOD, 20000 * MS, buf, sizeof buf) == 1 &&
+              strstr(buf, "inputs: 600 generated frames had the presented frame's, 0 older ones (up to 0 presents back); 7 writes"),
+          "the age counts start again each period, the run's overlaps do not: %s", buf);
+    FgsAge a = {0};
+    fgs_age_note(&a, 0, 1), fgs_age_note(&a, 4, 2), fgs_age_note(&a, 2, 3);
+    fgs_age_text(&a, buf, sizeof buf);
+    CHECK(!strcmp(buf, "inputs: 1 generated frames had the presented frame's, 2 older ones (up to 4 presents back); 3 "
+                       "writes of the inputs while a present read them in this run"),
+          "the text the DLSS lines take: %s", buf);
+    CHECK(!a.own && !a.older && !a.oldest && a.overlaps == 3, "the period's counts start again after the text, the run's not");
+
+    memset(&s, 0, sizeof s);
     for (int i = 0; i < FGS_IDLE; i++) fgs_count(&s, FGS_NO_SCENE, (uint64_t)i, (uint64_t)i * 16 * MS);
     CHECK(fgs_line(&s, "fsr3fg", FGS_IDLE, 60000 * MS, buf, sizeof buf) == 1, "a line after %d frames of any kind", FGS_IDLE);
     CHECK(strstr(buf, "fsr3fg: 0 gameplay frames: 0 generated (0.0%)") && strstr(buf, "3600 without a scene"), "%s", buf);

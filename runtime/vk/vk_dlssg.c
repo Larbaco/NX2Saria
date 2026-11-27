@@ -12,6 +12,7 @@
 #include "vk_dlaa.h"
 #include "vk_dlssg.h"
 #include "vk_dlssg_device.h"
+#include "vk_fg_stats.h"
 #include "dlssg/nx2_sl.h"
 #include "ui/menu.h"
 
@@ -292,6 +293,8 @@ VkResult vk_dlssg_acquire(VkDevice d, VkSwapchainKHR sc, uint64_t t, VkSemaphore
     return S.acquire(d, sc, t, sem, VK_NULL_HANDLE, idx);
 }
 
+static FgsAge ages;
+
 static void stats(void) {
     static uint64_t shown, next = 600;
     if (++shown < next) return;
@@ -303,9 +306,11 @@ static void stats(void) {
     char limit[96];
     if (us) snprintf(limit, sizeof limit, "Reflex holds frame starts to %.3f ms", us / 1000.0);
     else snprintf(limit, sizeof limit, "the game's own limiter holds the frame limit");
-    rt_log("dlssg: present %llu: %s; %llu frame starts held by Reflex's sleep, %.2f ms on average; %llu not held",
+    char age[256];
+    fgs_age_text(&ages, age, sizeof age);
+    rt_log("dlssg: present %llu: %s; %llu frame starts held by Reflex's sleep, %.2f ms on average; %llu not held; %s",
            (unsigned long long)shown, limit, (unsigned long long)n, n ? (double)ns / (double)n / 1e6 : 0.0,
-           (unsigned long long)un);
+           (unsigned long long)un, age);
 }
 
 VkResult vk_dlssg_present(VkQueue q, const VkPresentInfoKHR *pi) {
@@ -389,12 +394,13 @@ uint64_t vk_dlssg_shown(void) { return S.active ? S.shown() : 0; }
 
 void vk_dlssg_frame(VkCommandBuffer cb, VkExtent2D ext) {
     if (!S.active) return;
-    VkFfxImage d, m;
-    VkImageView dv, mvv;
-    VkDlaaCamera c;
-    float jx = 0, jy = 0;
-    int reset = 0;
-    int have = vk_dlaa_fg_inputs(&d, &m, &jx, &jy, &reset) && vk_dlaa_fg_views(&dv, &mvv) && vk_dlaa_fg_camera(&c);
+    VkDlaaFgSet s = {0};
+    int have = vk_dlaa_fg_take(&s) && s.depth_view && s.mv_view && s.cam_ok;
+    const VkFfxImage d = s.depth, m = s.mv;
+    const VkImageView dv = s.depth_view, mvv = s.mv_view;
+    const VkDlaaCamera c = s.cam;
+    const float jx = s.jx, jy = s.jy;
+    const int reset = s.reset;
     int want = have && !menu_is_open();
     if (want == S.mode) S.pending = 0;
     else if (++S.pending >= FG_SETTLE_FRAMES) { S.mode = want; S.pending = 0; }
@@ -403,6 +409,8 @@ void vk_dlssg_frame(VkCommandBuffer cb, VkExtent2D ext) {
     __atomic_store_n(&S.shown_mult, on ? mult : 1, __ATOMIC_RELAXED);
     uint32_t limit = __atomic_load_n(&S.limit_want, __ATOMIC_ACQUIRE);
     if (S.reflex2 && limit != __atomic_load_n(&S.limit_set, __ATOMIC_ACQUIRE)) reflex_apply(limit);
+    if (on && have) fgs_age_note(&ages, s.age, vk_dlaa_fg_overlaps());
+    else ages.overlaps = vk_dlaa_fg_overlaps();
     stats();
     Nx2SlImage zd = {d.image, dv, d.format, d.width, d.height, VK_IMAGE_LAYOUT_GENERAL,
                      VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT};

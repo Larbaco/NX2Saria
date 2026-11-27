@@ -1098,12 +1098,12 @@ static uint32_t g_hl_w, g_hl_h;
 static VkFormat g_hl_fmt;
 
 static VkImage hudless_record(VkCommandBuffer cb, unsigned slot, int w, int h, const int rect[4], const int to[4], int general) {
-    VkImage pic;
-    VkImageView pv;
-    uint32_t pw, ph;
-    VkFormat pf;
-    if (!(vk_fg_active() || ng_running()) || !vk_dlaa_fg_hudless(&pic, &pv, &pw, &ph, &pf) || !pw || !ph || w <= 0 || h <= 0)
+    VkDlaaFgHudless hl;
+    if (!(vk_fg_active() || ng_running()) || !vk_dlaa_fg_hudless(&hl) || !hl.w || !hl.h || w <= 0 || h <= 0)
         return VK_NULL_HANDLE;
+    const VkImage pic = hl.img;
+    const uint32_t pw = hl.w, ph = hl.h;
+    const VkFormat pf = hl.fmt;
     int prect[4] = {rect[0], rect[1], rect[2], rect[3]};
     if ((int)pw != w || (int)ph != h) {
         prect[0] = (int)((int64_t)rect[0] * pw / w), prect[1] = (int)((int64_t)rect[1] * ph / h);

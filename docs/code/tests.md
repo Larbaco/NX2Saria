@@ -1124,6 +1124,28 @@ Two checks of the lock every NGX call goes through (`runtime/vk/ngx_lock.h`). No
   so a waiter can sit through two holds in a row, and on a loaded CI runner the present thread waited 65.6 ms behind a
   32.8 ms hold.
 
+## `tests/fg_inputs_check.py`
+
+Builds and runs `tests/fg_inputs_check.c` on `runtime/vk/vk_fg_inputs.h`: how frame generation's inputs go from the
+replay to the present thread. No GPU, no game files; needs the Vulkan headers for the types.
+
+- One thread: an empty box hands nothing out; a set made before this present is this frame's (age 0) and is handed out
+  once; its camera stays readable; one more than `FGI_MAX_AGE` presents old is not handed out and counts as taken; of
+  two sets put before a present the newest is handed out, whole; the age in presents; sets and HUD-less pictures are
+  withdrawn apart; a set put after a withdrawal is handed out.
+- Threads as in the game, 2000 frames, every field stamped with its frame. The present thread takes a job (`busy` while
+  it blits), waits up to 350 us, then takes the HUD-less picture and the set, as `runtime/vk/vk_backend.c`
+  `present_main()`. A game thread replays each frame after a drain (`vk_present_drain()` in `submit_sync()`): it
+  writes the frame's camera, 150 us later the frame's images and HUD-less picture.
+  - One game thread, which also makes the present call: over the fields as `runtime/vk/vk_dlaa.c` had them up to 0.28.0
+    nothing goes wrong and no write lands while the present reads (the drain); through the box every present takes its
+    own frame's set and picture.
+  - Two game threads, one replaying, the other making the present calls up to 200 us after the frame was replayed: the
+    replay passes its drain before the other hands over the present. Over the old fields the detector must see sets that
+    mix two frames (it works); through the box none does. It prints both counts, the sets of another frame than the one
+    presented (the box hands out the newest whole set, which can be the next frame's) and the writes made while the
+    present read.
+
 ## `tests/fg_reset_check.py`
 
 Builds and runs `tests/fg_reset_check.c` on `runtime/vk/vk_fg_reset.h`: which frames FSR 3.1 frame generation's
@@ -1149,6 +1171,9 @@ game's frames (gameplay, the menu, no scene) and when it writes one. No GPU, no 
 - A long session: every line up to `FGS_LINES`, then one period in `FGS_EVERY`, the counts carried in the totals.
 - A new swapchain counts its presents from 0: the period's presents and time start again there, not at 0.
 - GPU times out of range are not taken.
+- The inputs' age: only generated frames count, the presented frame's own set apart from an older one, with the
+  oldest; the counts start again each period, and the text the DLSS lines take (`fgs_age_text()`) starts again after
+  it is written.
 
 ## `tests/flags_check.py`
 

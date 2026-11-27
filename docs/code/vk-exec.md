@@ -1050,7 +1050,8 @@ The present thread. For each job it takes:
    frame, before anything reads it. The thumbnails are taken with the flight recorder on or `NX2SARIA_DUMP_WHITE`,
    which reads them too.
 3. `vk_lowlat_present_frame()` gives the frame's number to the blit's submit and the present's markers.
-4. The blit, then a submission of its own (`vk_sync_submit(NULL, 0)`): a timeline value after the blit, so deferred
+4. The blit (marked with `runtime/vk/vk_dlaa.c` `vk_dlaa_present_reads()`: frame generation reads its inputs there),
+   then a submission of its own (`vk_sync_submit(NULL, 0)`): a timeline value after the blit, so deferred
    destruction waits for the blit too. A present queued by the asynchronous replay must signal the value it was
    queued as, else the run stops.
 5. The wait for the picture's time (`wait_until()`, `pace_smooth()`), the host present, and `perfmon_shown()` with the

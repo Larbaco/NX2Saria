@@ -20,6 +20,8 @@
 #include "vk_fg.h"
 #include "vk_fsr3fg.h"
 #include "vk_ffx.h"
+#include "vk_fg_inputs.h"
+#include "vk_fg_stats.h"
 #include "vk_rec.h"
 #include "vk_up_defer.h"
 #include "dlaa_mv_spv.h"
@@ -87,6 +89,7 @@ static struct {
     uint32_t w, h;
     VkFormat fmt;
     int failed, reset, evals;
+    FgsAge age;
 } FG;
 
 static NgxLock NL;
@@ -340,6 +343,9 @@ static int utf8_to_wide(const char *in, wchar_t *out, size_t cap) {
 #endif
 
 void vk_dlaa_init(void) {
+    rt_log("dlaa: frame generation's inputs go to the present as one snapshot a frame (depth, motion vectors, jitter, reset "
+           "and the camera of the same frame copied together under a lock, the picture without the HUD beside them), "
+           "taken once and at most %d presents old", FGI_MAX_AGE);
     if (vk_dlaa_wanted() && fsr3()) {
         fsr_frame = 1;
         N.available = vk_ffx_load();
@@ -508,21 +514,17 @@ static struct {
     int ids_ok;
     unsigned cfg_seen;
     uint64_t last_eval_ns;
-    VkFfxImage fg_depth, fg_mv;
-    VkImageView fg_depth_view, fg_mv_view;
     VkDlaaCamera fg_cam;
     int fg_cam_ok;
-    float fg_jx, fg_jy;
-    int fg_fresh, fg_reset;
+    int fg_reset;
     int scene_last;
     uint64_t presents;
-    uint64_t fg_at, hl_at;
+    uint64_t hl_at;
     VkImage hl_srgb, hl;
     VmaAllocation hl_srgb_mem, hl_mem;
     VkImageView hl_view;
     uint32_t hl_w, hl_h;
     VkFormat hl_fmt;
-    int hl_fresh;
     int pre_on;
     int pre;
     int pre_at;
@@ -545,21 +547,34 @@ static struct {
     VkImage second_img;
 } F;
 
-#define FG_INPUT_PRESENTS 4
-static int fg_current(uint64_t made) { return D.presents - made <= FG_INPUT_PRESENTS; }
+static FgiBox FGI = {.m = PLAT_MUTEX_INIT};
+static int fg_reading;
+static uint64_t fg_overlaps;
 
-int vk_dlaa_fg_hudless(VkImage *img, VkImageView *view, uint32_t *w, uint32_t *h, VkFormat *fmt) {
-    if (!D.hl_fresh) return 0;
-    D.hl_fresh = 0;
-    if (!fg_current(D.hl_at)) return 0;
-    *img = D.hl, *view = D.hl_view, *w = D.hl_w, *h = D.hl_h, *fmt = D.hl_fmt;
-    return 1;
+void vk_dlaa_present_reads(int on) { __atomic_store_n(&fg_reading, on, __ATOMIC_RELEASE); }
+uint64_t vk_dlaa_fg_overlaps(void) { return __atomic_load_n(&fg_overlaps, __ATOMIC_RELAXED); }
+
+static void fg_overlap(void) {
+    if (__atomic_load_n(&fg_reading, __ATOMIC_ACQUIRE)) __atomic_add_fetch(&fg_overlaps, 1, __ATOMIC_RELAXED);
 }
 
-int vk_dlaa_fg_views(VkImageView *depth, VkImageView *mv) {
-    *depth = D.fg_depth_view, *mv = D.fg_mv_view;
-    return D.fg_depth_view && D.fg_mv_view;
+static uint64_t presents_now(void);
+
+static void fg_publish(VkFfxImage depth, VkFfxImage mv, VkImageView dv, VkImageView mvv, float jx, float jy) {
+    const VkDlaaFgSet s = {.depth = depth, .mv = mv, .depth_view = dv, .mv_view = mvv, .jx = jx, .jy = jy,
+                           .reset = D.fg_reset, .cam = D.fg_cam, .cam_ok = D.fg_cam_ok, .made = presents_now()};
+    fg_overlap();
+    fgi_put(&FGI, &s);
 }
+
+static void fg_withdraw(int set, int hudless) {
+    fg_overlap();
+    fgi_withdraw(&FGI, set, hudless);
+}
+
+int vk_dlaa_fg_take(VkDlaaFgSet *s) { return fgi_take(&FGI, presents_now(), s); }
+
+int vk_dlaa_fg_hudless(VkDlaaFgHudless *h) { return fgi_take_hudless(&FGI, presents_now(), h); }
 
 int vk_dlaa_pose_depth(uint64_t frame, uint32_t w, uint32_t h, VkDescriptorImageInfo *image, float history[4]) {
     const struct Size *last = D.last;
@@ -572,25 +587,19 @@ int vk_dlaa_pose_depth(uint64_t frame, uint32_t w, uint32_t h, VkDescriptorImage
 
 int vk_dlaa_fg_scene(void) { return __atomic_load_n(&D.scene_last, __ATOMIC_RELAXED); }
 
-int vk_dlaa_fg_camera(VkDlaaCamera *c) {
-    if (!D.fg_cam_ok) return 0;
-    *c = D.fg_cam;
-    return 1;
-}
+int vk_dlaa_fg_camera(VkDlaaCamera *c) { return fgi_camera(&FGI, c); }
 
 #define VIEW_METERS 1.0f
 
-int vk_dlaa_ffx_camera(VkFfxCamera *c) {
+static int ffx_camera(VkFfxCamera *c) {
     if (!D.fg_cam_ok) return 0;
     *c = (VkFfxCamera){D.fg_cam.fov_y, D.fg_cam.znear, D.fg_cam.zfar, VIEW_METERS};
     return 1;
 }
 
-int vk_dlaa_fg_inputs(VkFfxImage *depth, VkFfxImage *mv, float *jx, float *jy, int *reset) {
-    if (!D.fg_fresh || D.failed) return 0;
-    D.fg_fresh = 0;
-    if (!fg_current(D.fg_at)) return 0;
-    *depth = D.fg_depth, *mv = D.fg_mv, *jx = D.fg_jx, *jy = D.fg_jy, *reset = D.fg_reset;
+int vk_dlaa_fg_ffx_camera(const VkDlaaFgSet *s, VkFfxCamera *c) {
+    if (!s->cam_ok) return 0;
+    *c = (VkFfxCamera){s->cam.fov_y, s->cam.znear, s->cam.zfar, VIEW_METERS};
     return 1;
 }
 
@@ -606,6 +615,7 @@ static int use_fsr(void) { return !N.ngx_up && fsr_frame; }
 static void dl_fail(const char *what, NgxResult r) {
     rt_log("dlaa: %s failed (%08x): DLAA off for this run", what, (unsigned)r);
     D.failed = 1;
+    fg_withdraw(1, 0);
 }
 
 static int image2d(uint32_t w, uint32_t h, VkFormat f, VkImageUsageFlags usage, VkImage *img, VmaAllocation *mem,
@@ -1159,6 +1169,7 @@ static int mv_pass(VkExec *ex, struct Size *e, VkImageView zv, float jx, float j
             have_m = 1;
         }
     }
+    fg_overlap();
     D.fg_cam_ok = 0;
     if (cr && have_m && D.cam_size == OCAM_BLOCK) fg_camera(cr, m);
     if (cr && D.cam_size == OCAM_BLOCK) cam_cut(cr);
@@ -1424,6 +1435,7 @@ static void sh_destroy(void);
 #endif
 static void hl_destroy(void) {
     const VkCtx *c = vk_ctx();
+    fg_withdraw(0, 1);
     if (D.hl_view) vkDestroyImageView(c->device, D.hl_view, NULL);
     if (D.hl) vmaDestroyImage(c->vma, D.hl, D.hl_mem);
     if (D.hl_srgb) vmaDestroyImage(c->vma, D.hl_srgb, D.hl_srgb_mem);
@@ -1487,6 +1499,7 @@ void vk_dlaa_release(void) {
 #ifndef _WIN32
     const VkCtx *c = vk_ctx();
     if (!c) return;
+    fg_withdraw(1, 1);
     upd_take_all(&dead, dead_release, (void *)1);
     for (int i = 0; i < DLSS_SIZES; i++)
         if (D.sizes[i].feat) NGX_CALL(&NL, NGX_AT_SETUP, N.release(D.sizes[i].feat)), D.sizes[i].feat = NULL;
@@ -2078,7 +2091,7 @@ static void evaluate(VkExec *ex, const VkExecTarget *dst) {
                    fm = {e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1, e->mv_view},
                    fo = {e->out, VK_FORMAT_R16G16B16A16_SFLOAT, ow, oh, 1, e->out_view};
         VkFfxCamera fcam;
-        if (!vk_dlaa_ffx_camera(&fcam)) memset(&fcam, 0, sizeof fcam);
+        if (!ffx_camera(&fcam)) memset(&fcam, 0, sizeof fcam);
         if (!vk_ffx_upscale(cb, &fc, &fz, &fm, &fo, tjx, tjy, D.reset, dt > 0 && dt < 100 ? (float)dt : 16.67f, &fcam))
             return dl_fail("FSR 3.1", 0);
         static int told;
@@ -2212,10 +2225,8 @@ evaluated:
     ex->recorded += 4;
     vk_exec_draw_new_cb();
     D.jdepth = z->image, D.jw = z->width, D.jh = z->height;
-    D.fg_depth = (VkFfxImage){z->image, z->format, w, h, 0, zv};
-    D.fg_mv = (VkFfxImage){e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1, e->mv_view};
-    D.fg_depth_view = zv, D.fg_mv_view = e->mv_view;
-    D.fg_jx = jx, D.fg_jy = jy, D.fg_at = D.presents, D.fg_fresh = 1;
+    fg_publish((VkFfxImage){z->image, z->format, w, h, 0, zv}, (VkFfxImage){e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1, e->mv_view},
+               zv, e->mv_view, jx, jy);
     if (D.jit_used) D.jittered++;
     next_jitter(w, ow);
     if (++D.evals == 1 || D.evals == 300 || D.evals % 3600 == 0)
@@ -2238,6 +2249,12 @@ evaluated:
 }
 
 int vk_dlaa_hudless_wanted;
+static void hl_publish(void) {
+    D.hl_at = D.presents;
+    const VkDlaaFgHudless h = {D.hl, D.hl_view, D.hl_w, D.hl_h, D.hl_fmt, D.hl_at, 0};
+    fg_overlap();
+    fgi_put_hudless(&FGI, &h);
+}
 static void hudless_from(VkCommandBuffer cb, VkImage src, uint32_t level, uint32_t layer, uint32_t w, uint32_t h);
 static void hudless(VkCommandBuffer cb, VkImage src, uint32_t w, uint32_t h) { hudless_from(cb, src, 0, 0, w, h); }
 static void hudless_from(VkCommandBuffer cb, VkImage src, uint32_t level, uint32_t layer, uint32_t w, uint32_t h) {
@@ -2284,14 +2301,14 @@ static void hudless_from(VkCommandBuffer cb, VkImage src, uint32_t level, uint32
                    VK_FILTER_NEAREST);
     full_barrier(cb);
     if (hdr) {
-        D.hl_at = D.presents, D.hl_fresh = 1;
+        hl_publish();
         return;
     }
     VkImageCopy cp = {.srcSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1}, .dstSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
                       .extent = {w, h, 1}};
     vkCmdCopyImage(cb, D.hl_srgb, VK_IMAGE_LAYOUT_GENERAL, D.hl, VK_IMAGE_LAYOUT_GENERAL, 1, &cp);
     full_barrier(cb);
-    D.hl_at = D.presents, D.hl_fresh = 1;
+    hl_publish();
 }
 
 static int scene_color(VkFormat f) {
@@ -2535,8 +2552,9 @@ static void retire_idle(void) {
     for (int i = 0; i < SNAPS; i++) retire_snap(&R.s[i]);
     vk_ffx_release_idle();
     if (D.failed) {
+        fg_withdraw(1, 0);
         for (int i = 0; i < DLSS_SIZES; i++) retire_size(&D.sizes[i]);
-        D.last = NULL, D.host = NULL, D.fg_fresh = 0, D.fg_mv_view = VK_NULL_HANDLE, D.fg_mv = (VkFfxImage){0};
+        D.last = NULL, D.host = NULL;
     }
     vk_upscaler_let_go();
     retired_n++;
@@ -2711,7 +2729,7 @@ int vk_dlaa_resized_take(void) {
 static uint64_t off_at;
 static void idle_release(void) {
     if (!idle_free()) return;
-    if (D.hl && D.presents - D.hl_at >= IDLE_FREE_PRESENTS && !D.hl_fresh) {
+    if (D.hl && D.presents - D.hl_at >= IDLE_FREE_PRESENTS) {
         rt_log("dlaa: the HUD-less picture for frame generation went unused for %d presents: freed", IDLE_FREE_PRESENTS);
         hl_destroy();
     }
@@ -2735,11 +2753,11 @@ static void idle_release(void) {
         if (s->out || s->feat) {
             rt_log("dlaa: the DLSS size %ux%u -> %ux%u went unused for %d presents with the upscaler off: freed",
                    s->w, s->h, s->ow, s->oh, IDLE_FREE_PRESENTS);
+            if (!D.fgo) fg_withdraw(1, 0);
             destroy_size(s, NGX_AT_FRAME), n++;
         }
     }
-    if (n && !D.fgo)
-        D.last = NULL, D.host = NULL, D.fg_fresh = 0, D.fg_mv_view = VK_NULL_HANDLE, D.fg_mv = (VkFfxImage){0};
+    if (n && !D.fgo) D.last = NULL, D.host = NULL;
 }
 
 static int fg_runs(void) { return vk_dlssg_active() || vk_fg_active() || vk_ngxfg_on() || vk_fsr3fg_on(); }
@@ -2833,6 +2851,7 @@ static void fg_only_frame(VkExec *ex, const VkExecTarget *dst) {
     if (!e) {
         rt_log("dlaa: the motion images for frame generation could not be made: none for the rest of this run");
         D.failed = 1;
+        fg_withdraw(1, 0);
         return;
     }
     if (e != D.last) D.reset = 1, D.why[0]++, e->chars_ok = e->dist_ok = 0;
@@ -2859,10 +2878,8 @@ static void fg_only_frame(VkExec *ex, const VkExecTarget *dst) {
     ex->recorded += 2;
     vk_exec_draw_new_cb();
     D.jdepth = z->image, D.jw = z->width, D.jh = z->height;
-    D.fg_depth = (VkFfxImage){z->image, z->format, w, h, 0};
-    D.fg_mv = (VkFfxImage){e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1};
-    D.fg_depth_view = zv, D.fg_mv_view = e->mv_view;
-    D.fg_jx = D.fg_jy = 0.0f, D.fg_at = D.presents, D.fg_fresh = 1;
+    fg_publish((VkFfxImage){z->image, z->format, w, h, 0}, (VkFfxImage){e->mv, VK_FORMAT_R16G16_SFLOAT, w, h, 1}, zv,
+               e->mv_view, 0.0f, 0.0f);
     D.jit_ok = 0;
     static uint64_t frames, still;
     frames++, still += mv != 1;
@@ -2905,7 +2922,7 @@ void vk_dlaa_frame(void) {
         off_at = D.presents;
         D.reset = 1, D.cam_prev_ok = 0, D.jit_ok = D.jit_used = D.armed = D.done = D.gbuf = D.ended = D.up = 0;
         D.hold = 0;
-        D.fg_fresh = D.hl_fresh = 0;
+        fg_withdraw(1, 1);
         memset(&F, 0, sizeof F);
         if (on == D.on) return;
     }
@@ -2915,7 +2932,7 @@ void vk_dlaa_frame(void) {
         off_at = D.presents;
         D.reset = 1, D.cam_prev_ok = 0, D.jit_ok = D.jit_used = D.armed = D.done = D.gbuf = D.ended = D.up = 0;
         D.hold = 0;
-        D.fg_fresh = D.hl_fresh = 0;
+        fg_withdraw(1, 1);
         memset(&F, 0, sizeof F);
         return;
     }
@@ -3015,15 +3032,16 @@ int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage
                       const VkNgxImage *real) {
     if (!vk_ngxfg_max() || count < 1) return 0;
     if (count > FG.max) count = FG.max;
-    VkFfxImage d, m;
-    VkImageView dv, mvv;
-    VkDlaaCamera c;
-    float jx = 0, jy = 0;
-    int reset = 0;
-    if (!vk_dlaa_fg_inputs(&d, &m, &jx, &jy, &reset) || !vk_dlaa_fg_views(&dv, &mvv) || !vk_dlaa_fg_camera(&c)) {
+    VkDlaaFgSet s;
+    if (!vk_dlaa_fg_take(&s) || !s.depth_view || !s.mv_view || !s.cam_ok) {
         FG.reset = 1;
         return 0;
     }
+    const VkFfxImage d = s.depth, m = s.mv;
+    const VkImageView dv = s.depth_view, mvv = s.mv_view;
+    VkDlaaCamera c = s.cam;
+    const float jx = s.jx, jy = s.jy;
+    const int reset = s.reset;
     if (!FG.p && !NGX_OK(NGX_CALL(&NL, NGX_AT_PRESENT, N.alloc_params(&FG.p)))) {
         FG.failed = 1;
         rt_log("ngxfg: parameter allocation failed: frame generation off");
@@ -3124,7 +3142,11 @@ int vk_ngxfg_evaluate(VkCommandBuffer cb, const VkNgxImage *bb, const VkNgxImage
     }
     full_barrier(cb);
     FG.reset = 0;
-    if (made && (++FG.evals == 1 || FG.evals % 3600 == 0))
-        rt_log("ngxfg: %d frames with generation (%d generated per rendered frame)", FG.evals, made), ngx_lock_log();
+    if (made) fgs_age_note(&FG.age, s.age, vk_dlaa_fg_overlaps());
+    if (made && (++FG.evals == 1 || FG.evals % 3600 == 0)) {
+        char age[256];
+        fgs_age_text(&FG.age, age, sizeof age);
+        rt_log("ngxfg: %d frames with generation (%d generated per rendered frame); %s", FG.evals, made, age), ngx_lock_log();
+    }
     return made;
 }
