@@ -60,14 +60,14 @@ COMMENT_WARNING = ('Your text is sent as you write it: leave out your e-mail or 
 class Row:
     def __init__(self, kind, label='', value='', style='normal', big=False, icon=None, badge=False, desc=None,
                  on=None, left=None, right=None, get=None, options=None, fraction=0.0, actions=None, check=False,
-                 focus_value=False, height=None, enabled=True):
-        self.kind, self.label, self.value, self.style = kind, label, value, style
+                 focus_value=False, height=None, enabled=True, short=()):
+        self.kind, self.label, self.value, self.style, self.short = kind, label, value, style, tuple(short)
         self.big, self.icon, self.badge, self.desc, self.check = big, icon, badge, desc, check
         self.on, self.left, self.right, self.get, self.options = on, left, right, get, options
         self.fraction, self.actions, self.focus_value, self.enabled = fraction, actions or [], focus_value, enabled
         default_h = {'divider': 26, 'action': 54, 'pair': 44}.get(kind, 64 if big else 40)
         self.h = height or default_h
-        self.rect = self.value_rect = None
+        self.rect = self.value_rect = self.shown = None
         self.parts = []
 
     @property
@@ -335,6 +335,17 @@ class App:
             if measure(self.fcache[key], text) <= width:
                 return self.fcache[key]
         return self.fcache[(family, max(7, int(px * smallest)), weight)]
+
+    def value_text(self, r, font, width):
+        forms = (r.value,) + r.short
+        for text in forms:
+            sized = self.fit_font(font, text, width, 0.8)
+            if measure(sized, text) <= width:
+                r.shown = text
+                return sized, text
+        sized = self.fit_font(font, forms[-1], width, 0.8)
+        r.shown = fit(sized, forms[-1], width)
+        return sized, r.shown
 
     def fonts_from_game(self, game_dir='', dump=''):
         fonts, sounds = not self.game_fonts, not self.sounds.game
@@ -1027,14 +1038,16 @@ class App:
         staged = self.bg.ready(self.release)
         if staged:
             upd = Row('value', 'Updates', f'Ready · {staged["version"]}', 'orange_arrow', big=True, icon='refresh',
-                      badge=True, on=self.start_update, focus_value=True, desc=lambda: self.staged_desc(staged))
+                      badge=True, on=self.start_update, focus_value=True, desc=lambda: self.staged_desc(staged),
+                      short=('Ready',))
         elif self.bg.staging():
             upd = Row('value', 'Updates', f'Downloading {self.bg.job.ver}', 'orange_arrow', big=True,
-                      icon='refresh', on=self.start_update, focus_value=True, desc=self.staging_desc)
+                      icon='refresh', on=self.start_update, focus_value=True, desc=self.staging_desc,
+                      short=('Downloading…',))
         elif self.release and jobs.update_available(self.ctx, self.release):
             nv = versions.display(self.release.version)
             upd = Row('value', 'Updates', f'Version {nv}', 'orange_arrow', big=True, icon='refresh', badge=True,
-                      on=self.start_update, focus_value=True, desc=self.update_desc)
+                      on=self.start_update, focus_value=True, desc=self.update_desc, short=(nv,))
         elif self.check and self.check.result is None:
             upd = Row('value', 'Updates', 'Checking…', 'dim', big=True, icon='refresh', on=lambda: None,
                       desc=('Looking for a new version of NX2Saria.',))
@@ -1044,12 +1057,12 @@ class App:
                       desc=(f'The update check failed: {self.check_error}', 'Select this row to try again.'))
         elif self.checked_at:
             upd = Row('value', 'Updates', f'Up to Date · {mine}', 'normal', big=True, icon='refresh', check=True,
-                      on=lambda: self.check_now(force=True),
+                      on=lambda: self.check_now(force=True), short=(f'Latest · {mine}', 'Up to Date'),
                       desc=(f'{mine} is the newest version. Checked {self.ago(self.checked_at)}.',
                             'Select this row to check again.'))
         else:
             upd = Row('value', 'Updates', f'Version {mine}', 'normal', big=True, icon='refresh',
-                      on=lambda: self.check_now(force=True),
+                      on=lambda: self.check_now(force=True), short=(mine,),
                       desc=(f'You have NX2Saria {mine}. Select this row to look for a new version.',))
         unfinished = not built and build.installed(gd)
         rebuild_value = (f'Built with {versions.display(built)}' if built else
@@ -3008,11 +3021,11 @@ class App:
         elif r.style == 'orange_arrow':
             self.orange(ix0, iy0, ix1, iy1)
             cw, ch = X(9), X(12)
-            vfont = self.fit_font(vfont, r.value, (ix1 - ix0) - X(30) - cw, 0.8)
-            label_w = measure(vfont, r.value)
+            vfont, text = self.value_text(r, vfont, (ix1 - ix0) - X(30) - cw)
+            label_w = measure(vfont, text)
             total = label_w + X(10) + cw
             sx = cx - total // 2
-            self.canvas.create_text(sx, cy, text=r.value, font=vfont, fill=P['on_text'], anchor='w', tags='dyn')
+            self.canvas.create_text(sx, cy, text=text, font=vfont, fill=P['on_text'], anchor='w', tags='dyn')
             img = self.sprite(('chev', cw, ch, False, 'on'), lambda: art.chevron(cw, ch, P['on_text']))
             c.create_image(sx + label_w + X(10), cy, anchor='w', image=img, tags='dyn')
         elif r.style == 'swatch':
@@ -3038,8 +3051,7 @@ class App:
         else:
             color = {'normal': P['value_text'], 'dim': P['dim'], 'salmon': P['salmon']}.get(r.style, P['value_text'])
             avail = (x1 - vx0) - X(20) - (X(21) if r.check else 0)
-            vfont = self.fit_font(vfont, r.value, avail, 0.8)
-            label = fit(vfont, r.value, avail)
+            vfont, label = self.value_text(r, vfont, avail)
             tw = measure(vfont, label)
             sx = cx - (tw + (X(21) if r.check else 0)) // 2
             if r.check:

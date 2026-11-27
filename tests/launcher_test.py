@@ -2528,25 +2528,36 @@ class MakeGameTest(Tmp):
             (self.out / 'nx2navi.ini').write_text('vsync = on\nbind_a = key:f   # jump\n')
             others, ev, runs = build()
             self.assertEqual((others, states(ev), runs), ([], ['start', 'done'], 2))
-            shutil.rmtree(self.out / 'romfs-patches-pc')
+            followed = 'drawn from Test pack 2 (CC0 1.0); the keyboard prompts follow 1 remapped button (A: f)\n'
+            self.assertEqual(record.read_text(), followed)
+            record.unlink()
+            self.assertEqual(build()[2], 2)
+            self.assertEqual(record.read_text(), followed)
+            (self.out / 'nx2navi.ini').write_text('vsync = on\nbind_a = key:f   # jump\nbind_B = pad:north\n')
             self.assertEqual(build()[2], 3)
-            (art / 'T_X_B_White.png').write_bytes(b'picture two')
+            self.assertEqual(record.read_text(), 'drawn from Test pack 2 (CC0 1.0); the gamepad prompts follow 1 '
+                                                 'remapped button (B: north), the keyboard prompts 1 (A: f)\n')
+            (self.out / 'nx2navi.ini').write_text('vsync = on\nbind_a = key:f   # jump\n')
             self.assertEqual(build()[2], 4)
+            shutil.rmtree(self.out / 'romfs-patches-pc')
+            self.assertEqual(build()[2], 5)
+            (art / 'T_X_B_White.png').write_bytes(b'picture two')
+            self.assertEqual(build()[2], 6)
             st = json.loads((self.out / 'build-cache' / 'state.json').read_text())
             del st['steps']['lift']
             (self.out / 'build-cache' / 'state.json').write_text(json.dumps(st))
             others, ev, runs = build()
-            self.assertEqual((others, states(ev), runs), (['compile', 'lift'], ['skip'], 4))
+            self.assertEqual((others, states(ev), runs), (['compile', 'lift'], ['skip'], 6))
             (kit / 'prompt-art' / 'fail').write_bytes(b'')
             (art / 'T_X_Y_White.png').write_bytes(b'picture three')
             with self.assertRaises(SystemExit):
                 build()
             self.assertEqual(record.read_text(), 'not drawn: drawing them failed (the build log says why)\n')
             (kit / 'prompt-art' / 'fail').unlink()
-            self.assertEqual(build()[2], 5)
-            self.assertEqual(record.read_text(), 'drawn from Test pack 2 (CC0 1.0)\n')
+            self.assertEqual(build()[2], 7)
+            self.assertEqual(record.read_text(), followed)
             shutil.rmtree(kit / 'prompt-art')
-            self.assertEqual(build(), ([], [{'ev': 'step', 'step': 'prompts', 'state': 'skip'}], 5))
+            self.assertEqual(build(), ([], [{'ev': 'step', 'step': 'prompts', 'state': 'skip'}], 7))
             self.assertTrue((self.out / 'romfs-patches-xbox' / 'manifest.tsv').is_file())
             self.assertTrue(record.read_text().startswith('not drawn: this version carries no button art ('))
 
@@ -3793,9 +3804,9 @@ class FileCheckTest(Tmp):
         self.assertNotEqual(logic_digest(a), logic_digest(c))
 
 
-PROMPT_LOGIC = ('ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249',
-                {'pad_prompts.py': '9bea69a5e0b9d7ec6250fe332176a9b485ecb11bcd718401e16b9045f8b5d3d5',
-                 'prompt_art.py': '043ecee5411d3b060b6f1b1c9d12708559df3ab5b618743cda929c4af867ca96',
+PROMPT_LOGIC = ('d65e5ed91e94f72b4623eb41b6dbdbaf42ae0dde20ab73254c0387f5f0e8fe7e',
+                {'pad_prompts.py': '3fd123d30ffbe28b9b4e7af2e67747ede543875a3f422e1658017c923d5b2a40',
+                 'prompt_art.py': 'e011c567d29790d0786ef7c2c5f7cdedcd7bb9c31c899204cbcfd557d8940a2a',
                  'button_icons.py': '79a5b9d99c36d227838777e1338f0ffc7b2231fb5350a059a996b61b724319b9'})
 
 
@@ -3868,6 +3879,66 @@ class PromptToolsTest(Tmp):
         content, used = romfs.load('UI/dict.bntx.zs')
         self.assertEqual((content, used.dict_id()), (b''.join(samples[:50]), dic.dict_id()))
 
+    def test_pad_prompts_follow_the_pad_binds(self):
+        import prompt_art
+        pp = self.pp
+        ini = ('[input]\n# bind_X = pad:south\nbind_A = pad:south, key:E\nbind_B = pad:east, key:lctrl  ; swapped\n'
+               'bind_Y = key:q\nbind_L = pad:default, pad:r\nbind_ZR = pad:lpaddle1, pad:zl\nbind_PLUS = pad:back\n'
+               'bind_MINUS = none\nbind_UP = pad:north\nbind_LCLICK = pad:rstick\nbind_R = pad:lpaddle2\n')
+        self.assertEqual(prompt_art.pad_binds(ini), {'A': 'south', 'B': 'east', 'ZR': 'zl', 'PLUS': 'back',
+                                                     'UP': 'north', 'LCLICK': 'rstick'})
+        self.assertEqual(prompt_art.pad_binds(None), {})
+        self.assertEqual(prompt_art.key_binds(ini), {'A': 'e', 'B': 'lctrl', 'Y': 'q'})
+        for style, s in prompt_art.STYLES.items():
+            for layout, face in pp.FACE.items():
+                with self.subTest(style=style, layout=layout):
+                    before = ({b: s['glyph'][face.get(b, b)] for b in set(pp.GLYPHS.values())},
+                              {b: s['note'][face.get(b, b)] for b in pp.NOTES.values()})
+                    self.assertEqual(pp.pad_pictures(style, layout), before)
+                    self.assertEqual(pp.pad_pictures(style, layout, {}), before)
+                    glyph, note = pp.pad_pictures(style, layout, {'A': face['B'], 'B': face['A']})
+                    swapped = ({**before[0], 'A': before[0]['B'], 'B': before[0]['A']},
+                               {**before[1], 'A': before[1]['B'], 'B': before[1]['A']})
+                    self.assertEqual((glyph, note), swapped)
+                    glyph, note = pp.pad_pictures(style, layout, prompt_art.pad_binds(ini))
+                    self.assertEqual(glyph, {**before[0], 'A': s['glyph']['south'], 'B': s['glyph']['east'],
+                                             'ZR': s['glyph']['ZL'], 'PLUS': s['glyph']['MINUS'],
+                                             'DPAD_UP': s['glyph']['north'], 'LSTICK_PRESS': s['glyph']['RSTICK_PRESS']})
+                    self.assertEqual(note, {**before[1], 'A': s['note']['south'], 'B': s['note']['east']})
+        glyph, note = pp.pad_pictures('xbox', 'position', {'L': 'dpad_left', 'X': 'l'})
+        self.assertEqual((glyph['L'], note['L'], note['X']), (prompt_art.STYLES['xbox']['glyph']['DPAD_LEFT'],
+                                                              prompt_art.STYLES['xbox']['note']['L'],
+                                                              prompt_art.STYLES['xbox']['note']['L']))
+        xbox = prompt_art.STYLES['xbox']['glyph']
+        glyph, note, lit, reference = pp.pictures(None, 'xbox', 'position', {}, {'A': 'l', 'UP': 'north', 'X': 'dpad_up'})
+        self.assertEqual((glyph['A'], glyph['DPAD_UP'], glyph['X'], reference), (xbox['L'], xbox['north'],
+                                                                                   xbox['DPAD_UP'], xbox['east']))
+        self.assertEqual(lit, {xbox[b] for b in ('DPAD_UP', 'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT', 'DPAD_UPDOWN',
+                                                 'DPAD_LEFTRIGHT')})
+        self.assertEqual({b for b, rel in glyph.items() if rel in lit},
+                         {'DPAD_DOWN', 'DPAD_LEFT', 'DPAD_RIGHT', 'DPAD_UPDOWN', 'DPAD_LEFTRIGHT', 'X'})
+        self.assertEqual(prompt_art.binds_followed(None), '')
+        self.assertEqual(prompt_art.binds_followed('bind_A = key:default, pad:default\n'), '')
+        self.assertEqual(prompt_art.binds_followed('bind_A = pad:south\nbind_B = pad:east\n'),
+                         'the gamepad prompts follow 2 remapped buttons (A: south, B: east)')
+        self.assertEqual(prompt_art.binds_followed(ini),
+                         'the gamepad prompts follow 6 remapped buttons (A: south, B: east, ZR: zl, PLUS: back, '
+                         'UP: north, LCLICK: rstick), the keyboard prompts 1 (Y: q)')
+        self.assertEqual(prompt_art.binds_followed('bind_A = pad:south, key:E, key:lshift\nbind_B = pad:east, key:lctrl\n'),
+                         'the gamepad prompts follow 2 remapped buttons (A: south, B: east)')
+        self.assertEqual(prompt_art.binds_followed('bind_A = key:f\n'), 'the keyboard prompts follow 1 remapped button '
+                                                                       '(A: f)')
+        self.assertEqual(pp.pc_keys(ini), {**pp.PC_KEYS, 'A': 'e', 'B': 'lctrl', 'Y': 'q'})
+        every = ''.join(f'bind_{b} = pad:south, key:x\n' for b in prompt_art.PAD_BUTTONS)
+        every += ''.join(f'bind_{b} = key:x\n' for b in prompt_art.PC_KEYS if b not in prompt_art.PAD_BUTTONS)
+        long_line = prompt_art.binds_followed(every)
+        self.assertEqual(long_line, 'the gamepad prompts follow 16 remapped buttons (A: south, B: east, X: west, Y: north, '
+                                    'L: l, R: r, ZL: zl, ZR: zr and 8 more), the keyboard prompts 20 (A: x, B: x, X: x, '
+                                    'Y: x, L: x, R: x, ZL: x, ZR: x and 12 more)'.replace('B: east', 'B: south')
+                         .replace('X: west', 'X: south').replace('Y: north', 'Y: south').replace('L: l', 'L: south')
+                         .replace('R: r,', 'R: south,').replace('ZL: zl', 'ZL: south').replace('ZR: zr', 'ZR: south'))
+        self.assertLess(len('drawn from JulioCacko, FREE Input Prompts Pack 1.4 (CC0 1.0); ' + long_line), 400)
+
     def test_the_prompts_key_is_the_one_installs_have(self):
         import make_game
         kit = self.tmp / 'kit'
@@ -3877,7 +3948,7 @@ class PromptToolsTest(Tmp):
         out = self.tmp / 'game'
         out.mkdir()
         ident = 'nup C:\\dumps\\game.nup 28000000000 1760000000'
-        released = 'ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249'
+        released = 'd65e5ed91e94f72b4623eb41b6dbdbaf42ae0dde20ab73254c0387f5f0e8fe7e'
         with mock.patch.object(make_game, 'KIT', kit):
             pictures = make_game.tree_digest(kit / 'prompt-art', ('**/*.png',))
             binds = make_game.sha256_bytes(b'[]')
@@ -6663,7 +6734,7 @@ class WindowTest(Tmp):
         r = subprocess.run([sys.executable, '-m', 'launcher', '--root', str(self.tmp / 'w'), '--selftest'],
                            cwd=ROOT, capture_output=True, text=True, timeout=180)
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('27 screens drawn', r.stdout)
+        self.assertIn('28 screens drawn', r.stdout)
 
 
 class TelemetryHiddenTest(Tmp):

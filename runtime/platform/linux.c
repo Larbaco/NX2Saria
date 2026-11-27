@@ -1425,24 +1425,29 @@ static void (*crash_fn)(const PlatCrash *c);
 static void fault_handler(int sig, siginfo_t *si, void *uc) {
     ucontext_t *u = uc;
     long err = u->uc_mcontext.gregs[REG_ERR];
-    if (sig == SIGSEGV && access_hook && !(err & 16) &&
+    int sent = si->si_code <= 0;
+    if (!sent && sig == SIGSEGV && access_hook && !(err & 16) &&
         access_hook((uint64_t)(uintptr_t)si->si_addr, (err & 2) != 0, (uint64_t)u->uc_mcontext.gregs[REG_RIP]))
         return;
-    if (sig == SIGSEGV && fault_hook && (err & 2) && fault_hook((uint64_t)(uintptr_t)si->si_addr)) return;
+    if (!sent && sig == SIGSEGV && fault_hook && (err & 2) && fault_hook((uint64_t)(uintptr_t)si->si_addr)) return;
     uintptr_t rip = (uintptr_t)u->uc_mcontext.gregs[REG_RIP];
     Dl_info at, self;
     if (crash_fn) {
         int found = dladdr((void *)rip, &at) && at.dli_fname;
-        PlatCrash c = {sig == SIGSEGV ? "access violation" : sig == SIGBUS ? "bus error"
-                       : sig == SIGILL ? "illegal instruction" : "arithmetic exception",
-                       (uint32_t)sig, rip, found ? rip - (uintptr_t)at.dli_fbase : rip, -1, 0};
+        const char *what = sent ? (sig == SIGSEGV ? "signal SIGSEGV" : sig == SIGBUS ? "signal SIGBUS"
+                                   : sig == SIGILL ? "signal SIGILL" : "signal SIGFPE")
+                           : sig == SIGSEGV ? "access violation" : sig == SIGBUS ? "bus error"
+                           : sig == SIGILL ? "illegal instruction" : "arithmetic exception";
+        PlatCrash c = {what, (uint32_t)sig, rip, found ? rip - (uintptr_t)at.dli_fbase : rip, -1, 0};
         if (!found) {
             c.module = "";
         } else if (!dladdr((void *)plat_crash_hook, &self) || at.dli_fbase != self.dli_fbase) {
             const char *n = strrchr(at.dli_fname, '/');
             c.module = n ? n + 1 : at.dli_fname;
         }
-        if (sig == SIGSEGV || sig == SIGBUS)
+        if (sent)
+            c.sent = si->si_pid == getpid() ? 2 : 1, c.sender = (int)si->si_pid;
+        else if (sig == SIGSEGV || sig == SIGBUS)
             c.access = (err & 16) ? 8 : (err & 2) ? 1 : 0, c.addr = (uint64_t)(uintptr_t)si->si_addr;
         crash_fn(&c);
     }

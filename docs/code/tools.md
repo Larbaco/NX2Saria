@@ -3251,12 +3251,16 @@ folder on most installs: it is written short (`tools/private_paths.py`), as the 
 
 ### `prompts_drawn()`, `prompts_none()`
 
-`PROMPTS_RECORD`'s line for prompts drawn from the kit's art, and for a kit without button art.
+`PROMPTS_RECORD`'s line for prompts drawn from the kit's art, and for a kit without button art. `prompts_drawn()` adds
+the buttons whose prompts follow a remap in the game folder's `bind_` lines (`tools/prompt_art.py` `binds_followed()`):
+`drawn from <art>; the gamepad prompts follow 2 remapped buttons (A: south, B: east), the keyboard prompts 1 (A: f)`.
+It reads them from the folder, not from the tool's output, so a build that skips the step (its key unchanged) still
+writes the line right; without a remap the line is what it was.
 
 ### `bind_lines()`
 
-The `bind_` lines of the game folder's settings file, comments cut off: the keys the keyboard and mouse prompts show
-(`tools/pad_prompts.py` `pc_keys()` reads the same lines).
+The `bind_` lines of the game folder's settings file, comments cut off: the keys the keyboard and mouse prompts show and
+the pad buttons the pad prompts show (`tools/prompt_art.py` `key_binds()` and `pad_binds()` read the same lines).
 
 ### `step_prompts()`
 
@@ -4270,9 +4274,22 @@ The tables:
 ### `pad_pictures()`, `pc_keys()`, `key_picture()`, `pc_pictures()`
 
 `pad_pictures()`: glyph and note pictures for a pad style, Switch button to picture, the face buttons through `FACE`.
+`pads` (`tools/prompt_art.py` `pad_binds()`) puts a remapped button on the picture of the pad button its `bind_` line
+names, in every layout (a `pad:` entry names a pad button by position whatever the layout, `runtime/input/input_map.c`
+`input_map_bind()`). A note follows only to a picture the style has a note of (the face buttons, L and R): a button
+remapped to the d-pad keeps its note. Without `pads` the pictures are those of before, so a folder without a remap is
+drawn byte for byte as before.
 
-`pc_keys()`: `PC_KEYS` with the first key of each `bind_<button>` line of a settings file over it. A line without a
-key entry, or with `key:default` first, keeps the default (the prompt then shows a key the line took away).
+`pictures()`: what `main()` draws one folder from: the glyph and note pictures, the pictures traced as lit d-pad
+pictures, and the picture the font's scale is taken from. For a pad style both come from the style and layout, not from
+the remapped buttons: the lit ones are the style's `DPAD_` pictures (a d-pad direction remapped to a face button gets a
+plain face button, and a face button remapped to the d-pad a lit arrow), and the scale is that of the layout's own A
+picture, so remapping A to a shoulder does not resize every glyph. The keyboard and mouse take the scale from the key
+on A, as before.
+
+`pc_keys()`: `PC_KEYS` (`tools/prompt_art.py`) with the first key of each `bind_<button>` line of a settings file over
+it (`key_binds()`). A line without a key entry, or with `key:default` first, keeps the default (the prompt then shows a
+key the line took away).
 
 `key_picture()`: the art of a key or mouse button in `shade` (`Dark`: a dark key with a white label; `White`: the
 other way round), or a blank key with its name drawn on it when the art has none. The art names its dark 4 key
@@ -4360,7 +4377,8 @@ The button font with the glyphs of `GLYPHS` drawn from `glyph` (Switch button to
 A's picture is to the game's A (both fill their square the same way; the game's A is a round button), centred in its
 advance and placed at the height of the art's own square, so the arrows of a stick reach out as they do in the art. A
 grid of keys is made no taller than the game's A and centred on it. A wider picture widens its glyph; `side` is the
-room the game's A has on either side. `lit_dpad`: the d-pad directions are lit pad pictures (`ink()` with `lit`).
+room the game's A has on either side. `lit`: the pictures traced as lit pad pictures (`ink()` with `lit`), the d-pad
+directions of a pad style. `reference`: the picture the scale is taken from, A's when not given (`pictures()`).
 
 ### `bntx_textures()`, `level_tiles()`, `block_linear()`
 
@@ -4828,6 +4846,25 @@ names, into its `prompt-art` folder, which `tools/make_game.py` passes to `tools
   action prompt; `White`: the other way round, the ocarina's notes), and the blank key (`BLANKS`) a key the art has no
   picture of gets its name written on (`tools/pad_prompts.py` `label_art()`).
 - `OVERLAYS`: every folder `tools/pad_prompts.py` writes without `--style` and `--layout`.
+- `PC_KEYS`: the key each Switch button has by default, which the keyboard and mouse prompts show.
+- `PAD_BUTTONS`: the Switch buttons a `bind_` line can put on a pad button, to the glyph each one's prompt is (`LCLICK`
+  is the left stick's press, `UP` the d-pad's up). `PAD_PICTURES`: the pad buttons of a `pad:` entry the art has a
+  picture of, to that picture's key in `STYLES`; the back paddles have none.
+
+### `key_binds()`, `pad_binds()`, `binds_followed()`
+
+`key_binds()`: the first key of each `bind_<button>` line that names one and does not start with `key:default`, for
+the buttons of `PC_KEYS`; a later line without a key keeps an earlier key, as before. `pad_binds()`: the pad button of
+each `bind_<button>` line of `PAD_BUTTONS`: its first `pad:` entry with a picture. A line with `pad:default` keeps the
+layout's button (the runtime puts the defaults first, `input_map_bind()`), and a later line for the same button
+replaces an earlier one, as `nx2saria.ini` does. A line with no pad entry (`none`, keys only) keeps the layout's picture:
+the pad then presses nothing for it, and the prompt shows its own button.
+
+`binds_followed()`: the text the build's record of the prompts adds for them (`tools/make_game.py` `prompts_drawn()`),
+empty without a remap. A key that is the button's default (`PC_KEYS`) is not counted: the Controls tab writes every
+key of a line it changes, so `bind_A = pad:south, key:E, key:lshift` remaps the pad only. Each kind names at most `LISTED_MAX` (8) buttons and counts the rest ("and 8 more"): the game
+reads the record into 512 bytes (`runtime/hle/romfs.c` `overlay_init()`), and every button remapped both ways would
+have run to about 700.
 
 ### `_sticks()`
 

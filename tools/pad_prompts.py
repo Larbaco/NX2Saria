@@ -15,7 +15,8 @@ DESCRIPTION = 'Xbox, PlayStation, Steam Deck and keyboard-and-mouse button promp
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import button_icons  # noqa: E402  (bfotf_decode, bfotf_encode, redraw_font, grow_restbl)
-from prompt_art import BLANKS, KM, OPTIONS, SHARE, STYLES, overlay_folder  # noqa: E402  (the art, the folders)
+from prompt_art import (BLANKS, KM, OPTIONS, PAD_BUTTONS, PAD_PICTURES, PC_KEYS, SHARE, STYLES,  # noqa: E402
+                        key_binds, overlay_folder, pad_binds)
 
 FONT = 'Font2/Scalable/External.Nin_Ounce_NVN2.bfotf.zs'
 TEXTURES = 'UI/Layout2Archive/Common.Product.100.Nin_Ounce_NVN2.bntx.zs'
@@ -40,16 +41,27 @@ NOTES = {'OcarinaButtonA_00': 'A', 'OcarinaButtonB_00': 'B', 'OcarinaButtonX_00'
          'OcarinaButtonL_00': 'L', 'OcarinaButtonR_00': 'R'}
 
 
-def pad_pictures(style, layout):
+def pad_pictures(style, layout, pads=None):
     s = STYLES[style]
     glyph = {b: s['glyph'][FACE[layout].get(b, b)] for b in set(GLYPHS.values())}
     note = {b: s['note'][FACE[layout].get(b, b)] for b in NOTES.values()}
+    for button, pad in (pads or {}).items():
+        picture = PAD_PICTURES[pad]
+        glyph[PAD_BUTTONS[button]] = s['glyph'][picture]
+        if button in note and picture in s['note']:
+            note[button] = s['note'][picture]
     return glyph, note
 
 
-PC_KEYS = {'A': 'e', 'B': 'lctrl', 'X': 'space', 'Y': 'mouse_l', 'L': 'q', 'R': 'r', 'ZL': 'mouse_r', 'ZR': 'f',
-           'PLUS': 'tab', 'MINUS': 'm', 'LEFT': '1', 'UP': '2', 'RIGHT': '3', 'DOWN': '4', 'LCLICK': 'v', 'RCLICK': 'c',
-           'LSTICK_UP': 'w', 'LSTICK_LEFT': 'a', 'LSTICK_DOWN': 's', 'LSTICK_RIGHT': 'd'}
+def pictures(art, style, layout, keys, pads):
+    if style == 'pc':
+        glyph, note = pc_pictures(art, keys)
+        return glyph, note, frozenset(), glyph['A']
+    glyph, note = pad_pictures(style, layout, pads)
+    lit = frozenset(rel for b, rel in STYLES[style]['glyph'].items() if b.startswith('DPAD_'))
+    return glyph, note, lit, pad_pictures(style, layout)[0]['A']
+
+
 KEY_ART = {'space': 'Space', 'tab': 'Tab', 'lshift': 'Shift', 'rshift': 'Shift', 'lctrl': 'Crtl', 'rctrl': 'Crtl',
            'lalt': 'Alt', 'up': 'Up', 'down': 'Down', 'left': 'Left', 'right': 'Right', 'enter': 'Enter',
            'backspace': 'BackSpace', 'capslock': 'CapsLock', 'insert': 'Ins', 'delete': 'Del', 'home': 'Home',
@@ -62,16 +74,7 @@ KEY_LABELS = {'comma': ',', 'period': '.', 'equals': '=', 'num_decimal': '.', 'b
 
 
 def pc_keys(ini_text=None):
-    keys = dict(PC_KEYS)
-    for line in (ini_text or '').splitlines():
-        line = line.split('#')[0].split(';')[0].strip()
-        if not line.lower().startswith('bind_') or '=' not in line:
-            continue
-        button, value = (s.strip() for s in line.split('=', 1))
-        entries = [e.strip()[4:].strip().lower() for e in value.split(',') if e.strip().lower().startswith('key:')]
-        if entries and entries[0] != 'default' and button[5:].upper() in keys:
-            keys[button[5:].upper()] = entries[0]
-    return keys
+    return {**PC_KEYS, **key_binds(ini_text)}
 
 
 def key_picture(art, key, shade):
@@ -405,20 +408,20 @@ def bounds(outlines):
     return min(xs), min(ys), max(xs), max(ys)
 
 
-def draw_font(otf, glyph, traced, lit_dpad):
+def draw_font(otf, glyph, traced, lit=frozenset(), reference=None):
     font = TTFont(io.BytesIO(otf))
     glyphs, cmap, hmtx = font.getGlyphSet(), font.getBestCmap(), font['hmtx']
     box = BoundsPen(glyphs)
     glyphs[cmap[0xE040]].draw(box)
     gx0, gy0, gx1, gy1 = box.bounds
-    rx0, ry0, rx1, ry1 = bounds(traced(glyph['A']))
+    rx0, ry0, rx1, ry1 = bounds(traced(reference or glyph['A']))
     scale = (gy1 - gy0) / (ry1 - ry0)
     mid_y_px, mid_y = (ry0 + ry1) / 2, (gy0 + gy1) / 2
     side = gx0
     drawn = {}
     for cp, button in GLYPHS.items():
         pic = glyph[button]
-        outlines = traced(pic, lit_dpad and button.startswith('DPAD_'))
+        outlines = traced(pic, pic in lit)
         x0, y0, x1, y1 = bounds(outlines)
         s, cy = scale, mid_y_px
         if isinstance(pic, tuple) and pic[0] == 'grid':
@@ -686,7 +689,8 @@ def main():
     if args.out and not (args.style and (args.layout or args.style == 'pc')):
         ap.error('--out writes one folder: give --style and --layout')
     binds = args.binds or default_binds(args.game)
-    keys = pc_keys(binds.read_text(encoding='utf-8', errors='replace') if binds else None)
+    ini_text = binds.read_text(encoding='utf-8', errors='replace') if binds else None
+    keys, pads = pc_keys(ini_text), pad_binds(ini_text)
     romfs = Romfs(args.romfs or args.game / 'romfs')
     restbl = max((p for p in romfs.paths() if p.startswith('System/Resource/ResourceSizeTable.') and p.endswith('.zs')),
                  key=lambda p: int(p.split('.')[2]) if p.split('.')[2].isdigit() else 0, default=None)
@@ -710,8 +714,8 @@ def main():
     for style in [args.style] if args.style else sorted(STYLES) + ['pc']:
         for layout in [None] if style == 'pc' else [args.layout] if args.layout else sorted(FACE):
             out = args.out or args.game / overlay_folder(style, layout)
-            glyph, note = pc_pictures(args.art, keys) if style == 'pc' else pad_pictures(style, layout)
-            new_otf = draw_font(otf, glyph, traced, style != 'pc')
+            glyph, note, lit, reference = pictures(args.art, style, layout, keys, pads)
+            new_otf = draw_font(otf, glyph, traced, lit, reference)
             blob = button_icons.bfotf_encode(new_otf, key, font_blob)
             data = bytearray(textures)
             draw_textures(data, glyph, note, args.art, cache)

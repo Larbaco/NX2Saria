@@ -1,4 +1,5 @@
 #include "../runtime/audio/audio_mixer.c"
+#include "../runtime/input/window_idle.c"
 
 #include <stdarg.h>
 
@@ -56,6 +57,7 @@ const char *cfg_value(const char *name) {
 }
 int cfg_bool(const char *name) {
     if (!strcmp(setting(name), "AUDIO_RAMP")) return ramp_setting;
+    if (!strcmp(setting(name), "BACKGROUND_MUTE")) return 0;
     printf("unexpected setting %s\n", name);
     exit(2);
 }

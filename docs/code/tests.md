@@ -201,6 +201,8 @@ Builds and runs `tests/audio_mixer_check.c`: `runtime/audio/audio_mixer.c` with 
 game files and no audio device: the mixer runs as with `NX2SARIA_AUDIO=none`, the device's requests are made by hand,
 and SDL3 is only linked. It is compiled for the default build's target (x86-64-v3: AVX2 and FMA), so the mixing loops
 are compiled as they ship.
+`runtime/input/window_idle.c` is built in with it (`background_gain()` calls it); `background_mute` reads 0 there, as
+in `tests/audio_params_check.c`.
 
 The renderer of the test has the final mix (4 buffers, the mixer's buffers 0-3), one submix (2 buffers, 4-5) that goes
 nowhere, three voices and one splitter with one destination. Each voice plays a wave buffer of one constant sample
@@ -1085,7 +1087,9 @@ temporary folder of its own. `RUNS` (20) times each, `--probe-crash-busy` and `-
 70 and exactly one FATAL line in the whole format the crash report (`CRASH_LINE`) or the probe's fatal error
 (`FATAL_LINE`) writes, with no other thread's text inside it; the check counts how many runs failed. Then
 `--probe-crash-stuck` must end with 71 within `TIMEOUT` (60 s), a whole FATAL line and one line that says stderr's lock
-was given up. Needs the executable (`--exe`); no game files, GPU or window.
+was given up. On Linux, `sent_signal()` starts `--probe-crash-wait` (`probe_crash_wait()`), sends it SIGSEGV with
+`os.kill` once it says it waits, and wants 71 and one FATAL line (`SENT_LINE`) that says another process sent the signal,
+names this script's pid and gives no address. Needs the executable (`--exe`); no game files, GPU or window.
 
 ## `tests/ffx_cache_check.py`
 
@@ -2182,6 +2186,9 @@ The prompts step, the settings file and what goes beside the game:
   nor the prompts); a kit without art skips it, the folders an earlier build drew stay, and the record says there is
   no art. The game folder's record of where the prompts came from ("drawn from Test pack 2 (CC0 1.0)"), which the
   game's log repeats, is written again when the step is skipped. A setting that is no key binding changes nothing.
+  A `bind_` line adds the remapped buttons to the record ("; the keyboard prompts follow 1 remapped button (A: f)",
+  with a pad remap "the gamepad prompts follow 1 remapped button (B: north), the keyboard prompts 1 (A: f)"), also
+  when the step is skipped.
   When the tool fails the build fails and the record says why there are no new prompts.
 - The rebuild an update ends with (`make_game.py --rebuild` under a newer kit, with another lifter and another
   version: the lift, the compile, the shaders step and the button prompts all run again) leaves the game folder's
@@ -2246,15 +2253,24 @@ dictionary the game lacks is not judged.
   same effective bindings, and `step_key` already includes those bindings, so the rename recorded the digest without
   forcing all prompts to redraw; and `REPO_ART`, `release_art`, `source_of` and the `SOURCE.md` copy of
   `tools/prompt_art.py` (issue #15) choose and record the art, while the pictures it names, which the step's key
-  holds, are the same, so the prompts drawn from them are too.
+  holds, are the same, so the prompts drawn from them are too. The pad prompts that follow the `bind_` lines gave it a
+  new value: an install with a pad remap draws other pictures.
 - `load_pad_prompts()` loads `tools/pad_prompts.py` as a module. Where fontTools is not installed, the names the tool
   and `tools/button_icons.py` import from it get empty stand-ins for the import: the tests use the tool's reading of
   the game files only, which needs none of them. The module is not left in `sys.modules`.
 - `PromptToolsTest`: `tools/pad_prompts.py` reads the game's files in pieces: the same bytes as in one call (on 24 MiB
   that pack to several pieces), without the minutes one call took on the 244 MB texture archive; its reader of
   extracted game files takes plain files, packed ones, and one packed with a dictionary of the game's dictionary
-  archive. The prompts step's key no longer follows the scripts' bytes: it is the one installs have (the scripts of
-  0.7.1, `ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249`).
+  archive. The prompts step's key no longer follows the scripts' bytes: it is the one installs have (`PROMPT_TOOLS`,
+  last changed when the pad prompts began to follow the `bind_` lines; the scripts of 0.7.1 had
+  `ad59f2c4533f6ea2630b916ef5f3695f72daffe9b2b7663eea4168a4f08e4249`).
+- `PromptToolsTest.test_pad_prompts_follow_the_pad_binds`: the `bind_` lines a settings file can hold (a comment, a
+  line after a `;`, `pad:default`, a back paddle before a button with a picture, `none`, keys only) give the pad
+  buttons and keys `tools/prompt_art.py` reads; for every pad style and layout, no remap draws the pictures of before
+  (the `FACE` formula), A and B swapped swap their glyphs and notes and nothing else, and the remaps of the file move
+  exactly their buttons. A d-pad picture on a face button is traced lit and a face picture on the d-pad is not, and the
+  font's scale stays the layout's A when A is remapped to a shoulder. The record's text and `pc_keys()` follow the
+  same lines.
 
 ### Jobs and locks
 
@@ -3509,7 +3525,9 @@ truly still (60 s, no bias).
 Checks the direct camera hook's register contract and raw-count routing without game data
 (`python tests/mouse_direct_check.py --cc <clang>`; the `--help` text is the string `DESCRIPTION`). One block of
 stand-ins for the rest of the runtime serves both harnesses. The sites are Ocarina 1.1.1's
-(`recomp/patches-v111.txt`, set `mouse_direct`): the two sites of `camera_input_oot` and `camera_activity_oot`.
+(`recomp/patches-v111.txt`, set `mouse_direct`): the two sites of `camera_input_oot` and `camera_activity_oot`. The
+stand-in of `input_mouse_turned()` applies `invert_x`, `invert_y` and `sens_y` as `input_mouse_turn()` does: both
+harnesses check that the counts reach the camera through it (inverted x, inverted y, half and double vertical).
 
 ## `tests/mouse_stick_check.c`
 
@@ -3525,6 +3543,9 @@ factor in it. `tests/mouse_stick_check.py` builds and runs it with `runtime/inpu
 - A fast flick reaches full tilt at every camera speed, in each direction. The case that was wrong: at camera speed 1.5
   a flick stopped at two thirds of full tilt, the top speed of camera speed 1.
 - Nothing to divide by: no deflection.
+- `input_mouse_turn()`: with the defaults the counts come out unchanged (up to `INT32_MIN` and `INT32_MAX`); each
+  inversion negates its axis alone; the vertical factor scales y alone, held to 0.1..10, and one that is not a number
+  is 1. The stick deflection of turned counts is that of the counts turned by hand.
 
 ## `tests/movie_timeline_check.py`
 
@@ -5875,6 +5896,15 @@ kept. A zstd dictionary is made with a given id, its content and samples taken f
 ## `tests/widescreen_math_check.py`
 
 Compiles and runs the aspect, scene, heap and Vert+ formulas without game data.
+
+## `tests/window_idle_check.c`
+
+`runtime/input/window_idle.c` on made-up times, built and run by `tests/window_idle_check.py`. The cursor: shown at the
+first look, still shown at 2.999 s, hidden at 3 s and counted once however long it stays; a move shows it at once and
+the 3 s start from the move. Off the window it never hides, and coming back starts the 3 s again; captured or gone it
+shows; `cursor_hide = 0` never hides, and switching it off while hidden shows it at once. The sound: muted when the
+focus goes, once per loss, back with the focus; `background_mute = 0` never mutes, and switching it off while unfocused
+gives the sound back.
 
 ## `tests/worktree_test.py`
 

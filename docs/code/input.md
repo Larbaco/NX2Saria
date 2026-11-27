@@ -219,6 +219,7 @@ State:
 - `pad_sdl`: the SDL buttons of the gamepad inputs (`PAD_*` of `input_map.h`), by position; `PAD_ZL` and `PAD_ZR` are
   the triggers (axes).
 - `mouse_sens`: `NX2SARIA_MOUSE_SENS`, 0 = mouse camera off, live (`cfg_version`); clamped to 0..10.
+- `mouse_turn_seen`, `mouse_turn_logged`, `mouse_turn_y`: what `mouse_turn_log()` last said.
 - `stick_dead`: `input_pad_deadzone()` of the left and right stick, live (`cfg_version`).
 
 ### `script_load()`, `script_apply()`
@@ -228,7 +229,11 @@ the real input. The game menus' mouse (`runtime/ui/menu_mouse.c`) has its own li
 the pointer at those fractions of the window (0..1 from its top left; it stays there until the next `POINTER`),
 `<frame> MOUSEL|MOUSER [hold]` holds the left or right mouse button for it, `<frame> WHEEL <notches>` turns the wheel (up
 positive). They reach only that module (`input_menu_pointer()`, `input_menu_mouse_presses()`,
-`input_menu_wheel_take()`), never the key bindings.
+`input_menu_wheel_take()`), never the key bindings. `<frame> FOCUS 0|1` takes the focus from the window or gives it
+back, as an alt-tab would, for runs without a window (`background_mute`, `cursor_hide`): `script_apply()` holds `lock`,
+so it only leaves the value in `script_focus`, and `input_poll()` passes it to `runtime/gfx/gfx_wsys.h`
+`wsys_probe_focus()` after the lock is let go (the window thread takes the event). `tools/run_game.py` sets
+`NX2SARIA_ASSUME_FOCUS`, so the game itself still sees the focus.
 
 `<frame>` and its hold are 60 Hz ticks of game time since the first present (`frame_step_ticks()`: presents at 60 fps),
 so the title menus get the presses at the same game time at any frame limit. A line `@<ms> ...` is timed instead: `<ms>`
@@ -285,6 +290,26 @@ The ini takes the key names the Controls tab writes; a hand-written line may spe
 The default scale is 0.51 rather than 0.5: a keyboard sample is 32767, and 32767 * 0.5 = 16383 falls one short of
 `stick_bits()`' `STICK_DIR` (16384), which would leave the game's stick-direction bits clear while the walk key is held.
 The value in the settings table carries that default; this code only rejects what the table's range does not allow.
+
+### `window_idle_log()`
+
+From the poll, whether the window has focus or not and with `NX2SARIA_INPUT=none` too (the cursor and the mute still act
+then): one line `input: cursor_hide = 1 (...), background_mute = 0 (...)`
+at start, and again when either changes.
+
+### `input_mouse_turned()`, `mouse_turn_log()`
+
+`input_mouse_turned()`: the mouse's counts with `NX2SARIA_MOUSE_INVERT_X`, `NX2SARIA_MOUSE_INVERT_Y` and
+`NX2SARIA_MOUSE_SENS_Y` applied (`input_mouse_turn()`), for the camera in both mouse modes: the stick mode here
+(`mouse_camera()`) and the direct mode in `runtime/input/mouse_direct.c`. Read at every call, so a change is live. The
+selectors (the wheel and the quick lists) and the menus' pointer take the counts as they are: inverting them would turn
+a wheel the wrong way round. An input recording (`input_record`) keeps the counts as they are too, and a replay goes
+through the same settings.
+
+`mouse_turn_log()`: from the poll (with `window_idle_log()`, before anything else, so also without the focus and with
+`NX2SARIA_INPUT=none`), one line `input: mouse camera: mouse_invert_x = ..., mouse_invert_y = ...,
+mouse_sens_y = ...` when the three differ from the defaults at start, and again when they change while the game runs.
+With the defaults nothing is said.
 
 ### `mouse_camera()`
 
@@ -744,6 +769,19 @@ is fully handled.
 - `WM_SYSCOMMAND`: Alt pressed alone would enter the window menu loop, which stalls the game: Alt is a game key.
 - `WM_KEYDOWN`: Esc is unbound in the game layout: it releases the cursor and opens the menu (`menu_window_msg()`).
 - `WM_LBUTTONDOWN` and the others: client area only; `poll_merged()` drops the click that captures.
+- `WM_CREATE` also starts `CURSOR_IDLE_TIMER`, every `CURSOR_IDLE_TICK_MS` (200 ms), whose `WM_TIMER` runs
+  `cursor_idle_check()`. `WM_SETCURSOR` for a mouse move runs it first, so a move shows the cursor in that message;
+  over the client area the cursor is `NULL` while captured or while the idle check hid it, and the class cursor
+  (`DefWindowProc`) otherwise.
+
+### `cursor_idle_check()`
+
+`cursor_hide` (`NX2SARIA_CURSOR_HIDE`, read again when `cfg_version` changes) on Windows: the cursor over the client
+area, not captured, still for `CURSOR_IDLE_NS` (`runtime/input/window_idle.c` `cursor_idle_step()`) is hidden with
+`SetCursor(NULL)`; shown again without a move (`cursor_hide` switched off) it gets the class cursor back at once.
+Windows sends `WM_SETCURSOR` only when the mouse moves, so the timer looks at it while it is still.
+Over the window means `WindowFromPoint()` is this window and the point is inside the client rectangle: a window on top or
+the title bar keeps the cursor. The first hide of the session is logged.
 - `WM_MOUSEACTIVATE` comes before `WM_ACTIVATEAPP`: a title bar or border click must not capture.
 - `WM_ACTIVATEAPP`: Alt+Tab back in captures again.
 
@@ -806,6 +844,15 @@ use, 0 for none.
 ### `input_key_char()`
 
 A keycode with the `SDLK_SCANCODE_MASK` bit names no character.
+
+### `cursor_idle_apply()`
+
+`cursor_hide` on SDL, on the window thread after every event and every idle wake of the window loop (100 ms without an
+event, `runtime/gfx/gfx_window_sdl.c` `window_main()`): the pointer outside relative mode, over the window
+(`ptr_inside`) and at the same place (`SDL_GetMouseState()`) for `CURSOR_IDLE_NS` hides with `SDL_HideCursor()`, and a
+move shows it with `SDL_ShowCursor()`. The relative mode hides the cursor itself: while captured the step says shown,
+so the cursor SDL brings back at the release is not left hidden. A failed call is logged (4 times at most) and tried at
+the next event; the first hide of the session is logged.
 
 ### `pointer_at()`, `pointer_read()`, `cursor_apply()`
 
@@ -924,9 +971,16 @@ folder made by hand) or its first line is empty.
 table, presses. `input_map_held()`: 1 when a key of `action` is held. `input_map_stick()`: x and y of the stick (0
 left, 1 right) from its four direction actions; up is +y; a diagonal is scaled to the unit circle.
 
+### `input_mouse_turn()`
+
+The mouse's counts for the camera: x negated with `invert_x`, y negated with `invert_y` and then multiplied by
+`sens_y`, held to 0.1..10 (a value that is not a number is 1). The defaults (0, 0, 1) give the counts as floats,
+unchanged. A factor on the vertical alone keeps `NX2SARIA_MOUSE_SENS` the one speed of both axes. In floats, so a
+fraction of a count is not lost to rounding before the camera scales it. `tests/mouse_stick_check.c` checks it.
+
 ### `input_mouse_stick()`
 
-Mouse motion in raw counts over `dt_s` seconds to right-stick deflection: full deflection at 3000 / `sens` counts a
+Mouse motion in counts (`input_mouse_turn()`'s, so floats) over `dt_s` seconds to right-stick deflection: full deflection at 3000 / `sens` counts a
 second. `cam` is the factor the game multiplies the right stick's turn rates by (`cam_speed_applied`). The deflection is
 divided by it, so the turn per count stays what `sens` says, and only then clamped: a clamp taken first would hold the
 mouse's fastest turn at the game's unmultiplied top speed, however high the factor. Clamped to the unit circle; up
@@ -1504,6 +1558,32 @@ ambiguity.
 
 On by default, so the summary line comes every 7200 presents: every minute or two, not every two seconds.
 
+## `runtime/input/window_idle.c`
+
+The two window settings that act on their own, as functions of the state and the time given to them, so
+`tests/window_idle_check.c` drives them with made-up times. The callers read the settings, the pointer and the clock.
+
+### `cursor_idle_step()`
+
+`cursor_hide`: 1 when the cursor should be hidden. It hides once the pointer has been over the window, not captured
+(`over`), at the same place for `CURSOR_IDLE_NS` (3 s), and shows at once when it moves, leaves the window, is captured
+or the setting is off; coming back over the window starts the 3 s again. `hides` counts the hides, for the first-time
+log line. The callers: `runtime/input/input_sdl.c` `cursor_idle_apply()`, `runtime/input/input_win.c`
+`cursor_idle_check()`.
+
+On by default: the cursor shows only while it is released (Esc, the settings menu, the game's menus with the mouse in
+use, the focus elsewhere), and in each of these a still pointer has nothing to show. Hiding it changes neither where it
+is nor what it clicks: the game's menus read the position (`ikb_pointer()`) and keep the button under it selected, and
+the settings menu takes clicks where the hidden pointer is. A move shows it before anything else reads it, and while
+the mouse camera has it (captured) the capture's own hiding applies, so the two never fight. A warp counts as a move:
+when the game's menus put the pointer on a button (`ikb_pointer_set()`, keys or the d-pad moving the focus), it shows
+there, and hides 3 s later.
+
+### `focus_mute_step()`
+
+`background_mute`: 1 (silent) while the setting is on and the window does not have the focus; `mutes` counts the times
+it went silent. Called by `runtime/audio/audio_mixer.c` `background_gain()`.
+
 ## `runtime/input/mouse_direct.c`
 
 Direct mouse input for 1.4.3. The camera controller's input update (main+0x874c1c) turns the HID stick floats into a
@@ -1547,6 +1627,9 @@ s10, which carry the processed camera input, and makes the displaced store of s9
 camera input by its 30 Hz frame ratio later. The mouse is divided by that exact ratio rather than by wall-clock time, so
 an equal distance of mouse motion gives equal input at every frame rate. Frame generation's frames are not the game's
 (`frame_step_game_hz`).
+
+The counts go through `runtime/input/input.c` `input_mouse_turned()` (the player's inversions and vertical factor) before
+the motion, the angles and the stick values are made from them.
 
 ### `orbit_begin()`
 
@@ -1595,7 +1678,9 @@ gives degrees per count.
 `camera_input_oot()`: the game multiplies the processed stick by the frames it steps and by its camera speeds, which
 `NX2SARIA_STICK_SENS` scales (`runtime/input/camera_speed.c`): divided by both, a count turns the camera by the same
 angle at every frame rate and stick speed. Nothing after the site clamps the sum, so a fast flick is not cut short. The
-displaced instruction is `str s1, [x20, #0x538]`.
+displaced instruction is `str s1, [x20, #0x538]`. The counts go through `input_mouse_turned()` first, as in
+`camera_input()`: the player's inversions and vertical factor come before the game's own inversion of the flags, which
+the player sets in the game's options.
 
 `camera_activity_oot()`: the idle test follows the first site and already counts the mouse's part, but one slow count
 adds less than the game's 10% threshold: an update the mouse moved in is not idle. The site is the displaced

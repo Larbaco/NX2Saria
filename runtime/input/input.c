@@ -11,6 +11,7 @@
 #include "input_hd_pair.h"
 #include "input_map.h"
 #include "input_wsys.h"
+#include "gfx_wsys.h"
 #ifdef _WIN32
 #include "input_ds3.h"
 #endif
@@ -54,7 +55,7 @@ static const SDL_GamepadButton pad_sdl[PAD_COUNT] = {
 };
 
 typedef struct { uint64_t at, hold; int bit, stick, timed, mark, mouse; int32_t x, y; float fx, fy; int logged; char text[48]; } ScriptEv;
-enum { SM_POINTER = 1, SM_LEFT, SM_RIGHT, SM_WHEEL };
+enum { SM_POINTER = 1, SM_LEFT, SM_RIGHT, SM_WHEEL, SM_FOCUS };
 static const struct { const char *name; int bit; } script_buttons[] = {
     {"A", B_A}, {"B", B_B}, {"X", B_X}, {"Y", B_Y}, {"LCLICK", B_STICK_L}, {"RCLICK", B_STICK_R}, {"L", B_L}, {"R", B_R},
     {"ZL", B_ZL}, {"ZR", B_ZR}, {"PLUS", B_PLUS}, {"MINUS", B_MINUS}, {"LEFT", B_LEFT}, {"UP", B_UP}, {"RIGHT", B_RIGHT}, {"DOWN", B_DOWN},
@@ -66,6 +67,7 @@ static int32_t script_mouse[2];
 static volatile uint32_t script_ptr[2];
 static volatile int32_t script_ptr_on, script_wheel;
 static volatile uint32_t script_presses[2];
+static volatile int32_t script_focus;
 
 static void script_load(void) {
     script_state = 1;
@@ -106,6 +108,13 @@ static void script_load(void) {
             e.mouse = p ? SM_POINTER : SM_WHEEL, e.hold = 1, e.fx = (float)x, e.fy = (float)y, e.x = (int32_t)x;
             if (p) snprintf(e.text, sizeof e.text, "POINTER %.3f %.3f", x, y);
             else snprintf(e.text, sizeof e.text, "WHEEL %d", e.x);
+        } else if (!strcmp(name, "FOCUS")) {
+            if (sscanf(line + off, "%ld", &a) != 1 || (a != 0 && a != 1)) {
+                rt_log("input: script line %d: FOCUS needs 0 (the window loses the focus) or 1 (it gets it back)", ln);
+                continue;
+            }
+            e.mouse = SM_FOCUS, e.hold = 1, e.x = (int32_t)a;
+            snprintf(e.text, sizeof e.text, "FOCUS %d", e.x);
         } else if (!strcmp(name, "MOUSEL") || !strcmp(name, "MOUSER")) {
             e.mouse = name[5] == 'L' ? SM_LEFT : SM_RIGHT;
             if (sscanf(line + off, "%lf", &c) == 1 && c > 0) e.hold = (uint64_t)(c * unit + 0.5);
@@ -145,7 +154,7 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
         ScriptEv *e = &script_ev[i];
         if (e->timed ? w < 0 : script_mixed && w >= 0) continue;
         uint64_t now = e->timed ? (uint64_t)w : tick;
-        int once = e->mark || e->stick == 3 || e->mouse == SM_POINTER || e->mouse == SM_WHEEL;
+        int once = e->mark || e->stick == 3 || e->mouse == SM_POINTER || e->mouse == SM_WHEEL || e->mouse == SM_FOCUS;
         if (now < e->at || (now >= e->at + e->hold && (e->logged || (!e->timed && !once)))) continue;
         if (once && e->logged) continue;
         if (!e->logged) {
@@ -164,6 +173,7 @@ static void script_apply(uint64_t *b, int32_t sl[2], int32_t sr[2]) {
             plat_xchg32(&script_ptr_on, 1);
             __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
         } else if (e->mouse == SM_WHEEL) plat_add32(&script_wheel, e->x), __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
+        else if (e->mouse == SM_FOCUS) plat_xchg32(&script_focus, e->x + 1);
         else if (e->mouse) __atomic_store_n(&g_kbm_last, 1, __ATOMIC_RELAXED);
         else if (e->stick == 3) {
             int64_t x = (int64_t)script_mouse[0] + e->x, y = (int64_t)script_mouse[1] + e->y;
@@ -310,6 +320,42 @@ static float mouse_sens_get(void) {
     return mouse_sens;
 }
 
+void input_mouse_turned(int32_t dx, int32_t dy, float out[2]) {
+    input_mouse_turn(dx, dy, cfg_bool("NX2SARIA_MOUSE_INVERT_X"), cfg_bool("NX2SARIA_MOUSE_INVERT_Y"),
+                     (float)cfg_double("NX2SARIA_MOUSE_SENS_Y"), out);
+}
+
+static unsigned mouse_turn_seen = ~0u;
+static int mouse_turn_logged[2];
+static float mouse_turn_y = 1;
+
+static void mouse_turn_log(void) {
+    unsigned ver = cfg_version();
+    if (ver == mouse_turn_seen) return;
+    mouse_turn_seen = ver;
+    float one[2];
+    input_mouse_turn(0, 1, 0, 0, (float)cfg_double("NX2SARIA_MOUSE_SENS_Y"), one);
+    int ix = cfg_bool("NX2SARIA_MOUSE_INVERT_X"), iy = cfg_bool("NX2SARIA_MOUSE_INVERT_Y");
+    if (ix == mouse_turn_logged[0] && iy == mouse_turn_logged[1] && one[1] == mouse_turn_y) return;
+    mouse_turn_logged[0] = ix, mouse_turn_logged[1] = iy, mouse_turn_y = one[1];
+    rt_log("input: mouse camera: mouse_invert_x = %d, mouse_invert_y = %d, mouse_sens_y = %.2f (the vertical turn is "
+           "%.2f times the horizontal; the default is 0, 0, 1)", ix, iy, one[1], one[1]);
+}
+
+static unsigned window_idle_seen = ~0u;
+static int window_idle_logged[2] = {-1, -1};
+
+static void window_idle_log(void) {
+    unsigned ver = cfg_version();
+    if (ver == window_idle_seen) return;
+    window_idle_seen = ver;
+    int hide = cfg_bool("NX2SARIA_CURSOR_HIDE"), mute = cfg_bool("NX2SARIA_BACKGROUND_MUTE");
+    if (hide == window_idle_logged[0] && mute == window_idle_logged[1]) return;
+    window_idle_logged[0] = hide, window_idle_logged[1] = mute;
+    rt_log("input: cursor_hide = %d (%s), background_mute = %d (%s)", hide,
+           hide ? "the cursor hides after 3 s still over the window" : "the cursor stays shown", mute,
+           mute ? "the game is silent while the window has no focus" : "the sound plays without the focus");
+}
 
 static int walk_key = KEY_NONE;
 static float walk_scale = 0.51f;
@@ -391,7 +437,9 @@ static void mouse_camera(int32_t out[2], int selector) {
         if (fr != frame) {
             double dt = age < 0.004 ? 0.004 : age > 0.1 ? 0.1 : age;
             ikb_mouse_take(&dx, &dy);
-            input_mouse_stick(dx, dy, dt, mouse_sens_get(), cam_speed_applied(), held);
+            float turned[2];
+            input_mouse_turned(dx, dy, turned);
+            input_mouse_stick(turned[0], turned[1], dt, mouse_sens_get(), cam_speed_applied(), held);
             frame = fr;
             t0 = now;
         } else if (age > 0.1) {
@@ -1213,6 +1261,8 @@ static void poll_merged(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx
     int32_t sl[2] = {0, 0}, sr[2] = {0, 0};
     plat_mutex_lock(&lock);
     if (!state) start();
+    mouse_turn_log();
+    window_idle_log();
     if (state > 0) {
         binds_refresh();
         if (state == 1) pad_read(&b, sl, sr);
@@ -1325,6 +1375,8 @@ int input_sdl_version(int *built) {
 
 void input_poll(uint64_t *buttons, int32_t *lx, int32_t *ly, int32_t *rx, int32_t *ry) {
     poll_merged(buttons, lx, ly, rx, ry);
+    int32_t focus = plat_xchg32(&script_focus, 0);
+    if (focus) wsys_probe_focus(focus - 1);
     if (!g_block && !g_menu)
         menu_cursor_poll(buttons), menu_mouse_poll(buttons), quit_menu_poll(buttons), pause_tab_poll(buttons);
     const int32_t axes[4] = {*lx, *ly, *rx, *ry};

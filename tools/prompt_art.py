@@ -66,6 +66,67 @@ SHADES = ('Dark', 'White')
 BLANKS = {'Dark': f'{KM}Blanks/T_Blank_Black_Normal.png', 'White': f'{KM}Blanks/T_Blank_White_Normal.png'}
 
 
+PC_KEYS = {'A': 'e', 'B': 'lctrl', 'X': 'space', 'Y': 'mouse_l', 'L': 'q', 'R': 'r', 'ZL': 'mouse_r', 'ZR': 'f',
+           'PLUS': 'tab', 'MINUS': 'm', 'LEFT': '1', 'UP': '2', 'RIGHT': '3', 'DOWN': '4', 'LCLICK': 'v', 'RCLICK': 'c',
+           'LSTICK_UP': 'w', 'LSTICK_LEFT': 'a', 'LSTICK_DOWN': 's', 'LSTICK_RIGHT': 'd'}
+PAD_BUTTONS = {'A': 'A', 'B': 'B', 'X': 'X', 'Y': 'Y', 'L': 'L', 'R': 'R', 'ZL': 'ZL', 'ZR': 'ZR', 'PLUS': 'PLUS',
+               'MINUS': 'MINUS', 'LCLICK': 'LSTICK_PRESS', 'RCLICK': 'RSTICK_PRESS', 'LEFT': 'DPAD_LEFT',
+               'UP': 'DPAD_UP', 'RIGHT': 'DPAD_RIGHT', 'DOWN': 'DPAD_DOWN'}
+PAD_PICTURES = {'south': 'south', 'east': 'east', 'west': 'west', 'north': 'north', 'l': 'L', 'r': 'R', 'zl': 'ZL',
+                'zr': 'ZR', 'start': 'PLUS', 'back': 'MINUS', 'lstick': 'LSTICK_PRESS', 'rstick': 'RSTICK_PRESS',
+                'dpad_left': 'DPAD_LEFT', 'dpad_up': 'DPAD_UP', 'dpad_right': 'DPAD_RIGHT', 'dpad_down': 'DPAD_DOWN'}
+
+
+def _bind_entries(ini_text, kind):
+    for line in (ini_text or '').splitlines():
+        line = line.split('#')[0].split(';')[0].strip()
+        if not line.lower().startswith('bind_') or '=' not in line:
+            continue
+        button, value = (s.strip() for s in line.split('=', 1))
+        yield button[5:].upper(), [e.strip()[len(kind):].strip().lower() for e in value.split(',')
+                                   if e.strip().lower().startswith(kind)]
+
+
+def key_binds(ini_text=None):
+    out = {}
+    for b, entries in _bind_entries(ini_text, 'key:'):
+        if b in PC_KEYS and entries and entries[0] != 'default':
+            out[b] = entries[0]
+    return out
+
+
+def pad_binds(ini_text=None):
+    out = {}
+    for b, entries in _bind_entries(ini_text, 'pad:'):
+        if b in PAD_BUTTONS:
+            pad = None if 'default' in entries else next((e for e in entries if e in PAD_PICTURES), None)
+            if pad:
+                out[b] = pad
+            else:
+                out.pop(b, None)
+    return out
+
+
+LISTED_MAX = 8
+
+
+def binds_followed(ini_text=None):
+    def listed(binds):
+        named = [f'{b}: {v}' for b, v in binds.items()]
+        if len(named) <= LISTED_MAX:
+            return ', '.join(named)
+        return ', '.join(named[:LISTED_MAX]) + f' and {len(named) - LISTED_MAX} more'
+    pads = pad_binds(ini_text)
+    keys = {b: k for b, k in key_binds(ini_text).items() if k != PC_KEYS[b]}
+    parts = []
+    if pads:
+        parts.append(f'the gamepad prompts follow {len(pads)} remapped button{"s" * (len(pads) != 1)} ({listed(pads)})')
+    if keys:
+        parts.append(f'the keyboard prompts {len(keys)} ({listed(keys)})' if parts else
+                     f'the keyboard prompts follow {len(keys)} remapped button{"s" * (len(keys) != 1)} ({listed(keys)})')
+    return ', '.join(parts)
+
+
 def overlay_folder(style, layout=None):
     return f'romfs-patches-{style}' + ('-label' if layout == 'label' else '')
 

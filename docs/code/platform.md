@@ -302,6 +302,7 @@ A crash goes to `fn`, which reports it and must end the process. The write-fault
 | `addr` | its address when `access` >= 0 |
 | `nframes`, `frames[16]` | return addresses in this executable, innermost first: for abort and invalid parameter (`rip` is `frames[0]`) and for a fault in another module; 0 for a fault in this one |
 | `module` | the module holding `rip`: NULL for this executable, "" for none (a jump to address 0) |
+| `sent`, `sender` | Linux: 1 when a process sent the signal (`kill`, `si_code` <= 0) and was not this one, 2 when this process sent it to itself, 0 for a fault; `sender` the sending pid. `access` is then -1 |
 
 `plat_crash_context()`: what this thread is doing, named by the crash notes (a stack overflow leaves no room for the
 full report); NULL clears it. `s` must stay valid until it is cleared. `plat_crash_context_get()` is the calling
@@ -1096,6 +1097,14 @@ a frozen region); any other fault, in this executable or in a library (Mesa, SDL
 (`runtime/main.c` `crash_handler()`), which reports it and ends the process. Without a crash hook the fault gets the
 default action: the handler sets `SIG_DFL` and returns into the faulting instruction, which faults again. It runs on the
 thread's signal stack.
+
+A signal another process sent (`kill -SEGV`, `si_code` `SI_USER`, `SI_QUEUE` or `SI_TKILL`, all <= 0) is no fault:
+`si_addr` then shares its bytes with the sender's `si_pid` and `si_uid`, so a `kill` from pid 4321 under uid 1000 read as
+an address gives 0x3e8000010e1, and the error code in the context is whatever the interrupted code left there. Such a
+signal skips both memory hooks (one could take the pid for a guest address and swallow the signal) and goes to the
+crash hook named as the signal ("signal SIGSEGV"), with `sent` and `sender` set and no access or address
+(`tests/fatal_line_check.py` sends one to `--probe-crash-wait`). `SI_KERNEL` (0x80), a general protection fault on a
+non-canonical address, stays a fault.
 
 ### `plat_crash_context()`, `plat_crash_filter_reassert()`, `plat_crash_context_get()`
 

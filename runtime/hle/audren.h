@@ -222,5 +222,6 @@ uint64_t audio_voice_consumed(const AudioRenderer *r, ServerVoice *v, int frames
 int audio_buffer_empty(const AudrenWaveBuffer *b);
 void audio_device_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);
 void audio_channels_live(void);
+void audio_window_focus(int focused);
 void audio_dmg_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);
 void audio_sysmix_handler(IpcSession *s, const IpcRequest *rq, IpcResponse *rs);

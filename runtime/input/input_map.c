@@ -350,7 +350,13 @@ void input_map_stick(const uint8_t down[KEY_COUNT], int stick, int32_t out[2]) {
     out[1] = dy * m;
 }
 
-void input_mouse_stick(int32_t dx, int32_t dy, double dt_s, float sens, float cam, int32_t out[2]) {
+void input_mouse_turn(int32_t dx, int32_t dy, int invert_x, int invert_y, float sens_y, float out[2]) {
+    float k = isnan(sens_y) ? 1 : fminf(10, fmaxf(0.1f, sens_y));
+    out[0] = invert_x ? -(float)dx : (float)dx;
+    out[1] = (invert_y ? -(float)dy : (float)dy) * k;
+}
+
+void input_mouse_stick(float dx, float dy, double dt_s, float sens, float cam, int32_t out[2]) {
     out[0] = out[1] = 0;
     if (!(dt_s > 0) || !(sens > 0) || !(cam > 0)) return;
     double k = STICK_MAX * (double)sens / (MOUSE_FULL_CPS * dt_s * cam);

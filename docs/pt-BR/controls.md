@@ -1,4 +1,4 @@
-<!-- translation: lang=pt-BR source=docs/controls.md source-hash=74aa6b347e9c1566a341434a7e1d7531ff7e00a2 reviewed=no -->
+<!-- translation: lang=pt-BR source=docs/controls.md source-hash=06aa1dba612e0c8763dce7f041315d307482c6d9 reviewed=no -->
 <!-- languages -->
 [English](../controls.md) · **Português (Brasil)** · [Русский](../ru/controls.md) · [简体中文](../zh-Hans/controls.md)
 
@@ -77,6 +77,11 @@ frontal direito, então os ícones dele mostram B ou círculo, B mostra A ou xis
 quadrado; com `xbox`, `playstation` e `automatic` (pelo rótulo) A mostra A ou xis, B mostra B ou círculo, X mostra X ou
 quadrado e Y mostra Y ou triângulo.
 
+Um botão remapeado para outro botão do controle (uma linha `bind_` com uma entrada `pad:`, que a aba Controles escreve)
+mostra esse botão no lugar, em todo estilo e layout de controle: com A e B trocados, os ícones de A mostram o botão de B
+e os de B mostram o de A. As notas da ocarina também seguem quando o novo botão é um botão frontal, L ou R. As paletas
+traseiras não têm figura, então um botão numa paleta mantém o ícone do próprio botão.
+
 `pc` mostra a primeira tecla de cada botão do Switch (a tabela acima, ou as linhas `bind_` do `nx2saria.ini` quando a
 ferramenta roda): E, Ctrl, Space, o mouse com o botão esquerdo para Y, Q, R, o mouse com o botão direito para ZL, F, Tab,
 M, V e C para os cliques dos analógicos, 1 a 4 para o D-pad, e W A S D para andar, com as direções que o ícone indica
@@ -84,7 +89,8 @@ dispostas como no teclado. Os ícones da câmera mostram o mouse se movendo. Ele
 
 O jogo lê a fonte e as texturas da interface uma vez na inicialização, então uma mudança aparece depois de reiniciar (a
 linha avisa; o botão Reiniciar do menu reinicia). Um botão ou tecla remapeado nesta aba mantém o ícone antigo até as
-pastas serem criadas de novo.
+pastas serem criadas de novo (refazer o jogo as cria de novo quando as linhas `bind_` mudaram). A linha
+`button prompts:` do log diz quais botões remapeados os ícones seguem.
 
 Os ícones ficam em pastas de overlay ao lado do exe, `romfs-patches-xbox`, `romfs-patches-xbox-label`,
 `romfs-patches-playstation`, `romfs-patches-playstation-label`, `romfs-patches-steamdeck` e
@@ -181,6 +187,11 @@ Quando nada corresponde ou o dispositivo não abre, o log lista os dispositivos 
 sistema; um dispositivo escolhido que desaparece com o jogo rodando (um sink virtual removido, um headset desconectado)
 também leva o som para o padrão do sistema. `audio_channels = auto` pergunta ao dispositivo escolhido quantos canais ele
 tem.
+
+`background_mute = 1` (seção `[audio]`, sem linha no menu, aplicado na hora; padrão 0) silencia o jogo enquanto a janela
+dele não tem o foco, como quando você troca para outro programa, e o som volta com o foco. A linha
+`input: cursor_hide = ..., background_mute = ...` do log no início diz se está ligado, e `audio: background_mute: ...`
+marca a primeira vez que ele silenciou o jogo.
 
 ## Aplicar mudanças no menu
 
@@ -382,7 +393,12 @@ analógico, as contagens usadas e o que elas somaram) e, com `dlaa` ligado (DLAA
 jogo), a direção da câmera em cada quadro, para medir o giro por contagem.
 
 `NX2SARIA_MOUSE_SENS` (a linha *Sensibilidade da câmera no mouse*, aplicada na hora; 0 a 10, padrão 1; mais alto gira
-mais rápido, 0 desliga a câmera com o mouse e a captura do cursor, a linha desce até 0.05). Enquanto a janela está em
+mais rápido, 0 desliga a câmera com o mouse e a captura do cursor, a linha desce até 0.05). Três configurações não têm
+linha e ficam só no `nx2saria.ini` (aplicadas na hora): `mouse_invert_x = 1` e `mouse_invert_y = 1` invertem a câmera
+com o mouse naquele eixo, e `mouse_sens_y` (0.1 a 10, padrão 1) faz o giro vertical ser esse fator do horizontal, então
+`mouse_sens_y = 0.5` olha para cima e para baixo na metade da velocidade. Valem nos dois modos, e a inversão de câmera do
+próprio jogo (nas Opções dele) continua valendo por cima; as rodas de itens e os menus recebem o mouse como ele é. O log
+as diz no início quando não estão no padrão (`input: mouse camera: mouse_invert_x = ...`). Enquanto a janela está em
 primeiro plano, o cursor fica escondido e preso à área cliente. Ele é liberado quando a janela perde o foco, quando é
 minimizada, enquanto o F11 muda a janela, durante um laço de redimensionar ou mover e enquanto uma entrada de texto está
 aberta. O Esc o libera à mão: o cursor aparece, a câmera com o mouse e os botões do mouse param, e a janela pode ser
@@ -390,6 +406,13 @@ movida, minimizada ou fechada. Um clique do mouse dentro da área cliente o capt
 Ativar a janela com um clique na barra de título ou na borda não captura o cursor, então ela pode ser arrastada ou
 fechada na hora; Alt+Tab ou um clique na área cliente capturam como antes. `NX2SARIA_INPUT=none` também desativa a
 captura.
+
+Enquanto o cursor aparece (liberado, nos menus do jogo, no menu de configurações), ele some depois de 3 segundos parado
+sobre a janela do jogo e volta assim que o mouse se move. Um cursor escondido continua apontando: um clique cai onde ele
+está, e nos menus do jogo o botão embaixo dele continua selecionado. `cursor_hide = 0` (seção `[input]`, sem linha no
+menu, aplicado na hora; padrão 1) o mantém visível. A linha do log no início diz a configuração
+(`input: cursor_hide = 1 ...`), e `input: cursor_hide: the cursor hid after 3 s still over the window` marca a primeira
+vez que ele sumiu.
 
 `NX2SARIA_STICK_DEADZONE` (0 a 50, padrão 8) é a zona morta dos analógicos do controle em porcentagem da inclinação
 total, a mesma para os dois analógicos. Ela é redonda: um analógico dentro do círculo é lido como centralizado, e o resto
@@ -567,6 +590,7 @@ relatório, não é reconhecido pelo leitor e passa pelo SDL ou pelo XInput, com
 <frame> POINTER <x> <y>                    # the pointer for the game's menus at x, y of the window (0..1 from top left)
 <frame> MOUSEL|MOUSER [hold_frames]        # the left or right mouse button, for the game's menus only
 <frame> WHEEL <notches>                    # the mouse wheel for the game's menus, up positive
+<frame> FOCUS 0|1                          # the window loses the focus (0) or gets it back (1), as an alt-tab
 ```
 
 `<frame>` conta ticks de 60 Hz de tempo de jogo desde o primeiro quadro (quadros apresentados a 60 fps). Cada evento é

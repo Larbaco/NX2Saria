@@ -14,6 +14,7 @@
 #include "audio_reverb.h"
 #include "audren.h"
 #include "host.h"
+#include "window_idle.h"
 #include "ipc.h"
 
 #define MAX_FRAME 1024
@@ -86,6 +87,32 @@ static float host_volume(void) {
     v = (float)((pct < 0 ? 0 : pct > 100 ? 100 : pct) / 100);
     return v;
 }
+static _Atomic int window_focused = 1;
+static _Atomic int background_mute_logged, background_back_logged;
+
+void audio_window_focus(int focused) { atomic_store(&window_focused, focused != 0); }
+
+static float background_gain(void) {
+    static _Thread_local FocusMute state;
+    static _Thread_local unsigned seen = ~0u;
+    static _Thread_local int on;
+    unsigned ver = cfg_version();
+    if (ver != seen) seen = ver, on = cfg_bool("NX2SARIA_BACKGROUND_MUTE");
+    static _Thread_local uint64_t muted_at, passes;
+    int was = state.muted, muted = focus_mute_step(&state, on, atomic_load(&window_focused));
+    if (muted && !was) {
+        muted_at = kern_now_ns(), passes = 0;
+        if (!atomic_exchange(&background_mute_logged, 1))
+            rt_log("audio: background_mute: the window lost the focus, so the game's sound is muted until it has it "
+                   "again (the first time this session)");
+    }
+    if (muted) passes++;
+    if (was && !muted && !atomic_exchange(&background_back_logged, 1))
+        rt_log("audio: background_mute: the sound came back with the focus after %.2f s muted, %llu mix passes at gain 0 "
+               "(the first time this session)", (kern_now_ns() - muted_at) / 1e9, (unsigned long long)passes);
+    return muted ? 0.0f : 1.0f;
+}
+
 static unsigned audio_revision(const AudioRenderer *r) { unsigned byte = r->revision >> 24; return byte >= '0' ? byte - '0' : 0; }
 static void report_once(Mixer *m, unsigned bit, const char *msg, int value) {
     if (m->reported & (1u << bit)) return;
@@ -1468,7 +1495,8 @@ void audio_mixer_render(AudioRenderer *r, double seconds, int drop) {
                    sink->inputs[2], sink->inputs[3], sink->inputs[4], sink->inputs[5], sink->downmix_enabled ? "on" : "off",
                    sink->downmix[0], sink->downmix[1], sink->downmix[2], sink->downmix[3]);
         }
-        const float gain = host_volume() * atomic_load(&device_volume) * (r->mixes[0].in_use ? r->mixes[0].volume : 1.0f);
+        const float gain = host_volume() * background_gain() * atomic_load(&device_volume) *
+                           (r->mixes[0].in_use ? r->mixes[0].volume : 1.0f);
         const float *ch[6] = {0};
         float raw[2 * MAX_FRAME];
         for (uint32_t c = 0; c < sink->input_count; c++) if (sink->inputs[c] >= 0 && sink->inputs[c] < m->nbuf) ch[c] = mixbuf(m, sink->inputs[c]);
