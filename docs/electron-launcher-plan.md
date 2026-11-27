@@ -41,7 +41,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The Windows and Linux worker tests exercise the install request with a stand-in task. The Linux Electron window test covers progress, cancel, retry and a return to a playable screen. Background dump search proposes the newest valid result and preserves a manual choice. Worker tests use an isolated search directory, and the Linux window test displays the discovered file. The first-run preferences use the existing update settings and Windows shortcut. The first-run requirements check reports missing runtime support or Linux build tools. First installation without the app/runtime and owner validation remain open.
 - [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Manual Rebuild uses the existing RebuildJob. A synthetic worker case proves refusal while the old marker exists, completion after cleanup, honoring the cache setting and leaving the last executable untouched. The Linux window visits the ready screen after an explicit Rebuild without automatically starting Play. The interrupted-build cases below prove wait, stop, stale and reused process identities, unreadable markers and recovery by Tk. A complete build of the real game remains owner validation.
 - [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
-- [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Automatic metadata checks follow the Tk start, post-install and hourly due conditions. Staging and application, rebuild after update, handover and rollback remain open.
+- [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Automatic metadata checks follow the Tk start, post-install and hourly due conditions. Electron launcher tests run `45915051994` passed the loopback worker cases on Linux and Windows and the availability notice in a Linux Electron window. Staging and application, rebuild after update, handover and rollback remain open.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
 - [x] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. The synthetic worker passed in the Linux and Windows jobs of Electron launcher tests run `45759008861`. The Linux Electron window verifies picker cancellation, both source types and restoring the backup. The portable package `f53b2481` also passed export, import and backup creation with the published runtime. All automated scenarios use scratch saves.
 - [x] Mods: add files/folders, enable/disable, ordering, rebuild and errors. The Linux window verifies folder and archive selection, ordering, conflicts, toggling and invalid inputs. The worker tests passed on Linux and Windows in run `45759008861`, including resuming Play after the stand-in rebuild, refusing a mutation during Play and moving a mod across pages. The Linux portable package `f53b2481` verified folder addition with the published runtime. A real build still has its own acceptance item.
@@ -148,6 +148,46 @@ and a verified transition from existing Tk installations.
 - **Replacement review.** Send the branch head and evidence to releases
   once the inventory and migration checks are complete. The branch work
   ends at that hand-off.
+
+## Remaining replacement work
+
+### Owner decisions and evidence
+
+- **Shell distribution.** Do you approve one shell download per new digest of 139.7 MiB
+  on Windows and 116.2 MiB on Linux, with the standard AppImage kept at 97.9 MiB?
+  Prefer one separate, digest-addressed archive, with the previous runnable shell retained
+  until the approved pruning rule. This decision gates staging, activation, the bridge
+  update and release workflow implementation.
+- **Older completed build.** After a cancelled or failed rebuild, should Electron keep
+  letting the player run the last finished game build while offering Rebuild? Keep Tk
+  parity and show the pending rebuild.
+- **Session and crash reports.** Will you enable the private package's opt-in switch to
+  validate session reports with the existing consent and crash logs by explicit click?
+  Keep the switch off by default in private packages and test sending only through the
+  existing report permission and preview.
+- **Real game flows.** Can you use the next approved packages on Windows and Linux to
+  check Play, hide and restore, a rebuild and the relevant error messages, then share
+  the launcher and game logs? Use the smallest real test set that closes each platform's
+  existing gaps. Update and migration scenarios remain synthetic.
+- **Device and language checks.** Can you review the four menu languages and try Steam
+  Deck Game Mode, Flatpak Steam and controller focus where those setups are available?
+  Capture evidence by setup and keep any unavailable case open.
+
+### Work independent of the owner
+
+1. Run a native Windows Electron window in the existing synthetic CI with a scratch root
+   and a held stand-in game. Check idle process death and lock release, a killed window
+   during Play, a second window refused while the same game PID is alive, and a later
+   window that acquires the lock. Compare the worker and window logs and keep the Linux
+   case in the same test. This is a development window with the pinned CI Python.
+2. Write the permitted scratch-root acceptance scenarios for shell readiness, timeout,
+   interrupted selection and preserved state using a fake shell. The tests precede
+   implementing activation or the bridge. Record whether the Linux test runner can
+   exercise the production sandbox policy independently.
+3. Reconcile the inventory against CI runs and existing owner evidence. Prepare the
+   remaining synthetic cases for rollback, headless and platform behavior and the test
+   protocol for the next private packages. The replacement review follows completion
+   of the synthetic transition and collection of any remaining owner evidence.
 
 ## Validation and known limits
 

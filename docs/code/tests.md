@@ -6098,8 +6098,10 @@ On Linux, a fixture with an active release and an AppImage wrapper checks that t
 `launcher-electron/ui-tests/parent-synthetic.cjs` kills only the Electron main process against a temporary
 installation on Linux and Windows. It checks that the idle worker PID disappears and another window obtains the lock.
 With a synthetic game held open by a test file, it checks that the same worker and game survive and a second window
-reports busy until the fixture ends the game. The Linux case requires real pipe EOF. The Windows case validates the executable path of the worker's parent before killing it because Playwright can
-report the PID of a command wrapper. It uses the `tests/fixtures/worker_held_game.c` executable, release Python,
+reports busy until the fixture ends the game. The Linux case requires real pipe EOF. The Windows case validates
+the executable path of the worker's parent before killing it because Playwright can report the PID of a command
+wrapper. On the Windows CI runner the test uses the pinned development Electron and Python with the
+`tests/fixtures/worker_held_game.c` executable. For package validation it instead uses the packaged Electron, release Python,
 and a packaged Electron app. A separate Python test keeps the protocol writer open while the worker's parent dies
 and requires the native parent-exit path to close output and release the lock.
 

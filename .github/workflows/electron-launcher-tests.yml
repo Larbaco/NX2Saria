@@ -9,6 +9,7 @@ on:
       - launcher/**
       - tests/launcher_worker_test.py
       - tests/fixtures/worker_fake_game.c
+      - tests/fixtures/worker_held_game.c
       - tests/fixtures/worker_install_dump.py
       - tests/fixtures/worker_restart_game.c
       - tests/fixtures/worker_udmabuf.py
@@ -65,12 +66,16 @@ jobs:
         run: |
           $fake = Join-Path $env:RUNNER_TEMP 'worker-fake-game.exe'
           $restart = Join-Path $env:RUNNER_TEMP 'worker-restart-game.exe'
+          $held = Join-Path $env:RUNNER_TEMP 'worker-held-game.exe'
           gcc -static tests/fixtures/worker_fake_game.c -o $fake
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           gcc -static tests/fixtures/worker_restart_game.c -o $restart
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          gcc -static tests/fixtures/worker_held_game.c -o $held
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "NX2_TEST_FAKE_GAME=$fake" >> $env:GITHUB_ENV
           "NX2_TEST_RESTART_GAME=$restart" >> $env:GITHUB_ENV
+          "NX2_TEST_HELD_GAME=$held" >> $env:GITHUB_ENV
       - name: Worker tests
         run: python tests/launcher_worker_test.py
       - name: Node tests
@@ -87,3 +92,7 @@ jobs:
             sudo apt-get install -y xvfb
           fi
           xvfb-run -a npm run test:ui
+      - name: Windows Electron window tests
+        if: runner.os == 'Windows'
+        working-directory: launcher-electron
+        run: node ui-tests/parent-synthetic.cjs
