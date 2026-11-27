@@ -24,6 +24,8 @@ int pause_tab_request_take(void);
 void pause_tab_set_open(int open, const char *why);
 int pause_tab_view(PauseTabView *v);
 void pause_tab_applied(int changes, const char *list);
+void pause_tab_more(int open, uint64_t ms);
+void pause_tab_exit_log(void);
 
 #ifndef __cplusplus
 #include "cpu.h"

@@ -53,6 +53,9 @@ Implemented by `runtime/gfx/gfx_present.c`, the window back end (`runtime/gfx/gf
 - `vk_hdr_native()`: `NX2SARIA_HDR = native`, the game's own HDR picture (`runtime/vk/vk_hdr.c`).
 - `gfx_picture_rect()`: where the last present put the picture, as fractions of the swapchain (x, y, w, h); 0 before
   one.
+- `gfx_surface_hdr10()`: the window's surface offered an HDR10 colour space (`VK_COLOR_SPACE_HDR10_ST2084_EXT`) when
+  the swapchain was last made, whatever `NX2SARIA_HDR` is; the pause menu's settings tab shows its HDR row by it
+  (`runtime/ui/menu.cpp` `pause_tab_rows()`).
 
 ### The shader service client
 
@@ -1369,10 +1372,11 @@ The steps:
 10. `changebank_hold_exit_log`: the neighbouring map preloads held.
 11. `camera_clearance_exit_log`: what the camera's clearance loaded.
 12. `cheats_exit_log`.
-13. `vk_exec_mfb_batch_exit_log`: the mesh fallback batch's totals (`runtime/vk/vk_exec_draw.c`), with it on.
-14. `logq_flush`: the lines so far on the disk before the slow part; the queue stays on.
-15. `vk_pipeline_save_exit`.
-16. `fs_save_flush`, last: a Commit started since `fs_save_wait` finishes, and one after this is refused.
+13. `pause_tab_exit_log`: the pause menu's settings tab's session (`runtime/ui/pause_tab.c`), with it on.
+14. `vk_exec_mfb_batch_exit_log`: the mesh fallback batch's totals (`runtime/vk/vk_exec_draw.c`), with it on.
+15. `logq_flush`: the lines so far on the disk before the slow part; the queue stays on.
+16. `vk_pipeline_save_exit`.
+17. `fs_save_flush`, last: a Commit started since `fs_save_wait` finishes, and one after this is refused.
 
 ### `gfx_window_closed()`
 
@@ -1501,7 +1505,8 @@ this releases. It returns 0, `create_swapchain()`'s failure. AMD's swapchain has
 
 ### `surface_formats()`
 
-Surface-format lists can exceed 64 entries when a compositor advertises several colour spaces. The query is made again
+Surface-format lists can exceed 64 entries when a compositor advertises several colour spaces. `create_swapchain()`
+notes whether any pair is HDR10 (`g_surface_hdr10`, read by `gfx_surface_hdr10()`). The query is made again
 on VK_INCOMPLETE: the available list may grow between the count and data calls.
 
 ### `create_swapchain()`

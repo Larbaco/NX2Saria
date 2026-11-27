@@ -39,9 +39,9 @@ static inline int pt_settled(float x, float last_x, float units) {
 typedef struct { uint16_t index, parent; } PtLink;
 
 static const PtLink PT_SYSTEM_TREE[] = {{1, 0}, {2, 1}, {3, 2}, {4, 2}, {8, 2}, {12, 2}};
-static const PtLink PT_CATEGORY_TREE[] = {{1, 0}, {2, 1}, {3, 2}, {4, 3}, {5, 3}, {6, 1}};
+static const PtLink PT_CATEGORY_TREE[] = {{1, 0}, {2, 1}, {3, 2}, {4, 3}, {5, 3}, {6, 1}, {7, 6}};
 static const PtLink PT_OVERLAY_TREE[] = {{7, 5}, {8, 7}, {9, 7}, {10, 7}, {11, 7}, {12, 5}, {13, 12}, {14, 12}};
-enum { PT_SYSTEM_INOUT = 2, PT_CATEGORY_BG = 3, PT_OVERLAY_FIRST_CATEGORY = 8, PT_OVERLAY_L = 13, PT_OVERLAY_R = 14 };
+enum { PT_SYSTEM_INOUT = 2, PT_CATEGORY_BG = 3, PT_CATEGORY_TEXT = 7, PT_OVERLAY_FIRST_CATEGORY = 8, PT_OVERLAY_L = 13, PT_OVERLAY_R = 14 };
 
 static inline int pt_tree_ok(const uint16_t *parents, int n, const PtLink *want, int wn) {
     for (int i = 0; i < wn; i++)
@@ -94,6 +94,18 @@ static inline int pt_find_trans(const float *panes[PT_MOVED], int words, int ski
         found = k;
     }
     return found;
+}
+
+static inline float pt_alpha_clamp(float a) { return !(a > 0.0f) ? 0.0f : a > 1.0f ? 1.0f : a; }
+
+static inline float pt_chain_alpha(const float *alpha, const uint32_t *flags, int n) {
+    if (n <= 0 || !(flags[0] & 1u)) return 0.0f;
+    float a = pt_alpha_clamp(alpha[0]);
+    for (int i = 1; i < n; i++) {
+        if (!(flags[i] & 1u)) return 0.0f;
+        if (flags[i] & 8u) a *= pt_alpha_clamp(alpha[i]);
+    }
+    return a;
 }
 
 static inline void pt_five_box(const PtBox *last, PtBox *out) {

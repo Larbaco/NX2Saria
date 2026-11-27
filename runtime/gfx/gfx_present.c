@@ -21,6 +21,7 @@
 #include "ov.h"
 #include "platform/platform.h"
 #include "ui/menu.h"
+#include "ui/pause_tab.h"
 #include "vk.h"
 #include "vk_mesh_fb.h"
 #include "vk_fg.h"
@@ -98,6 +99,10 @@ void gfx_window_focus_changed(int in) {
     }
 }
 
+static volatile int32_t g_surface_hdr10;
+
+int gfx_surface_hdr10(void) { return __atomic_load_n(&g_surface_hdr10, __ATOMIC_RELAXED); }
+
 static volatile uint32_t exit_tid;
 
 int rt_exit_begin(void) {
@@ -125,6 +130,7 @@ void rt_exit_steps(unsigned what) {
     changebank_hold_exit_log();
     camera_clearance_exit_log();
     cheats_exit_log();
+    pause_tab_exit_log();
     vk_exec_mfb_batch_exit_log();
     logq_flush();
     vk_pipeline_save_exit();
@@ -485,6 +491,9 @@ static int create_swapchain(void) {
         rt_log("gfx: the surface offers %u format and colour space pairs, all considered%s", nf,
                nf > 64 ? " (more than the 64 read before 0.21.1)" : "");
     }
+    int hdr10 = 0;
+    for (uint32_t i = 0; i < nf; i++) hdr10 |= fmts[i].colorSpace == VK_COLOR_SPACE_HDR10_ST2084_EXT;
+    plat_xchg32(&g_surface_hdr10, hdr10);
     VkSurfaceFormatKHR sf = fmts[0];
     g_sc_hdr_wanted = vk_hdr_wanted();
     int hdr = g_sc_hdr_wanted && vk_hdr_surface_format(fmts, nf, &sf), found = hdr;

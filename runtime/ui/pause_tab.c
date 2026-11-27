@@ -163,6 +163,17 @@ static int pane_shown(uint64_t p) {
     return 1;
 }
 
+static float pane_chain_alpha(uint64_t p) {
+    float alpha[49];
+    uint32_t flags[49];
+    int n = 0;
+    for (uint64_t a = p; a && n < 49; a = pane_parent(a)) {
+        if (!ok_at(a, PANE_STRIDE)) return 0.0f;
+        alpha[n] = rdf(a + PANE_ALPHA), flags[n] = rd32(a + PANE_FLAGS), n++;
+    }
+    return pt_chain_alpha(alpha, flags, n);
+}
+
 static int pane_box(uint64_t p, PtBox *b) {
     MmBox m;
     if (!ok_at(p, PANE_STRIDE) ||
@@ -304,6 +315,8 @@ static uint64_t category_layout(uint64_t cat) {
 
 static volatile int32_t g_five;
 static int g_five_failed, g_five_pending, g_trans = -1;
+enum { FIVE_NOT_SEEN, FIVE_TOOK, FIVE_PUT_BACK, FIVE_ELSEWHERE, FIVE_NO_OFFSET, FIVE_SHAPE };
+static volatile int32_t g_five_state;
 static uint64_t g_five_ms;
 
 int pause_tab_five(void) { return __atomic_load_n(&g_five, __ATOMIC_ACQUIRE); }
@@ -330,9 +343,11 @@ static int find_trans(const uint64_t p[PT_MOVED]) {
     for (int i = 0; i < PT_MOVED; i++) memcpy(words[i], (const void *)(uintptr_t)p[i], PANE_STRIDE), rows[i] = words[i];
     int k = pt_find_trans(rows, PANE_STRIDE / 4, PANE_MTX / 4, PANE_SIZE / 4);
     if (k >= 0) rt_log("pause_tab: the header panes' own position found at +%#x (the game's x and y in all six)", k * 4);
-    else
+    else {
+        __atomic_store_n(&g_five_state, FIVE_NO_OFFSET, __ATOMIC_RELAXED);
         rt_log("pause_tab: the header panes' own position %s: the four categories keep their places and the tab stands "
                "after the R icon", k == -2 ? "is at more than one place" : "was not found");
+    }
     return k >= 0 ? k * 4 : -1;
 }
 
@@ -342,6 +357,7 @@ static void respace(uint64_t s, uint64_t cats, int want) {
     if (g_five_failed) return;
     if (!moved_panes(s, cats, p)) {
         g_five_failed = 1;
+        __atomic_store_n(&g_five_state, FIVE_SHAPE, __ATOMIC_RELAXED);
         rt_log("pause_tab: the header's panes are not the ones this tab knows: the four categories keep their places "
                "and the tab stands after the R icon");
         return;
@@ -362,6 +378,7 @@ static void respace(uint64_t s, uint64_t cats, int want) {
         g_five_failed = 1;
         if (__atomic_load_n(&g_five, __ATOMIC_ACQUIRE)) place(p, PT_GAME_X);
         __atomic_store_n(&g_five, 0, __ATOMIC_RELEASE);
+        __atomic_store_n(&g_five_state, FIVE_ELSEWHERE, __ATOMIC_RELAXED);
         rt_log("pause_tab: the header's panes are at x %.1f %.1f %.1f %.1f, L %.1f, R %.1f (y %.1f, %.1f), not where the "
                "game or this tab puts them: they are left alone and the tab stands after the R icon",
                (double)x[0], (double)x[1], (double)x[2], (double)x[3], (double)x[4], (double)x[5], (double)y[3],
@@ -384,10 +401,12 @@ static void respace(uint64_t s, uint64_t cats, int want) {
         float cx = pane_box(p[3], &b) ? (b.x0 + b.x1) * 0.5f : 1e9f;
         if (fabsf(cx - PT_FIVE_X[3]) < 3.0f && !pause_tab_test("nofive")) {
             __atomic_store_n(&g_five, 1, __ATOMIC_RELEASE);
+            __atomic_store_n(&g_five_state, FIVE_TOOK, __ATOMIC_RELAXED);
             rt_log("pause_tab: the header's new places took effect (the System category's centre at x %.1f)", (double)cx);
         } else {
             place(p, PT_GAME_X);
             g_five_failed = 1;
+            __atomic_store_n(&g_five_state, FIVE_PUT_BACK, __ATOMIC_RELAXED);
             float f[10];
             memcpy(f, (const void *)(uintptr_t)(p[3] + PANE_SIZE), sizeof f);
             rt_log("pause_tab: the header's new places did not take effect%s (the System category's centre at x %.1f, "
@@ -449,7 +468,8 @@ static int header_tick(uint64_t s) {
                shape ? "found" : "not found: it stays while the tab is open");
     plat_mutex_lock(&g_lock);
     memcpy(g_view.tab, out, sizeof out);
-    g_view.alpha = shown ? 1.0f : 0.0f;
+    uint64_t text = shape ? pane_at(last_lyt, PT_CATEGORY_TEXT) : 0;
+    g_view.alpha = shown ? pane_chain_alpha(text ? text : host[1]) : 0.0f;
     g_header_ms = shown ? now : g_header_ms;
     plat_mutex_unlock(&g_lock);
     return 1;
@@ -501,11 +521,21 @@ static volatile uint64_t g_click_ms;
 
 void pause_tab_click_wanted(void) { __atomic_store_n(&g_click_ms, plat_now_ms(), __ATOMIC_RELEASE); }
 
+static volatile int32_t g_opened_r, g_opened_click, g_applies, g_changes, g_more_times;
+static const char *const CLOSE_WHY[] = {"L", "B", "Plus", "Apply", "Discard", "More settings"};
+enum { CLOSE_KINDS = sizeof CLOSE_WHY / sizeof *CLOSE_WHY };
+static volatile int32_t g_closed[CLOSE_KINDS + 1];
+
 void pause_tab_set_open(int open, const char *why) {
     static int lines;
     int was = plat_xchg32(&g_open, open);
     if (!open) plat_xchg32(&g_req, 0);
     if (was == open) return;
+    if (!open) {
+        int k = 0;
+        while (k < CLOSE_KINDS && strcmp(why ? why : "", CLOSE_WHY[k])) k++;
+        __atomic_add_fetch(&g_closed[k], 1, __ATOMIC_RELAXED);
+    }
     uint64_t now = plat_now_ms();
     if (open) g_open_ms = now;
     if (lines++ < 64) {
@@ -516,6 +546,8 @@ void pause_tab_set_open(int open, const char *why) {
 
 void pause_tab_applied(int changes, const char *list) {
     static int lines;
+    __atomic_add_fetch(&g_applies, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&g_changes, changes, __ATOMIC_RELAXED);
     if (lines++ < 32) rt_log("pause_tab: Apply from the tab: %d change(s): %s", changes, list && *list ? list : "none");
 }
 
@@ -553,6 +585,7 @@ void pause_tab_poll(uint64_t *buttons) {
     if (click && !opened) {
         static int lines;
         if (lines++ < 32) rt_log("pause_tab: a click on the tab: the tab opens");
+        __atomic_add_fetch(&g_opened_click, 1, __ATOMIC_RELAXED);
         plat_xchg32(&g_req, 1);
     }
     __atomic_store_n(&held, swallow, __ATOMIC_RELAXED);
@@ -560,7 +593,42 @@ void pause_tab_poll(uint64_t *buttons) {
     if (opened) {
         static int lines;
         if (lines++ < 32) rt_log("pause_tab: R on the System tab: the tab opens");
+        __atomic_add_fetch(&g_opened_r, 1, __ATOMIC_RELAXED);
         plat_xchg32(&g_req, 1);
     }
     plat_xchg32(&busy, 0);
+}
+
+void pause_tab_more(int open, uint64_t ms) {
+    static int lines;
+    if (lines++ >= 32) return;
+    if (open) {
+        __atomic_add_fetch(&g_more_times, 1, __ATOMIC_RELAXED);
+        rt_log("pause_tab: more settings: the settings menu opens on its Controls tab over the paused game; the tab gives "
+               "the System tab's page back under it");
+        return;
+    }
+    uint64_t seen = plat_now_ms() - g_page_ms;
+    rt_log("pause_tab: more settings: the settings menu closed after %llu ms; %s", (unsigned long long)ms,
+           g_page_ms && seen < SEEN_MS ? "the pause menu is still open under it, the game still paused"
+                                       : "the pause menu is not seen any more (the game closed it meanwhile)");
+}
+
+void pause_tab_exit_log(void) {
+    static const char *const header[] = {
+        "never shown", "in five places", "put back (the new places did not take)",
+        "left alone (its panes not where the game puts them)", "left alone (the panes' own position not found)",
+        "left alone (its panes not the ones this tab knows)"};
+    if (!pause_tab_on()) return;
+    int r = __atomic_load_n(&g_opened_r, __ATOMIC_RELAXED), c = __atomic_load_n(&g_opened_click, __ATOMIC_RELAXED);
+    int st = __atomic_load_n(&g_five_state, __ATOMIC_RELAXED);
+    if (st < 0 || st > FIVE_SHAPE) st = FIVE_NOT_SEEN;
+    char closed[200];
+    int at = 0;
+    for (int k = 0; k <= CLOSE_KINDS && at < (int)sizeof closed; k++)
+        at += snprintf(closed + at, sizeof closed - (size_t)at, "%s%s %d", k ? ", " : "", k < CLOSE_KINDS ? CLOSE_WHY[k] : "other",
+                       __atomic_load_n(&g_closed[k], __ATOMIC_RELAXED));
+    rt_log("pause_tab: session: the tab opened %d time(s) (R %d, a click %d); closed by %s; %d Apply with %d change(s); "
+           "More settings %d; the header %s", r + c, r, c, closed, __atomic_load_n(&g_applies, __ATOMIC_RELAXED),
+           __atomic_load_n(&g_changes, __ATOMIC_RELAXED), __atomic_load_n(&g_more_times, __ATOMIC_RELAXED), header[st]);
 }
