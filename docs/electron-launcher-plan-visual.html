@@ -37,8 +37,8 @@
 <li><strong>Dispositivos e idiomas.</strong> Você pode revisar os quatro idiomas e testar o foco com controle, o Game Mode do Steam Deck e o Steam Flatpak onde tiver acesso? A recomendação é registrar cada ambiente testado.</li>
 </ul></article>
 <article class="card"><h3>Posso fazer sem ele</h3><ol>
-<li>Colocar a janela Electron nativa do Windows no CI com uma instalação descartável, um jogo sintético e conferência da trava após fechar ou matar o launcher.</li>
-<li>Preparar cenários com um shell falso para prontidão, estouro de prazo e interrupção, e verificar o que o CI permite provar sobre o sandbox no Linux.</li>
+<li>A janela Electron nativa do Windows passou no CI 45915629836 com uma instalação descartável. A trava foi liberada ao matar a janela ociosa. Durante o jogo sintético, a segunda janela encontrou a trava ocupada até o fim do jogo.</li>
+<li>Preparar cenários com um shell falso: o worker pronto com a janela ainda bloqueada, falha imediata, prazo excedido, interrupção antes e depois da troca, executável anterior aberto no Windows e escolha explícita do Tk. O teste local com o Electron real já confirmou o filtro seccomp do renderer. O CI repete o teste em Linux quando o runner permite namespaces de usuário.</li>
 <li>Conferir o inventário com o CI e os logs existentes e preparar os testes restantes de rollback e plataformas.</li>
 </ol></article>
 </div></section>

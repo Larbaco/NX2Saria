@@ -40,7 +40,7 @@ Each entry stays open until implementation and the required verification are com
 - [ ] Startup: discover current and legacy installations, paths, state, settings and interrupted work; useful errors and recovery. Node tests cover current and legacy default paths, and owner sessions confirmed automatic detection on both platforms. The standalone Windows registry fallback and the explicit root argument are implemented. Electron launcher tests run `45844664530` passed the native Windows scratch-key test for Unicode and a stale value, and the Linux window tests for picker cancellation and explicit-root startup. The extracted private Linux package `4bbd8059` passed default and explicit startup with the published 0.27.0-rc.4 runtime. The corresponding Windows ZIP passed archive checks, and the native notebook session verified window startup, default detection, the saved theme and writes to Hide While Playing. Play on this package remains an owner check. In the manual picker, cancelling keeps the existing selection, its lock and any open settings panel. Only a confirmed folder choice can replace the current worker. The Linux locale window fixture checks this with an active installation.
 - [ ] First run: dump and game-folder selection, detection, shortcuts, update channel and preferences, prerequisites, validation and disk/path constraints. The Linux Electron first-run test covers both proposals, preserving them on cancel or rejection, and both worker tests verify that settings stay unchanged. The Windows and Linux worker tests exercise the install request with a stand-in task. The Linux Electron window test covers progress, cancel, retry and a return to a playable screen. Background dump search proposes the newest valid result and preserves a manual choice. Worker tests use an isolated search directory, and the Linux window test displays the discovered file. The first-run preferences use the existing update settings and Windows shortcut. The first-run requirements check reports missing runtime support or Linux build tools. First installation without the app/runtime and owner validation remain open.
 - [ ] Build: tool downloads, extraction, validation, build and rebuild, progress and logs, cancellation, retry, interruption recovery and existing executable protection. First run calls the existing InstallJob. The worker test refuses low space and a playable destination without rewriting settings or the executable, and waits for the job marker to be cleared on success. The Linux window test cancels and retries with a stand-in job. Manual Rebuild uses the existing RebuildJob. A synthetic worker case proves refusal while the old marker exists, completion after cleanup, honoring the cache setting and leaving the last executable untouched. The Linux window visits the ready screen after an explicit Rebuild without automatically starting Play. The interrupted-build cases below prove wait, stop, stale and reused process identities, unreadable markers and recovery by Tk. A complete build of the real game remains owner validation.
-- [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. Real checks for the latest changes remain open.
+- [ ] Play: launch and exit handling, errors, hide/restore behavior, game process/restart tracking and logging. The worker test `test_native_game_restart_retains_the_play_session_and_lock` confirms one session, a busy second worker while the replacement process lives, and the replacement's final exit code. It passed on Linux and Windows in the Electron launcher tests run `45703680179`. The development window in run `45915629836` confirmed on native Windows and Linux that killing the launcher while idle releases the lock, while killing it during a synthetic game leaves the worker and game alive. A second window observes the same running game and reports busy, then a new window takes the lock after the fixture ends. Real checks for the latest changes remain open.
 - [ ] Updates: check and channels, notes, staged/background downloads, integrity checks, automatic/manual settings, switch, rebuild, cancellation, failed or interrupted update and rollback; never replace a running game. In the persistent-worker Play milestone, the worker only detects and logs a waiting update, reports it in the handshake and after the game, and leaves all staged files untouched. The interface directs the player to the installed launcher to apply it. The next manual check uses the selected feed and channel, shows bounded release notes, and has loopback worker and Linux Electron tests. Automatic metadata checks follow the Tk start, post-install and hourly due conditions. Electron launcher tests run `45915051994` passed the loopback worker cases on Linux and Windows and the availability notice in a Linux Electron window. Staging and application, rebuild after update, handover and rollback remain open.
 - [ ] Migration: current and legacy names, settings, game location, saves, profiles, mods, Steam shortcuts and desktop entries; handover and recovery on Windows and Linux.
 - [x] Saves: export, optional logs/settings, import from archive or folder, validation, backups and recovery. The synthetic worker passed in the Linux and Windows jobs of Electron launcher tests run `45759008861`. The Linux Electron window verifies picker cancellation, both source types and restoring the backup. The portable package `f53b2481` also passed export, import and backup creation with the published runtime. All automated scenarios use scratch saves.
@@ -837,6 +837,44 @@ handshake and window readiness are committed. Starting Tk explicitly leaves the 
 failed startup resets the streak and retains the previous shell. Prune the previous shell after three
 consecutive successful starts of its replacement, once no process uses the previous digest and no
 activation is pending. Keep a runnable Tk fallback for older apps that may still be selected by app rollback.
+
+#### Synthetic activation acceptance cases
+
+Use the normal Python entry point reached by the installed stub or wrapper, a disposable
+root and a fake shell process. Start the fake process with one of four controlled behaviors:
+worker and window ready, worker ready with the window still blocked, immediate failure, or
+no readiness signal. Synchronize on the fake process's explicit checkpoints. Use an injected
+deadline for timeout tests rather than sleeping through a production timeout. Inspect the
+selected shell, journals, logs and protected files through the installation root.
+
+1. Start with an active shell and a staged candidate. Once the test observes worker readiness,
+   keep the window checkpoint blocked and check that the active shell is still selected.
+   Release the window checkpoint and verify one commit, one successful start and no Tk fallback.
+2. Have the fake shell fail immediately or hold the window checkpoint until the deadline.
+   Verify the previous selection, one Tk launch and distinct logged reasons. A second
+   startup must be free to obtain the installation lock.
+3. Kill the startup process after observing the pending activation, before window readiness.
+   Open the same scratch root again. Verify that the incomplete trial cannot commit,
+   the previous shell is usable and unresolved state is reported in the log. Repeat the
+   interruption immediately after the committed pointer changes and verify that the next
+   start does not count the completed trial twice.
+4. Hold the previous executable open across a Windows shell swap. Verify successful startup
+   of the unmodified candidate, no replacement in place and delayed pruning of the previous
+   digest. Once the previous shell exits, verify pruning only on the third successful start.
+5. Exercise both `--tk` and the saved Tk preference with a staged shell. Verify no candidate
+   spawn and no success count change. Across all cases compare the original reads of the
+   settings, saves, mods, and the game directory selection. Inspect app and runtime pointers,
+   and assert the launcher does not request the real release feed.
+
+These scenarios specify the test boundary while provisioning is awaiting approval. Synthetic
+coverage of pending activation and rollback will use the same entry points on both platforms.
+A sandbox failure case must record the reason and leave Tk usable. A CI namespace probe may
+help identify eligible Linux runners, but the sandbox check must use the actual Electron
+launch with the production flags. The development window test launches under Xvfb with Chromium's
+sandbox enabled, opens a disposable installation and checks the renderer's
+`NoNewPrivs` and seccomp filter in `/proc`. A local run verified both. The hosted
+test reports a skip if its runner blocks user namespaces. Fallback to Tk on a restricted
+distribution with the installed launcher remains open.
 
 ### 3. Existing installations and the first visible launch
 

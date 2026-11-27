@@ -6093,6 +6093,13 @@ On Linux, a fixture with an active release and an AppImage wrapper checks that t
 
 `tests/fixtures/worker_fake_game.c` can be cross-compiled to a Windows executable and passed as `NX2_TEST_FAKE_GAME` to the worker tests. It waits briefly and writes a marker in its temporary working directory; it does not contain or start the game. The Windows-only test uses the real native spawn and verifies that the stand-in finishes after the worker is killed.
 
+### Linux Electron sandbox
+
+`launcher-electron/ui-tests/sandbox-synthetic.cjs` launches the actual Electron renderer with
+Playwright's Chromium sandbox enabled. It opens a temporary first-run root under Xvfb and
+checks the window log and the renderer's Linux seccomp status. The CI step probes for
+unprivileged user namespaces first and reports a skip if the runner blocks them.
+
 ### Packaged launcher and parent-exit checks
 
 `launcher-electron/ui-tests/parent-synthetic.cjs` kills only the Electron main process against a temporary

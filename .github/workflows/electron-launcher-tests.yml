@@ -92,6 +92,15 @@ jobs:
             sudo apt-get install -y xvfb
           fi
           xvfb-run -a npm run test:ui
+      - name: Linux Electron sandbox
+        if: runner.os == 'Linux'
+        working-directory: launcher-electron
+        run: |
+          if unshare --user --map-root-user true; then
+            xvfb-run -a node ui-tests/sandbox-synthetic.cjs
+          else
+            echo 'Sandbox test skipped: the runner blocks unprivileged user namespaces.'
+          fi
       - name: Windows Electron window tests
         if: runner.os == 'Windows'
         working-directory: launcher-electron
