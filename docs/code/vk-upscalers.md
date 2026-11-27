@@ -2943,30 +2943,25 @@ Compares the operands of an OpName after the id.
 ### The SPIR-V numbers
 
 The file reads and writes SPIR-V words directly. The enum names its opcodes as the specification numbers them: OpName 5,
-OpLine 8, OpExtInstImport 11, OpExtInst 12, OpMemoryModel 14, OpEntryPoint 15, OpCapability 17, OpTypeBool 20, OpTypeInt
-21, OpTypeFloat 22, OpTypeVector 23, OpTypeMatrix 24, OpTypeStruct 30, OpTypePointer 32, OpTypeFunction 33,
-OpConstantTrue 41, OpConstantFalse 42, OpConstant 43, OpConstantComposite 44, OpConstantNull 46, OpFunction 54,
-OpFunctionParameter 55, OpFunctionEnd 56, OpFunctionCall 57, OpVariable 59, OpLoad 61, OpStore 62, OpAccessChain 65,
-OpDecorate 71, OpMemberDecorate 72, OpVectorShuffle 79, OpCompositeConstruct 80, OpCompositeExtract 81,
-OpCompositeInsert 82, OpFAdd 129, OpFMul 133, OpFDiv 136, OpLoopMerge 246, OpSelectionMerge 247, OpLabel 248,
-OpBranchConditional 250, OpSwitch 251, OpNoLine 317. With them: the decoration Offset 35, the storage classes Uniform 2,
-Output 3 and Function 7, the capability Shader 1, and GLSL.std.450's FMax 40, FClamp 43, Fma 50, NMax 80 and NClamp 81.
+OpLine 8, OpExtInstImport 11, OpExtInst 12, OpMemoryModel 14, OpEntryPoint 15, OpCapability 17, OpTypeVoid 19,
+OpTypeBool 20, OpTypeInt 21, OpTypeFloat 22, OpTypeVector 23, OpTypeMatrix 24, OpTypeStruct 30, OpTypePointer 32,
+OpTypeFunction 33, OpTypeForwardPointer 39, OpConstantTrue 41, OpConstantFalse 42, OpConstant 43, OpConstantComposite
+44, OpConstantSampler 45, OpConstantNull 46, OpFunction 54, OpFunctionParameter 55, OpFunctionEnd 56, OpFunctionCall
+57, OpVariable 59, OpLoad 61, OpStore 62, OpCopyMemory 63, OpAccessChain 65, OpDecorate 71, OpMemberDecorate 72,
+OpVectorShuffle 79, OpCompositeConstruct 80, OpCompositeExtract 81, OpCompositeInsert 82, OpImageWrite 99, OpFAdd 129,
+OpFMul 133, OpFDiv 136, OpAtomicStore 228, OpLoopMerge 246, OpSelectionMerge 247, OpLabel 248, OpBranch 249,
+OpBranchConditional 250, OpSwitch 251, OpKill 252, OpReturn 253, OpReturnValue 254, OpUnreachable 255, OpNoLine 317.
+With them: the decoration Offset 35, the storage classes Input 1, Uniform 2, Output 3 and Function 7, the capability
+Shader 1, and GLSL.std.450's FMax 40, FClamp 43, Fma 50, NMax 80 and NClamp 81.
 
-The numbers the code holds bare:
+Where the code reads the ones that are not instructions it makes or looks for by name:
 
-| Number | What it is | Where |
-|---|---|---|
-| 1 | storage class Input | `tonemap_splice()`: a library variable that is an Input is left with main |
-| 19 to 39 | the type declarations, OpTypeVoid to OpTypeForwardPointer | `is_type_op()` |
-| 45 | OpConstantSampler, which is not taken as a constant | `is_const_op()` (41 to 46 without it) |
-| 63 | OpCopyMemory | `spv_literal()` gives up on it; `tonemap_splice()` leaves it out as an instruction without a result |
-| 99 | OpImageWrite | `tonemap_splice()`: no result |
-| 228 | OpAtomicStore | `tonemap_splice()`: no result |
-| 249 | OpBranch | `tonemap_splice()`, the library's functions: no result |
-| 252 | OpKill | the same |
-| 253 | OpReturn | the same |
-| 254 | OpReturnValue | the same, and in the game's function |
-| 255 | OpUnreachable | the same |
+- `is_type_op()`: the type declarations are the opcodes from OpTypeVoid to OpTypeForwardPointer.
+- `is_const_op()`: OpConstantTrue to OpConstantNull, but OpConstantSampler, which is not taken as a constant.
+- `spv_literal()` gives up on OpCopyMemory, as on OpSwitch, OpLine and OpNoLine.
+- `tonemap_splice()`: OpCopyMemory, OpImageWrite, OpAtomicStore and OpReturnValue are instructions without a result
+  in the game's function; in the library's functions OpBranch, OpKill, OpReturn, OpReturnValue and OpUnreachable are
+  too. A library variable that is an Input is left with main.
 
 A module's first five words are its header; word 3 is the id bound, one more than the largest id. An instruction's first
 word holds its length in words in the high 16 bits and its opcode in the low 16.

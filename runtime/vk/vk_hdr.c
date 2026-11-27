@@ -122,7 +122,10 @@ enum { SPV_OP_NAME = 5, SPV_OP_EXT_INST_IMPORT = 11, SPV_OP_EXT_INST = 12, SPV_O
        SPV_OP_VECTOR_SHUFFLE = 79, SPV_OP_COMPOSITE_CONSTRUCT = 80, SPV_OP_COMPOSITE_EXTRACT = 81,
        SPV_OP_COMPOSITE_INSERT = 82, SPV_OP_FADD = 129, SPV_OP_FMUL = 133, SPV_OP_FDIV = 136, SPV_OP_LOOP_MERGE = 246,
        SPV_OP_SELECTION_MERGE = 247, SPV_OP_LABEL = 248, SPV_OP_BRANCH_CONDITIONAL = 250, SPV_OP_SWITCH = 251,
-       SPV_OP_LINE = 8, SPV_OP_NO_LINE = 317, SPV_DEC_OFFSET = 35, SPV_SC_UNIFORM = 2, SPV_SC_OUTPUT = 3,
+       SPV_OP_TYPE_VOID = 19, SPV_OP_TYPE_FORWARD_POINTER = 39, SPV_OP_CONSTANT_SAMPLER = 45, SPV_OP_COPY_MEMORY = 63,
+       SPV_OP_IMAGE_WRITE = 99, SPV_OP_ATOMIC_STORE = 228, SPV_OP_BRANCH = 249, SPV_OP_KILL = 252, SPV_OP_RETURN = 253,
+       SPV_OP_RETURN_VALUE = 254, SPV_OP_UNREACHABLE = 255, SPV_OP_LINE = 8, SPV_OP_NO_LINE = 317, SPV_DEC_OFFSET = 35,
+       SPV_SC_INPUT = 1, SPV_SC_UNIFORM = 2, SPV_SC_OUTPUT = 3,
        SPV_SC_FUNCTION = 7, SPV_CAP_SHADER = 1, GLSL_FMA = 50, GLSL_FMAX = 40, GLSL_FCLAMP = 43, GLSL_NMAX = 80,
        GLSL_NCLAMP = 81 };
 
@@ -198,7 +201,7 @@ static int spv_literal(uint32_t op, uint32_t j) {
     case SPV_OP_TYPE_INT: case SPV_OP_TYPE_FLOAT: return j >= 2;
     case SPV_OP_TYPE_VECTOR: case SPV_OP_TYPE_MATRIX: return j == 3;
     case SPV_OP_TYPE_POINTER: return j == 2;
-    case SPV_OP_SWITCH: case SPV_OP_LINE: case SPV_OP_NO_LINE: case 63: return -1;
+    case SPV_OP_SWITCH: case SPV_OP_LINE: case SPV_OP_NO_LINE: case SPV_OP_COPY_MEMORY: return -1;
     default: return 0;
     }
 }
@@ -233,8 +236,10 @@ static int put_mapped(SpvOut *o, const uint32_t *ins, const uint32_t *map, uint3
     return 1;
 }
 
-static int is_type_op(uint32_t op) { return op >= 19 && op <= 39; }
-static int is_const_op(uint32_t op) { return op >= SPV_OP_CONSTANT_TRUE && op <= SPV_OP_CONSTANT_NULL && op != 45; }
+static int is_type_op(uint32_t op) { return op >= SPV_OP_TYPE_VOID && op <= SPV_OP_TYPE_FORWARD_POINTER; }
+static int is_const_op(uint32_t op) {
+    return op >= SPV_OP_CONSTANT_TRUE && op <= SPV_OP_CONSTANT_NULL && op != SPV_OP_CONSTANT_SAMPLER;
+}
 
 typedef struct { const uint32_t *w, *def, *sval; const uint8_t *cls, *scnt; uint32_t bound, glsl; } SpvView;
 
@@ -391,8 +396,8 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         if (op == SPV_OP_VARIABLE && len >= 4 && a[1] < bound) def[a[1]] = (uint32_t)i;
         else if (first_fn && len >= 3 && a[1] < bound && !def[a[1]] && op != SPV_OP_STORE && op != SPV_OP_LABEL &&
                  op != SPV_OP_SELECTION_MERGE && op != SPV_OP_LOOP_MERGE && op != SPV_OP_BRANCH_CONDITIONAL &&
-                 op != SPV_OP_SWITCH && op != 63 && op != 99 &&
-                 op != 228 && op != 254)
+                 op != SPV_OP_SWITCH && op != SPV_OP_COPY_MEMORY && op != SPV_OP_IMAGE_WRITE &&
+                 op != SPV_OP_ATOMIC_STORE && op != SPV_OP_RETURN_VALUE)
             def[a[1]] = (uint32_t)i;
         i += len;
     }
@@ -539,7 +544,7 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         } else if (is_const_op(op)) {
             map[a[1]] = id++;
             if (!put_mapped(&g, L + i, map, lbound)) goto lib_fail;
-        } else if (op == SPV_OP_VARIABLE && a[2] != 1 && a[2] != SPV_SC_OUTPUT) {
+        } else if (op == SPV_OP_VARIABLE && a[2] != SPV_SC_INPUT && a[2] != SPV_SC_OUTPUT) {
             goto lib_fail;
         }
         i += len;
@@ -569,8 +574,8 @@ static int tonemap_splice(uint32_t **spirv, uint64_t *words) {
         uint32_t op = L[i] & 0xffff, len = L[i] >> 16, r;
         switch (op) {
         case SPV_OP_STORE: case SPV_OP_SELECTION_MERGE: case SPV_OP_LOOP_MERGE: case SPV_OP_BRANCH_CONDITIONAL:
-        case 249: case 253: case 254: case SPV_OP_FUNCTION_END:
-        case 252: case 255:
+        case SPV_OP_BRANCH: case SPV_OP_RETURN: case SPV_OP_RETURN_VALUE: case SPV_OP_FUNCTION_END:
+        case SPV_OP_KILL: case SPV_OP_UNREACHABLE:
             continue;
         case SPV_OP_LABEL: r = len >= 2 ? L[i + 1] : 0; break;
         default: r = len >= 3 ? L[i + 2] : 0; break;
