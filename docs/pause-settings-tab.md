@@ -7,16 +7,24 @@ they are. The implementation notes: [code/ui.md](code/ui.md), `runtime/ui/pause_
 
 ## What the player sees
 
-- The tab's name after the System tab's, between the game's R icon and the rupee counter: "NX2Saria" (`pause_settings_tab_name = product`, the
+- The header in five places: the game's four categories move closer together (x -840, -420, 0, 420 instead of -690,
+  -230, 230, 690) and L and R a little outwards, and the tab takes the fifth place, after System and before R. The
+  Minus menu's header keeps the game's places. If the header's panes are not where the game puts them, or the move
+  does not take, they stay or go back and the tab stands after the R icon instead.
+- The tab's name: "NX2Saria" (`pause_settings_tab_name = product`, the
   default), or the menu language's "Settings" (`pause_settings_tab_name = settings`; English where the menu has no
   translation). It shows only while the pause menu's header shows its four categories, so never in the Minus menu.
-- R on the System tab opens it, and so does a click on its name while the System tab is shown. The System tab's page
+- R on the System tab opens it, and so does a click on its name: from the System tab at once, from another tab after
+  the mouse in the menus walked there. The System tab's page
   is hidden and the Picture rows are drawn in its place; the name gets the selected tab's plate and the System
   category gives up its own.
 - L, B or Plus closes it. With changes in the draft the box "Apply your changes?" asks first, as the settings menu
   does when it is left. The System tab's page comes back.
-- The rows are the settings menu's own: the frame limit, VSync, the upscaler, frame generation, sharpening and
-  anisotropic filtering. A row whose setting takes a restart says so, as in the settings menu.
+- The rows are the settings menu's own, in groups: Picture (the frame limit, VSync, the upscaler, frame generation,
+  sharpening, anisotropic filtering) Sound (the volume, the menu sounds' volume, the channels) and Controls (the mouse, the gamepad's layout and prompts, sprint,
+  vibration, the gyro, the sticks; the button bindings stay in the settings menu) and Game (the language, the operation
+  mode, playing in the background, the message speed, the amiibo daily limit, Discord; the saves, the testing rows and
+  the debug menu stay in the settings menu). A row whose setting takes a restart says so, as in the settings menu.
 
 ## What the game has (1.1.1)
 
@@ -44,7 +52,8 @@ more page animations, and new states in the AINB sequence, which this port can o
 the native tab; this one is the first step.
 
 So the tab changes no file of the game and patches no game code. It reads the pause menu and its System page through
-the screens' site (`main+0x2d13b0`, the sets `menu_mouse` and `quit_menu`), and writes two bits while it is open:
+the screens' site (`main+0x2d13b0`, the sets `menu_mouse` and `quit_menu`), moves six panes of the header (their local
+x), and writes two bits while it is open:
 the shown bit of the System page's `N_InOut_00` (the pane the game fades out with `InContent` when its Options
 opens; the game never sets that bit itself) and the one of the System category's plate, `N_Bg_00`. Both are set
 again when the tab closes. With `pause_settings_tab = 0` nothing is read or written.
@@ -76,6 +85,10 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
   start, or `pause_tab: off ...` with the reason.
 - `pause_tab: the header's category 3 has no box ...` (at most 4 lines): the header could not be read, and the tab
   stands where the game's layout puts the categories; the System category then keeps its plate while the tab is open.
+- `pause_tab: the header panes' own position found at +0x..`, once, or `... was not found` and the old place.
+- `pause_tab: the header's categories moved to make room for a fifth (...)`, then `pause_tab: the header's new places
+  took effect (the System category's centre at x 420.0)`; `... back where the game puts them (the Minus menu's
+  header)`. If not: `... did not take effect (...)` or `the header's panes are at x ...`, once.
 - `pause_tab: header: the System category at x 490..890, the tab at 1054..1314 (layout units); its plate found`: once,
   the first time the header shows.
 - `pause_tab: R on the System tab: the tab opens` (or `a click on the tab`), `pause_tab: the tab opened`,
@@ -88,6 +101,7 @@ to the game there. A check that fails leaves R to the game: the worst case is a 
 
 `NX2SARIA_PAUSE_SETTINGS_TAB_TEST` takes words, for test runs only: `log` writes why R is or is not taken each time
 that changes (at most 120 lines); `screens` names each screen the screens' site runs for; `fail` makes the page fail to draw 30 frames after the tab opens, which closes it
-and gives the System page back. While the tab is open, `NX2SARIA_INPUT_SCRIPT` reaches its rows too.
+and gives the System page back. `nofive` takes the header's new places for not taken: they go back and the tab stands after
+the R icon, as when the game's panes do not move. While the tab is open, `NX2SARIA_INPUT_SCRIPT` reaches its rows too.
 `tests/pause_tab_check.py` checks the R press, the tab's place, the page's settling and the layouts' shape (with
 `--romfs`, against the game's own `PaSystemMenu_00`, `PaMenuCategory_00` and `MenuOverlay_00`).

@@ -931,7 +931,24 @@ reason, so `runtime/ui/pause_tab.c` shows the System page again.
 ### `pause_tab_rows()`
 
 The tab's page: the Picture rows of `tab_screen()` that a player looks for in a pause menu, with the same row functions,
-so their notes ("after restart", the disabled sharpening) are the settings menu's.
+so their notes ("after restart", the disabled sharpening) are the settings menu's; then the Sound tab's rows
+(`rows_sound()`) the Controls tab's without the bindings (`rows_controls()`) and the Game tab's (`rows_game()`), each under its
+tab's name as a group.
+
+### `rows_sound()`
+
+The Sound tab's rows, for the tab and for `tab_sound()`.
+
+### `rows_controls()`
+
+The Controls tab's rows without the bindings page (`binds_rows()`), whose cells wait for a press: for the pause menu's
+settings tab and for `tab_controls()`, which adds the bindings after them.
+
+### `rows_game()`
+
+The Game tab's rows a player looks for in a pause menu: the game's language, the operation mode, playing in the
+background, the message speed, the amiibo daily limit and Discord. The frame limit is in Picture; the saves'
+export and import (a file dialog), the testing rows and the debug menu stay in `tab_game()` only.
 
 ### `pause_tab_label()`
 
@@ -942,9 +959,11 @@ The tab's name: "NX2Saria", or `UI_MENU_PAUSE_TAB` with `pause_settings_tab_name
 The tab's name in the pause menu's header, on the background list, at the box `runtime/ui/pause_tab.c` `header_tick()`
 works out, in picture fractions turned into the window's pixels with `gfx_picture_rect()`. The plate runs from the
 picture's top down to 0.545 of the box's height below its centre (y 878 in layout units, where the game's plate ends),
-as wide as the box. The text is in the menu's first font, the game's own text face with the system's CJK glyphs
-merged (the title face drew "设置" thin and small), at 0.28 of the box's height, the game's category text size, and
-shrinks to fit 0.92 of the box's width ("Configurações").
+as wide as the text and a margin of half the box's height, at most the box. The text's centre is 0.06 of the box's
+height below the box's: on the bench the game's category names sit about 13 units lower than the box's centre. The text is in the menu's first font, the game's own text face with the system's CJK glyphs
+merged (the title face drew "设置" thin and small), at 0.28 of the box's height, the game's category text size (0.38 for a name with CJK characters, the UTF-8 lead
+bytes 0xe3 to 0xe9: on the bench the system's CJK face drew "设置" at two thirds of the game's "系统" at the same size), and
+shrinks to fit 0.94 of the box's width ("Configurações").
 
 ### `layout_pause_tab()`
 
@@ -1827,6 +1846,8 @@ label's font, NULL for the current one. True when selected: call `ImGui::EndTabI
 
 A tab's name in the game's pause menu header, drawn without a widget: the selected category's plate (`a` to `b`)
 behind it when `current`, the text centred on `text_at` with a soft shadow, in `font` at `font_px`, all at `alpha`.
+The text is drawn twice, the second a little to the right (`font_px / 36`, at least 0.6 px), for the weight of the
+game's category names.
 
 ## `runtime/ui/menu_skin.cpp`
 
@@ -2570,6 +2591,13 @@ presses (`busy`), and the others add the one held, if any.
 When there has been no menu for the mouse for `IDLE_MS` (gameplay, a movie, the overlay), the pointer goes and the
 camera takes the mouse.
 
+
+### `tab_at()`
+
+The tab row under the pointer: the game's four places (`runtime/ui/menu_mouse_geom.h` `mm_tab_at()`), or the five of
+the pause menu's settings tab while it has moved the header (`runtime/ui/pause_tab.c` `pause_tab_five()`,
+`runtime/ui/pause_tab_core.h` `pt_five_tab_at()`). A click on the settings tab walks to the System tab and asks
+`pause_tab_click_wanted()`.
 ## `runtime/ui/menu_mouse_geom.h`
 
 The arithmetic and the bookkeeping of the mouse in the 1.1.1 menus (`runtime/ui/menu_mouse.c`), kept free of the
@@ -2951,6 +2979,11 @@ The pause menu is open, shown, not blocked and its controller takes input; the f
 Lets go of the System page's layout. A page it hid gets its shown bit back first, if the pane still belongs to that
 layout and the layout is still `PaSystemMenu_00`.
 
+### `pause_tab_click_wanted()`
+
+A click on the tab's name from another page (`runtime/ui/menu_mouse.c` walks to the System tab): the next 4 s, the
+first time R would be taken the tab opens by itself.
+
 ### `plus_tick()`
 
 At the pause menu's update. Arms R when the focus is on a System page button and the page stands in the middle: its
@@ -2958,8 +2991,8 @@ part pane `Pa_System_00` (the host of the `PaSystemMenu_00` layout) at x within 
 update before (`pt_settled()`); at 21:9 with the wide menus the page that shows is also in the middle. While the tab is
 open it clears the shown bit of the page's `N_InOut_00`, if it was set, and sets it again once the tab closes; the
 layout found when arming is kept, checked against the pause menu's layout each update, so the bit is put back on the
-page it was taken from. The page box (`runtime/ui/pause_tab_core.h` `pt_page_box()`) goes to the picture with this
-screen's projection.
+page it was taken from. The page box (`runtime/ui/pause_tab_core.h` `pt_page_box()`, wider with the wide menus spread) goes to the
+picture with this screen's projection.
 
 ### `static_header()`
 
@@ -2971,10 +3004,29 @@ category's text is at y 1000, where `MenuOverlay_00` puts it.
 
 A category's layout: its +0x20 holds the layout's holder, whose +0x80 is the layout, as a screen's +0x28 does.
 
+### `pause_tab_five()`, `moved_panes()`, `place()`, `respace()`
+
+The header in five places, by moving the panes' own (local) position, which the game turns into the matrix at +0x28
+on its next update. Where that position lies in a pane is found, not assumed (`find_trans()`, `g_trans`): the one
+offset outside the matrix where all six panes hold the game's x and y (`runtime/ui/pause_tab_core.h`
+`pt_find_trans()`); none, or more than one, and the header is left alone. +0x60 holds 1.0 in all six on the bench (a
+scale), which the first guess took for the position: the check before writing refused it. While the fourth category is set shown (the Plus menu's header; the Minus
+menu clears that bit), the four categories go to x -840, -420, 0 and 420 and the L and R icons to -1100 and 1100
+(`runtime/ui/pause_tab_core.h` `PT_FIVE_X`), so the tab gets the fifth place at 840; with the bit clear they go back to
+the game's -690, -230, 230, 690 and -990, 990 (`PT_GAME_X`). The panes are the header layout's 8 to 11, 13 and 14,
+checked by shape (`PT_OVERLAY_TREE`) and against the categories' own part panes, and written only when all six are
+where the game or this tab puts them (and the fourth's y is 0, R's 2); with the bit clear, other places (the Minus
+menu's own, if it had them) are left alone and turn nothing off. 150 ms after a move the fourth category's box
+must be centred within 3 units of 420 (and `NX2SARIA_PAUSE_SETTINGS_TAB_TEST=nofive` must be off); otherwise
+everything goes back, the line says what the pane holds from +0x58,
+and the tab keeps the place after the R icon for the session (`g_five_failed`). `g_five` is read by
+`runtime/ui/menu_mouse.c` for its clicks on the tab row.
+
 ### `header_tick()`
 
-At the header's update (`MenuOverlay_00`). True when it could read the categories' boxes. A header with other than four categories gets no tab (one line). The tab's box follows the
-third and fourth categories' part panes (`pt_tab_box()`) and shows only while the fourth is shown with all its parents:
+At the header's update (`MenuOverlay_00`). True when it could read the categories' boxes. A header with other than four categories gets no tab (one line). The tab's box is the fifth place
+(`pt_five_box()`) once the header is in five places, else it follows the third and fourth categories' part panes
+(`pt_tab_box()`), and shows only while the fourth is shown with all its parents:
 the Plus menu's header, faded in. While the tab is open the fourth category's plate `N_Bg_00` loses its shown bit (the
 category is drawn as not selected), and gets it back when it closes.
 
@@ -3014,8 +3066,14 @@ The parts of the tab that need neither the game's memory nor the runtime, so `te
 - `pt_name_kind()`: `product` (and unset) or `settings`; anything else is the product's name, said in the start line.
 - `pt_header_boxes()`: the third and fourth categories of `MenuOverlay_00` in layout units (x 30..430 and 490..890,
   y 888..1112), for the tab's place when the header object is not found.
-- `pt_page_box()`: the page's box in layout units, under the header's plate and over the footer: x -1560..1560,
-  y -780..430 (the System page's buttons run from 428 down to -606).
+- `pt_page_box()`: the page's box in layout units, under the header's plate (its bottom at 382) and over the footer's
+  guides (their top at -939): x -1560..1560, y -880..410. With the wide menus spread (`wide_menus = full`, the default)
+  it grows by the picture's extra units `u` on each side, as the game's pages do (`runtime/patches/wide_hud.c`).
+- `PT_GAME_X`, `PT_FIVE_X`, `pt_spacing()`: the x of the four categories, L and R as the game has them and in five
+  places, and which of the two a reading is (within half a unit), or neither. `pt_five_box()`: the fifth place, x
+  670..1010, between the moved System category and R. `pt_five_tab_at()`: a click on the tab row in five places: the
+  four categories, L (x below -1040), R (above 1040) and the tab (`PT_TAB_SETTINGS`). `PT_OVERLAY_TREE`: the parents of
+  the header panes moved (the categories under `N_MenuChange_00`, the icons under `N_InOut_01`).
 
 ## `runtime/ui/binds_page.h`
 

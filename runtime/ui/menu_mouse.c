@@ -12,6 +12,8 @@
 #include "input_wsys.h"
 #include "layout.h"
 #include "menu_mouse_geom.h"
+#include "pause_tab.h"
+#include "pause_tab_core.h"
 #include "platform/platform.h"
 
 #define UI_SYSTEM 0x4e982e0ull
@@ -158,6 +160,8 @@ static int pause_page_of(uint64_t entry) {
     }
     return -1;
 }
+
+static int tab_at(float x, float y) { return pause_tab_five() ? pt_five_tab_at(x, y) : mm_tab_at(x, y); }
 
 static int screen_units(uint64_t s, float *ux, float *uy) { return mm_units(rdf(s + SCR_PROJ), rdf(s + SCR_PROJ + 0x14), ux, uy); }
 
@@ -384,7 +388,7 @@ void menu_mouse_screen_host(Cpu *c) {
         tab_log("left for the player's d-pad, stick, L or R at", tab_goal, page), tab_goal = -1;
     float tx = 0, ty = 0;
     if (pos) mm_to_layout(px, py, ux, uy, &tx, &ty);
-    int on_tabs = pause && pos && mm_tab_at(tx, ty) >= 0;
+    int on_tabs = pause && pos && tab_at(tx, ty) >= 0;
     if (pause) {
         int cur = pause_page_of(focused);
         if (cur != page) {
@@ -429,8 +433,12 @@ void menu_mouse_screen_host(Cpu *c) {
     int i = mm_pick(ent.box, ent.n, x, y);
     if (i < 0 && pause && !on_tabs) i = mm_pick_near(ent.box, ent.n, x, y, NEAR_UNITS);
     if (i < 0 && click_l && on_tabs) {
-        int tab = mm_tab_at(x, y);
+        int tab = tab_at(x, y);
         st.tabs++;
+        if (tab == PT_TAB_SETTINGS) {
+            pause_tab_click_wanted();
+            tab = 3;
+        }
         if (tab == MM_TAB_L || tab == MM_TAB_R) mm_queue(pending, tab == MM_TAB_L ? MM_L : MM_R, 1), tab_goal = -1;
         else if (page < 0) tab_log("clicked, the page now not known for", tab, page), tab_goal = -1;
         else if (tab != page) tab_goal = tab, tab_ms = now, step_ms = 0, tab_log("clicked", tab, page);

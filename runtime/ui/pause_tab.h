@@ -15,6 +15,8 @@ typedef struct {
 } PauseTabView;
 
 int pause_tab_on(void);
+int pause_tab_five(void);
+void pause_tab_click_wanted(void);
 int pause_tab_test(const char *word);
 int pause_tab_name_kind(void);
 void pause_tab_poll(uint64_t *buttons);

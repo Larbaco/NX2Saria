@@ -62,6 +62,23 @@ def check_romfs(folder):
     if cats != [f'Pa_Category_{i:02d}' for i in range(4)]:
         print(f'FAIL: MenuOverlay_00 has the categories {cats}, not four')
         fails += 1
+    if over:
+        for idx, parent in tree_of(header, 'PT_OVERLAY_TREE'):
+            if over.panes[idx].parent != parent:
+                print(f'FAIL: MenuOverlay_00 pane {idx} has the parent {over.panes[idx].parent}, not {parent}')
+                fails += 1
+        text = header.read_text(encoding='utf-8')
+        start = text.index('PT_GAME_X[PT_MOVED] = {') + len('PT_GAME_X[PT_MOVED] = {')
+        game_x = [float(v.rstrip('f')) for v in text[start:text.index('}', start)].split(',')]
+        moved = [over.panes[8 + i] for i in range(4)] + [over.panes[13], over.panes[14]]
+        want = ['Pa_Category_00', 'Pa_Category_01', 'Pa_Category_02', 'Pa_Category_03', 'T_BtnL_00', 'T_BtnR_00']
+        for pane, name, x in zip(moved, want, game_x):
+            if pane.name != name or abs(pane.x - x) > 0.01:
+                print(f'FAIL: MenuOverlay_00 pane {pane.index} is {pane.name} at x {pane.x}, not {name} at {x}')
+                fails += 1
+        if abs(over.panes[11].y) > 0.01 or abs(over.panes[14].y - 2) > 0.01:
+            print(f'FAIL: the System category at y {over.panes[11].y} and R at {over.panes[14].y}, not 0 and 2')
+            fails += 1
     print(f"pause_tab_check: the game's layouts {'differ' if fails else 'match'} (PaSystemMenu_00, PaMenuCategory_00, "
           'MenuOverlay_00)')
     return fails

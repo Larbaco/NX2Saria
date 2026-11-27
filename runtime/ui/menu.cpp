@@ -1529,9 +1529,7 @@ static void rows_saves(void) {
     if (line[0]) opt_text_str(line, warn);
 }
 
-static void tab_game(float scale) {
-    opt_begin("##game", scale);
-    row_fps_limit();
+static void rows_game(void) {
     row_game_lang();
     static const UiTextId mode[] = {UI_MENU_MODE_DOCKED, UI_MENU_MODE_HANDHELD};
     opt_choice("NX2SARIA_OPERATION_MODE", UI_MENU_OPERATION_MODE, mode, 2, UI_MENU_OPERATION_MODE_DESC);
@@ -1543,6 +1541,12 @@ static void tab_game(float scale) {
     if (amiibo_daily_available())
         opt_toggle("NX2SARIA_AMIIBO_DAILY_LIMIT", UI_MENU_AMIIBO_DAILY_LIMIT, UI_MENU_AMIIBO_DAILY_LIMIT_DESC);
     opt_toggle("NX2SARIA_DISCORD_RPC", UI_MENU_DISCORD_RPC, UI_MENU_DISCORD_RPC_DESC);
+}
+
+static void tab_game(float scale) {
+    opt_begin("##game", scale);
+    row_fps_limit();
+    rows_game();
     rows_saves();
     opt_group_text("Testing");
     {
@@ -1572,12 +1576,16 @@ static void tab_game(float scale) {
     opt_end();
 }
 
-static void tab_sound(float scale) {
-    opt_begin("##sound", scale);
+static void rows_sound(void) {
     opt_slider("NX2SARIA_VOLUME", UI_MENU_VOLUME, 0, 100, UI_MENU_VOLUME_DESC, 5, "%.0f %%");
     opt_slider("NX2SARIA_MENU_SOUND_VOLUME", UI_MENU_MENU_SOUNDS, 0, 100, UI_MENU_MENU_SOUNDS_DESC, 5, "%.0f %%");
     static const UiTextId channels[] = {UI_MENU_CHANNELS_AUTO, UI_MENU_CHANNELS_STEREO, UI_MENU_CHANNELS_51};
     opt_choice("NX2SARIA_AUDIO_CHANNELS", UI_MENU_AUDIO_CHANNELS, channels, 3, UI_MENU_AUDIO_CHANNELS_DESC);
+}
+
+static void tab_sound(float scale) {
+    opt_begin("##sound", scale);
+    rows_sound();
     opt_end();
 }
 
@@ -2129,8 +2137,7 @@ static void rows_gyro(void) {
     opt_toggle("NX2SARIA_GYRO_TILT_INVERT", UI_MENU_GYRO_TILT_INVERT, UI_MENU_GYRO_TILT_INVERT_DESC);
 }
 
-static void tab_controls(float scale) {
-    opt_begin("##controls", scale);
+static void rows_controls(void) {
     if (input_direct_mouse_available()) {
         static const UiTextId mouse_mode[] = {UI_MENU_MOUSE_STICK, UI_MENU_MOUSE_DIRECT};
         opt_choice("NX2SARIA_MOUSE_MODE", UI_MENU_MOUSE_MODE, mouse_mode, 2, UI_MENU_MOUSE_MODE_DESC);
@@ -2170,6 +2177,11 @@ static void tab_controls(float scale) {
     opt_slider("NX2SARIA_STICK_SENS", UI_MENU_STICK_SENS, 0.1f, 3, UI_MENU_STICK_SENS_DESC, 0.05f, "%.2f");
     row_walk_key();
     opt_slider("NX2SARIA_WALK_SCALE", UI_MENU_WALK_SCALE, 0.2f, 0.9f, UI_MENU_WALK_SCALE_DESC, 0.01f, "%.2f");
+}
+
+static void tab_controls(float scale) {
+    opt_begin("##controls", scale);
+    rows_controls();
     binds_rows(scale);
     opt_end();
     binds_after_page();
@@ -2224,6 +2236,11 @@ static void pause_tab_rows(void) {
     static const char *const aniso[] = {"game", "2", "4", "8", "16"};
     const char *aniso_names[] = {menu_text(UI_MENU_ANISO_GAME), "2x", "4x", "8x", "16x"};
     opt_choice_list("NX2SARIA_ANISO", UI_MENU_ANISO, aniso, aniso_names, 5, UI_MENU_ANISO_DESC);
+    opt_group(UI_MENU_TAB_SOUND);
+    rows_sound();
+    opt_group(UI_MENU_TAB_CONTROLS);
+    rows_controls();    opt_group(UI_MENU_TAB_GAME);
+    rows_game();
 }
 
 static const char *pause_tab_label(void) {
@@ -2241,12 +2258,14 @@ static void pause_tab_header(uint32_t w, uint32_t h, float scale, bool current) 
     ImFontAtlas *atlas = ImGui::GetIO().Fonts;
     ImFont *font = atlas->Fonts.Size ? atlas->Fonts[0] : ImGui::GetFont();
     const char *label = pause_tab_label();
-    float px = bh * 0.28f;
-    const float wide = font->CalcTextSizeA(px, FLT_MAX, 0, label).x;
-    if (wide > bw * 0.92f) px *= bw * 0.92f / wide;
-    const float top = r[1] * h, bottom = cy + bh * 0.545f;
-    skin_header_tab(ImGui::GetBackgroundDrawList(), ImVec2(x0, top), ImVec2(x1, bottom), ImVec2(cx, cy), scale, current,
-                    label, font, px, v.alpha);
+    bool cjk = false;
+    for (const unsigned char *c = (const unsigned char *)label; *c; c++) cjk |= *c >= 0xe3 && *c <= 0xe9;
+    float px = bh * (cjk ? 0.38f : 0.28f);
+    float wide = font->CalcTextSizeA(px, FLT_MAX, 0, label).x;
+    if (wide > bw * 0.94f) px *= bw * 0.94f / wide, wide = bw * 0.94f;
+    const float plate = fminf(bw, wide + bh * 0.5f), top = r[1] * h, bottom = cy + bh * 0.545f;
+    skin_header_tab(ImGui::GetBackgroundDrawList(), ImVec2(cx - plate * 0.5f, top), ImVec2(cx + plate * 0.5f, bottom),
+                    ImVec2(cx, cy + bh * 0.06f), scale, current, label, font, px, v.alpha);
 }
 
 static void layout_pause_tab(uint32_t w, uint32_t h, float scale) {
