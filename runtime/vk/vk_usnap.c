@@ -43,6 +43,7 @@ static struct {
 } U;
 
 static Arena *free_arenas;
+static volatile uint32_t arenas_made, arenas_back;
 static PlatMutex free_lock = PLAT_MUTEX_INIT;
 static PlatMutex gather_lock = PLAT_MUTEX_INIT;
 
@@ -92,12 +93,14 @@ static Arena *arena_get(uint64_t need) {
         return NULL;
     }
     a->map = info.pMappedData;
+    __atomic_add_fetch(&arenas_made, 1, __ATOMIC_RELAXED);
     rt_log("vk_usnap: new arena of %.1f MiB", a->size / 1048576.0);
     return a;
 }
 
 static void arena_done(void *arg) {
     Arena *a = arg;
+    __atomic_add_fetch(&arenas_back, 1, __ATOMIC_RELAXED);
     plat_mutex_lock(&free_lock);
     a->next = free_arenas, free_arenas = a;
     plat_mutex_unlock(&free_lock);
@@ -526,7 +529,10 @@ void vk_usnap_shutdown(void) {
         next = a->next, vmaDestroyBuffer(vk_ctx()->vma, a->buf, a->alloc), free(a->cpu), free(a);
     free_arenas = NULL;
     plat_mutex_unlock(&free_lock);
-    if (n) rt_log("vk_usnap: teardown: %u arenas released", n);
+    uint32_t made = __atomic_load_n(&arenas_made, __ATOMIC_RELAXED), back = __atomic_load_n(&arenas_back, __ATOMIC_RELAXED);
+    if (made)
+        rt_log("vk_usnap: teardown: %u arenas released; %u made, %u given back by their submissions since the start", n,
+               made, back);
 }
 
 void vk_usnap_sizes(PerfSizes *s) {

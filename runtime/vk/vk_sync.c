@@ -1576,6 +1576,16 @@ void vk_sync_shutdown(void) {
         plat_thread_join(completion_thread);
         completion_thread = NULL;
         plat_mutex_lock(&st_lock);
+        if (qn || rqn || fqn) {
+            uint64_t lo = UINT64_MAX;
+            for (int i = 0; i < qn; i++) lo = queue[qhead + i].fence < lo ? queue[qhead + i].fence : lo;
+            for (int i = 0; i < rqn; i++) lo = rqueue[rqhead + i].fence < lo ? rqueue[rqhead + i].fence : lo;
+            for (int i = 0; i < fqn; i++) lo = fqueue[fqhead + i].fence < lo ? fqueue[fqhead + i].fence : lo;
+            rt_log("vk: sync shutdown: %zu callbacks left in the queues are dropped (%zu, %zu results, %zu first; lowest value "
+                   "%llu, done %llu, issued %llu, reserved %llu)", (size_t)(qn + rqn + fqn), (size_t)qn, (size_t)rqn,
+                   (size_t)fqn, (unsigned long long)lo, (unsigned long long)done, (unsigned long long)issued,
+                   (unsigned long long)reserved);
+        }
         qhead = qn = rqhead = rqn = fqhead = fqn = 0;
         plat_mutex_unlock(&st_lock);
         plat_mutex_lock(&sub_lock);
