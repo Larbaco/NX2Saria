@@ -7,6 +7,8 @@
 #include "cfg.h"
 #include "host.h"
 #include "vk.h"
+#include "vk_dlaa.h"
+#include "vk_ffx.h"
 #include "platform/platform.h"
 
 #define DYN_LEVELS 4
@@ -49,8 +51,9 @@ static struct {
     uint64_t last_busy;
     unsigned cfg_seen;
     char base_mode[32];
+    const char *up;
     char why[320];
-} D = {.cfg_seen = ~0u, .from = -2};
+} D = {.cfg_seen = ~0u, .from = -2, .up = "DLSS"};
 
 static uint64_t share_bits;
 
@@ -84,9 +87,11 @@ static const char *step_value(int level, char *buf, size_t n) {
     return buf;
 }
 
+static const char *upscaler_name(void) { return !vk_dlaa_fsr3() ? "DLSS" : vk_ffx_fsr4() ? "FSR 4" : "FSR 3.1"; }
+
 static const char *step_name(int level, char *buf, size_t n) {
     char v[32];
-    snprintf(buf, n, "%s %s", D.plain ? "scene share" : "DLSS", step_value(level, v, sizeof v));
+    snprintf(buf, n, "%s %s", D.plain ? "scene share" : D.up, step_value(level, v, sizeof v));
     return buf;
 }
 
@@ -131,7 +136,7 @@ static void dynres_read(void) {
         snprintf(line, sizeof line, "resolution: dynamic resolution off: %s as set", step_name(D.base, a, sizeof a));
         state_log(line);
     }
-    D.plain = plain, D.from = from, D.min = min;
+    D.plain = plain, D.from = from, D.min = min, D.up = upscaler_name();
     snprintf(D.base_mode, sizeof D.base_mode, "%s", m);
     if (on && (!D.on || moved)) {
         if (plain) {
@@ -146,9 +151,10 @@ static void dynres_read(void) {
         D.up_from = 0, D.up_wait_ns = DYN_UP_WAIT_NS, D.upped_at = 0;
         D.logged_ns = D.target_ns;
         snprintf(line, sizeof line,
-                 "resolution: dynamic resolution on (%s): target %.1f ms (%s), steps at least %.2f s apart and %.0f s "
-                 "from a step down to a step up, %s down to %s",
-                 plain ? "the scene share, no upscaler runs" : "the upscaler's mode", D.target_ns / 1e6,
+                 "resolution: dynamic resolution on (%s%s): target %.1f ms (%s), steps at least %.2f s apart and "
+                 "%.0f s from a step down to a step up, %s down to %s",
+                 plain ? "the scene share, no upscaler runs" : "the upscaler's mode, ", plain ? "" : D.up,
+                 D.target_ns / 1e6,
                  target_why(1, why, sizeof why), hold / 1e9, DYN_UP_WAIT_NS / 1e9,
                  step_name(D.base, a, sizeof a), step_value(D.low, b, sizeof b));
         state_log(line);
@@ -160,8 +166,8 @@ static void dynres_read(void) {
     }
     if (D.want && !on) {
         if (!plain)
-            snprintf(line, sizeof line, "resolution: dynamic resolution needs a DLSS upscaling mode (quality, balanced, "
-                     "performance or ultra performance) while DLSS or FSR runs; DLSS is %s", m);
+            snprintf(line, sizeof line, "resolution: dynamic resolution needs an upscaling mode (quality, balanced, "
+                     "performance or ultra performance) while %s runs; the mode (dlss) is %s", D.up, m);
         else if (from <= 0)
             snprintf(line, sizeof line, "resolution: dynamic resolution has no scene share to step: scene_share is 0 "
                      "(the game's own dynamic resolution) or this game version cannot set it");
@@ -189,6 +195,7 @@ double dynres_share(void) {
 void dynres_frame(void) {
     if (cfg_version() != D.cfg_seen || (D.want && wide_dynres_base() != D.from)) dynres_read();
     if (!D.on) return;
+    if (!D.plain) D.up = upscaler_name();
     D.target_ns = target_now_ns();
     if (fabs(D.target_ns - D.logged_ns) > D.logged_ns * 0.01) {
         static int said;

@@ -1421,19 +1421,19 @@ Constants:
 - `DYN_STEP_LINES` 200: step lines a run, then one line that says the rest are not logged. `DYN_STATE_LINES` 100: on,
   off and why-not lines a run.
 
-State, `D`: `want` `NX2SARIA_DYN_RES`; `on` dynamic resolution is acting now; `plain` the path it reads now, 1 the
-scene share (no upscaler runs), 0 the upscaler's mode; `base`, `low` the sharpest step used and the lowest (`DYN_MODE`
+State, `D`: `want` `NX2SARIA_DYN_RES`; `on` dynamic resolution is acting now; `plain` the path it reads now, 1 the scene
+share (no upscaler runs), 0 the upscaler's mode; `base`, `low` the sharpest step used and the lowest (`DYN_MODE`
 indexes, or `share[]` indexes: 0 and the floor); `level` the step in use; `share` the scene-share path's steps,
 `share[0]` the player's share, `share[low]` the floor; `from` `wide_dynres_base` as last read, the share stepped from,
 -1 the upscaler's mode; `min` `NX2SARIA_DYN_RES_MIN` as last read, within its range; `held_from` `plat_now_ns` when the
 step in use was taken; `hold_ns` how long to hold a step; `up_from` no step up before this `plat_now_ns` (a step down
 was taken `DYN_UP_WAIT_NS` or more before); `up_wait_ns` the wait after a step down before a step up, `DYN_UP_WAIT_NS`
-doubled by undone steps up; `upped_at` when the last step up was taken, until it is held `DYN_UP_PROVEN_NS`, 0 for
-none; `avg_ns` moving average of the GPU's busy time per frame; `target_ms` `NX2SARIA_DYN_RES_TARGET`, under 1 the
-frame time of the game's rate; `target_ns` the target in use; `logged_ns` the target the log last named (the start
-line's, or `dynres_frame()`'s last line); `last_busy` `vk_gpu_busy_all` at the previous presented frame; `cfg_seen`
-`cfg_version` the settings were read at; `why` the last line that said why it does not act, so each reason is said
-once.
+doubled by undone steps up; `upped_at` when the last step up was taken, until it is held `DYN_UP_PROVEN_NS`, 0 for none;
+`avg_ns` moving average of the GPU's busy time per frame; `target_ms` `NX2SARIA_DYN_RES_TARGET`, under 1 the frame time
+of the game's rate; `target_ns` the target in use; `logged_ns` the target the log last named (the start line's, or
+`dynres_frame()`'s last line); `last_busy` `vk_gpu_busy_all` at the previous presented frame; `cfg_seen` `cfg_version`
+the settings were read at; `up` the upscaler's name for the log (`upscaler_name()`); `why` the last line that said why
+it does not act, so each reason is said once.
 
 `tests/dynres_check.py` builds the file from `#define DYN_LEVELS` on, with stand-ins for the settings, the GPU's busy
 time, the clock and the game's rate under the limit.
@@ -1450,9 +1450,18 @@ while not stepping the scene share.
 The scene-share path's steps from the share in effect down to the floor (the lower of it and `dyn_res_min`) into out;
 the floor's index, 0 when there is no room.
 
+### `upscaler_name()`
+
+The upscaler whose mode the steps set, as the log names it: "DLSS", unless `runtime/vk/vk_dlaa.c` `vk_dlaa_fsr3()`
+says AMD's runs, then "FSR 4" while `runtime/vk/vk_ffx.cpp` `vk_ffx_fsr4()` says FSR 4 does the upscaling, else
+"FSR 3.1". All read the `dlss` setting's modes, so the step's value is the same word; only the name in front tells
+them apart. Read into `D.up` with the settings (`dynres_read()`) and at every frame of the mode path
+(`dynres_frame()`), so a FSR 4 that falls back to FSR 3.1 is named as it runs; the "off" line names the one that ran.
+
 ### `step_value()`, `step_name()`
 
-A step as the log names it: its value alone ("0.75", "quality"), or with what it is ("scene share 0.75").
+A step as the log names it: its value alone ("0.75", "quality"), or with what it is ("scene share 0.75", "DLSS
+quality", "FSR 3.1 quality").
 
 ### `target_now_ns()`
 

@@ -20,6 +20,11 @@ and checks that
   - each step is held for dyn_res_step 60ths of a second of the clock at 60 and 240 fps (90: 1.5 s), never less than
     1 s (60, 45 and 8 all hold 1 s), down while the GPU is over the target and back up once it is under three quarters
     of it, the first step up no sooner than 3 s after a step down;
+  - with an upscaler it steps the upscaler's mode, and its lines name the one that runs (vk_dlaa.c vk_dlaa_fsr3):
+    "the upscaler's mode, FSR 3.1" and "FSR 3.1 quality down to performance" at the start, "FSR 3.1 balanced ->
+    performance" at a step, DLSS and FSR 4 by their own names, and the name of the one that runs now when FSR 4
+    falls back to FSR 3.1 without a settings change; with DLAA or FSR at native size the line says which runs and that
+    the mode is not an upscaling one;
   - without an upscaler (widescreen.c wide_dynres_base gives a share) it steps the scene share: from the share in
     effect down by 0.87 a step to the floor, the lower of that share and dyn_res_min, and back up when the GPU is
     light; never above the share, never below the floor, and not at all when the share is at or under dyn_res_min
@@ -61,6 +66,10 @@ static double cfg_double(const char *k) {
     return !strcmp(k, "NX2SARIA_DYN_RES_TARGET") ? set_target_ms : !strcmp(k, "NX2SARIA_DYN_RES_MIN") ? set_min : 0;
 }
 static double wide_dynres_base(void) { return wbase; }
+static int fsr;
+static int vk_dlaa_fsr3(void) { return fsr; }
+static int fsr4;
+static int vk_ffx_fsr4(void) { return fsr4; }
 static int cfg_int(const char *k) { return !strcmp(k, "NX2SARIA_DYN_RES_STEP") ? set_step : 0; }
 static double frame_step_game_hz(void) { return game_hz; }
 static uint64_t vk_gpu_busy_all(void) { return busy; }
@@ -340,14 +349,42 @@ int main(void) {
     // An upscaler that runs takes the mode path, which the share leaves alone.
     wbase = -1, dlss = "quality", ver++;
     frame(60, T60);
-    CHECK(D.on && !D.plain && dynres_share() == 0 && strstr(last_log, "the upscaler's mode"), "an upscaler: %%s",
-          last_log);
+    CHECK(D.on && !D.plain && dynres_share() == 0 && strstr(last_log, "(the upscaler's mode, DLSS)")
+          && strstr(last_log, "DLSS quality down to performance"), "an upscaler: %%s", last_log);
     run(60, 5, heavy, NULL, NULL, NULL);
     CHECK(dynres_share() == 0 && dynres_override() && !strcmp(dynres_override(), "performance"),
           "an upscaler under load: share %%.3f, mode %%s", dynres_share(), dynres_override());
+    CHECK(strstr(last_log, "DLSS balanced -> performance"), "DLSS's step line: %%s", last_log);
+    fsr = 1;
+    restart();
+    CHECK(D.on && !D.plain && strstr(last_log, "(the upscaler's mode, FSR 3.1)")
+          && strstr(last_log, "FSR 3.1 quality down to performance") && !strstr(last_log, "DLSS"),
+          "FSR 3.1's start line: %%s", last_log);
+    run(60, 5, heavy, NULL, NULL, NULL);
+    CHECK(dynres_override() && !strcmp(dynres_override(), "performance")
+          && strstr(last_log, "FSR 3.1 balanced -> performance") && !strstr(last_log, "DLSS"),
+          "FSR 3.1's step line: %%s", last_log);
+    fsr4 = 1;
+    restart();
+    CHECK(strstr(last_log, "(the upscaler's mode, FSR 4)") && strstr(last_log, "FSR 4 quality down to performance"),
+          "FSR 4's start line: %%s", last_log);
+    run(60, 2, heavy, NULL, NULL, NULL);
+    CHECK(strstr(last_log, "FSR 4 quality -> balanced"), "FSR 4's step line: %%s", last_log);
+    fsr4 = 0;
+    run(60, 3, heavy, NULL, NULL, NULL);
+    CHECK(strstr(last_log, "FSR 3.1 balanced -> performance") && !strstr(last_log, "FSR 4"),
+          "FSR 4 fell back to FSR 3.1 without a settings change: %%s", last_log);
     dlss = "dlaa", ver++;
     frame(60, T60);
-    CHECK(!D.on && dynres_override() == NULL && strstr(last_log, "needs a DLSS upscaling mode"), "DLAA: %%s", last_log);
+    CHECK(!D.on && dynres_override() == NULL
+          && strstr(last_log, "needs an upscaling mode (quality, balanced, performance or ultra performance) while "
+                    "FSR 3.1 runs; the mode (dlss) is dlaa"), "FSR 3.1 at native size: %%s", last_log);
+    fsr = 0, dlss = "quality", ver++;
+    frame(60, T60);
+    dlss = "dlaa", ver++;
+    frame(60, T60);
+    CHECK(!D.on && dynres_override() == NULL && strstr(last_log, "while DLSS runs; the mode (dlss) is dlaa"),
+          "DLAA: %%s", last_log);
     dlss = "quality";
 
     // A GPU time at the edge of the target does not swing between steps.

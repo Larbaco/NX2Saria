@@ -1006,19 +1006,21 @@ A change to which entry of the upscaler stand-in's scratch images serves a new s
 and checks that a match is a hit, a ninth size takes a free entry or the one used longest ago instead of being
 refused, and two images of one frame never evict each other. No GPU, no game files.
 
-A change to dynamic resolution (`runtime/pacing/dynres.c`) passes `python tests\dynres_check.py`, which builds that file with
-stand-ins for the settings, the GPU's busy time, the clock, the game's rate under the limit and the scene share
-`runtime/patches/widescreen.c` `wide_dynres_base` gives it: the default target is the frame time of 60, 144 and 240 fps and
-16.7 ms for an unknown or unlimited rate, a target that is set wins, a limit or target changed while it runs (in the
+A change to dynamic resolution (`runtime/pacing/dynres.c`) passes `python tests\dynres_check.py`, which builds that file
+with stand-ins for the settings, the GPU's busy time, the clock, the game's rate under the limit and the scene share
+`runtime/patches/widescreen.c` `wide_dynres_base` gives it: the default target is the frame time of 60, 144 and 240 fps
+and 16.7 ms for an unknown or unlimited rate, a target that is set wins, a limit or target changed while it runs (in the
 menu too) moves the target with one log line, a refresh rate wandering under 1 % after the start line logs none, and
 each step is held for `dyn_res_step` 60ths of a second at 60, 144 and 240 fps but never less than 1 s, down while the
-GPU is over the target and back up once it is under three quarters of it, no sooner than 3 s after a step down.
-Without an upscaler it steps the scene share from the share in effect down to the lower of that share and
-`dyn_res_min` and back, never past either end, not at all for a share of 0.4 against a `dyn_res_min` of 0.5 (one log
-line), and from the new share again when `scene_share` or `dyn_res_min` changes. GPU times at the edge of the target
-(alternating just over and under 108 %, or landing at the target after a step down) move it once at most in ten
-simulated minutes, and a GPU whose time swings past both thresholds at each step (a step costing more than the gap
-between them) takes at most 40 steps there, on the share and on the DLSS mode alike. No GPU, no game files.
+GPU is over the target and back up once it is under three quarters of it, no sooner than 3 s after a step down. Without
+an upscaler it steps the scene share from the share in effect down to the lower of that share and `dyn_res_min` and
+back, never past either end, not at all for a share of 0.4 against a `dyn_res_min` of 0.5 (one log line), and from the
+new share again when `scene_share` or `dyn_res_min` changes. With an upscaler it steps its mode, and the lines name the
+one that runs, DLSS, FSR 3.1 or FSR 4 (`runtime/vk/vk_dlaa.c` `vk_dlaa_fsr3`, `runtime/vk/vk_ffx.cpp` `vk_ffx_fsr4`),
+with its modes, also after FSR 4 fell back to FSR 3.1. GPU times at the edge of the target (alternating just over and
+under 108 %, or landing at the target after a step down) move it once at most in ten simulated minutes, and a GPU whose
+time swings past both thresholds at each step (a step costing more than the gap between them) takes at most 40 steps
+there, on the share and on the DLSS mode alike. No GPU, no game files.
 
 A change to the ASTC decoder's scratch trim (`runtime/vk/vk_astc.c` `vk_astc_scratch_trim`, with the upload lock it only
 tries, `runtime/vk/vk_memory.c` `vk_defer_buffer_try`) passes `python tests\astc_trim_check.py`, which builds `vk_astc.c`

@@ -281,6 +281,14 @@ resolution: dynamic resolution: target 7.50 ms (the frame limit's 8.33 ms less 1
 resolution: dynamic resolution has no room: the scene share 0.40 is at or under dyn_res_min 0.50, the lowest it may go; the scene stays at 0.40
 ```
 
+With an upscaler the lines name the one that runs and its modes (DLSS's lines say `DLSS` and FSR 4's say `FSR 4` where these say `FSR 3.1`):
+
+```
+resolution: dynamic resolution on (the upscaler's mode, FSR 3.1): target 15.0 ms (the frame limit's 16.7 ms less 10 %), steps at least 1.00 s apart and 3 s from a step down to a step up, FSR 3.1 quality down to performance
+resolution: dynamic resolution: GPU 17.40 ms a frame against 15.00 ms: FSR 3.1 quality -> balanced
+resolution: dynamic resolution needs an upscaling mode (quality, balanced, performance or ultra performance) while FSR 3.1 runs; the mode (dlss) is dlaa
+```
+
 The step lines stop after 200 in a run (one line says so), the summaries after 12, and the scene's own
 `widescreen: scene ...` line follows the first 40 steps.
 
