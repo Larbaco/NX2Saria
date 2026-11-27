@@ -42,7 +42,7 @@ def check_romfs(folder):
     header = ROOT / 'runtime' / 'ui' / 'pause_tab_core.h'
     fails = 0
     for lname, table, want in (('PaSystemMenu_00', 'PT_SYSTEM_TREE', {2: 'N_InOut_00'}),
-                               ('PaMenuCategory_00', 'PT_CATEGORY_TREE', {3: 'N_Bg_00'})):
+                               ('PaMenuCategory_00', 'PT_CATEGORY_TREE', {3: 'N_Bg_00', 7: 'N_Text_00'})):
         lay = layouts.get(lname)
         if lay is None:
             print(f'FAIL: {lname} is not in the game\'s layouts')

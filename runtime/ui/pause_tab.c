@@ -468,7 +468,8 @@ static int header_tick(uint64_t s) {
                shape ? "found" : "not found: it stays while the tab is open");
     plat_mutex_lock(&g_lock);
     memcpy(g_view.tab, out, sizeof out);
-    g_view.alpha = shown ? pane_chain_alpha(host[1]) : 0.0f;
+    uint64_t text = shape ? pane_at(last_lyt, PT_CATEGORY_TEXT) : 0;
+    g_view.alpha = shown ? pane_chain_alpha(text ? text : host[1]) : 0.0f;
     g_header_ms = shown ? now : g_header_ms;
     plat_mutex_unlock(&g_lock);
     return 1;

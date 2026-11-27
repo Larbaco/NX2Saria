@@ -2967,8 +2967,10 @@ parents of the panes the tab uses, against `runtime/ui/pause_tab_core.h` `PT_SYS
 ### `pane_chain_alpha()`
 
 The opacity a pane is drawn at: its own alpha times that of each parent that passes its alpha on (flag 8), 0 when it
-or a parent is not shown (`runtime/ui/pause_tab_core.h` `pt_chain_alpha()`). The tab's name and plate take the fourth
-category's, so they fade in with the header instead of standing at full alpha while the game's names come up.
+or a parent is not shown (`runtime/ui/pause_tab_core.h` `pt_chain_alpha()`). The tab's name and plate take that of the fourth
+category's text, `N_Text_00` (its own `TextIn` fade, then the part's and the header's), so they fade in with the
+game's names; the part pane's alone left the text's fade out, and on the bench the name stood a tenth of a second
+ahead.
 
 ### `pane_box()`, `to_picture()`
 
@@ -3089,8 +3091,9 @@ The parts of the tab that need neither the game's memory nor the runtime, so `te
 - `pt_settled()`: the page's x in the middle and still.
 - `PT_SYSTEM_TREE`, `PT_CATEGORY_TREE`, `pt_tree_ok()`: the parents of the panes the tab relies on, as the game's
   `PaSystemMenu_00` (1 `N_All_00`, 2 `N_InOut_00` under it, the controller picture, the ornament and the buttons
-  under that) and `PaMenuCategory_00` (3 `N_Bg_00` under `N_BgIn_00`, with the two plates under it) have them;
-  `PT_SYSTEM_INOUT` and `PT_CATEGORY_BG` are the panes written.
+  under that) and `PaMenuCategory_00` (3 `N_Bg_00` under `N_BgIn_00`, with the two plates under it; 7 `N_Text_00`
+  under `N_MenuChangeTextIn_00`) have them; `PT_SYSTEM_INOUT` and `PT_CATEGORY_BG` are the panes written,
+  `PT_CATEGORY_TEXT` the one whose opacity the name takes.
 - `pt_alpha_clamp()`, `pt_chain_alpha()`: a pane's opacity through its parents (see `pane_chain_alpha()`).
 - `pt_name_kind()`: `product` (and unset) or `settings`; anything else is the product's name, said in the start line.
 - `pt_header_boxes()`: the third and fourth categories of `MenuOverlay_00` in layout units (x 30..430 and 490..890,
