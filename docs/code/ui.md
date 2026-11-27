@@ -849,7 +849,8 @@ window thread follows `FULLSCREEN` / `WINDOW_SIZE`, and `VK_PRESENT` follows at 
 
 ### `pad_events()`
 
-In the tab mode the buttons of `NX2SARIA_INPUT_SCRIPT` are added (`runtime/input/input.c` `input_script_buttons()`), so a
+In the tab mode, and in the settings menu More settings opened from it (`g_more_open`), the buttons of
+`NX2SARIA_INPUT_SCRIPT` are added (`runtime/input/input.c` `input_script_buttons()`), so a
 test run reaches the tab's rows; Plus, which has no ImGui key, is kept as a press in `g_pad_plus`, only in the tab
 mode and dropped on a reset, so a Plus from another menu never closes the tab.
 

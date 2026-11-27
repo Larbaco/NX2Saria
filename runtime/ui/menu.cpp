@@ -273,7 +273,7 @@ static void pad_events(ImGuiIO &io, int reset) {
     uint64_t b;
     int32_t lx, ly;
     int have = input_pad_read(&b, &lx, &ly);
-    if (g_pause_tab.load(std::memory_order_relaxed)) input_script_buttons(&b), have = 1;
+    if (g_pause_tab.load(std::memory_order_relaxed) || g_more_open) input_script_buttons(&b), have = 1;
     if (have) io.BackendFlags |= ImGuiBackendFlags_HasGamepad;
     else io.BackendFlags &= ~ImGuiBackendFlags_HasGamepad;
     stick_dir = stick_to_dpad(lx, ly);
