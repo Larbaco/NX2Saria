@@ -3399,8 +3399,20 @@ Back to the version of `previous.txt`; false when there is none to go back to.
 ### `prune()`
 
 Removes every app version but the current and the previous one and a staged release newer than the current one
-(`_waiting()`), and stale downloads (`.part`, `.zip` and `.of` files). `python.old` is not removed here: it is the
-rollback runtime until the launcher's wrapper confirms that the new version started.
+(`_waiting()`), and stale downloads (`.part`, `.zip` and `.of` files).
+
+It leaves the Python an update replaced: `python.old` on Linux (`install_staged()`), `python.old-<n>` on Windows
+(`launcher/native/nx2saria.c` `swap_python()`). On Linux the installed wrapper puts `python.old` back when the new
+version exits with an error within six seconds (`tools/appimage_install.py` `_write_wrapper()`). Nothing confirms the
+start: `launcher/ui/app.py` `App.start()` of the version whose window opens next removes every `python.old*` and
+`python.failed*`. Successive updates do not pile Pythons up on either path: on Linux `install_staged()` replaces a
+`python.old` that is still there (an update from `launcher/cli.py` `update` does not go through `App.start()`, so its
+`python.old` stays until the window next opens), and on Windows the stub makes a `python.old-<n>` only when it swaps a
+staged `python.next` in, which a window then removes. The app folder holds the current version, the previous one and
+one staged release newer than the current one (`stage()` removes the staged releases it supersedes) once `prune()`
+ran; `switch_to()` leaves the version before the previous one, and only `launcher/jobs.py` `ContinueUpdateJob.run()`
+calls `prune()`, after the rebuild. An update whose rebuild fails leaves that version too, so updates that all fail
+their rebuild keep one more folder each until one finishes.
 
 ## `launcher/versions.py`
 

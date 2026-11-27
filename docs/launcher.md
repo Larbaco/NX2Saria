@@ -496,7 +496,8 @@ The stub swaps `python.next` in while no Python runs, then starts the new versio
 8. **Draw the Button Prompts**, with button art in the new version: only when the art, the prompt tools or the key
    bindings changed, or a prompt folder is missing (a first version with art draws them all).
 9. Every version but the current and the previous one is deleted, except a staged release newer than the current
-   one.
+   one. The Python an update replaced is deleted when the new version's window opens: updates in a row leave no old
+   Pythons behind.
 
 When the new version fails to start (exit code 86 from `start.pyw`, or any error within six seconds), the stub sets
 `current.txt` back to `previous.txt`'s version and starts it with `--rolled-back`. `start.pyw` writes the failure to
