@@ -3333,13 +3333,11 @@ every other one falls back to (`tex_info_full()`, `pool_sync_entries()`): withou
 ### `vk_exec_draw_shutdown()`
 
 Releases the stand-ins and the depth twins. The device must be idle; the game path leaves them to process exit like the
-pipelines. The mesh ring, the pool marks, the texture pool's set (`pool_set_release()`), the spare descriptor pools and
-uniform chunks and the uniform snapshot arenas (`vk_usnap_shutdown()`) go first, before the test for the stand-ins,
-because they are made without the stand-ins too. The spare pools and chunks and the arenas used to come after that test:
-a probe that never made the stand-ins (`--probe-meshfb` with the mesh fallback's batch off) left a 4 MiB arena allocated
-and the spare pools undestroyed when the device went, and VMA's leak assert ended it (`runtime/vk/vk_device.c`
-`vma_destroy_logged()`), on every run under the validation layer on the bench. `dc_main`'s `rs_last` is cleared with
-`rs_lists`: it is the replay's context, and no other records now.
+pipelines. `vk_completion_flush_idle()` runs first, so what the queued completion callbacks give back (the uniform
+snapshot arenas, the descriptor pools, the retired pipelines) is back before it is released here. The mesh ring, the
+pool marks and the texture pool's set (`pool_set_release()`) go next, before the test for the stand-ins, because they
+are made without the stand-ins too. `dc_main`'s `rs_last` is cleared with `rs_lists`: it is the replay's context, and no
+other records now.
 
 ### `pool_set_release()`
 
@@ -7148,9 +7146,28 @@ The game's own wait for a fence (`runtime/nvn/nvn_api_core.c` `nvnSyncWait`): th
 the wait for the results of the submission the value's GPU work belongs to (`vk_sync_exec_wait`), when that one's tail
 is all the GPU still has of it: the tail reads nothing the game can change and hands it nothing.
 
+### `vk_completion_flush_idle()`
+
+The teardown's run of the completion callbacks that are still queued, on the calling thread, with the device idle
+(`vk_sync_finish()` first). The completion thread runs a queue in order and stops at the first entry whose value has not
+been reached, so an entry queued for a value ahead (`runtime/vk/vk_pipeline.c` `fast_retire()` destroys a retired
+pipeline at the value issued + 2; the pool, block and twin releases at issued + 1) holds every entry behind it until a
+later submission reaches that value. The last submission never comes in a teardown: in `--probe-meshfb` with the mesh
+fallback's batch off, the `arena_done` of the last submission sat behind such an entry, the 4 MiB uniform snapshot arena
+was still allocated when the allocator went, and VMA's leak assert ended the probe (`runtime/vk/vk_device.c`
+`vma_destroy_logged()`), every run under the validation layer on the bench; the retired pipelines were the "has not been
+destroyed" errors left at `vkDestroyDevice`.
+
+It takes the first and the ordinary queues whole, in their order (the first queue's entries before the others', as
+`completion_main()` runs them), and runs them whatever their value: nothing will be submitted again, and they only give
+back what the GPU no longer uses. The results queue is left as it is: its callbacks read results of GPU work, which a
+value never submitted has not got. One line counts them (`vk: sync teardown:`). `vk_exec_draw_shutdown()` calls it
+before it releases anything, and `vk_sync_shutdown()` again; a game run never reaches either.
+
 ### `vk_sync_shutdown()`
 
-After the completion thread ended, what is left in the three queues is dropped: callbacks of values never submitted.
+`vk_completion_flush_idle()` runs after the finish. After the completion thread ended, what is left in the three queues
+is dropped (results of values never submitted), and one line says how many and for which values (`vk: sync shutdown:`).
 The pre-pass command buffers' pool (`vk_sync_pre`: the mesh emulation's and the mesh fallback's batches) is destroyed
 with the others; it stayed past the device's end, a leak each time the device was made again (the probes, a device made
 anew).
@@ -7579,8 +7596,9 @@ The host copy where there is one (DLSS), else the device copy.
 
 ### `vk_usnap_shutdown()`
 
-The arenas back on the free list are destroyed (`vk_exec_draw_shutdown`: the device is idle, every completion ran), and
-one line says how many (`vk_usnap: teardown:`); only the probes reach it.
+The arenas back on the free list are destroyed (`vk_exec_draw_shutdown`: the device is idle, and
+`vk_completion_flush_idle()` has run every `arena_done`). One line gives the arenas released, made and given back since
+the start (`vk_usnap: teardown:`): released below made is an arena that never came back. Only the probes reach it.
 
 ### `vk_usnap_sizes()`
 

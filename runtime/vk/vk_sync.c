@@ -1565,10 +1565,40 @@ void vk_sync_finish(void) {
     vk_upload_flush(1);
 }
 
+uint32_t vk_completion_flush_idle(void) {
+    if (!__atomic_load_n(&started, __ATOMIC_ACQUIRE) || vk_device_is_lost() ||
+        plat_thread_id() == __atomic_load_n(&cb_tid, __ATOMIC_ACQUIRE))
+        return 0;
+    vk_sync_finish();
+    plat_mutex_lock(&st_lock);
+    int k = 0, n = fqn + qn;
+    Pending *run = n ? malloc(sizeof *run * (size_t)n) : NULL;
+    if (run) {
+        for (int i = 0; i < fqn; i++) run[k++] = fqueue[fqhead + i];
+        for (int i = 0; i < qn; i++) run[k++] = queue[qhead + i];
+        fqhead = fqn = qhead = qn = 0;
+    }
+    uint64_t reached = done, newest = 0;
+    plat_mutex_unlock(&st_lock);
+    uint32_t ahead = 0;
+    for (int i = 0; i < k; i++) {
+        ahead += run[i].fence > reached;
+        if (run[i].fence > newest) newest = run[i].fence;
+        run[i].fn(run[i].arg);
+    }
+    free(run);
+    if (k)
+        rt_log("vk: sync teardown: %d completion callbacks still queued after the last submission ran, on this thread (%u "
+               "for values past it, %llu; the newest %llu)", k, ahead, (unsigned long long)reached,
+               (unsigned long long)newest);
+    return (uint32_t)k;
+}
+
 void vk_sync_shutdown(void) {
     plat_mutex_lock(&start_lock);
     if (started) {
         vk_sync_finish();
+        vk_completion_flush_idle();
         plat_mutex_lock(&st_lock);
         stop = 1;
         plat_cond_broadcast(&cv_work);

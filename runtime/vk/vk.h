@@ -590,6 +590,7 @@ void vk_sub_in_frame_publish(void);
 void vk_completion_add(uint64_t fence, void (*fn)(void *), void *arg);
 void vk_completion_add_result(uint64_t fence, void (*fn)(void *), void *arg);
 void vk_completion_add_first(uint64_t fence, void (*fn)(void *), void *arg);
+uint32_t vk_completion_flush_idle(void);
 void rdoc_init(void);
 int rdoc_active(void);
 void rdoc_after_present(uint64_t frame);
