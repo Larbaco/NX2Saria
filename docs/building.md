@@ -1106,9 +1106,10 @@ on screen once and to the pacer the second time. No GPU, no game files.
 
 A change to the driver's low latency (`runtime/pacing/vk_lowlat.c`) passes `python tests\lowlat_revision_check.py`,
 which builds that file over a made-up driver of revision 1, 2 and 3 of `VK_NV_low_latency2` and checks that
-`vkGetLatencyTimingsNV` is called only where the driver's revision takes the three-argument form, that the sleep and
-the markers run the same on all three, and what the `lowlat:` lines say for each. It needs the Vulkan headers and
-`vk_mem_alloc.h`; no GPU, no game files.
+`vkGetLatencyTimingsNV` is called only where the driver's revision takes the three-argument form, that the sleep and the
+markers run the same on all three, that the submissions carry the frame's number on all three, and what the `lowlat:`
+lines say for each, also whether the revision follows that number. It needs the Vulkan headers and `vk_mem_alloc.h`; no
+GPU, no game files.
 
 A change to `runtime/dlssg/nx2_sl.h` or to the export check in `tools/build_dlssg.py` (`declared_exports`,
 `pe_exports`) passes `python tests\dlssg_exports_check.py`, which builds a small DLL with MSYS2's clang and checks that

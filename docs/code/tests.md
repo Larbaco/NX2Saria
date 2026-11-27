@@ -2908,8 +2908,10 @@ info structure as revision 1 had it; the static assertions hold `pTimings` at 0x
 `main()` plays 4200 frames, so two statistics lines are due (frames 600 and 4200), and checks for every revision the
 revision in the first line, one sleep mode set, a sleep for every frame start but the first (no host present yet) and
 seven markers a frame: low latency itself runs the same on all three. Revision 1: no call of `vkGetLatencyTimingsNV`,
-the first line says the timings are left out, and one statistics line of the two says there is no report. Revision 2
-and 3: two calls and the report in both lines. `listed()` checks `vk_lowlat_revision()` on a made-up extension list.
+the first line says the timings are left out, and one statistics line of the two says there is no report. Revision 2 and
+3: two calls and the report in both lines. On all three a submission and the present's blit of the next frame carry its
+number, and with low latency turned off a submission carries none; the first line says that revisions 1 and 2 ignore it
+and that revision 3 follows it. `listed()` checks `vk_lowlat_revision()` on a made-up extension list.
 
 ## `tests/make_game_gate_test.py`
 

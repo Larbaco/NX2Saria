@@ -13,6 +13,9 @@ static int fails;
 #define NO_TIMINGS "frame timings are not asked for"
 #define NO_REPORT "no report from the driver"
 #define REPORT "the driver's report over 16 frames: pad read to GPU done 8.00 ms"
+#define SUBMIT_FOLLOWED "while it is on, queue submissions carry the frame's number, and this revision follows it"
+#define SUBMIT_IGNORED \
+    "while it is on, queue submissions carry the frame's number, which this revision ignores (revision 3 on follows it)"
 
 typedef struct {
     VkStructureType sType;
@@ -40,8 +43,10 @@ void rt_log(const char *fmt, ...) {
     if (n_lines < LINES) vsnprintf(lines[n_lines++], sizeof lines[0], fmt, ap);
     va_end(ap);
 }
-int cfg_int(const char *key) { return !strcmp(key, "NX2SARIA_LOW_LATENCY"); }
-unsigned cfg_version(void) { return 1; }
+static int ll_level = 1;
+static unsigned cfg_ver = 1;
+int cfg_int(const char *key) { return !strcmp(key, "NX2SARIA_LOW_LATENCY") ? ll_level : 0; }
+unsigned cfg_version(void) { return cfg_ver; }
 uint64_t kern_now_ns(void) { return now_ns; }
 int kern_core_away(void) { return 0; }
 void kern_core_back(int *away) { (void)away; }
@@ -157,6 +162,26 @@ int main(int argc, char **argv) {
     CHECK(sleeps == FRAMES - 1, "%d frame starts slept in the driver, not %d", sleeps, FRAMES - 1);
     CHECK(markers == 7 * FRAMES, "%d markers, not %d", markers, 7 * FRAMES);
     CHECK(count_lines("lowlat: frame ") == 2, "%d statistics lines, not 2", count_lines("lowlat: frame "));
+    CHECK(strstr(lines[0], driver_rev >= 3 ? SUBMIT_FOLLOWED : SUBMIT_IGNORED) != NULL
+          && !strstr(lines[0], driver_rev >= 3 ? SUBMIT_IGNORED : SUBMIT_FOLLOWED),
+          "the first line does not say what the submissions' frame number does on revision %u: %s", driver_rev, lines[0]);
+    VkLatencySubmissionPresentIdNV tag = {0};
+    int tagged = 0;
+    gfx_counters.frames = FRAMES;
+    vk_lowlat_frame_start(1);
+    CHECK(vk_lowlat_submit_tag(&tag) && tag.sType == VK_STRUCTURE_TYPE_LATENCY_SUBMISSION_PRESENT_ID_NV
+          && tag.presentID == FRAMES + 1, "a submission of frame %u is not tagged on revision %u (%llu)", FRAMES + 1,
+          driver_rev, (unsigned long long)tag.presentID);
+    vk_lowlat_present_frame(FRAMES + 1);
+    CHECK(vk_lowlat_blit_frame(&tag, &tagged) == FRAMES + 1 && tagged && tag.presentID == FRAMES + 1,
+          "the present's blit is not tagged on revision %u", driver_rev);
+    ll_level = 0, cfg_ver++;
+    gfx_counters.frames = FRAMES + 1;
+    vk_lowlat_game_present();
+    vk_lowlat_frame_start(1);
+    tag = (VkLatencySubmissionPresentIdNV){0};
+    CHECK(!vk_lowlat_on() && !vk_lowlat_submit_tag(&tag) && !tag.presentID,
+          "a submission is tagged with low latency off on revision %u", driver_rev);
     if (driver_rev < 2) {
         CHECK(rev1_calls == 0, "vkGetLatencyTimingsNV was called %d times with three arguments on a revision %u driver, "
               "which takes four: its fourth held %#llx, and a real driver reads pTimings at that plus 0x10", rev1_calls,

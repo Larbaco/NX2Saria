@@ -1068,8 +1068,18 @@ all take the same calls, so a call is made only in the form the driver's revisio
   offset 0x10.
 - Revision 2 (headers 1.3.271 on): three arguments, with `timingCount` inside the structure at 0x10 and `pTimings`
   after it at 0x18. The extension's history calls it a breaking change.
-- Revision 3 (2026): no call changed. Only from this revision on does a driver follow the frame number chained to a
-  queue submission (`VkLatencySubmissionPresentIdNV`, `vk_lowlat_submit_tag()`); an older one ignores it.
+- Revision 3 (2026-04-20): no call changed. Only from this revision on does a driver follow the frame number chained to
+  a queue submission (`VkLatencySubmissionPresentIdNV`, `vk_lowlat_submit_tag()`, `vk_lowlat_blit_frame()`); an older
+  one ignores it and gives the submissions to frames by the rule the revision writes down for submissions without it.
+
+While low latency is on (`vk_lowlat_submit_tag()` and `vk_lowlat_blit_frame()` tag only a frame it started), the
+submissions carry the number on every revision: the structure is valid on all three, and an older driver ignores it,
+so leaving it out there would change nothing the driver does. The sleep, the markers and the present's number do not
+depend on it. The first `lowlat:` line says which holds (`SUBMIT_ID_REV`): "while it is on, queue submissions carry the
+frame's number, and this revision follows it", or "... which this revision ignores (revision 3 on follows it): the
+driver gives submissions to frames itself". No machine here has an NVIDIA driver: `tests/lowlat_revision_check.py` shows the line
+and the tags on a stand-in driver of each revision; whether a revision 3 driver attributes the frames better than an
+older one is not measured.
 
 `vkSetLatencySleepModeNV`, `vkLatencySleepNV` and `vkSetLatencyMarkerNV` are the same in all three, and so are the
 structures they take and the swapchain's `VkSwapchainLatencyCreateInfoNV`. `vkQueueNotifyOutOfBandNV`, which took its
@@ -1131,6 +1141,7 @@ Constants:
 - `SLEEP_FAILS` 3: that many waits in a row running out, and the mode is given up for the run.
 - `REPORTS` 16: frames of the driver's report read for a statistics line.
 - `TIMINGS_REV` 2: the first revision of `VK_NV_low_latency2` whose `vkGetLatencyTimingsNV` has the form called here.
+- `SUBMIT_ID_REV` 3: the first revision that follows the frame number a queue submission carries.
 - `PACE_WINDOW` 60: frames over which the driver's hold of the frame limit is checked.
 
 State, `L`:

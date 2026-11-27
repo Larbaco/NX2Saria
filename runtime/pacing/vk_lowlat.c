@@ -20,6 +20,7 @@ enum { LL_NONE, LL_NV, LL_AMD };
 #define PACE_WINDOW 60
 #define MODE_UNSET 0xffffffffu
 #define TIMINGS_REV 2u
+#define SUBMIT_ID_REV 3u
 
 #define LOAD(p) __atomic_load_n(p, __ATOMIC_ACQUIRE)
 #define STORE(p, v) __atomic_store_n(p, v, __ATOMIC_RELEASE)
@@ -408,8 +409,13 @@ void vk_lowlat_init(VkCtx *c) {
             L.present_ids = c->has_present_id;
             L.kind = LL_NV;
             rt_log("lowlat: NVIDIA's low latency through VK_NV_low_latency2 revision %u (presents %s the frame's number): %s "
-                   "(NX2SARIA_LOW_LATENCY=%d)%s", L.rev, L.present_ids ? "carry" : "do not carry",
+                   "(NX2SARIA_LOW_LATENCY=%d)%s%s", L.rev, L.present_ids ? "carry" : "do not carry",
                    level == 2 ? "on with boost" : level ? "on" : "off", level,
+                   L.rev >= SUBMIT_ID_REV ? "; while it is on, queue submissions carry the frame's number, and this "
+                                            "revision follows it"
+                                          : "; while it is on, queue submissions carry the frame's number, which this "
+                                            "revision ignores (revision 3 on follows it): the driver gives submissions "
+                                            "to frames itself",
                    L.timings ? "" : "; the driver's frame timings are not asked for: this revision gives them through "
                                     "another form of the call, so the frame lines come without the driver's report");
             return;
