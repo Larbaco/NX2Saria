@@ -462,10 +462,11 @@ the translator identity and the input id. A code hash without a known mask is tr
 ("TKSP", the full answers); its files are renamed to the cache key and the mask stored.
 
 **Translator identity.** `build/xlate/nx2navi_xlate.id` holds the sha256, in hex, that `tools/build_xlate.py` writes
-over the sources it builds from (`Program.cs`, the csproj, the patches, the vendor tree); without that file the
-identity is the sha256 of the exe. `NX2SARIA_XLATE_ID` (64 hex digits) overrides it. A translator change therefore
-changes every cache key without a hand-made `KEY_VERSION` bump; `KEY_VERSION` is for changes on this side (the key
-layout, how the output is used). Nothing in this file or its folder is part of that identity.
+over what it builds from (`identity()`: the vendor tree as the patches leave it, `tools/xlate`'s own sources and the
+publish settings, C# and MSBuild comments left out; without a patched tree, the patches and the vendor tree byte for
+byte); without that file the identity is the sha256 of the exe. `NX2SARIA_XLATE_ID` (64 hex digits) overrides it. A
+translator change therefore changes every cache key without a hand-made `KEY_VERSION` bump; `KEY_VERSION` is for changes
+on this side (the key layout, how the output is used). Nothing in this file or its folder is part of that identity.
 
 **Carry** (`NX2SARIA_SHADER_CARRY`, default 1). Since every cache key names the translator, a release with a new
 translator would otherwise translate every shader again, before play or while the game waits.

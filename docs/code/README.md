@@ -123,8 +123,10 @@ Not read: `tools/vendor/` and `runtime/third_party/` (others' code, unmodified),
 header, unmodified), `runtime/shaders/smaa.glsl` (the SMAA reference implementation, unmodified),
 `recomp/patches-*.txt` (data that `recomp/patches.py` reads),
 `generated/`, `build/`, the `*_spv.h` shader headers, any file with the `GENERATED_MARKER`, and `tools/xlate/`, the
-shader translator, whose comments go with its next identity change: its identity, `tools/build_xlate.py` `identity()`, reads the patch
-files byte for byte, and a new identity makes every player prepare the shaders again.
+shader translator, whose comments go with its next identity change: its identity, `tools/build_xlate.py`
+`identity()`, hashes the tree a build patched and its own sources with their C# and MSBuild comments left out, and,
+when no patched tree is there, the patch files and the vendor tree byte for byte; a new identity makes every player
+prepare the shaders again.
 
 Kept with their comments for now, and counted and named in a line of their own at every run (`kept with comments: 3
 files, ...`), outside their area's count: `runtime/cpu.h`, `runtime/simd.h` and `runtime/simd_fp.h`. They are ours and

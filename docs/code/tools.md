@@ -666,10 +666,11 @@ python tools/build_hactool.py [--src DIR] [--out DIR]
 
 It fetches the pinned commit into `toolchain/src/hactool`, resets it (local changes and build output there are
 discarded), applies the patches of `PATCHES` (`portable.patch`: title keys and BKTR fixes; `unicode.patch`: a UTF-8
-manifest; `mbedtls-asm-clobbers.patch`) and builds a static exe with MSYS2 UCRT64 gcc; mbedtls comes with hactool's
-tree. The exe and hactool's `LICENSE` go to `toolchain/hactool`, where `tools/extract.py` takes them. Run with `.venv`.
-On Linux the system's cc and make build `toolchain/hactool/hactool` (`unicode.patch` only adds a Windows manifest,
-under `EXEEXT` `.exe`).
+manifest; `mbedtls-asm-clobbers.patch`: the memory and flags clobbers of the bundled mbedtls's x86-64
+multiply-accumulate asm, without which clang's build fails every RSA signature check) and builds a static exe with MSYS2
+UCRT64 gcc; mbedtls comes with hactool's tree. The exe and hactool's `LICENSE` go to `toolchain/hactool`, where
+`tools/extract.py` takes them. Run with `.venv`. On Linux the system's cc and make build `toolchain/hactool/hactool`
+(`unicode.patch` only adds a Windows manifest, under `EXEEXT` `.exe`).
 
 ### `fetch()`
 
@@ -3576,10 +3577,9 @@ is all there (`tools/prompt_art.py` `art_files()`), that the profile fits this c
 ## `tools/make_mvobj_fs.py`
 
 The SPIR-V of the per-object motion fragment shader as `runtime/mvobj_fs_spv.h`, which `runtime/vk/vk_exec_draw.c`
-includes (the text of the header the tool writes still names that code's earlier file, `vk_mvobj.c`). It is
-assembled here, word by word, because it must be patched at run time (the Location of its input follows the vertex
-shader variant) and is small. `tools/build_shaders.py` writes the header from `HEADER` when the game is built; run on
-its own (`python tools/make_mvobj_fs.py`), the script writes it too.
+includes; the header's first line names that file. It is assembled here, word by word, because it must be patched at run
+time (the Location of its input follows the vertex shader variant) and is small. `tools/build_shaders.py` writes the
+header from `HEADER` when the game is built; run on its own (`python tools/make_mvobj_fs.py`), the script writes it too.
 
 The shader, as GLSL:
 
@@ -6151,8 +6151,6 @@ The part of Python 3.14's `compression.zstd` the shader tools use, on older Pyth
 `decompress(data, zstd_dict=None)`, `ZstdDict(raw)` with `.dict_id`, and `get_frame_info(data)` with
 `.decompressed_size` (`None` when the frame does not say) and `.dictionary_id` (0 for none). On 3.14 the standard
 module itself is used; that import carries `# noqa: F401`, which stays.
-
-`LIMIT` is the largest output a frame without a content size may decompress to.
 
 ### `decompress()`
 

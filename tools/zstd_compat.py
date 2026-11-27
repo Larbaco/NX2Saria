@@ -6,7 +6,6 @@ except ImportError:
     import zstandard
 
     FrameInfo = namedtuple('FrameInfo', 'decompressed_size dictionary_id')
-    LIMIT = 1 << 30
 
     class ZstdDict:
         def __init__(self, raw):

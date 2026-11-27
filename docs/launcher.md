@@ -781,23 +781,23 @@ job with a fake
 holds it, the lock gone when its holder is killed, a job and the command line refused while another process holds
 it, two jobs on one folder), and the window's selftest when a display is there.
 
-What goes wrong around a build is tested the same way, on made-up folders and stand-in processes: an update that
-stops in its compile (the game stays installed, home says how to finish, the install goes on from the unpacked
-files), `start.pyw` on a version that cannot be imported (exit code 86 at once, no message box, with a version to go
-back to), a cut RomFS image and the free space, the object cache written while the compile runs and kept when it is
-cut, a RomFS step that does not repeat the lift, the update's duration text and the warm-up's bar, a damaged dump
-named by its file and an unexpected error by its message, the file check's result in its row and on home, the
-game's FATAL line after exit codes 70, 71 and 72, the copy the game's own Restart starts followed for its exit code
-and its FATAL line, Play on Linux with a stand-in game (its own session, a `play: not started` line for each Play that
-does not start, a compiled stand-in whose Restart's copy is adopted and read for its code, and the whole window under
-`xvfb-run` hiding while it runs), an end with code 0 noted in the game's log when it has no line of the
-game's own end, the job count by free memory and the build's priority class, a line
-handler that raises and a log that cannot be written, one forced update check a minute and GitHub's reset time, a
-game folder with characters outside the Basic Multilingual Plane (its `modules.c` compiled when a C compiler is
-there), the file check at both piece sizes against the check as it was, the disk space of every step and the build
-tools' test compile, and the prompt tool's unpacking. Two tests record the logic of `tools/romfs_check.py` and of
-the three prompt scripts (their code without comments and docstrings) beside `SCAN_TOOL` and `PROMPT_TOOLS`: they
-fail when that logic changes, to ask whether the step must run again on every install.
+What goes wrong around a build is tested the same way, on made-up folders and stand-in processes: an update that stops
+in its compile (the game stays installed, home says how to finish, the install goes on from the unpacked files),
+`start.pyw` on a version that cannot be imported (exit code 86 at once, no message box, with a version to go back to), a
+cut RomFS image and the free space, the object cache written while the compile runs and kept when it is cut, a RomFS
+step that does not repeat the lift, the update's duration text and the warm-up's bar, a damaged dump named by its file
+and an unexpected error by its message, the file check's result in its row and on home, the game's FATAL line after exit
+codes 70, 71 and 72, the copy the game's own Restart starts followed for its exit code and its FATAL line, Play on Linux
+with a stand-in game (its own session, a `play: not started` line for each Play that does not start, a compiled stand-in
+whose Restart's copy is adopted and read for its code, and the whole window under `xvfb-run` hiding while it runs), an
+end with code 0 noted in the game's log when it has no line of the game's own end, the job count by free memory and the
+build's priority class, a line handler that raises and a log that cannot be written, one forced update check a minute
+and GitHub's reset time, a game folder with characters outside the Basic Multilingual Plane (its `modules.c` compiled
+when a C compiler is there), the file check at both piece sizes against the check as it was, the disk space of every
+step and the build tools' test compile, and the prompt tool's unpacking. Two tests record the logic of
+`tools/romfs_check.py` and of the three prompt scripts (their code without docstrings, comment lines and blank lines; a
+comment at the end of a line of code counts) beside `SCAN_TOOL` and `PROMPT_TOOLS`: they fail when that logic changes,
+to ask whether the step must run again on every install.
 
 ## Requirements and limits
 
