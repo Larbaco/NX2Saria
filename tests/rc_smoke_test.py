@@ -149,7 +149,8 @@ class Pieces(unittest.TestCase):
 
 def smoke(d, **kw):
     base = {'tag': 'v9.9.9-rc.1', 'root': d, 'bench': d, 'games': os.path.join(d, 'g'), 'logs': d,
-            'expect_file': None, 'expect': [], 'pin_url': False, 'lock_held': False, 'ini': [], 'run_env': []}
+            'expect_file': None, 'expect': [], 'pin_url': False, 'lock_held': False, 'ini': [], 'run_env': [],
+            'channel': 'preview', 'dump': ''}
     base.update(kw)
     s = rc_smoke.Smoke(type('A', (), base)())
     s.runs.mkdir(parents=True, exist_ok=True)
@@ -171,6 +172,39 @@ class Options(unittest.TestCase):
                              f'2: -> FLOCK  ADVISORY  WRITE 33 {ident} 0 EOF\n'
                              f'3: FLOCK  ADVISORY  WRITE 44 00:00:1 0 EOF\n', encoding='ascii')
             self.assertEqual(rc_smoke.lock_holders(f, table), [22])
+
+    def test_newest_by_version_not_by_order(self):
+        def release(tag, pre, manifest=True, draft=False):
+            return {'tag_name': tag, 'prerelease': pre, 'draft': draft,
+                    'assets': [{'name': rc_smoke.LINUX_MANIFEST}] if manifest else []}
+        with tempfile.TemporaryDirectory() as d:
+            s = smoke(d)
+            s._releases = [release('v9.9.0-rc.4', True), release('v9.9.0-rc.3', True), release('v9.9.0', True),
+                           release('v9.9.1', False, manifest=False), release('v9.9.2', False, draft=True),
+                           release('v9.8.0', False)]
+            self.assertEqual(s.newest('preview'), 'v9.9.0')
+            self.assertEqual(s.newest('stable'), 'v9.8.0')
+            s._releases[2]['prerelease'] = False
+            self.assertEqual(s.newest('stable'), 'v9.9.0')
+            s._releases = [release('v9.9.0-rc.1', True)]
+            self.assertIsNone(s.newest('stable'))
+
+    def test_channel_reaches_the_feed_and_the_settings(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = smoke(d, tag='v9.9.0', channel='stable')
+            s._releases = [{'tag_name': 'v9.9.1-rc.1', 'prerelease': True, 'assets': [{'name': rc_smoke.LINUX_MANIFEST}]},
+                           {'tag_name': 'v9.9.0', 'prerelease': False, 'assets': [{'name': rc_smoke.LINUX_MANIFEST}]}]
+            self.assertEqual(s.feed(), 'the real GitHub feed, stable channel')
+            s.a.channel = 'preview'
+            with self.assertRaises(rc_smoke.Failed) as e:
+                s.feed()
+            self.assertIn('preview channel (v9.9.1-rc.1 is)', str(e.exception))
+            s.a.channel = 'stable'
+            s.prepare_settings('clean', Path(d) / 'game')
+            got = json.loads((s.root('clean') / 'data' / 'launcher.json').read_text(encoding='utf-8'))
+            self.assertEqual((got['channel'], got['dump']), ('stable', ''))
+            with self.assertRaises(rc_smoke.Failed):
+                s.dump()
 
     def test_ini_with(self):
         text = '# kept\nfps_limit = 60\nfoliage_distance = 1\n  foliage_distance=3\n'

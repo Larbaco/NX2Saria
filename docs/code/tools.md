@@ -4922,7 +4922,7 @@ The stages, each one line of PASS or FAIL with its reason:
 
 | Stage | What it proves |
 |---|---|
-| `install` | The tag's AppImage matches `SHA256SUMS.txt`, its own `tools/appimage_install.py` installs it, and `launcher.cli check` on the Preview channel says it is the newest |
+| `install` | The tag's AppImage matches `SHA256SUMS.txt`, its own `tools/appimage_install.py` installs it, and `launcher.cli check` on the channel of `--channel` says it is the newest |
 | `cli` | The installed `launcher/cli.py`, run as a script without `-I` as an older launcher runs it after an update, starts: `check` and `tools` end with code 0 |
 | `build` | `launcher.cli install` of the installed version builds the game from the dump; the build state names that version |
 | `run` | The game reaches the boot map's area: its `version:` line names the tag, the session ends `end normal`, no `FATAL` line, and the log has the lines the notes promise |
@@ -4972,16 +4972,19 @@ checks in `/proc/locks` (`lock_holders()`) that the process holding the lock is 
 
 ### `Smoke.stage_install()`
 
-- The real feed is the one a player of the Preview channel reads. When the tag is not the newest release there, the
-  stage fails unless `--pin-url` is given (`Smoke.feed()`, which the `update` stage asks again right before the
-  update, since a release published during its build changes what the feed offers): then the installed copy's `feed.json` names the tag's own
-  `NX2Saria-update-linux.json` (the `url` feed of `launcher/feed.py`). The PASS line and `summary.md` say which feed was
-  used.
+- The real feed is the one a player of the `--channel` channel reads: `preview` by default, `stable` for a release
+  without a suffix once it is promoted. The tag must be the newest release that channel offers (`Smoke.newest()`: the
+  highest version among the releases the channel takes, as `launcher/feed.py` `_github()` picks it, not the first one
+  the API lists), or the stage fails unless `--pin-url` is given. `Smoke.feed()` checks it, and the `update` stage asks
+  again right before the update, since a release published during its build changes what the feed offers. With
+  `--pin-url` the installed copy's `feed.json` names the tag's own `NX2Saria-update-linux.json` (the `url` feed of
+  `launcher/feed.py`). The PASS line and `summary.md` say which feed was used.
 - The AppImage is unpacked with `--appimage-extract` and installed by the `install()` of its own
   `tools/appimage_install.py`, with `APPIMAGE` set as the AppImage's runtime sets it. The step the AppImage's start
   script adds, starting the window, is the `window` stage.
-- The settings the stages start from: Preview channel, session reports `off`, the crash log offer `off`, no desktop
-  shortcut, no sounds, the dump and the game folder.
+- The settings the stages start from: the `--channel` channel, session reports `off`, the crash log offer `off`, no desktop
+  shortcut, no sounds, the dump and the game folder. The dump is written empty when none is given: only a build needs
+  it (`Smoke.dump()`), so `--only install,cli,window,privacy` runs without one.
 
 ### `Smoke.wait_for_disk()`
 
