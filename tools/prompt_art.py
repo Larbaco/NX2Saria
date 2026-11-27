@@ -116,7 +116,8 @@ def binds_followed(ini_text=None):
         if len(named) <= LISTED_MAX:
             return ', '.join(named)
         return ', '.join(named[:LISTED_MAX]) + f' and {len(named) - LISTED_MAX} more'
-    pads, keys = pad_binds(ini_text), key_binds(ini_text)
+    pads = pad_binds(ini_text)
+    keys = {b: k for b, k in key_binds(ini_text).items() if k != PC_KEYS[b]}
     parts = []
     if pads:
         parts.append(f'the gamepad prompts follow {len(pads)} remapped button{"s" * (len(pads) != 1)} ({listed(pads)})')

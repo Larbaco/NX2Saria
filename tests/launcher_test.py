@@ -3806,7 +3806,7 @@ class FileCheckTest(Tmp):
 
 PROMPT_LOGIC = ('d65e5ed91e94f72b4623eb41b6dbdbaf42ae0dde20ab73254c0387f5f0e8fe7e',
                 {'pad_prompts.py': '3fd123d30ffbe28b9b4e7af2e67747ede543875a3f422e1658017c923d5b2a40',
-                 'prompt_art.py': '56e8d7075ca781a1ebab87052bf2215cde3fa4a4ae03c342713394f60d8e4dd6',
+                 'prompt_art.py': 'e011c567d29790d0786ef7c2c5f7cdedcd7bb9c31c899204cbcfd557d8940a2a',
                  'button_icons.py': '79a5b9d99c36d227838777e1338f0ffc7b2231fb5350a059a996b61b724319b9'})
 
 
@@ -3923,7 +3923,9 @@ class PromptToolsTest(Tmp):
                          'the gamepad prompts follow 2 remapped buttons (A: south, B: east)')
         self.assertEqual(prompt_art.binds_followed(ini),
                          'the gamepad prompts follow 6 remapped buttons (A: south, B: east, ZR: zl, PLUS: back, '
-                         'UP: north, LCLICK: rstick), the keyboard prompts 3 (A: e, B: lctrl, Y: q)')
+                         'UP: north, LCLICK: rstick), the keyboard prompts 1 (Y: q)')
+        self.assertEqual(prompt_art.binds_followed('bind_A = pad:south, key:E, key:lshift\nbind_B = pad:east, key:lctrl\n'),
+                         'the gamepad prompts follow 2 remapped buttons (A: south, B: east)')
         self.assertEqual(prompt_art.binds_followed('bind_A = key:f\n'), 'the keyboard prompts follow 1 remapped button '
                                                                        '(A: f)')
         self.assertEqual(pp.pc_keys(ini), {**pp.PC_KEYS, 'A': 'e', 'B': 'lctrl', 'Y': 'q'})
