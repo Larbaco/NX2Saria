@@ -3333,9 +3333,13 @@ every other one falls back to (`tex_info_full()`, `pool_sync_entries()`): withou
 ### `vk_exec_draw_shutdown()`
 
 Releases the stand-ins and the depth twins. The device must be idle; the game path leaves them to process exit like the
-pipelines. The mesh ring, the pool marks and the texture pool's set (`pool_set_release()`) go first, before the test for
-the stand-ins, because they are made without the stand-ins too. `dc_main`'s `rs_last` is cleared with `rs_lists`: it is
-the replay's context, and no other records now.
+pipelines. The mesh ring, the pool marks, the texture pool's set (`pool_set_release()`), the spare descriptor pools and
+uniform chunks and the uniform snapshot arenas (`vk_usnap_shutdown()`) go first, before the test for the stand-ins,
+because they are made without the stand-ins too. The spare pools and chunks and the arenas used to come after that test:
+a probe that never made the stand-ins (`--probe-meshfb` with the mesh fallback's batch off) left a 4 MiB arena allocated
+and the spare pools undestroyed when the device went, and VMA's leak assert ended it (`runtime/vk/vk_device.c`
+`vma_destroy_logged()`), on every run under the validation layer on the bench. `dc_main`'s `rs_last` is cleared with
+`rs_lists`: it is the replay's context, and no other records now.
 
 ### `pool_set_release()`
 
@@ -7575,12 +7579,8 @@ The host copy where there is one (DLSS), else the device copy.
 
 ### `vk_usnap_shutdown()`
 
-The arenas back on the free list are destroyed (`vk_exec_draw_shutdown`: the device is idle, every completion ran).
-First the arenas held elsewhere go back to it: those of the submissions `vk_usnap_take` took and no `vk_usnap_begin`
-adopted (`tq_head`, freed with `taken_free`), and `U.arena`. The taken queue was left as it was before, and its arena
-stayed allocated when the device went: `--probe-meshfb` with the mesh fallback's batch off then ended in VMA's leak
-assert (`runtime/vk/vk_device.c` `vma_destroy_logged()`), on every run under the validation layer on the bench. One line
-says how many arenas went and how many were held that way (`vk_usnap: teardown:`); only the probes reach it.
+The arenas back on the free list are destroyed (`vk_exec_draw_shutdown`: the device is idle, every completion ran), and
+one line says how many (`vk_usnap: teardown:`); only the probes reach it.
 
 ### `vk_usnap_sizes()`
 

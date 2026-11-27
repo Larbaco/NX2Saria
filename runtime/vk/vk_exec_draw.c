@@ -519,9 +519,15 @@ void vk_exec_draw_shutdown(void) {
     pose_shutdown();
     skin_shutdown();
     vk_meshfb_shutdown();
-    if (vk_ctx()) mesh_ring_release(vk_ctx()), pool_marks_release(vk_ctx()), pool_set_release(vk_ctx());
-    if (!Z.ready) return;
     VkCtx *c = vk_ctx();
+    if (!c) return;
+    mesh_ring_release(c), pool_marks_release(c), pool_set_release(c);
+    for (int i = 0; i < nspare_pool; i++) vkDestroyDescriptorPool(c->device, spare_pool[i], NULL);
+    __atomic_sub_fetch(&npools_live, nspare_pool, __ATOMIC_RELAXED);
+    for (int i = 0; i < nspare_chunk; i++) vmaDestroyBuffer(c->vma, spare_chunk[i].buf, spare_chunk[i].alloc);
+    nspare_pool = nspare_chunk = 0;
+    vk_usnap_shutdown();
+    if (!Z.ready) return;
     twins_release(c);
     for (int i = 0; i < DV_COUNT; i++) {
         if (Z.img[i].sview != Z.img[i].view) vkDestroyImageView(c->device, Z.img[i].sview, NULL);
@@ -536,11 +542,6 @@ void vk_exec_draw_shutdown(void) {
     memset(SD, 0, sizeof SD);
     nvn_hm_clear(&rs_lists, free);
     dc_main.rs_last = NULL, dc_main.rs_last_l = NULL;
-    for (int i = 0; i < nspare_pool; i++) vkDestroyDescriptorPool(c->device, spare_pool[i], NULL);
-    __atomic_sub_fetch(&npools_live, nspare_pool, __ATOMIC_RELAXED);
-    for (int i = 0; i < nspare_chunk; i++) vmaDestroyBuffer(c->vma, spare_chunk[i].buf, spare_chunk[i].alloc);
-    nspare_pool = nspare_chunk = 0;
-    vk_usnap_shutdown();
     vkDestroyBufferView(c->device, Z.zview, NULL);
     vmaDestroyBuffer(c->vma, Z.zbuf, Z.zalloc);
     if (Z.sink) vmaDestroyBuffer(c->vma, Z.sink, Z.sink_alloc);
