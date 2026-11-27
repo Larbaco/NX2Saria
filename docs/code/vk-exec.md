@@ -7108,6 +7108,11 @@ For the perf lines: a wait that ended here counts among the game's waits for GPU
 the GPU wait is counted there), and `gw_skip_kind` counts what the submissions between `need` and value had that the
 mask leaves out.
 
+Each wait that waited for a submission names it to the pass timing's result points (`runtime/vk/vk_crumbs.c`
+`vk_gpu_passes_waited()`, `NX2SARIA_GPU_PASSES`): `need` on the replay's path, value itself on the GPU wait, which runs
+the whole submission. The GPU wait, the default, returned before it did, and the line `gpu passes:   result points`
+said that none of 0 waited-for submissions was timed.
+
 ### `fence_wait_impl()`
 
 A held submission the waiter needs goes to the queue first (`hold_release()`). A value never submitted nor queued is

@@ -1404,7 +1404,11 @@ int vk_sync_recorded_wait(uint64_t value, uint64_t timeout_ns, int (*gpu_wait)(u
                "memory itself", gpu);
     }
     if (__atomic_load_n(&done, __ATOMIC_ACQUIRE) >= value) return 1;
-    if (gpu) return gpu_wait(value, timeout_ns);
+    if (gpu) {
+        int ok = gpu_wait(value, timeout_ns);
+        if (ok) vk_gpu_passes_waited(value);
+        return ok;
+    }
     uint64_t w0 = plat_now_ns(), newest = __atomic_load_n(&reserved, __ATOMIC_ACQUIRE);
     uint64_t sent = __atomic_load_n(&issued, __ATOMIC_ACQUIRE);
     int live = 1, ok = 1;
