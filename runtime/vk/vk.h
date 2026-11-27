@@ -216,6 +216,9 @@ void gfx_vsync_bind_counter(volatile int32_t *counter);
 unsigned gfx_window_focus_messages(void);
 void gfx_window_release_vk(void);
 long vk_validation_errors_total(void);
+void vk_vma_leak_line(const char *fmt, ...);
+void vk_vma_leak_found(void);
+void vk_vma_teardown_begin(void);
 
 int  vk_pool_init(pool_t *p);
 void vk_pool_fini(pool_t *p);
@@ -587,6 +590,7 @@ void vk_sub_in_frame_publish(void);
 void vk_completion_add(uint64_t fence, void (*fn)(void *), void *arg);
 void vk_completion_add_result(uint64_t fence, void (*fn)(void *), void *arg);
 void vk_completion_add_first(uint64_t fence, void (*fn)(void *), void *arg);
+uint32_t vk_completion_flush_idle(void);
 void rdoc_init(void);
 int rdoc_active(void);
 void rdoc_after_present(uint64_t frame);

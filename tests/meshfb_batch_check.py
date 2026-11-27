@@ -16,22 +16,43 @@ With the batch on, the same pictures go through mfb_draw's batch and its way bac
 first draws (no history yet) go one by one in a pass whose other draws are batched, and the passes are cut. The probe
 prints a "batch:" line with its counts and checks that draws were batched, that some went one by one for want of
 history, that passes were cut, and that no draw lacked a pre-pass command buffer. Validation is on in both runs; an
-error while drawing fails the check, while those of the device's creation and teardown are only printed.
+error while drawing fails the check, while those of the device's creation and teardown are only printed. Each run must
+also reach its "probe-meshfb: passed" line and exit with 0: a probe that aborts or dies in its teardown fails, and the
+teardown's lines about memory still allocated (runtime/vk/vk_device.c vma_destroy_logged) are printed. On Linux the
+probe runs with no core file and a core filter of 0, so an abort does not write the guest's shared memory out.
 
 Usage: meshfb_batch_check.py PATH_TO_GAME_EXE
 """
+
+
+def no_core():
+    try:
+        import resource
+        resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+    except (ImportError, ValueError, OSError):
+        pass
+    try:
+        with open('/proc/self/coredump_filter', 'w') as f:
+            f.write('0')
+    except OSError:
+        pass
 
 
 def run(exe, batch):
     env = dict(os.environ)
     env['NX2SARIA_VK_VALIDATION'] = '1'
     env['NX2SARIA_MESH_FALLBACK_BATCH'] = str(batch)
-    r = subprocess.run([exe, '--probe-meshfb'], env=env, capture_output=True, text=True, errors='replace')
+    r = subprocess.run([exe, '--probe-meshfb'], env=env, capture_output=True, text=True, errors='replace',
+                       preexec_fn=no_core if os.name == 'posix' else None)
     out = r.stdout + r.stderr
     lines = [ln for ln in r.stdout.splitlines() if ln.startswith('probe-meshfb:')]
     print('--- batch %d' % batch)
     print('\n'.join(lines))
-    ok = not any(ln.startswith('probe-meshfb: FAILED:') for ln in lines)
+    teardown = [ln for ln in out.splitlines() if 'vk: teardown:' in ln]
+    for ln in teardown:
+        print('  ' + ln[:300])
+    ok = not any(ln.startswith('probe-meshfb: FAILED') for ln in lines)
+    ok = ok and r.returncode == 0 and any(ln.startswith('probe-meshfb: passed') for ln in lines) and not teardown
     ok = ok and any('with background builds the picture was whole' in ln for ln in lines)
     ok = ok and any('task draw of' in ln and 'counted' in ln for ln in lines)
     if batch:

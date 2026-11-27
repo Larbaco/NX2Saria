@@ -986,6 +986,7 @@ const GfxBackend gfx_vulkan_backend = {
 };
 
 void vk_backend_shutdown(void) {
+    vk_vma_teardown_begin();
     replay_drain(DR_FINISH);
     gfx_exit_log();
     vk_present_drain();

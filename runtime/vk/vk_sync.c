@@ -1565,10 +1565,42 @@ void vk_sync_finish(void) {
     vk_upload_flush(1);
 }
 
+uint32_t vk_completion_flush_idle(void) {
+    if (!__atomic_load_n(&started, __ATOMIC_ACQUIRE) || vk_device_is_lost() ||
+        plat_thread_id() == __atomic_load_n(&cb_tid, __ATOMIC_ACQUIRE))
+        return 0;
+    vk_sync_finish();
+    plat_mutex_lock(&st_lock);
+    int nf = fqn, nq = qn, left = rqn, k = 0;
+    Pending *run = nf + nq ? malloc(sizeof *run * (size_t)(nf + nq)) : NULL;
+    if (run) {
+        for (int i = 0; i < nf; i++) run[k++] = fqueue[fqhead + i];
+        for (int i = 0; i < nq; i++) run[k++] = queue[qhead + i];
+        fqhead = fqn = qhead = qn = 0;
+    } else {
+        nf = nq = 0;
+    }
+    uint64_t reached = done, newest = 0;
+    plat_mutex_unlock(&st_lock);
+    uint32_t ahead = 0;
+    for (int i = 0; i < k; i++) {
+        ahead += run[i].fence > reached;
+        if (run[i].fence > newest) newest = run[i].fence;
+        run[i].fn(run[i].arg);
+    }
+    free(run);
+    if (k || left)
+        rt_log("vk: sync teardown: ran %d callbacks still queued after the last submission finished, on this thread (%d "
+               "first, %d ordinary; %u for values past the last one, %llu, the newest %llu); %d result callbacks left",
+               k, nf, nq, ahead, (unsigned long long)reached, (unsigned long long)newest, left);
+    return (uint32_t)k;
+}
+
 void vk_sync_shutdown(void) {
     plat_mutex_lock(&start_lock);
     if (started) {
         vk_sync_finish();
+        vk_completion_flush_idle();
         plat_mutex_lock(&st_lock);
         stop = 1;
         plat_cond_broadcast(&cv_work);
@@ -1576,6 +1608,16 @@ void vk_sync_shutdown(void) {
         plat_thread_join(completion_thread);
         completion_thread = NULL;
         plat_mutex_lock(&st_lock);
+        if (qn || rqn || fqn) {
+            uint64_t lo = UINT64_MAX;
+            for (int i = 0; i < qn; i++) lo = queue[qhead + i].fence < lo ? queue[qhead + i].fence : lo;
+            for (int i = 0; i < rqn; i++) lo = rqueue[rqhead + i].fence < lo ? rqueue[rqhead + i].fence : lo;
+            for (int i = 0; i < fqn; i++) lo = fqueue[fqhead + i].fence < lo ? fqueue[fqhead + i].fence : lo;
+            rt_log("vk: sync shutdown: %zu callbacks left in the queues are dropped (%zu, %zu results, %zu first; lowest value "
+                   "%llu, done %llu, issued %llu, reserved %llu)", (size_t)(qn + rqn + fqn), (size_t)qn, (size_t)rqn,
+                   (size_t)fqn, (unsigned long long)lo, (unsigned long long)done, (unsigned long long)issued,
+                   (unsigned long long)reserved);
+        }
         qhead = qn = rqhead = rqn = fqhead = fqn = 0;
         plat_mutex_unlock(&st_lock);
         plat_mutex_lock(&sub_lock);

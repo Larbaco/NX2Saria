@@ -1661,6 +1661,11 @@ Called with `P.lock` held and `p->info.pipeline` just replaced by the optimised 
 new handle visible before the submission count is read. `fast_retired` (under `P.lock`) counts the fast links
 destroyed so far.
 
+
+The destroy is queued for the value issued + 2 (or past the recording submission), a value no submission has reached
+yet. The completion thread runs its queue in order, so such an entry also holds the callbacks queued after it until a
+later submission reaches its value; at a teardown none does, and `runtime/vk/vk_sync.c` `vk_completion_flush_idle()`
+runs them.
 ### `pressure_release()`, `release_drain()`, `releasable()`
 
 Pipelines no draw has used, given back while video memory is short.
