@@ -5707,11 +5707,11 @@ ors two compares on purpose, and clang 18 warns on it.
 
 ### `tests/wide_hud_check.c`
 
-The layout files are made by the test from the format as the notes of `runtime/patches/wide_hud.c` describe it, with
-the panes, values and animation curves the game's 1.1.1 `PlayerStatus_00`, `MapMenu_00`, `NumDisplay_00`,
-`LoadingFade_00`, `PlusMenu_00`, `MenuOverlay_00`, `PaShortCutSlideList_00` and `PaItemMenu_00` hold, so the reader is
-checked against a writer of its own; the archives and zstd dictionaries are made in the test too. It prints each
-failed check and exits 1 on any.
+The layout files are made by the test from the format as [patches.md](patches.md#the-layout-format-bffh) describes it
+for `runtime/patches/wide_hud.c`, with the panes, values and animation curves the game's 1.1.1 `PlayerStatus_00`,
+`MapMenu_00`, `NumDisplay_00`, `LoadingFade_00`, `PlusMenu_00`, `MenuOverlay_00`, `PaShortCutSlideList_00` and
+`PaItemMenu_00` hold, so the reader is checked against a writer of its own; the archives and zstd dictionaries are made
+in the test too. It prints each failed check and exits 1 on any.
 
 The writer:
 
@@ -5892,15 +5892,16 @@ offsets the index gives (`game_args()`), edits it for four shapes of picture (21
 the log lines of each. Nothing is written. The program is built with the same sanitizers as
 `tests/wide_hud_check.c`; `runtime/simd_fp.h` `FOK` ors two compares on purpose, and clang 18 warns on it.
 
-In the C file the layouts and archives are made from the format as the notes of `wide_hud.c` describe it, with the
-panes and widths the game's 1.1.1 `TitleMenuBG_00` holds, so the reader is checked against a writer of its own: a BFFH
-layout with panes in the order given (parents first) and an empty table of animations (`pane_at` is where each pane's
-record was put); the 1.1.1 layouts of the title archive as far as the edit reads them; a SARC of one other member,
-then the members in order; the title archive as the game's holds it: `PaCommonBtnTitle_00`, `TitleMenuBG_00` and
-`Title_00`, each a number of times (members 3 * c .. 3 * c + 2 for copy c), with `width_at` the three width fields
-within `TitleMenuBG_00` (`C_Capture_00`, `P_Capture_00`, `P_Noise_00`). A shift is the menus' alone (a layout's grid
-units wider on each side) or the HUD's alone. What `wide_hud.c` reaches in the runtime is stubbed and every log line
-kept. A zstd dictionary is made with a given id, its content and samples taken from a source buffer.
+In the C file the layouts and archives are made from the format as [patches.md](patches.md#the-layout-format-bffh)
+describes it for `wide_hud.c`, with the panes and widths the game's 1.1.1 `TitleMenuBG_00` holds, so the reader is
+checked against a writer of its own: a BFFH layout with panes in the order given (parents first) and an empty table of
+animations (`pane_at` is where each pane's record was put); the 1.1.1 layouts of the title archive as far as the edit
+reads them; a SARC of one other member, then the members in order; the title archive as the game's holds it:
+`PaCommonBtnTitle_00`, `TitleMenuBG_00` and `Title_00`, each a number of times (members 3 * c .. 3 * c + 2 for copy c),
+with `width_at` the three width fields within `TitleMenuBG_00` (`C_Capture_00`, `P_Capture_00`, `P_Noise_00`). A shift
+is the menus' alone (a layout's grid units wider on each side) or the HUD's alone. What `wide_hud.c` reaches in the
+runtime is stubbed and every log line kept. A zstd dictionary is made with a given id, its content and samples taken
+from a source buffer.
 
 - `check_synthetic()`, with the menus' shift 640 (21:9: 1080 * 2560 / 1080 - 1920): the Common archive's edit leaves
   the Title archive alone; the HUD's edges alone change nothing in the Title archive; the menus' shift changes three
